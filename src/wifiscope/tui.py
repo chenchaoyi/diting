@@ -115,7 +115,11 @@ class ScanPanel(Static):
         inv: NetworkInventory,
     ) -> None:
         ago = "" if scanned_at is None else f"  · scanned {int(time.monotonic() - scanned_at)}s ago"
-        self.border_title = f"Nearby APs ({len(results)}){ago}"
+        all_redacted = bool(results) and all(
+            r.bssid is None and r.ssid is None for r in results
+        )
+        identity = "  · identity TCC-redacted" if all_redacted else ""
+        self.border_title = f"Nearby APs ({len(results)}){ago}{identity}"
         if not results:
             self.update(Text("(no APs from last scan — likely throttle, retrying)", style="dim italic"))
             return
@@ -211,14 +215,31 @@ def _scan_line(r: ScanResult, current_bssid: str | None, inv: NetworkInventory) 
     star = "★" if is_current else " "
     rssi_color = _rssi_color(r.rssi_dbm) if r.rssi_dbm is not None else "dim"
     ap_name = inv.resolve(r.bssid)
-    label = ap_name or (r.ssid or "")
+
+    # On macOS without Location Services, scan-list ssid AND bssid are
+    # both redacted (CoreWLAN's CWNetwork.ssid/.bssid/.ieData all come
+    # back empty). The SCDynamicStore fallback that rescues the *current*
+    # connection has no equivalent for the neighbor list. Make the
+    # redacted state visibly distinct from "AP with empty SSID".
+    redacted = r.bssid is None and r.ssid is None
+    if redacted:
+        label = "(redacted)"
+        bssid_str = "(redacted)"
+        label_style = "dim italic"
+        bssid_style = "dim italic"
+    else:
+        label = ap_name or (r.ssid or "(no SSID)")
+        bssid_str = r.bssid or "???"
+        label_style = "cyan" if ap_name else "white"
+        bssid_style = "dim"
+
     line = Text()
     line.append(f" {star:<2}", style="bold cyan" if is_current else "")
     line.append(f"{r.rssi_dbm if r.rssi_dbm is not None else '?':>4}  ", style=rssi_color)
     line.append(f"{r.channel if r.channel is not None else '?':<4} ", style="white")
     line.append(f"{r.channel_band or '?':<5}  ", style="white")
-    line.append(f"{label[:28]:<28}  ", style="cyan" if ap_name else "white")
-    line.append(f"{r.bssid or '???':<17}  ", style="dim")
+    line.append(f"{label[:28]:<28}  ", style=label_style)
+    line.append(f"{bssid_str:<17}  ", style=bssid_style)
     line.append(f"{(str(r.channel_width_mhz)+'MHz') if r.channel_width_mhz else '?':<5}  ", style="white")
     line.append(f"{(r.phy_mode or '?'):<8}", style="white")
     if is_current:
