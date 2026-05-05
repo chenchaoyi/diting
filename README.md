@@ -1,37 +1,55 @@
 # wifiscope
 
-A terminal WiFi monitor for macOS, focused on **roaming visibility**.
+A terminal WiFi monitor for macOS, focused on **roaming visibility** —
+which AP your Mac is on, when it switches, and how strong the signal
+is, all in one screen.
 
-Built for inspecting which AP a Mac is associated with on a multi-AP WiFi 6
-deployment (AC + panel APs), watching roaming events as they happen, and
-giving each BSSID a friendly alias so the human reading the screen does not
-have to memorize MAC addresses.
+Built for multi-AP home / SMB networks (AC + panel APs, mesh systems)
+where the same SSID is broadcast by 5+ radios and you cannot tell at
+a glance whether sticky roaming is causing your Zoom call to drop.
+
+## What you see
+
+- **Current connection**: SSID, BSSID, RSSI, noise, tx rate, channel,
+  width, band, PHY mode, security
+- **Roam events**: tagged `[band switch on <AP>]` for same-AP radio
+  changes vs `[inter-AP roam]` for genuine moves between physical APs
+- **Nearby APs**: scan list (every 5 s) sorted by signal strength
+- **Friendly names** for each AP from a YAML inventory (you provide
+  AP-level mgmt MACs; wifiscope figures out the per-radio attribution)
 
 ## Status
 
-v0.1, work in progress. macOS only. Linux support is unconfirmed and not
-present in this version.
+v0.1 — macOS 11+ only. TUI lands in step 8 of implementation; current
+build ships a streaming console mode. Linux is on the long roadmap.
 
-## Stack
+## Install & run
 
-- Python 3.11+
-- [CoreWLAN](https://developer.apple.com/documentation/corewlan) via `pyobjc`
-  (required: `wdutil info` redacts BSSIDs on macOS 14.4+)
-- [Textual](https://textual.textualize.io/) for the TUI
-- [PyYAML](https://pyyaml.org/) for the BSSID alias config
-- [uv](https://docs.astral.sh/uv/) for packaging and environment management
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
-## Quick start
+```bash
+git clone git@github.com:chenchaoyi/wifiscope.git
+cd wifiscope
+uv sync
+```
 
-> TODO — wired up once the CLI entry point lands (step 4 of implementation).
+Two modes:
 
-## AP inventory
+```bash
+uv run wifiscope          # one-shot snapshot of the current connection
+uv run wifiscope watch    # stream changes until Ctrl+C
+```
 
-Long MAC addresses are unreadable; give each AP a name. Most WiFi
-controllers (H3C, Aruba, Ubiquiti, Cisco, ...) only show the AP's
-**management MAC**, not the per-radio BSSIDs the AP actually
-broadcasts. wifiscope works with what you can read off the controller
-and derives radio attribution at runtime.
+`watch` only prints when something meaningful changes — identity
+fields differ, RSSI moves ≥ 5 dBm, or a 10-second heartbeat fires —
+so it stays readable over long sessions.
+
+## Configure: AP inventory
+
+Most WiFi controllers (H3C, Aruba, Ubiquiti, Cisco, ASUS mesh, ...)
+only expose the AP-level **management MAC**, not the per-radio BSSIDs
+the AP actually broadcasts. List the mgmt MACs once; wifiscope derives
+radio attribution at runtime.
 
 Drop an `aps.yaml` at `~/.config/wifiscope/`:
 
@@ -43,43 +61,54 @@ aps:
     mgmt_mac: 40:fe:95:8a:3c:54
 ```
 
-`wifiscope` then renders `2F-living (5G) (40:fe:95:8a:3c:58)` and
-roam events come tagged `[band switch on 2F-living: 5G -> 2.4G]` or
-`[inter-AP roam]` so a glance at the log tells you whether you moved
-or just dropped to 2.4 GHz on the same AP.
+Output then renders `2F-living (5G) (40:fe:95:8a:3c:58)` instead of
+the raw BSSID, and roam events read `[band switch on 2F-living: 5G
+-> 2.4G]` or `[inter-AP roam]`. Override the config path with
+`WIFISCOPE_INVENTORY=/some/aps.yaml`.
 
-How the matching works: a BSSID and an AP's `mgmt_mac` are treated
-as the same physical device when their first five octets match. This
-holds for nearly all consumer / SMB gear because chipsets allocate
-radio and VAP MACs from one NIC by varying only the last octet.
+For vendors that randomize per-radio MACs (rare; some Cisco Meraki
+SKUs), add a `radio_overrides` map; see [`aps.example.yaml`](aps.example.yaml).
 
-If your vendor randomizes per-radio MACs (some Cisco Meraki SKUs
-do), add a `radio_overrides` section that maps specific BSSIDs
-directly to AP names — see `aps.example.yaml`.
+## How it works (design notes)
 
-Override the config path with `WIFISCOPE_INVENTORY=/some/path.yaml`.
+**Resolving an AP from a BSSID.** A BSSID and a known mgmt MAC are
+treated as the same physical AP when their first five octets match.
+This works because chipsets allocate radio and VAP MACs from one NIC
+by varying only the last octet — a hardware-level convention shared
+across most consumer + SMB gear. The bypass for outliers is the
+explicit `radio_overrides` map.
 
-## macOS 26 caveats
+**Band labels (2.4G / 5G).** Derived from the channel number, never
+the MAC: 1–14 → 2.4G, 32–177 → 5G. Vendor-independent.
 
-CoreWLAN's `bssid()` / `ssid()` are redacted to None on macOS 14.4+
-unless the host process has been granted Location Services. On
-macOS 26, terminal apps (Warp, Apple's Terminal.app, iTerm) often
-do not appear in the Location Services list at all — there is no
-"+" to add them, and the responsibility-chain trick that used to
-register a parent terminal via a child CLI's CoreWLAN call has
-been tightened.
+**SCDynamicStore fallback for redacted SSID/BSSID.** macOS 14.4+
+redacts CoreWLAN's `bssid()` / `ssid()` to `None` unless the host
+process has Location Services permission. On macOS 26 terminal apps
+(Warp, Terminal.app, iTerm) often do not appear in the Location
+Services list at all — and there is no "+" to add them. wifiscope
+works around this by reading `CachedScanRecord` from SCDynamicStore
+at `State:/Network/Interface/<iface>/AirPort`; the nested
+NSKeyedArchiver bplist describing the currently associated AP keeps
+its real BSSID and SSID even though the dictionary's top-level
+`BSSID` / `SSID_STR` are also redacted. Almost certainly an Apple
+oversight that may be closed in a future release. When the fallback
+is in use, the CLI prints a one-line `note:`; if both paths fail,
+BSSIDs come back `n/a` and a `WARNING:` is printed with remediation
+steps. A bundled `.app` distribution that owns its own TCC entry is
+the intended long-term fix (v0.2 roadmap).
 
-wifiscope works around this by reading `CachedScanRecord` from
-SCDynamicStore (`State:/Network/Interface/<iface>/AirPort`). The
-top-level BSSID and SSID fields there are also redacted, but the
-nested NSKeyedArchiver bplist describing the currently associated
-AP is not — almost certainly an Apple oversight that may be closed
-in a future release. When the fallback is in use, the CLI prints
-a one-line `note:`. If both paths fail, BSSID is reported as `n/a`
-and the CLI prints a `WARNING:` with remediation steps.
+**Channel from the cache, not the radio, in fallback mode.** macOS
+does periodic background scans while associated. A 1 Hz CoreWLAN
+poll catches the radio mid-scan often enough that
+`wlanChannel().channelNumber()` oscillates between the AP's real
+channel and the scan target. `CachedScanRecord` describes the AP
+itself, so its channel is stable; we use it whenever the SCDynamicStore
+fallback is active.
 
-A `.app` bundle distribution that owns its own TCC entry is the
-intended long-term fix and is on the roadmap for v0.2.
+**Pluggable backend.** `WiFiBackend` is an ABC with `get_connection`,
+`scan`, and `permission_state` methods; macOS lives in
+`MacOSWiFiBackend`. A future Linux backend (`nl80211` / `iw`) drops
+in without touching the polling, alias, or UI layers.
 
 ## License
 
