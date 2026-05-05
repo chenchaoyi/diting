@@ -174,3 +174,26 @@ def band_label(channel: int | None) -> str | None:
     if 32 <= channel <= 177:
         return "5G"
     return None
+
+
+def cluster_label(bssid: str | None) -> str:
+    """Synthetic AP label for a BSSID not present in any inventory entry.
+
+    Uses octets 3..5 of the MAC (the chip's serial bits inside its OUI
+    block). All radios / VAPs of the same physical AP share these
+    three octets regardless of which OUI block the vendor allocates
+    each radio from, so this label groups them under one identifier
+    without any prior knowledge from the user. False collisions
+    against unrelated nearby APs require ~24 bits of coincidence —
+    effectively never in practice.
+
+    Format ``?AA:BB:CC``. The leading ``?`` and dim styling at the
+    call site signal that this is auto-derived, not a user-provided
+    name.
+    """
+    if not bssid:
+        return "?"
+    parts = bssid.lower().split(":")
+    if len(parts) != 6:
+        return "?"
+    return "?" + ":".join(parts[2:5])

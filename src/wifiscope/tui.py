@@ -26,7 +26,7 @@ from textual.widgets import Footer, Header, RichLog, Static
 
 from .backend import WiFiBackend
 from .models import Connection, ScanResult
-from .network import NetworkInventory, band_label, format_bssid
+from .network import NetworkInventory, band_label, cluster_label, format_bssid
 from .poller import (
     ConnectionUpdate,
     RoamEvent,
@@ -200,6 +200,9 @@ def _rssi_color(rssi: int) -> str:
     return "red"
 
 
+_COL_RSSI = 4
+_COL_CH = 4
+_COL_BAND = 4
 _COL_AP = 18
 _COL_SSID = 22
 _COL_BSSID = 17
@@ -209,7 +212,7 @@ _COL_WIDTH = 6
 def _header_line() -> Text:
     h = Text(style="bold dim")
     h.append(
-        f" {'★':<2}{'RSSI':>5}  {'ch':<4} {'band':<5}  "
+        f" {'★':<2}{'RSSI':>{_COL_RSSI}}  {'ch':<{_COL_CH}}{'band':<{_COL_BAND}}  "
         f"{'AP':<{_COL_AP}}  {'SSID':<{_COL_SSID}}  "
         f"{'BSSID':<{_COL_BSSID}}  {'width':<{_COL_WIDTH}}"
     )
@@ -235,21 +238,30 @@ def _scan_line(r: ScanResult, current_bssid: str | None, inv: NetworkInventory) 
         bssid_text, bssid_style = "(redacted)", "dim italic"
     else:
         ap_name = inv.resolve(r.bssid)
-        # Two columns now: alias goes in AP, the actual SSID in SSID.
-        # An AP can broadcast many BSSIDs (one per radio per VAP), so
-        # collapsing them into one cell hid useful information.
-        ap_text = ap_name or "—"
-        ap_style = "cyan" if ap_name else "dim"
+        if ap_name is not None:
+            ap_text, ap_style = ap_name, "cyan"
+        else:
+            # Auto-discovery: cluster_label gives the same string for every
+            # radio / VAP of the same physical AP, even when the user has
+            # not added it to inventory. Lets a brand-new install make
+            # sense of the scan without any config.
+            ap_text, ap_style = cluster_label(r.bssid), "dim"
         ssid_text = r.ssid or "(no SSID)"
         ssid_style = "white" if r.ssid else "dim italic"
         bssid_text = r.bssid or "???"
         bssid_style = "dim"
 
+    # band display uses the short form (2.4G / 5G) derived from the
+    # channel number — fixed width 4 keeps subsequent columns aligned.
+    # The verbose "2.4 GHz" form would overflow column 4 and shift
+    # every column to the right by two characters on 2.4 GHz rows.
+    band_short = band_label(r.channel) or "?"
+
     line = Text()
     line.append(f" {star:<2}", style="bold cyan" if is_current else "")
-    line.append(f"{r.rssi_dbm if r.rssi_dbm is not None else '?':>4}  ", style=rssi_color)
-    line.append(f"{r.channel if r.channel is not None else '?':<4} ", style="white")
-    line.append(f"{r.channel_band or '?':<5}  ", style="white")
+    line.append(f"{r.rssi_dbm if r.rssi_dbm is not None else '?':>{_COL_RSSI}}  ", style=rssi_color)
+    line.append(f"{r.channel if r.channel is not None else '?':<{_COL_CH}}", style="white")
+    line.append(f"{band_short:<{_COL_BAND}}  ", style="white")
     line.append(f"{ap_text[:_COL_AP]:<{_COL_AP}}  ", style=ap_style)
     line.append(f"{ssid_text[:_COL_SSID]:<{_COL_SSID}}  ", style=ssid_style)
     line.append(f"{bssid_text:<{_COL_BSSID}}  ", style=bssid_style)
