@@ -208,17 +208,44 @@ def _render(event: Event, state: dict, inv: NetworkInventory) -> str | None:
 
 # ---------- entry ----------
 
+_USAGE = """\
+usage: wifiscope [SUBCOMMAND]
+
+  (no args)   launch the TUI dashboard (default)
+  once        print the current connection and exit
+  watch       stream events as plain text until Ctrl+C
+  -h, --help  show this message
+"""
+
+
+def _run_tui() -> None:
+    # Imported lazily so `wifiscope once` and `wifiscope watch` do not
+    # pull in textual / rich on every invocation.
+    from .tui import WifiScopeApp
+
+    backend = MacOSWiFiBackend()
+    inv = load_inventory()
+    WifiScopeApp(backend, inv).run()
+
+
 def main() -> None:
     args = sys.argv[1:]
-    if args and args[0] == "watch":
+    if not args:
+        _run_tui()
+        return
+    cmd = args[0]
+    if cmd == "once":
+        _run_once()
+        return
+    if cmd == "watch":
         try:
             asyncio.run(_run_watch())
         except KeyboardInterrupt:
             pass
         return
-    if args and args[0] in ("-h", "--help"):
-        print("usage: wifiscope [watch]")
-        print("  (no args)   one-shot snapshot of current connection")
-        print("  watch       stream events until Ctrl+C")
+    if cmd in ("-h", "--help"):
+        print(_USAGE, end="")
         return
-    _run_once()
+    print(f"wifiscope: unknown subcommand {cmd!r}\n", file=sys.stderr)
+    print(_USAGE, end="", file=sys.stderr)
+    sys.exit(2)

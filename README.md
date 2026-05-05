@@ -20,8 +20,9 @@ a glance whether sticky roaming is causing your Zoom call to drop.
 
 ## Status
 
-v0.1 — macOS 11+ only. TUI lands in step 8 of implementation; current
-build ships a streaming console mode. Linux is on the long roadmap.
+v0.1 — macOS 11+ only. TUI ships. Linux backend is on the long roadmap;
+the abstract `WiFiBackend` exists so a future `nl80211`/`iw` impl drops
+in without touching the polling, alias, or UI layers.
 
 ## Install & run
 
@@ -33,16 +34,26 @@ cd wifiscope
 uv sync
 ```
 
-Two modes:
+Three modes — the TUI is the default:
 
 ```bash
-uv run wifiscope          # one-shot snapshot of the current connection
-uv run wifiscope watch    # stream changes until Ctrl+C
+uv run wifiscope          # Textual TUI dashboard (default)
+uv run wifiscope once     # one-shot snapshot, exit
+uv run wifiscope watch    # stream events as plain text until Ctrl+C
 ```
+
+In the TUI:
+
+- top panel: current connection (AP name, SSID/BSSID, signal bar)
+- middle panel: nearby APs sorted by RSSI, your current one starred
+- bottom panel: roam log, tagged `[band switch on …]` or
+  `[inter-AP roam]`
+- bindings: `q` quit · `p` pause · `r` force rescan
 
 `watch` only prints when something meaningful changes — identity
 fields differ, RSSI moves ≥ 5 dBm, or a 10-second heartbeat fires —
-so it stays readable over long sessions.
+so it stays readable over long sessions, and is handy for piping
+into a logger.
 
 ## Configure: AP inventory
 

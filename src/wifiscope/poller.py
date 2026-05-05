@@ -75,6 +75,8 @@ class WiFiPoller:
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._last_bssid: str | None = None
         self._last_channel: int | None = None
+        # Set externally to wake the scan loop early (UI 'r' key).
+        self._scan_wakeup: asyncio.Event | None = None
 
     async def events(self) -> AsyncIterator[Event]:
         loop = asyncio.get_running_loop()
@@ -102,13 +104,32 @@ class WiFiPoller:
 
     async def _scan_loop(self) -> None:
         loop = asyncio.get_running_loop()
+        # Lazy-init the wakeup event in the loop that owns it.
+        self._scan_wakeup = asyncio.Event()
         while True:
             try:
                 results = await loop.run_in_executor(None, self._backend.scan)
             except Exception:
                 results = []
             await self._queue.put(ScanUpdate(results))
-            await asyncio.sleep(self._scan_interval)
+            try:
+                await asyncio.wait_for(
+                    self._scan_wakeup.wait(), timeout=self._scan_interval
+                )
+            except asyncio.TimeoutError:
+                pass
+            self._scan_wakeup.clear()
+
+    def force_rescan(self) -> None:
+        """Wake the scan loop to perform an immediate scan.
+
+        Note: CoreWLAN throttles back-to-back scans (~5s floor); a
+        forced scan within the throttle window will return [] from the
+        backend. The event still fires so the UI can clear its 'last
+        scanned Ns ago' counter.
+        """
+        if self._scan_wakeup is not None:
+            self._scan_wakeup.set()
 
     def _maybe_emit_roam(self, conn: Connection | None) -> None:
         # A real roam is two consecutive *known* BSSIDs that differ.
