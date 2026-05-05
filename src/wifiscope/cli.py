@@ -25,13 +25,14 @@ from .poller import (
     WiFiPoller,
 )
 
-_PERMISSION_HINT = (
-    "WARNING: SSID and BSSID are hidden because this terminal lacks "
-    "Location Services permission.\n"
-    "         Grant it under: System Settings -> Privacy & Security -> "
-    "Location Services\n"
-    "         Enable the entry for your terminal app (Terminal / iTerm / "
-    "Ghostty / etc.) and rerun.\n"
+_DENIED_HINT = (
+    "WARNING: SSID and BSSID are hidden. CoreWLAN is redacted by Location\n"
+    "         Services and the SCDynamicStore fallback also returned\n"
+    "         nothing. Grant Location Services to your terminal app, or\n"
+    "         see README's macOS 26 caveats section.\n"
+)
+_FALLBACK_HINT = (
+    "note: SSID/BSSID via SCDynamicStore fallback (CoreWLAN is redacted).\n"
 )
 
 
@@ -73,9 +74,13 @@ def _run_once() -> None:
     print(f"timestamp:  {conn.timestamp.isoformat(timespec='seconds')}")
     print()
     _print_connection(conn)
-    if backend.permission_state() == "denied":
+    state = backend.permission_state()
+    if state == "denied":
         print()
-        print(_PERMISSION_HINT, end="")
+        print(_DENIED_HINT, end="")
+    elif state == "fallback":
+        print()
+        print(_FALLBACK_HINT, end="")
 
 
 # ---------- watch mode ----------
@@ -124,9 +129,12 @@ def _format_roam_line(event: RoamEvent) -> str:
 async def _run_watch() -> None:
     backend = MacOSWiFiBackend()
     print(f"backend: {backend.name}  (Ctrl+C to quit)")
-    if backend.permission_state() == "denied":
+    state = backend.permission_state()
+    if state == "denied":
         print()
-        print(_PERMISSION_HINT, end="")
+        print(_DENIED_HINT, end="")
+    elif state == "fallback":
+        print(_FALLBACK_HINT, end="")
     print()
 
     poller = WiFiPoller(backend)

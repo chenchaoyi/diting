@@ -25,6 +25,28 @@ present in this version.
 
 > TODO — wired up once the CLI entry point lands (step 4 of implementation).
 
+## macOS 26 caveats
+
+CoreWLAN's `bssid()` / `ssid()` are redacted to None on macOS 14.4+
+unless the host process has been granted Location Services. On
+macOS 26, terminal apps (Warp, Apple's Terminal.app, iTerm) often
+do not appear in the Location Services list at all — there is no
+"+" to add them, and the responsibility-chain trick that used to
+register a parent terminal via a child CLI's CoreWLAN call has
+been tightened.
+
+wifiscope works around this by reading `CachedScanRecord` from
+SCDynamicStore (`State:/Network/Interface/<iface>/AirPort`). The
+top-level BSSID and SSID fields there are also redacted, but the
+nested NSKeyedArchiver bplist describing the currently associated
+AP is not — almost certainly an Apple oversight that may be closed
+in a future release. When the fallback is in use, the CLI prints
+a one-line `note:`. If both paths fail, BSSID is reported as `n/a`
+and the CLI prints a `WARNING:` with remediation steps.
+
+A `.app` bundle distribution that owns its own TCC entry is the
+intended long-term fix and is on the roadmap for v0.2.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

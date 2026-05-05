@@ -14,6 +14,7 @@ from datetime import datetime
 
 from CoreWLAN import CWWiFiClient
 
+from . import _dynamic_store
 from .backend import PermissionState, WiFiBackend
 from .models import Connection, ScanResult
 
@@ -114,9 +115,19 @@ class MacOSWiFiBackend(WiFiBackend):
         if channel is None:
             return None
         ch_num, ch_width, ch_band = _channel_fields(channel)
+        ssid = iface.ssid()
+        bssid = iface.bssid()
+        # If CoreWLAN redacted either, try the SCDynamicStore fallback —
+        # see _dynamic_store.py for why this works without permission.
+        if ssid is None or bssid is None:
+            ds_bssid, ds_ssid = _dynamic_store.read_current_identity(
+                iface.interfaceName()
+            )
+            ssid = ssid or ds_ssid
+            bssid = bssid or ds_bssid
         return Connection(
-            ssid=iface.ssid(),    # None if redacted by Location Services
-            bssid=iface.bssid(),  # None without Location Services permission
+            ssid=ssid,
+            bssid=bssid,
             rssi_dbm=_maybe_int(iface.rssiValue()),
             noise_dbm=_maybe_int(iface.noiseMeasurement()),
             tx_rate_mbps=_maybe_float(iface.transmitRate()),
@@ -133,12 +144,17 @@ class MacOSWiFiBackend(WiFiBackend):
     def permission_state(self) -> PermissionState:
         # CoreLocation could give a definitive answer, but it requires the
         # process to be a bundled .app to even prompt the user — useless
-        # for a CLI. Instead infer from CoreWLAN: when associated (channel
-        # populated), BSSID is None iff Location Services is denied.
+        # for a CLI. Instead infer from observable behaviour:
+        #   CoreWLAN returns BSSID            -> "granted"
+        #   CoreWLAN redacted, fallback works -> "fallback"
+        #   CoreWLAN redacted, fallback fails -> "denied"
         iface = self._interface()
         if iface is None or iface.wlanChannel() is None:
             return "unknown"
-        return "granted" if iface.bssid() else "denied"
+        if iface.bssid():
+            return "granted"
+        ds_bssid, _ = _dynamic_store.read_current_identity(iface.interfaceName())
+        return "fallback" if ds_bssid else "denied"
 
     def scan(self) -> list[ScanResult]:
         iface = self._interface()
