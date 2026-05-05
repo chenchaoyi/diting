@@ -39,6 +39,16 @@ def _print_connection(c: Connection) -> None:
         print(f"  {label:<{label_w}}  {value}")
 
 
+_PERMISSION_HINT = (
+    "WARNING: SSID and BSSID are hidden because this terminal lacks "
+    "Location Services permission.\n"
+    "         Grant it under: System Settings -> Privacy & Security -> "
+    "Location Services\n"
+    "         Enable the entry for your terminal app (Terminal / iTerm / "
+    "Ghostty / etc.) and rerun.\n"
+)
+
+
 def main() -> None:
     backend = MacOSWiFiBackend()
     conn = backend.get_connection()
@@ -49,3 +59,6 @@ def main() -> None:
     print(f"timestamp:  {conn.timestamp.isoformat(timespec='seconds')}")
     print()
     _print_connection(conn)
+    if backend.permission_state() == "denied":
+        print()
+        print(_PERMISSION_HINT, end="")

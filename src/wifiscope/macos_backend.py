@@ -14,7 +14,7 @@ from datetime import datetime
 
 from CoreWLAN import CWWiFiClient
 
-from .backend import WiFiBackend
+from .backend import PermissionState, WiFiBackend
 from .models import Connection, ScanResult
 
 # CoreWLAN enums → human strings. Values mirror the CoreWLAN headers; we
@@ -129,6 +129,16 @@ class MacOSWiFiBackend(WiFiBackend):
             nss=None,        # not exposed by CoreWLAN public API
             timestamp=datetime.now(),
         )
+
+    def permission_state(self) -> PermissionState:
+        # CoreLocation could give a definitive answer, but it requires the
+        # process to be a bundled .app to even prompt the user — useless
+        # for a CLI. Instead infer from CoreWLAN: when associated (channel
+        # populated), BSSID is None iff Location Services is denied.
+        iface = self._interface()
+        if iface is None or iface.wlanChannel() is None:
+            return "unknown"
+        return "granted" if iface.bssid() else "denied"
 
     def scan(self) -> list[ScanResult]:
         iface = self._interface()
