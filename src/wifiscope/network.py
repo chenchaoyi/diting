@@ -63,9 +63,24 @@ class NetworkInventory:
         b = bssid.lower()
         if b in self.radio_overrides:
             return self.radio_overrides[b]
+        # Primary: first five octets match. Catches all radios / VAPs
+        # that come out of the same NIC OUI pool (the most common case).
         prefix = _prefix5(b)
         for ap in self.aps:
             if ap.prefix == prefix:
+                return ap.name
+        # Secondary: middle four octets match (octets 2..5). Some
+        # vendors — H3C in particular — assign a chip's "user" SSIDs
+        # to one OUI block (e.g. 40:fe:95:...) and the same chip's
+        # "vendor-internal" SSIDs to a sibling OUI block (44:fe:95:...).
+        # Octets 2..5 carry the chip's serial bits and are the same
+        # across both blocks, so this rule reliably groups them while
+        # the chance of a false match against an unrelated nearby AP
+        # is ~1/2^32. If a real deployment hits a conflict, the user
+        # can pin specific BSSIDs in radio_overrides which wins above.
+        mid = _mid4(b)
+        for ap in self.aps:
+            if _mid4(ap.mgmt_mac) == mid:
                 return ap.name
         return None
 
@@ -78,13 +93,21 @@ class NetworkInventory:
         if name_a is not None and name_b is not None:
             return name_a == name_b
         if name_a is None and name_b is None:
-            return _prefix5(a) == _prefix5(b)
-        # one resolved, one not -> definitely different
+            # Apply both rules from `resolve` for consistency.
+            return _prefix5(a) == _prefix5(b) or _mid4(a) == _mid4(b)
         return False
 
 
 def _prefix5(mac: str) -> str:
     return mac.lower().rsplit(":", 1)[0]
+
+
+def _mid4(mac: str) -> str:
+    """Octets 2..5 of a MAC string (skips the leading byte and trailing byte)."""
+    parts = mac.lower().split(":")
+    if len(parts) != 6:
+        return mac.lower()
+    return ":".join(parts[1:5])
 
 
 def default_config_path() -> Path:

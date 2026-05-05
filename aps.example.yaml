@@ -5,8 +5,11 @@
 # Aruba, Ubiquiti, Cisco, ...) only expose the AP-level **management
 # MAC** — not the per-radio BSSIDs the AP actually broadcasts. Just
 # list the mgmt MACs here. wifiscope derives radio attribution at
-# runtime by matching the first five octets of any observed BSSID
-# against these entries.
+# runtime by two rules:
+#   1. first five octets match (chip's primary OUI block — the common
+#      case for nearly all consumer / SMB gear)
+#   2. middle four octets match (chip serial bits; covers vendors that
+#      allocate VAPs from a sibling OUI block — H3C, some others)
 
 aps:
   # Management MACs read straight off the H3C AC "AP列表" page.

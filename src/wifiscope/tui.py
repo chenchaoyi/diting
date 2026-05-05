@@ -200,9 +200,19 @@ def _rssi_color(rssi: int) -> str:
     return "red"
 
 
+_COL_AP = 18
+_COL_SSID = 22
+_COL_BSSID = 17
+_COL_WIDTH = 6
+
+
 def _header_line() -> Text:
     h = Text(style="bold dim")
-    h.append(f" {'★':<2}{'RSSI':>5}  {'ch':<4} {'band':<5}  {'AP / SSID':<28}  {'BSSID':<17}  {'width':<5}  {'phy':<8}")
+    h.append(
+        f" {'★':<2}{'RSSI':>5}  {'ch':<4} {'band':<5}  "
+        f"{'AP':<{_COL_AP}}  {'SSID':<{_COL_SSID}}  "
+        f"{'BSSID':<{_COL_BSSID}}  {'width':<{_COL_WIDTH}}"
+    )
     return h
 
 
@@ -214,23 +224,25 @@ def _scan_line(r: ScanResult, current_bssid: str | None, inv: NetworkInventory) 
     )
     star = "★" if is_current else " "
     rssi_color = _rssi_color(r.rssi_dbm) if r.rssi_dbm is not None else "dim"
-    ap_name = inv.resolve(r.bssid)
 
-    # On macOS without Location Services, scan-list ssid AND bssid are
-    # both redacted (CoreWLAN's CWNetwork.ssid/.bssid/.ieData all come
-    # back empty). The SCDynamicStore fallback that rescues the *current*
-    # connection has no equivalent for the neighbor list. Make the
-    # redacted state visibly distinct from "AP with empty SSID".
+    # When CoreWLAN is fully TCC-redacted (no helper, no Location grant),
+    # ssid AND bssid both come back None. Render that state distinctly so
+    # it does not look like an AP with an empty SSID.
     redacted = r.bssid is None and r.ssid is None
     if redacted:
-        label = "(redacted)"
-        bssid_str = "(redacted)"
-        label_style = "dim italic"
-        bssid_style = "dim italic"
+        ap_text, ap_style = "(redacted)", "dim italic"
+        ssid_text, ssid_style = "(redacted)", "dim italic"
+        bssid_text, bssid_style = "(redacted)", "dim italic"
     else:
-        label = ap_name or (r.ssid or "(no SSID)")
-        bssid_str = r.bssid or "???"
-        label_style = "cyan" if ap_name else "white"
+        ap_name = inv.resolve(r.bssid)
+        # Two columns now: alias goes in AP, the actual SSID in SSID.
+        # An AP can broadcast many BSSIDs (one per radio per VAP), so
+        # collapsing them into one cell hid useful information.
+        ap_text = ap_name or "—"
+        ap_style = "cyan" if ap_name else "dim"
+        ssid_text = r.ssid or "(no SSID)"
+        ssid_style = "white" if r.ssid else "dim italic"
+        bssid_text = r.bssid or "???"
         bssid_style = "dim"
 
     line = Text()
@@ -238,10 +250,11 @@ def _scan_line(r: ScanResult, current_bssid: str | None, inv: NetworkInventory) 
     line.append(f"{r.rssi_dbm if r.rssi_dbm is not None else '?':>4}  ", style=rssi_color)
     line.append(f"{r.channel if r.channel is not None else '?':<4} ", style="white")
     line.append(f"{r.channel_band or '?':<5}  ", style="white")
-    line.append(f"{label[:28]:<28}  ", style=label_style)
-    line.append(f"{bssid_str:<17}  ", style=bssid_style)
-    line.append(f"{(str(r.channel_width_mhz)+'MHz') if r.channel_width_mhz else '?':<5}  ", style="white")
-    line.append(f"{(r.phy_mode or '?'):<8}", style="white")
+    line.append(f"{ap_text[:_COL_AP]:<{_COL_AP}}  ", style=ap_style)
+    line.append(f"{ssid_text[:_COL_SSID]:<{_COL_SSID}}  ", style=ssid_style)
+    line.append(f"{bssid_text:<{_COL_BSSID}}  ", style=bssid_style)
+    width_str = f"{r.channel_width_mhz}MHz" if r.channel_width_mhz else "?"
+    line.append(f"{width_str:<{_COL_WIDTH}}", style="white")
     if is_current:
         line.stylize("on grey15")
     return line

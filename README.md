@@ -101,12 +101,23 @@ SKUs), add a `radio_overrides` map; see [`aps.example.yaml`](aps.example.yaml).
 
 ## How it works (design notes)
 
-**Resolving an AP from a BSSID.** A BSSID and a known mgmt MAC are
-treated as the same physical AP when their first five octets match.
-This works because chipsets allocate radio and VAP MACs from one NIC
-by varying only the last octet — a hardware-level convention shared
-across most consumer + SMB gear. The bypass for outliers is the
-explicit `radio_overrides` map.
+**Resolving an AP from a BSSID.** Two rules in order:
+
+1. **First five octets match.** Chipsets allocate radio and VAP MACs
+   from one NIC by varying only the last octet — a hardware-level
+   convention shared across most consumer + SMB gear. Catches the
+   common case.
+2. **Middle four octets match** (octets 2..5 of the MAC). Some
+   vendors — H3C in particular — assign one OUI block to a chip's
+   "user" SSIDs (e.g. `40:fe:95:...`) and a sibling OUI block to
+   the same chip's "vendor-internal" SSIDs (`44:fe:95:...`). Octets
+   2..5 carry the chip's serial bits and are the same across both
+   blocks, so this rule reliably groups them. False-match probability
+   against an unrelated nearby AP is ~1/2³².
+
+If neither rule fits a deployment (rare; some Cisco Meraki SKUs
+randomise per-radio MACs), explicit `radio_overrides` entries win
+above both rules.
 
 **Band labels (2.4G / 5G).** Derived from the channel number, never
 the MAC: 1–14 → 2.4G, 32–177 → 5G. Vendor-independent.
