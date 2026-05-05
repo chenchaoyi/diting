@@ -36,10 +36,17 @@ class ScanUpdate:
 
 @dataclass(frozen=True, slots=True)
 class RoamEvent:
-    """Two consecutive non-None BSSIDs differed."""
+    """Two consecutive non-None BSSIDs differed.
+
+    Carries the channel for each side so renderers can label band
+    switches (same physical AP, different radio) without re-querying
+    the inventory.
+    """
     timestamp: datetime
     previous_bssid: str
+    previous_channel: int | None
     new_bssid: str
+    new_channel: int | None
 
 
 Event = ConnectionUpdate | ScanUpdate | RoamEvent
@@ -67,6 +74,7 @@ class WiFiPoller:
         self._scan_interval = max(scan_interval, 3.0)
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._last_bssid: str | None = None
+        self._last_channel: int | None = None
 
     async def events(self) -> AsyncIterator[Event]:
         loop = asyncio.get_running_loop()
@@ -113,6 +121,7 @@ class WiFiPoller:
         #   the AP changed
         if conn is None:
             self._last_bssid = None
+            self._last_channel = None
             return
         if conn.bssid is None:
             return
@@ -121,7 +130,10 @@ class WiFiPoller:
                 RoamEvent(
                     timestamp=conn.timestamp,
                     previous_bssid=self._last_bssid,
+                    previous_channel=self._last_channel,
                     new_bssid=conn.bssid,
+                    new_channel=conn.channel,
                 )
             )
         self._last_bssid = conn.bssid
+        self._last_channel = conn.channel

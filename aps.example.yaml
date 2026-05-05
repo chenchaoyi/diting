@@ -1,0 +1,32 @@
+# wifiscope AP inventory — sample config
+#
+# Copy to ~/.config/wifiscope/aps.yaml (or set WIFISCOPE_INVENTORY env
+# var) and replace with your network's APs. Most controllers (H3C,
+# Aruba, Ubiquiti, Cisco, ...) only expose the AP-level **management
+# MAC** — not the per-radio BSSIDs the AP actually broadcasts. Just
+# list the mgmt MACs here. wifiscope derives radio attribution at
+# runtime by matching the first five octets of any observed BSSID
+# against these entries.
+
+aps:
+  # Management MACs read straight off the H3C AC "AP列表" page.
+  - name: AX51-E_1-B1
+    mgmt_mac: 40:fe:95:8a:3c:07
+  - name: AX51-E_4-B2
+    mgmt_mac: 40:fe:95:8a:3c:54
+  - name: AX51-E_5-3F
+    mgmt_mac: 40:fe:95:8a:3c:15
+  - name: AX51-E_3-2F
+    mgmt_mac: 40:fe:95:89:c7:df
+  - name: AX60_2
+    mgmt_mac: bc:22:47:ca:79:46
+
+# radio_overrides: {}
+#
+# Optional. Use ONLY if your AP vendor randomizes per-radio MACs so
+# that radio BSSIDs do not share the first five octets with the
+# mgmt MAC (some Cisco Meraki SKUs are like this). Maps an exact
+# BSSID directly to an AP name, bypassing the prefix-matching rule:
+#
+# radio_overrides:
+#   bc:22:47:ca:99:99: AX60_2

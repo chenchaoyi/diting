@@ -15,9 +15,15 @@ import sys
 import time
 from datetime import datetime
 
-from .aliases import format_bssid, load_aliases, resolve_config_path
 from .macos_backend import MacOSWiFiBackend
 from .models import Connection
+from .network import (
+    NetworkInventory,
+    band_label,
+    format_bssid,
+    load_inventory,
+    resolve_config_path,
+)
 from .poller import (
     ConnectionUpdate,
     Event,
@@ -45,10 +51,10 @@ def _fmt(value: object, suffix: str = "") -> str:
 
 # ---------- one-shot mode ----------
 
-def _print_connection(c: Connection, aliases: dict[str, str]) -> None:
+def _print_connection(c: Connection, inv: NetworkInventory) -> None:
     rows: list[tuple[str, str]] = [
         ("SSID", _fmt(c.ssid)),
-        ("BSSID", format_bssid(c.bssid, aliases)),
+        ("BSSID", format_bssid(c.bssid, c.channel, inv)),
         ("RSSI", _fmt(c.rssi_dbm, " dBm")),
         ("Noise", _fmt(c.noise_dbm, " dBm")),
         ("Tx Rate", _fmt(c.tx_rate_mbps, " Mbps")),
@@ -67,7 +73,7 @@ def _print_connection(c: Connection, aliases: dict[str, str]) -> None:
 
 def _run_once() -> None:
     backend = MacOSWiFiBackend()
-    aliases = load_aliases()
+    inv = load_inventory()
     conn = backend.get_connection()
     print(f"backend:    {backend.name}")
     if conn is None:
@@ -75,7 +81,7 @@ def _run_once() -> None:
         sys.exit(1)
     print(f"timestamp:  {conn.timestamp.isoformat(timespec='seconds')}")
     print()
-    _print_connection(conn, aliases)
+    _print_connection(conn, inv)
     state = backend.permission_state()
     if state == "denied":
         print()
@@ -109,11 +115,11 @@ def _identity_key(c: Connection | None) -> tuple:
     return tuple(getattr(c, f) for f in _IDENTITY_FIELDS)
 
 
-def _format_conn_line(c: Connection | None, aliases: dict[str, str]) -> str:
+def _format_conn_line(c: Connection | None, inv: NetworkInventory) -> str:
     if c is None:
         return "conn   <not associated>"
     return (
-        f"conn   ssid={_fmt(c.ssid)}  bssid={format_bssid(c.bssid, aliases)}  "
+        f"conn   ssid={_fmt(c.ssid)}  bssid={format_bssid(c.bssid, c.channel, inv)}  "
         f"rssi={_fmt(c.rssi_dbm, 'dBm')}  "
         f"ch{c.channel or 0}/{c.channel_band or '?'}/{_fmt(c.channel_width_mhz, 'MHz')}  "
         f"{c.phy_mode or '?'}  {c.security or '?'}"
@@ -124,19 +130,29 @@ def _format_scan_line(results: list) -> str:
     return f"scan   {len(results)} APs visible"
 
 
-def _format_roam_line(event: RoamEvent, aliases: dict[str, str]) -> str:
-    return (
-        f"ROAM   {format_bssid(event.previous_bssid, aliases)}  ->  "
-        f"{format_bssid(event.new_bssid, aliases)}"
-    )
+def _format_roam_line(event: RoamEvent, inv: NetworkInventory) -> str:
+    same = inv.is_same_ap(event.previous_bssid, event.new_bssid)
+    prev = format_bssid(event.previous_bssid, event.previous_channel, inv)
+    new = format_bssid(event.new_bssid, event.new_channel, inv)
+    if same:
+        prev_band = band_label(event.previous_channel) or "?"
+        new_band = band_label(event.new_channel) or "?"
+        ap_name = inv.resolve(event.new_bssid) or "same AP"
+        tag = f"[band switch on {ap_name}: {prev_band} -> {new_band}]"
+    else:
+        tag = "[inter-AP roam]"
+    return f"ROAM   {prev}  ->  {new}   {tag}"
 
 
 async def _run_watch() -> None:
     backend = MacOSWiFiBackend()
-    aliases = load_aliases()
+    inv = load_inventory()
     print(f"backend: {backend.name}  (Ctrl+C to quit)")
-    if aliases:
-        print(f"aliases: {len(aliases)} loaded from {resolve_config_path()}")
+    if inv.aps or inv.radio_overrides:
+        print(
+            f"inventory: {len(inv.aps)} APs, "
+            f"{len(inv.radio_overrides)} overrides — {resolve_config_path()}"
+        )
     perm = backend.permission_state()
     if perm == "denied":
         print()
@@ -149,13 +165,13 @@ async def _run_watch() -> None:
     state: dict = {"last_key": None, "last_rssi": None, "last_print_at": 0.0}
 
     async for event in poller.events():
-        line = _render(event, state, aliases)
+        line = _render(event, state, inv)
         if line is not None:
             now_str = datetime.now().strftime("%H:%M:%S")
             print(f"{now_str}  {line}", flush=True)
 
 
-def _render(event: Event, state: dict, aliases: dict[str, str]) -> str | None:
+def _render(event: Event, state: dict, inv: NetworkInventory) -> str | None:
     """Decide whether and how to render this event.
 
     Mutates `state` to track last-printed identity / RSSI / timestamp
@@ -164,7 +180,7 @@ def _render(event: Event, state: dict, aliases: dict[str, str]) -> str | None:
     if isinstance(event, ScanUpdate):
         return _format_scan_line(event.results)
     if isinstance(event, RoamEvent):
-        return _format_roam_line(event, aliases)
+        return _format_roam_line(event, inv)
     assert isinstance(event, ConnectionUpdate)
 
     c = event.connection
@@ -187,7 +203,7 @@ def _render(event: Event, state: dict, aliases: dict[str, str]) -> str | None:
     state["last_key"] = key
     state["last_rssi"] = rssi
     state["last_print_at"] = now
-    return _format_conn_line(c, aliases)
+    return _format_conn_line(c, inv)
 
 
 # ---------- entry ----------

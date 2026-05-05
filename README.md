@@ -25,22 +25,39 @@ present in this version.
 
 > TODO — wired up once the CLI entry point lands (step 4 of implementation).
 
-## BSSID aliases
+## AP inventory
 
-Long MAC addresses are unreadable; give each AP a name. Drop a YAML
-file at `~/.config/wifiscope/aliases.yaml`:
+Long MAC addresses are unreadable; give each AP a name. Most WiFi
+controllers (H3C, Aruba, Ubiquiti, Cisco, ...) only show the AP's
+**management MAC**, not the per-radio BSSIDs the AP actually
+broadcasts. wifiscope works with what you can read off the controller
+and derives radio attribution at runtime.
+
+Drop an `aps.yaml` at `~/.config/wifiscope/`:
 
 ```yaml
-40:fe:95:8a:3c:58: AX51-E_4-B2
-40:fe:95:8a:3c:0b: AX51-E_1-B1
+aps:
+  - name: 1F-bedroom
+    mgmt_mac: 40:fe:95:8a:3c:07
+  - name: 2F-living
+    mgmt_mac: 40:fe:95:8a:3c:54
 ```
 
-`wifiscope` then prints `AX51-E_4-B2 (40:fe:95:8a:3c:58)` instead of
-the raw BSSID, and roam events read like `AX51-E_4-B2 -> AX51-E_3-2F`.
+`wifiscope` then renders `2F-living (5G) (40:fe:95:8a:3c:58)` and
+roam events come tagged `[band switch on 2F-living: 5G -> 2.4G]` or
+`[inter-AP roam]` so a glance at the log tells you whether you moved
+or just dropped to 2.4 GHz on the same AP.
 
-Override the path with `WIFISCOPE_ALIASES=/some/other/aliases.yaml`.
-A starting template ships at `aliases.example.yaml`. Lookup is
-case-insensitive.
+How the matching works: a BSSID and an AP's `mgmt_mac` are treated
+as the same physical device when their first five octets match. This
+holds for nearly all consumer / SMB gear because chipsets allocate
+radio and VAP MACs from one NIC by varying only the last octet.
+
+If your vendor randomizes per-radio MACs (some Cisco Meraki SKUs
+do), add a `radio_overrides` section that maps specific BSSIDs
+directly to AP names — see `aps.example.yaml`.
+
+Override the config path with `WIFISCOPE_INVENTORY=/some/path.yaml`.
 
 ## macOS 26 caveats
 
