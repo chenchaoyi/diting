@@ -25,6 +25,23 @@ present in this version.
 
 > TODO — wired up once the CLI entry point lands (step 4 of implementation).
 
+## BSSID aliases
+
+Long MAC addresses are unreadable; give each AP a name. Drop a YAML
+file at `~/.config/wifiscope/aliases.yaml`:
+
+```yaml
+40:fe:95:8a:3c:58: AX51-E_4-B2
+40:fe:95:8a:3c:0b: AX51-E_1-B1
+```
+
+`wifiscope` then prints `AX51-E_4-B2 (40:fe:95:8a:3c:58)` instead of
+the raw BSSID, and roam events read like `AX51-E_4-B2 -> AX51-E_3-2F`.
+
+Override the path with `WIFISCOPE_ALIASES=/some/other/aliases.yaml`.
+A starting template ships at `aliases.example.yaml`. Lookup is
+case-insensitive.
+
 ## macOS 26 caveats
 
 CoreWLAN's `bssid()` / `ssid()` are redacted to None on macOS 14.4+

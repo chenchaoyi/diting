@@ -1,0 +1,25 @@
+# wifiscope BSSID aliases — sample config
+#
+# Copy to ~/.config/wifiscope/aliases.yaml (or set WIFISCOPE_ALIASES env var)
+# and replace BSSIDs / labels with your own.
+#
+# Each entry maps a 5 GHz radio BSSID (the MAC the AP advertises in beacon
+# frames) to a friendly name shown by wifiscope. Use the names that make
+# sense to you ("1F-bedroom", "office-AP", etc.).
+#
+# Note: most APs report a *management MAC* in the controller console (e.g.
+# H3C AC's "AP列表" table) — that is NOT the same as the radio BSSID.
+# H3C's AX51-E series adds an offset of +4 to derive the 5 GHz BSSID from
+# the management MAC. AX60 / other models may use a different offset; the
+# only fully reliable way is to associate to each AP and let wifiscope's
+# `watch` mode print the real BSSID.
+
+# Verified — currently associated AP at the time of writing
+40:fe:95:8a:3c:58: AX51-E_4-B2
+
+# Unverified — predicted as (management MAC + 4). Confirm by walking
+# near each AP, watching wifiscope, and updating if wrong.
+# 40:fe:95:8a:3c:0b: AX51-E_1-B1     # mgmt 40:fe:95:8a:3c:07
+# 40:fe:95:8a:3c:19: AX51-E_5-3F     # mgmt 40:fe:95:8a:3c:15
+# 40:fe:95:89:c7:e3: AX51-E_3-2F     # mgmt 40:fe:95:89:c7:df
+# bc:22:47:ca:79:4a: AX60_2          # mgmt bc:22:47:ca:79:46  (offset uncertain — different chipset)
