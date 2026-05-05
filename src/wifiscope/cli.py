@@ -1,16 +1,38 @@
-"""One-shot CLI: print the current WiFi connection.
+"""Command-line entry point.
 
-Step-4 smoke test — no TUI, no polling, no scan. A single Connection
-snapshot is printed and the process exits. Real-time polling and scan
-output land in steps 6 and 8.
+Two modes (no argparse — keep step-6 surface minimal):
+
+    wifiscope         one-shot snapshot of the current connection
+    wifiscope watch   streaming event log (Ctrl+C to quit)
+
+The TUI lands in step 8 and will replace `watch` as the default.
 """
 
 from __future__ import annotations
 
+import asyncio
 import sys
+import time
+from datetime import datetime
 
 from .macos_backend import MacOSWiFiBackend
 from .models import Connection
+from .poller import (
+    ConnectionUpdate,
+    Event,
+    RoamEvent,
+    ScanUpdate,
+    WiFiPoller,
+)
+
+_PERMISSION_HINT = (
+    "WARNING: SSID and BSSID are hidden because this terminal lacks "
+    "Location Services permission.\n"
+    "         Grant it under: System Settings -> Privacy & Security -> "
+    "Location Services\n"
+    "         Enable the entry for your terminal app (Terminal / iTerm / "
+    "Ghostty / etc.) and rerun.\n"
+)
 
 
 def _fmt(value: object, suffix: str = "") -> str:
@@ -18,6 +40,8 @@ def _fmt(value: object, suffix: str = "") -> str:
         return "n/a"
     return f"{value}{suffix}"
 
+
+# ---------- one-shot mode ----------
 
 def _print_connection(c: Connection) -> None:
     rows: list[tuple[str, str]] = [
@@ -39,17 +63,7 @@ def _print_connection(c: Connection) -> None:
         print(f"  {label:<{label_w}}  {value}")
 
 
-_PERMISSION_HINT = (
-    "WARNING: SSID and BSSID are hidden because this terminal lacks "
-    "Location Services permission.\n"
-    "         Grant it under: System Settings -> Privacy & Security -> "
-    "Location Services\n"
-    "         Enable the entry for your terminal app (Terminal / iTerm / "
-    "Ghostty / etc.) and rerun.\n"
-)
-
-
-def main() -> None:
+def _run_once() -> None:
     backend = MacOSWiFiBackend()
     conn = backend.get_connection()
     print(f"backend:    {backend.name}")
@@ -62,3 +76,118 @@ def main() -> None:
     if backend.permission_state() == "denied":
         print()
         print(_PERMISSION_HINT, end="")
+
+
+# ---------- watch mode ----------
+
+# Identity tuple — the parts of a Connection that, if any change, mean
+# something a human would care about. RSSI / noise / tx rate are noisy
+# fluctuating fields handled with a separate threshold.
+_IDENTITY_FIELDS = (
+    "ssid",
+    "bssid",
+    "channel",
+    "channel_width_mhz",
+    "channel_band",
+    "phy_mode",
+    "security",
+)
+_RSSI_DELTA_THRESHOLD_DB = 5
+_HEARTBEAT_SECONDS = 10.0
+
+
+def _identity_key(c: Connection | None) -> tuple:
+    if c is None:
+        return ("disconnected",)
+    return tuple(getattr(c, f) for f in _IDENTITY_FIELDS)
+
+
+def _format_conn_line(c: Connection | None) -> str:
+    if c is None:
+        return "conn   <not associated>"
+    return (
+        f"conn   ssid={_fmt(c.ssid)}  bssid={_fmt(c.bssid)}  "
+        f"rssi={_fmt(c.rssi_dbm, 'dBm')}  "
+        f"ch{c.channel or 0}/{c.channel_band or '?'}/{_fmt(c.channel_width_mhz, 'MHz')}  "
+        f"{c.phy_mode or '?'}  {c.security or '?'}"
+    )
+
+
+def _format_scan_line(results: list) -> str:
+    return f"scan   {len(results)} APs visible"
+
+
+def _format_roam_line(event: RoamEvent) -> str:
+    return f"ROAM   {event.previous_bssid} -> {event.new_bssid}"
+
+
+async def _run_watch() -> None:
+    backend = MacOSWiFiBackend()
+    print(f"backend: {backend.name}  (Ctrl+C to quit)")
+    if backend.permission_state() == "denied":
+        print()
+        print(_PERMISSION_HINT, end="")
+    print()
+
+    poller = WiFiPoller(backend)
+    state: dict = {"last_key": None, "last_rssi": None, "last_print_at": 0.0}
+
+    async for event in poller.events():
+        line = _render(event, state)
+        if line is not None:
+            now_str = datetime.now().strftime("%H:%M:%S")
+            print(f"{now_str}  {line}", flush=True)
+
+
+def _render(event: Event, state: dict) -> str | None:
+    """Decide whether and how to render this event.
+
+    Mutates `state` (the locals() dict from the caller) to track the
+    last-printed identity / RSSI / timestamp for connection dedup.
+    Returns the formatted line, or None to skip.
+    """
+    if isinstance(event, ScanUpdate):
+        return _format_scan_line(event.results)
+    if isinstance(event, RoamEvent):
+        return _format_roam_line(event)
+    assert isinstance(event, ConnectionUpdate)
+
+    c = event.connection
+    key = _identity_key(c)
+    rssi = c.rssi_dbm if c is not None else None
+    now = time.monotonic()
+
+    identity_changed = key != state["last_key"]
+    rssi_jumped = (
+        rssi is not None
+        and state["last_rssi"] is not None
+        and abs(rssi - state["last_rssi"]) >= _RSSI_DELTA_THRESHOLD_DB
+    )
+    heartbeat_due = now - state["last_print_at"] >= _HEARTBEAT_SECONDS
+    first_print = state["last_print_at"] == 0.0
+
+    if not (identity_changed or rssi_jumped or heartbeat_due or first_print):
+        return None
+
+    state["last_key"] = key
+    state["last_rssi"] = rssi
+    state["last_print_at"] = now
+    return _format_conn_line(c)
+
+
+# ---------- entry ----------
+
+def main() -> None:
+    args = sys.argv[1:]
+    if args and args[0] == "watch":
+        try:
+            asyncio.run(_run_watch())
+        except KeyboardInterrupt:
+            pass
+        return
+    if args and args[0] in ("-h", "--help"):
+        print("usage: wifiscope [watch]")
+        print("  (no args)   one-shot snapshot of current connection")
+        print("  watch       stream events until Ctrl+C")
+        return
+    _run_once()
