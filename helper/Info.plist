@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+
+    <key>CFBundleExecutable</key>
+    <string>wifiscope-helper</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>com.github.chenchaoyi.wifiscope.helper</string>
+
+    <key>CFBundleName</key>
+    <string>wifiscope-helper</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>wifiscope helper</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>0.2.0-alpha</string>
+
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <key>NSLocationUsageDescription</key>
+    <string>wifiscope reads nearby Wi-Fi network names and BSSIDs to label access points and detect roaming. Location data never leaves your machine.</string>
+
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>wifiscope reads nearby Wi-Fi network names and BSSIDs to label access points and detect roaming. Location data never leaves your machine.</string>
+
+    <key>LSUIElement</key>
+    <false/>
+</dict>
+</plist>

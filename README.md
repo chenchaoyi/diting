@@ -20,9 +20,12 @@ a glance whether sticky roaming is causing your Zoom call to drop.
 
 ## Status
 
-v0.1 — macOS 11+ only. TUI ships. Linux backend is on the long roadmap;
-the abstract `WiFiBackend` exists so a future `nl80211`/`iw` impl drops
-in without touching the polling, alias, or UI layers.
+v0.1 (TUI + AP inventory + roam classification, scan list TCC-redacted)
+shipped — see [the v0.1.0 release](https://github.com/chenchaoyi/wifiscope/releases/tag/v0.1.0).
+
+v0.2 in progress: a Swift `.app` sidecar at [`helper/`](helper/) owns
+Location Services and unredacts the scan list. macOS only; Linux is
+still on the long roadmap.
 
 ## Install & run
 
@@ -49,6 +52,22 @@ In the TUI:
 - bottom panel: roam log, tagged `[band switch on …]` or
   `[inter-AP roam]`
 - bindings: `q` quit · `p` pause · `r` force rescan
+
+### Optional: install the Swift helper for unredacted scan list
+
+The Nearby APs panel will show every neighbour's SSID and BSSID as
+`(redacted)` on macOS 26 unless you install the helper bundle:
+
+```bash
+cd helper
+./build.sh                                  # produces wifiscope-helper.app
+mv wifiscope-helper.app /Applications/
+open /Applications/wifiscope-helper.app     # grant Location Services once
+```
+
+After that, `wifiscope`'s `MacOSWiFiBackend` finds the helper, shells
+out to it for each scan, and the panel shows real identity for every
+visible AP. See [`helper/README.md`](helper/README.md) for details.
 
 `watch` only prints when something meaningful changes — identity
 fields differ, RSSI moves ≥ 5 dBm, or a 10-second heartbeat fires —
@@ -92,21 +111,27 @@ explicit `radio_overrides` map.
 **Band labels (2.4G / 5G).** Derived from the channel number, never
 the MAC: 1–14 → 2.4G, 32–177 → 5G. Vendor-independent.
 
-**SCDynamicStore fallback for redacted SSID/BSSID.** macOS 14.4+
-redacts CoreWLAN's `bssid()` / `ssid()` to `None` unless the host
-process has Location Services permission. On macOS 26 terminal apps
-(Warp, Terminal.app, iTerm) often do not appear in the Location
-Services list at all — and there is no "+" to add them. wifiscope
-works around this by reading `CachedScanRecord` from SCDynamicStore
-at `State:/Network/Interface/<iface>/AirPort`; the nested
-NSKeyedArchiver bplist describing the currently associated AP keeps
-its real BSSID and SSID even though the dictionary's top-level
-`BSSID` / `SSID_STR` are also redacted. Almost certainly an Apple
-oversight that may be closed in a future release. When the fallback
-is in use, the CLI prints a one-line `note:`; if both paths fail,
-BSSIDs come back `n/a` and a `WARNING:` is printed with remediation
-steps. A bundled `.app` distribution that owns its own TCC entry is
-the intended long-term fix (v0.2 roadmap).
+**SCDynamicStore fallback for the connection's SSID / BSSID.** macOS
+14.4+ redacts CoreWLAN's `bssid()` / `ssid()` to `None` unless the
+host process has Location Services permission. On macOS 26 terminal
+apps (Warp, Terminal.app, iTerm) often do not appear in the Location
+Services list at all — there is no "+" to add them. wifiscope reads
+`CachedScanRecord` from SCDynamicStore at
+`State:/Network/Interface/<iface>/AirPort`; the nested NSKeyedArchiver
+bplist describing the currently associated AP keeps its real BSSID
+and SSID even though the dictionary's top-level fields are also
+redacted. Almost certainly an Apple oversight that may be closed in
+a future release.
+
+**Swift helper sidecar for the scan list.** The same TCC redaction
+hits every neighbour in the scan list, and SCDynamicStore has no
+neighbour-list equivalent to tunnel through. The fix is a tiny
+Cocoa `.app` (`helper/`) that exists solely to own Location
+Services. When installed and granted, `MacOSWiFiBackend.scan()`
+shells out to it as a subprocess and gets unredacted JSON for every
+visible AP. Without the helper the backend silently falls back to
+direct CoreWLAN — RSSI / channel / band still work, identity comes
+back redacted.
 
 **Channel from the cache, not the radio, in fallback mode.** macOS
 does periodic background scans while associated. A 1 Hz CoreWLAN

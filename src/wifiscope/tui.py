@@ -322,6 +322,10 @@ class WifiScopeApp(App):
         if self._inv.radio_overrides:
             bits.append(f"{len(self._inv.radio_overrides)} overrides")
         bits.append(self._backend.name)
+        # Helper presence is informational; permission state shows up in
+        # the Nearby APs panel title via the redacted-row check.
+        if getattr(self._backend, "_helper_path", None):
+            bits.append("helper")
         if self._paused:
             bits.append("PAUSED")
         return " · ".join(bits)

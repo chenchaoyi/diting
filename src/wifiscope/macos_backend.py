@@ -14,7 +14,7 @@ from datetime import datetime
 
 from CoreWLAN import CWWiFiClient
 
-from . import _dynamic_store
+from . import _dynamic_store, _helper
 from .backend import PermissionState, WiFiBackend
 from .models import Connection, ScanResult
 
@@ -114,6 +114,10 @@ class MacOSWiFiBackend(WiFiBackend):
 
     def __init__(self) -> None:
         self._client = CWWiFiClient.sharedWiFiClient()
+        # Resolved once at construction; if the user installs / removes
+        # the helper later, they restart wifiscope. Avoids a stat() on
+        # every scan tick.
+        self._helper_path: str | None = _helper.find_helper()
 
     def _interface(self):
         return self._client.interface()
@@ -178,6 +182,15 @@ class MacOSWiFiBackend(WiFiBackend):
         return "fallback" if cached.bssid else "denied"
 
     def scan(self) -> list[ScanResult]:
+        # Helper-first: if the wifiscope-helper.app is installed it owns
+        # the Location Services grant and returns unredacted SSID /
+        # BSSID. Empty result (helper not installed, or installed but
+        # crashed) falls through to direct CoreWLAN, which still yields
+        # RSSI / channel even when identity is redacted.
+        if self._helper_path is not None:
+            results = _helper.scan(self._helper_path)
+            if results:
+                return results
         iface = self._interface()
         if iface is None:
             return []

@@ -30,5 +30,11 @@ htmlcov/
 *.swp
 *~
 
+# Swift helper build artefacts
+helper/.build/
+helper/.swiftpm/
+helper/Package.resolved
+helper/wifiscope-helper.app/
+
 # NOTE: do NOT ignore uv.lock or .python-version — both are committed for
 # reproducible installs (uv treats this as an application, not a library).
