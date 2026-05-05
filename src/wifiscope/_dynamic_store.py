@@ -23,6 +23,7 @@ milliseconds), we return None and the caller stays in the
 from __future__ import annotations
 
 import plistlib
+from dataclasses import dataclass
 
 from SystemConfiguration import SCDynamicStoreCopyValue, SCDynamicStoreCreate
 
@@ -37,46 +38,65 @@ _REDACTED_BSSID = "02:00:00:00:00:00"
 _MAX_AGE_MS = 30_000
 
 
-def read_current_identity(interface_name: str) -> tuple[str | None, str | None]:
-    """Return (bssid, ssid) for the currently associated AP, or (None, None).
+@dataclass(frozen=True, slots=True)
+class CachedAssociation:
+    """What we can recover for the currently associated AP."""
+    bssid: str | None
+    ssid: str | None
+    channel: int | None  # operating channel of the associated AP
+
+
+def read_current_identity(interface_name: str) -> CachedAssociation:
+    """Return identity + operating channel of the currently associated AP.
 
     Pure read — does not require any permission grant. Safe to call on
     every poll tick (cheap; a single SCDynamicStore lookup plus a small
     bplist parse).
+
+    Channel comes from this source (rather than CoreWLAN.wlanChannel())
+    because macOS does periodic background scans while associated, and a
+    1 Hz CoreWLAN poll catches the radio mid-scan often enough that its
+    reported channel oscillates between the AP's real channel and a
+    scan target. The CachedScanRecord channel describes the AP itself
+    and is stable.
     """
+    empty = CachedAssociation(bssid=None, ssid=None, channel=None)
     ds = SCDynamicStoreCreate(None, "wifiscope", None, None)
     if ds is None:
-        return None, None
+        return empty
     val = SCDynamicStoreCopyValue(
         ds, f"State:/Network/Interface/{interface_name}/AirPort"
     )
     if val is None:
-        return None, None
+        return empty
     csr = val.get("CachedScanRecord")
     if csr is None:
-        return None, None
+        return empty
 
     try:
         plist = plistlib.loads(bytes(csr))
         root = _resolve_ns_dict(plist["$objects"], plist["$top"]["root"])
     except Exception:
-        return None, None
+        return empty
     if root is None:
-        return None, None
+        return empty
 
     age_ms = root.get("AGE")
     if isinstance(age_ms, (int, float)) and age_ms > _MAX_AGE_MS:
-        return None, None
+        return empty
 
     bssid = root.get("BSSID")
     ssid = root.get("SSID_STR")
+    channel = root.get("CHANNEL")
     if not isinstance(bssid, str) or bssid == _REDACTED_BSSID:
         bssid = None
     else:
         bssid = bssid.lower()
     if not isinstance(ssid, str) or ssid == "":
         ssid = None
-    return bssid, ssid
+    if not isinstance(channel, int) or channel <= 0:
+        channel = None
+    return CachedAssociation(bssid=bssid, ssid=ssid, channel=channel)
 
 
 def _resolve(objs, ref):

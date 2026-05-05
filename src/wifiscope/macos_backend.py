@@ -94,6 +94,21 @@ def _channel_fields(channel):
     )
 
 
+def _band_from_channel_number(ch: int) -> str | None:
+    """Infer the band label from a channel number.
+
+    Used when channel comes from CachedScanRecord (which has no band
+    field). 6 GHz overlaps with 2.4 GHz channel numbers (1..233 vs
+    1..14), so this can be wrong if the AP is on 6 GHz channel 1; v0.1
+    accepts that ambiguity (most home gear is still 2.4/5 only).
+    """
+    if 1 <= ch <= 14:
+        return "2.4 GHz"
+    if 32 <= ch <= 177:
+        return "5 GHz"
+    return None
+
+
 class MacOSWiFiBackend(WiFiBackend):
     name = "macOS CoreWLAN"
 
@@ -120,11 +135,17 @@ class MacOSWiFiBackend(WiFiBackend):
         # If CoreWLAN redacted either, try the SCDynamicStore fallback —
         # see _dynamic_store.py for why this works without permission.
         if ssid is None or bssid is None:
-            ds_bssid, ds_ssid = _dynamic_store.read_current_identity(
-                iface.interfaceName()
-            )
-            ssid = ssid or ds_ssid
-            bssid = bssid or ds_bssid
+            cached = _dynamic_store.read_current_identity(iface.interfaceName())
+            ssid = ssid or cached.ssid
+            bssid = bssid or cached.bssid
+            # Channel from wlanChannel() oscillates because macOS does
+            # periodic background scans. The cached record describes the
+            # associated AP itself, so its channel is stable. Override
+            # only when fallback is in play, since CoreWLAN-with-permission
+            # is fully reliable.
+            if cached.channel is not None:
+                ch_num = cached.channel
+                ch_band = _band_from_channel_number(cached.channel)
         return Connection(
             ssid=ssid,
             bssid=bssid,
@@ -153,8 +174,8 @@ class MacOSWiFiBackend(WiFiBackend):
             return "unknown"
         if iface.bssid():
             return "granted"
-        ds_bssid, _ = _dynamic_store.read_current_identity(iface.interfaceName())
-        return "fallback" if ds_bssid else "denied"
+        cached = _dynamic_store.read_current_identity(iface.interfaceName())
+        return "fallback" if cached.bssid else "denied"
 
     def scan(self) -> list[ScanResult]:
         iface = self._interface()

@@ -14,12 +14,17 @@
 # only fully reliable way is to associate to each AP and let wifiscope's
 # `watch` mode print the real BSSID.
 
-# Verified — currently associated AP at the time of writing
-40:fe:95:8a:3c:58: AX51-E_4-B2
+# Verified — observed live in `wifiscope watch`. AX51-E series confirms
+# the rule: 5 GHz BSSID = mgmt MAC + 4, 2.4 GHz BSSID = mgmt MAC + 1.
+40:fe:95:8a:3c:58: AX51-E_4-B2 (5G)        # AP 2 5 GHz
+40:fe:95:89:c7:e3: AX51-E_3-2F (5G)        # AP 4 5 GHz
+40:fe:95:89:c7:e0: AX51-E_3-2F (2.4G)      # AP 4 2.4 GHz
 
-# Unverified — predicted as (management MAC + 4). Confirm by walking
-# near each AP, watching wifiscope, and updating if wrong.
-# 40:fe:95:8a:3c:0b: AX51-E_1-B1     # mgmt 40:fe:95:8a:3c:07
-# 40:fe:95:8a:3c:19: AX51-E_5-3F     # mgmt 40:fe:95:8a:3c:15
-# 40:fe:95:89:c7:e3: AX51-E_3-2F     # mgmt 40:fe:95:89:c7:df
-# bc:22:47:ca:79:4a: AX60_2          # mgmt bc:22:47:ca:79:46  (offset uncertain — different chipset)
+# Unverified — predicted from the +4 / +1 rule. Confirm by walking
+# near each AP and updating if wrong.
+# 40:fe:95:8a:3c:0b: AX51-E_1-B1 (5G)      # AP 1 5 GHz   (mgmt 40:fe:95:8a:3c:07 + 4)
+# 40:fe:95:8a:3c:08: AX51-E_1-B1 (2.4G)    # AP 1 2.4 GHz (mgmt + 1)
+# 40:fe:95:8a:3c:19: AX51-E_5-3F (5G)      # AP 3 5 GHz   (mgmt 40:fe:95:8a:3c:15 + 4)
+# 40:fe:95:8a:3c:16: AX51-E_5-3F (2.4G)    # AP 3 2.4 GHz (mgmt + 1)
+# bc:22:47:ca:79:4a: AX60_2 (5G)           # AP 5 5 GHz   (mgmt bc:22:47:ca:79:46 + 4 — uncertain, different chipset)
+# bc:22:47:ca:79:47: AX60_2 (2.4G)         # AP 5 2.4 GHz (mgmt + 1 — uncertain)
