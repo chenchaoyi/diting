@@ -9,7 +9,9 @@ authors = [
     { name = "Chaoyi Chen" }
 ]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "pyobjc-framework-corewlan>=12.1",
+]
 
 [project.scripts]
 wifiscope = "wifiscope:main"
