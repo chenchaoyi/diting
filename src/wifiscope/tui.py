@@ -201,6 +201,7 @@ def _rssi_color(rssi: int) -> str:
 
 
 _COL_RSSI = 4
+_COL_SIGNAL = 8
 _COL_CH = 4
 _COL_BAND = 4
 _COL_AP = 18
@@ -212,7 +213,8 @@ _COL_WIDTH = 6
 def _header_line() -> Text:
     h = Text(style="bold dim")
     h.append(
-        f" {'★':<2}{'RSSI':>{_COL_RSSI}}  {'ch':<{_COL_CH}}{'band':<{_COL_BAND}}  "
+        f" {'★':<2}{'RSSI':>{_COL_RSSI}}  {'signal':<{_COL_SIGNAL}}  "
+        f"{'ch':<{_COL_CH}}{'band':<{_COL_BAND}}  "
         f"{'AP':<{_COL_AP}}  {'SSID':<{_COL_SSID}}  "
         f"{'BSSID':<{_COL_BSSID}}  {'width':<{_COL_WIDTH}}"
     )
@@ -260,6 +262,8 @@ def _scan_line(r: ScanResult, current_bssid: str | None, inv: NetworkInventory) 
     line = Text()
     line.append(f" {star:<2}", style="bold cyan" if is_current else "")
     line.append(f"{r.rssi_dbm if r.rssi_dbm is not None else '?':>{_COL_RSSI}}  ", style=rssi_color)
+    line.append(_signal_bar(r.rssi_dbm, length=_COL_SIGNAL))
+    line.append("  ")
     line.append(f"{r.channel if r.channel is not None else '?':<{_COL_CH}}", style="white")
     line.append(f"{band_short:<{_COL_BAND}}  ", style="white")
     line.append(f"{ap_text[:_COL_AP]:<{_COL_AP}}  ", style=ap_style)
