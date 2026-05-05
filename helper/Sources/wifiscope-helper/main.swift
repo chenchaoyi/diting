@@ -52,6 +52,7 @@ func runScanAndDumpJSON() -> Never {
         var row: [String: Any] = [:]
         if let s = net.ssid { row["ssid"] = s }
         if let b = net.bssid { row["bssid"] = b }
+        if let cc = net.countryCode { row["country_code"] = cc }
         row["rssi_dbm"] = net.rssiValue
         row["noise_dbm"] = net.noiseMeasurement
         if let ch = net.wlanChannel {
@@ -63,9 +64,13 @@ func runScanAndDumpJSON() -> Never {
         out.append(row)
     }
 
+    var ifaceMeta: [String: Any] = ["name": iface.interfaceName ?? "?"]
+    if let cc = iface.countryCode() { ifaceMeta["country_code"] = cc }
+    if let hw = iface.hardwareAddress() { ifaceMeta["hardware_address"] = hw }
+
     let payload: [String: Any] = [
-        "schema": 1,
-        "interface": iface.interfaceName ?? "?",
+        "schema": 2,
+        "interface": ifaceMeta,
         "timestamp": timestamp,
         "networks": out,
     ]

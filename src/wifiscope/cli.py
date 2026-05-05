@@ -58,6 +58,7 @@ def _print_connection(c: Connection, inv: NetworkInventory) -> None:
         ("RSSI", _fmt(c.rssi_dbm, " dBm")),
         ("Noise", _fmt(c.noise_dbm, " dBm")),
         ("Tx Rate", _fmt(c.tx_rate_mbps, " Mbps")),
+        ("Max Link", _fmt(c.max_link_speed_mbps, " Mbps")),
         ("Channel", _fmt(c.channel)),
         ("Width", _fmt(c.channel_width_mhz, " MHz")),
         ("Band", _fmt(c.channel_band)),
@@ -65,6 +66,10 @@ def _print_connection(c: Connection, inv: NetworkInventory) -> None:
         ("Security", _fmt(c.security)),
         ("MCS", _fmt(c.mcs_index)),
         ("NSS", _fmt(c.nss)),
+        ("Country", _fmt(c.country_code)),
+        ("This Mac", _fmt(c.interface_mac)),
+        ("IP", _fmt(c.ip_address)),
+        ("Router", _fmt(c.router_ip)),
     ]
     label_w = max(len(label) for label, _ in rows)
     for label, value in rows:

@@ -62,11 +62,14 @@ def _resolve(path: Path) -> str | None:
     return None
 
 
-def scan(binary: str, timeout: float = 12.0) -> list[ScanResult]:
+def scan(binary: str, timeout: float = 12.0) -> tuple[list[ScanResult], dict]:
     """Run `<binary> scan` and decode the JSON payload.
 
-    Returns an empty list if the helper exits non-zero or its output
-    is malformed; callers can then fall back to a direct CoreWLAN scan.
+    Returns ([], {}) if the helper exits non-zero or its output is
+    malformed; callers can then fall back to a direct CoreWLAN scan.
+    The second element is the interface metadata dict (may contain
+    'name', 'country_code', 'hardware_address') from helper schema v2;
+    schema v1 returned a plain string and is treated as missing meta.
     """
     try:
         proc = subprocess.run(
@@ -76,13 +79,16 @@ def scan(binary: str, timeout: float = 12.0) -> list[ScanResult]:
             check=False,
         )
     except (subprocess.TimeoutExpired, OSError):
-        return []
+        return [], {}
     if proc.returncode != 0:
-        return []
+        return [], {}
     try:
         payload = json.loads(proc.stdout)
     except json.JSONDecodeError:
-        return []
+        return [], {}
+    iface_meta = payload.get("interface")
+    if not isinstance(iface_meta, dict):
+        iface_meta = {}
     nets = payload.get("networks") or []
     ts = datetime.now()
     out: list[ScanResult] = []
@@ -104,9 +110,10 @@ def scan(binary: str, timeout: float = 12.0) -> list[ScanResult]:
                 phy_mode=None,   # CWNetwork does not expose activePHYMode
                 security=None,   # helper only sends a coarse probe, not a label
                 timestamp=ts,
+                country_code=net.get("country_code") or None,
             )
         )
-    return out
+    return out, iface_meta
 
 
 def _or_none_zero(value):

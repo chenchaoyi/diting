@@ -41,7 +41,7 @@ class ConnectionPanel(Static):
     DEFAULT_CSS = """
     ConnectionPanel {
         height: auto;
-        min-height: 11;
+        min-height: 14;
         border: heavy $accent;
         padding: 0 1;
     }
@@ -61,14 +61,19 @@ class ConnectionPanel(Static):
         assert inv is not None
         ap_name = inv.resolve(conn.bssid) or "(unknown)"
         band = band_label(conn.channel)
-        # Header line: AP name in bold + band
         header = Text()
         header.append(ap_name, style="bold cyan")
         if band:
             header.append(f"  {band}", style="cyan")
-        # Body: aligned key/value rows, plus a signal bar
+        if conn.country_code:
+            header.append(f"  · country {conn.country_code}", style="dim")
+
         signal_bar = _signal_bar(conn.rssi_dbm)
-        rows = [
+
+        # Group of rows. Empty-valued rows (e.g. no IP yet) are omitted
+        # rather than printing 'n/a' lines that take vertical space and
+        # tell the user nothing.
+        rows: list[tuple[str, str]] = [
             ("SSID", _fmt(conn.ssid)),
             ("BSSID", _fmt(conn.bssid)),
             (
@@ -78,10 +83,24 @@ class ConnectionPanel(Static):
             ),
             ("PHY / Sec", f"{_fmt(conn.phy_mode)}   {_fmt(conn.security)}"),
             (
-                "Tx / Noise",
-                f"{_fmt(conn.tx_rate_mbps, ' Mbps')}   noise {_fmt(conn.noise_dbm, ' dBm')}",
+                "Tx / Max",
+                f"{_fmt(conn.tx_rate_mbps, ' Mbps')}  /  "
+                f"{_fmt(conn.max_link_speed_mbps, ' Mbps')} max",
             ),
+            (
+                "MCS / NSS",
+                f"{_fmt(conn.mcs_index)}  ·  {_fmt(conn.nss, ' streams')}",
+            ),
+            ("Noise", _fmt(conn.noise_dbm, " dBm")),
         ]
+        if conn.ip_address or conn.router_ip:
+            rows.append((
+                "IP / Router",
+                f"{_fmt(conn.ip_address)}  →  {_fmt(conn.router_ip)}",
+            ))
+        if conn.interface_mac:
+            rows.append(("This Mac", conn.interface_mac))
+
         body = Text()
         for label, value in rows:
             body.append(f"  {label:<11}", style="dim")

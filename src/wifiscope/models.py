@@ -31,6 +31,17 @@ class Connection:
     mcs_index: int | None
     nss: int | None
     timestamp: datetime
+    # Local-host context fields populated alongside the negotiated link
+    # state. Each may be None when its source is unavailable; we never
+    # synthesise. interface_mac is the Mac's own WiFi MAC (distinct
+    # from BSSID); router_ip is the default IPv4 gateway as seen from
+    # this interface; max_link_speed_mbps is what the radio is
+    # *capable* of, not what is currently negotiated.
+    interface_mac: str | None = None
+    country_code: str | None = None
+    ip_address: str | None = None
+    router_ip: str | None = None
+    max_link_speed_mbps: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,3 +58,6 @@ class ScanResult:
     phy_mode: str | None
     security: str | None
     timestamp: datetime
+    # Country code from the AP's beacon information element, when the
+    # data path can read it (helper or granted CoreWLAN).
+    country_code: str | None = None

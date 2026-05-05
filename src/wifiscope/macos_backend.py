@@ -10,6 +10,7 @@ iTerm) has been granted Location Services permission. Without it, all other
 fields still work and `bssid` comes back as None — the UI surfaces this.
 """
 
+import subprocess
 from datetime import datetime
 
 from CoreWLAN import CWWiFiClient
@@ -94,6 +95,49 @@ def _channel_fields(channel):
     )
 
 
+def _safe_call(obj, name: str):
+    """Call a possibly-undocumented Obj-C method, returning None on miss."""
+    fn = getattr(obj, name, None)
+    if fn is None or not callable(fn):
+        return None
+    try:
+        return fn()
+    except Exception:
+        return None
+
+
+def _get_ipv4_address(iface_name: str) -> str | None:
+    """`ipconfig getifaddr <iface>` — empty output when the interface
+    has no IPv4. ~1ms call, so safe to issue on every connection
+    poll tick rather than caching."""
+    if not iface_name:
+        return None
+    try:
+        proc = subprocess.run(
+            ["/usr/sbin/ipconfig", "getifaddr", iface_name],
+            capture_output=True, text=True, timeout=2.0, check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout.strip() or None
+
+
+def _get_default_router() -> str | None:
+    """First-line `default` entry of `netstat -rn -f inet`."""
+    try:
+        proc = subprocess.run(
+            ["/usr/sbin/netstat", "-rn", "-f", "inet"],
+            capture_output=True, text=True, timeout=2.0, check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if parts and parts[0] == "default":
+            return parts[1] if len(parts) >= 2 else None
+    return None
+
+
 def _band_from_channel_number(ch: int) -> str | None:
     """Infer the band label from a channel number.
 
@@ -118,6 +162,11 @@ class MacOSWiFiBackend(WiFiBackend):
         # the helper later, they restart wifiscope. Avoids a stat() on
         # every scan tick.
         self._helper_path: str | None = _helper.find_helper()
+        # Interface metadata last seen from a successful helper scan
+        # (country_code, hardware_address). Lets get_connection() show
+        # fields like country code that are TCC-redacted in the Python
+        # process but visible to the helper bundle.
+        self._helper_iface_meta: dict = {}
 
     def _interface(self):
         return self._client.interface()
@@ -150,6 +199,15 @@ class MacOSWiFiBackend(WiFiBackend):
             if cached.channel is not None:
                 ch_num = cached.channel
                 ch_band = _band_from_channel_number(cached.channel)
+        # MCS index and spatial-stream count are private CoreWLAN
+        # methods (mcsIndex / numberOfSpatialStreams). They are not in
+        # the public docs but exist as ObjC selectors and back the
+        # macOS WiFi panel's display, so we use them. Wrapped in
+        # getattr() so a future macOS that drops the method degrades
+        # to None instead of crashing the backend.
+        mcs = _safe_call(iface, "mcsIndex")
+        nss = _safe_call(iface, "numberOfSpatialStreams")
+        max_link = _safe_call(iface, "maximumLinkSpeed")
         return Connection(
             ssid=ssid,
             bssid=bssid,
@@ -161,9 +219,22 @@ class MacOSWiFiBackend(WiFiBackend):
             channel_band=ch_band,
             phy_mode=_PHY_MODE.get(int(iface.activePHYMode())),
             security=_SECURITY.get(int(iface.security())),
-            mcs_index=None,  # not exposed by CoreWLAN public API
-            nss=None,        # not exposed by CoreWLAN public API
+            mcs_index=_maybe_int(mcs),
+            nss=_maybe_int(nss),
             timestamp=datetime.now(),
+            interface_mac=iface.hardwareAddress() or None,
+            # CoreWLAN.countryCode is TCC-redacted in unprivileged
+            # processes; the helper sees it. Cache the last value the
+            # helper reported (refreshed on every scan) so the field
+            # is available across the 1 Hz connection-poll cadence.
+            country_code=(
+                iface.countryCode()
+                or self._helper_iface_meta.get("country_code")
+                or None
+            ),
+            ip_address=_get_ipv4_address(iface.interfaceName()),
+            router_ip=_get_default_router(),
+            max_link_speed_mbps=_maybe_int(max_link),
         )
 
     def permission_state(self) -> PermissionState:
@@ -188,7 +259,9 @@ class MacOSWiFiBackend(WiFiBackend):
         # crashed) falls through to direct CoreWLAN, which still yields
         # RSSI / channel even when identity is redacted.
         if self._helper_path is not None:
-            results = _helper.scan(self._helper_path)
+            results, meta = _helper.scan(self._helper_path)
+            if meta:
+                self._helper_iface_meta = meta
             if results:
                 return results
         iface = self._interface()
