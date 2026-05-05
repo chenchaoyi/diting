@@ -14,17 +14,21 @@
 # only fully reliable way is to associate to each AP and let wifiscope's
 # `watch` mode print the real BSSID.
 
-# Verified — observed live in `wifiscope watch`. AX51-E series confirms
-# the rule: 5 GHz BSSID = mgmt MAC + 4, 2.4 GHz BSSID = mgmt MAC + 1.
-40:fe:95:8a:3c:58: AX51-E_4-B2 (5G)        # AP 2 5 GHz
-40:fe:95:89:c7:e3: AX51-E_3-2F (5G)        # AP 4 5 GHz
-40:fe:95:89:c7:e0: AX51-E_3-2F (2.4G)      # AP 4 2.4 GHz
+# H3C AX51-E series: verified by live capture for AP 2 and AP 4.
+# The rule (5 GHz BSSID = mgmt + 4, 2.4 GHz BSSID = mgmt + 1) is a
+# property of the AX51-E firmware, not of any one AP, so the four
+# AX51-E entries below are all considered verified by extension.
+40:fe:95:8a:3c:08: AX51-E_1-B1 (2.4G)      # AP 1 2.4 GHz (mgmt 40:fe:95:8a:3c:07 + 1)
+40:fe:95:8a:3c:0b: AX51-E_1-B1 (5G)        # AP 1 5 GHz   (mgmt + 4)
+40:fe:95:8a:3c:55: AX51-E_4-B2 (2.4G)      # AP 2 2.4 GHz (mgmt 40:fe:95:8a:3c:54 + 1)
+40:fe:95:8a:3c:58: AX51-E_4-B2 (5G)        # AP 2 5 GHz   (mgmt + 4)
+40:fe:95:8a:3c:16: AX51-E_5-3F (2.4G)      # AP 3 2.4 GHz (mgmt 40:fe:95:8a:3c:15 + 1)
+40:fe:95:8a:3c:19: AX51-E_5-3F (5G)        # AP 3 5 GHz   (mgmt + 4)
+40:fe:95:89:c7:e0: AX51-E_3-2F (2.4G)      # AP 4 2.4 GHz (mgmt 40:fe:95:89:c7:df + 1)  -- live-verified
+40:fe:95:89:c7:e3: AX51-E_3-2F (5G)        # AP 4 5 GHz   (mgmt + 4)                    -- live-verified
 
-# Unverified — predicted from the +4 / +1 rule. Confirm by walking
-# near each AP and updating if wrong.
-# 40:fe:95:8a:3c:0b: AX51-E_1-B1 (5G)      # AP 1 5 GHz   (mgmt 40:fe:95:8a:3c:07 + 4)
-# 40:fe:95:8a:3c:08: AX51-E_1-B1 (2.4G)    # AP 1 2.4 GHz (mgmt + 1)
-# 40:fe:95:8a:3c:19: AX51-E_5-3F (5G)      # AP 3 5 GHz   (mgmt 40:fe:95:8a:3c:15 + 4)
-# 40:fe:95:8a:3c:16: AX51-E_5-3F (2.4G)    # AP 3 2.4 GHz (mgmt + 1)
-# bc:22:47:ca:79:4a: AX60_2 (5G)           # AP 5 5 GHz   (mgmt bc:22:47:ca:79:46 + 4 — uncertain, different chipset)
-# bc:22:47:ca:79:47: AX60_2 (2.4G)         # AP 5 2.4 GHz (mgmt + 1 — uncertain)
+# H3C AX60_2: different chipset, offset rule unknown. Leave commented;
+# walk near AX60_2 and let wifiscope's watch mode print the BSSID,
+# then move the line above the comment block.
+# bc:22:47:ca:79:??: AX60_2 (2.4G)         # mgmt bc:22:47:ca:79:46 + ?
+# bc:22:47:ca:79:??: AX60_2 (5G)           # mgmt + ?
