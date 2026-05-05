@@ -65,12 +65,14 @@ class WiFiPoller:
         backend: WiFiBackend,
         *,
         connection_interval: float = 1.0,
-        scan_interval: float = 5.0,
+        scan_interval: float = 7.0,
     ) -> None:
         self._backend = backend
         self._connection_interval = connection_interval
-        # CoreWLAN throttles scans internally; the spec says do not poll
-        # more often than every 3s, so 5s is comfortably above the floor.
+        # CoreWLAN's scan throttle empirically sits around 5 s — pinning
+        # the interval to exactly 5 s catches the throttle window every
+        # other call and the backend returns []. 7 s gives ~2 s of grace
+        # and produces consistent non-empty results in practice.
         self._scan_interval = max(scan_interval, 3.0)
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._last_bssid: str | None = None

@@ -244,7 +244,12 @@ class WifiScopeApp(App):
         self._inv = inv
         self._poller = WiFiPoller(backend)
         self._paused = False
-        self._last_scan_at: float | None = None
+        # Cache the most recent *non-empty* scan. CoreWLAN's throttle
+        # produces empty results periodically; replacing the panel with
+        # an empty list every time would make it flicker between 0 and
+        # the real list, which is just noise to the user.
+        self._cached_scan: list[ScanResult] = []
+        self._last_successful_scan_at: float | None = None
         self._latest_bssid: str | None = None
         self.title = "wifiscope"
         self.sub_title = self._build_subtitle()
@@ -269,9 +274,17 @@ class WifiScopeApp(App):
                     event.connection, self._inv
                 )
             elif isinstance(event, ScanUpdate):
-                self._last_scan_at = time.monotonic()
+                if event.results:
+                    self._cached_scan = event.results
+                    self._last_successful_scan_at = time.monotonic()
+                # Always re-render: even if results were empty, we want
+                # the "scanned Ns ago" counter (which now refers to the
+                # last *successful* scan) to keep ticking.
                 self.query_one("#scan", ScanPanel).update_scan(
-                    event.results, self._latest_bssid, self._last_scan_at, self._inv
+                    self._cached_scan,
+                    self._latest_bssid,
+                    self._last_successful_scan_at,
+                    self._inv,
                 )
             elif isinstance(event, RoamEvent):
                 self.query_one("#roam", RoamLogPanel).append_roam(event, self._inv)
