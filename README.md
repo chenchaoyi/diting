@@ -1,5 +1,7 @@
 # wifiscope
 
+[![tests](https://github.com/chenchaoyi/wifiscope/actions/workflows/test.yml/badge.svg)](https://github.com/chenchaoyi/wifiscope/actions/workflows/test.yml)
+
 A terminal WiFi monitor for macOS, focused on **roaming visibility** —
 which AP your Mac is on, when it switches, and how strong the signal
 is, all in one screen.
@@ -180,6 +182,31 @@ radio capability ceiling derived from the negotiated PHY/MCS/NSS at
 the current channel width. Reading "current ≤ max" is therefore not
 guaranteed; we expose both with a footnote in the Connection panel
 rather than hide the discrepancy.
+
+## Development
+
+```bash
+uv sync --all-groups          # installs runtime + dev deps (pytest)
+uv run pytest                 # runs the full test suite (~80 cases)
+```
+
+The test suite covers the data-flow logic that has caused real bugs:
+
+- inventory resolution (prefix5 + last-byte proximity, mid4 cross-OUI
+  fallback, radio_overrides, cluster_label fallback)
+- helper subprocess JSON parsing (schema v1 + v2, redacted rows,
+  malformed output, timeouts)
+- TUI helpers (`_merge_current` synthesises and replaces, `_group_by_ap`
+  clusters and sorts correctly)
+- TUI smoke tests via Textual's `run_test` pilot — every binding,
+  modal open / close, custom scan interval threading
+
+GitHub Actions runs the suite on every push and pull request to
+`main`, against Python 3.11 / 3.12 / 3.13 on macOS. CoreWLAN and
+SCDynamicStore are not exercised live in CI — those surfaces are
+mocked at the subprocess and dynamic-store boundaries.
+
+See [CHANGELOG.md](CHANGELOG.md) for the version-by-version log.
 
 ## License
 
