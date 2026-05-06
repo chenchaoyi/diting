@@ -187,19 +187,13 @@ rather than hide the discrepancy.
 
 ```bash
 uv sync --all-groups          # installs runtime + dev deps (pytest)
-uv run pytest                 # runs the full test suite (~80 cases)
+uv run pytest                 # runs the full test suite
 ```
 
-The test suite covers the data-flow logic that has caused real bugs:
-
-- inventory resolution (prefix5 + last-byte proximity, mid4 cross-OUI
-  fallback, radio_overrides, cluster_label fallback)
-- helper subprocess JSON parsing (schema v1 + v2, redacted rows,
-  malformed output, timeouts)
-- TUI helpers (`_merge_current` synthesises and replaces, `_group_by_ap`
-  clusters and sorts correctly)
-- TUI smoke tests via Textual's `run_test` pilot — every binding,
-  modal open / close, custom scan interval threading
+[`TESTING.md`](TESTING.md) is the canonical test plan — every
+automated test corresponds to a row in that document, and changes to
+test scenarios start there before touching `tests/`. Read it first
+when reviewing a PR or extending coverage.
 
 GitHub Actions runs the suite on every push and pull request to
 `main`, against Python 3.11 / 3.12 / 3.13 on macOS. CoreWLAN and
