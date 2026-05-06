@@ -47,8 +47,8 @@ should match it case-for-case.
 
 | Layer | Where | What it proves |
 |---|---|---|
-| Unit  | `tests/test_network.py`, `test_helper.py`, `test_tui_helpers.py` | Each pure function behaves as specified across its full input space, including the regression cases from real bugs. |
-| Smoke | `tests/test_tui_smoke.py` | The Textual App can be composed, mounted, driven through every binding, and unmounted, without exceptions. Uses a `_FakeBackend` that returns deterministic data. |
+| Unit  | `tests/test_network.py`, `test_helper.py`, `test_tui_helpers.py`, `test_ble.py`, `test_i18n.py` | Each pure function behaves as specified across its full input space, including the regression cases from real bugs. |
+| Smoke | `tests/test_tui_smoke.py` | The Textual App can be composed, mounted, driven through every binding (including the new `n` view toggle), and unmounted, without exceptions. Uses a `_FakeBackend` that returns deterministic data. |
 
 ---
 
@@ -177,6 +177,72 @@ itself is covered by the smoke tests in section 6.
 
 ---
 
+## 5b. Module: `wifiscope.ble`
+
+The async BLE scanning layer. Owns the JSONL line parser, the rolling
+device-map TTL, the rotated-UUID fuzzy merger, vendor lookup, and
+service-category inference. The Swift helper subprocess is mocked at
+the spawn boundary via the `BLEPoller(_spawn=...)` test seam so the
+suite stays hermetic on Linux CI runners that have no Bluetooth
+hardware (and macOS runners that have no granted helper).
+
+**Coverage targets:**
+
+- [x] JSONL line parsing — every advertisement field populates the
+      BLEDevice correctly; subsequent ads carry `first_seen` forward
+      and bump `ad_count`.
+- [x] Vendor lookup — Apple's company ID resolves; unknown / None
+      input is friendly.
+- [x] Bundled vendor JSON ships with at least the Apple entry — guards
+      against `make update-vendors` regressing the file.
+- [x] Service category inference — known 16-bit UUIDs map to readable
+      names; long-form (128-bit) is normalised; unknown UUIDs pass
+      through.
+- [x] Decay / TTL — devices unseen for >ttl_s drop from the snapshot;
+      devices within ttl_s are kept.
+- [x] Fuzzy merge — same `(vendor_id, name)` within ±10 dB folds into
+      one row with `ad_count` summed and `merged_count` set; entries
+      outside the window stay separate; anonymous (no vendor, no name)
+      devices never merge.
+- [x] Snapshots are sorted by RSSI desc.
+- [x] Permission denied — both via JSON error line and via subprocess
+      exit code 3 — flips `permission_state` to `"denied"` cleanly.
+- [x] Subprocess crash mid-stream — no exception bubbles up; subsequent
+      snapshots remain stable.
+- [x] Helper binary missing — flips state to `"unavailable"`, snapshots
+      keep coming.
+- [x] Malformed JSON line — silently skipped; subsequent valid lines
+      parse normally.
+
+### Test cases — `tests/test_ble.py`
+
+| Test | Scenario | Why it matters |
+|---|---|---|
+| `test_parse_advertisement_populates_all_fields` | A well-formed JSONL event becomes a BLEDevice with every field populated and identifier lower-cased. | Primary parser proof — the wire format from the helper. |
+| `test_parse_subsequent_advertisement_carries_history` | A repeat ad for the same identifier preserves `first_seen` and bumps `ad_count`; `last_seen` advances. | Ad rate / duration drives the panel's "X seconds ago" column and merge heuristic stability. |
+| `test_lookup_vendor_known_company_id` | Apple's well-known SIG company ID resolves to "Apple, Inc.". | Sanity for the most common BLE vendor. |
+| `test_lookup_vendor_unknown_returns_none` | An unassigned company ID resolves to None. | Renderer falls back to the raw ID for the user to investigate. |
+| `test_lookup_vendor_none_input_returns_none` | The "no manufacturer data" case (most common BLE state) is silent. | Defensive — function never raises. |
+| `test_load_vendors_ships_apple_id` | The bundled JSON contains entry 76 → "Apple, Inc.". | Guards against `make update-vendors` writing an empty / malformed file. |
+| `test_service_category_heart_rate` | `180D` → `"Heart Rate"`. | Spec-listed category mapping. |
+| `test_service_category_hid` | `1812` → `"HID"`. | Spec-listed category mapping. |
+| `test_service_category_unknown_passthrough` | An unknown UUID returns unchanged. | Honest about what we don't know. |
+| `test_service_category_long_form_normalised` | The 128-bit Bluetooth SIG base form of `180D` resolves to `"Heart Rate"`. | macOS reports either form; lookup must match both. |
+| `test_expire_drops_unseen_devices` | A device whose `last_seen` is older than `ttl_s` is removed from the snapshot. | Stops the panel hoarding stale rows after a device walks away. |
+| `test_expire_keeps_recent_devices` | A device seen within `ttl_s` is retained. | Sanity bound — dropped only when stale. |
+| `test_merge_folds_same_vendor_and_name_within_rssi_window` | Two records sharing `(vendor_id, name)` and within ±10 dB merge into one row with `ad_count` summed and `merged_count = 2`. | Primary fuzzy-merge proof — drives the (merged N) badge. |
+| `test_merge_keeps_distant_rssi_separate` | Two records sharing identity but with RSSIs > 10 dB apart stay separate. | Likely different physical devices in different rooms; merging would lie. |
+| `test_merge_does_not_combine_anonymous_devices` | Devices with both `vendor_id` and `name` None are never merged. | The heuristic would conflate every nameless beacon nearby — spec says "never silently fall back". |
+| `test_merge_sorts_by_rssi_descending` | The post-merge list is ordered by signal strength. | The closest device is at the top of the panel. |
+| `test_permission_denied_line_surfaces_state` | A JSON error line with "unauthorized" returns `"permission_denied"` from `update_from_line`. | Driver for the BLE panel's "(BLE permission required)" placeholder. |
+| `test_permission_denied_via_subprocess_exit_code` | Helper exits with code 3 — poller flips `permission_state` to `"denied"`. | Same outcome regardless of which signalling channel the helper used. |
+| `test_subprocess_crash_does_not_raise` | Helper killed mid-stream (137) leaves the poller quiet — future snapshots are empty, no exception bubbles up. | A SIGKILL during a system Bluetooth restart should not tear down the TUI. |
+| `test_helper_binary_missing_marks_unavailable` | OSError at spawn flips state to `"unavailable"`; snapshots keep coming. | First-launch case before the helper is built / granted. |
+| `test_malformed_line_skipped_subsequent_parsed` | Garbage line is skipped; the next valid line parses. | Helper line corruption (encoding glitch, partial write) cannot wedge the parser. |
+| `test_line_without_id_field_skipped` | A JSON object lacking `id` is skipped, not raised. | Defensive against schema drift from the helper. |
+
+---
+
 ## 6. TUI smoke
 
 End-to-end via Textual's `run_test` pilot. The fake backend ensures
@@ -186,11 +252,13 @@ real Mac.
 **Coverage targets:**
 
 - [x] App composes and unmounts cleanly
-- [x] Each binding (`q`, `p`, `r`, `s`, `c`, `h`) does not raise
+- [x] Each binding (`q`, `p`, `r`, `s`, `c`, `h`, `n`) does not raise
 - [x] Help modal opens and closes via Esc and via `h` again
 - [x] Help modal actually appears in the screen stack
 - [x] `scan_interval` constructor argument threads through to the
       poller
+- [x] `n` toggles the third panel slot between Wi-Fi scan and BLE
+      view; both widgets stay mounted, only `display` flips
 
 ### Test cases — `tests/test_tui_smoke.py`
 
@@ -204,6 +272,7 @@ real Mac.
 | `test_help_modal_h_to_close` | Press `h` to open, `h` again to close. | Convenience binding inside the modal. |
 | `test_help_modal_renders_through_pilot_query` | Open the modal and assert via `app.screen_stack` that exactly one HelpScreen is on the stack; close and assert zero. | Catches regressions where the binding handler runs but the widget never actually mounts. |
 | `test_custom_scan_interval_threads_through` | Construct `WifiScopeApp(..., scan_interval=4.5)` and inspect `app._poller._scan_interval`. | The `WIFISCOPE_SCAN_INTERVAL` env var lands here; if the kwarg path silently lost it, we'd never know. |
+| `test_toggle_view_swaps_third_panel` | Press `n` to toggle from the Wi-Fi scan view to the BLE view; press again to return. Asserts on the `display` flag of both panels and on `app._view_mode`. | Locks the spec's "toggle in place" behaviour — neither panel ever unmounts, so consumer state on either side survives the swap. |
 
 ---
 

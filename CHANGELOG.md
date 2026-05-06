@@ -12,6 +12,68 @@ behaviours between releases.
 
 _No unreleased changes._
 
+## [0.5.0] — 2026-05-06
+
+The "what electronic devices are around me right now?" release.
+
+### Added
+- **Nearby BLE devices view**, toggled with the new `n` binding.
+  Replaces the Nearby BSSIDs panel in the same vertical slot
+  (Diagnostics, Connection, and Roam log are unchanged) with a
+  scrollable list of every BLE peripheral advertising in range —
+  AirPods, Apple Watches, BLE keyboards, Find My beacons, smart-home
+  gadgets, iBeacons, etc. Both pollers run in parallel from app
+  mount, so toggling between the two views is instant and never
+  shows a stale "scanning…" state.
+- **Bluetooth permission via the existing helper bundle.** The Swift
+  sidecar at `helper/wifiscope-helper.app` gains a second TCC
+  entitlement (`NSBluetoothAlwaysUsageDescription`) and a new
+  `ble-scan` subcommand that streams advertisement events as JSON
+  Lines. The helper's GUI mode now requests both Location Services
+  and Bluetooth on launch — one Allow click covers both. No new
+  Python deps; the existing "permission isolation" architecture
+  stays intact.
+- **Bundled Bluetooth SIG vendor snapshot** at
+  `src/wifiscope/data/bluetooth_vendors.json` (4021 entries) plus a
+  new `make update-vendors` target that fetches the upstream YAML,
+  records the source commit hash, and rewrites the file. No network
+  calls at runtime.
+- **UUID-rotation fuzzy merger.** Modern BLE devices rotate their
+  identifier for privacy; the merger folds entries sharing
+  `(vendor_id, name)` with RSSI within ±10 dB into a single row and
+  shows a `(merged N)` badge so the merge is visible, never
+  silently. Anonymous beacons (no vendor, no name) are never merged
+  to avoid conflating unrelated devices.
+- **BLE preview SVGs** at `docs/preview-ble.svg` and
+  `docs/preview-ble.zh.svg`, alongside the existing Wi-Fi preview.
+  README hero block now shows both with a small caption indicating
+  which view each represents.
+- **8 new BLE unit tests** in `tests/test_ble.py` covering JSONL
+  parsing, vendor lookup, service category inference (Heart Rate /
+  HID / Audio / Find My), TTL expiry, fuzzy merging, permission
+  denied handling, subprocess crash resilience, and malformed JSON
+  recovery.
+- **i18n catalog entries** for every new user-visible string —
+  panel title, view subtitle, service categories (`音频` / `键盘` /
+  `心率` / `查找网络`; iBeacon stays English per spec), placeholder
+  messages, and the merged badge.
+
+### Changed
+- `make preview` now regenerates four SVGs instead of two; new
+  `preview-ble-en` and `preview-ble-zh` sub-targets handle the BLE
+  view individually. Wi-Fi targets unchanged.
+- Help modal documents the new `n` binding.
+- Header subtitle gains a `view: wifi` / `view: ble` segment so the
+  active view is always visible.
+
+### Known limitations
+- macOS Bluetooth Classic / BR-EDR is out of scope; this release is
+  BLE only.
+- No Linux / Windows BLE backend yet.
+- No GATT connect, pairing, or per-device deep-dive modal.
+- Apple Continuity / Handoff payloads are shown as a generic Apple
+  device — we do not reverse-engineer the proprietary format.
+
 ## [0.4.0] — 2026-05-06
 
 The "speak Chinese too" release.

@@ -2,20 +2,24 @@
 
 # wifiscope-helper
 
-A minimal Cocoa `.app` that owns macOS Location Services permission so
-the Python TUI can read **unredacted SSID and BSSID** for every AP in
-the scan list, not just the currently associated one.
+A minimal Cocoa `.app` that owns macOS Location Services AND Bluetooth
+permissions so the Python TUI can read **unredacted SSID and BSSID**
+for every AP in the scan list and **stream nearby BLE advertisements**
+in the BLE view.
 
 ## Why
 
 CoreWLAN's `bssid()` / `ssid()` are TCC-redacted on macOS 14.4+ unless
 the calling process belongs to a `.app` bundle that has been granted
-Location Services. CLI tools launched from a terminal cannot get on
-that list — wifiscope's main `wifiscope` CLI works around this for the
-*current connection* via an SCDynamicStore side-channel, but the
-neighbour list has no equivalent. This bundle is the proper fix:
-register a real `.app` with TCC, grant once, and CoreWLAN unredacts
-everything for any subprocess of the bundle.
+Location Services. CoreBluetooth's `CBCentralManager` similarly refuses
+to enter `.poweredOn` for processes without an `NSBluetoothAlwaysUsage
+Description` entitlement. CLI tools launched from a terminal cannot
+get either grant — wifiscope's main `wifiscope` CLI works around the
+Wi-Fi side for the *current connection* via an SCDynamicStore
+side-channel, but the neighbour list has no equivalent and BLE has no
+side-channel at all. This bundle is the proper fix: register a real
+`.app` with TCC, grant once for both permissions, and the bundle's
+CLI subprocesses inherit the trust for both CoreWLAN and CoreBluetooth.
 
 ## Build
 
@@ -59,14 +63,56 @@ the backend falls back to direct CoreWLAN, which still gives RSSI /
 channel / band but leaves SSID / BSSID redacted on macOS 26 without
 permission.
 
-## Two roles in one binary
+## Three roles in one binary
 
 ```bash
-wifiscope-helper            # GUI: request Location Services, park
-wifiscope-helper scan       # CLI: print one JSON document, exit
+wifiscope-helper            # GUI: request Location Services AND Bluetooth, park
+wifiscope-helper scan       # CLI: print one JSON document of CoreWLAN scan, exit
+wifiscope-helper ble-scan   # CLI: stream JSONL CoreBluetooth ads until SIGTERM
 ```
 
 The first form is what runs when the user double-clicks the bundle in
-Finder. The second is what `MacOSWiFiBackend` invokes from Python.
-TCC bundles its policy by bundle, not by binary path, so the CLI
-subprocess inherits the GUI bundle's permission grant.
+Finder. The second is what `MacOSWiFiBackend` invokes from Python for
+the Wi-Fi scan list. The third is what `wifiscope.ble.BLEPoller`
+spawns as a long-running subprocess for the BLE view — every
+advertisement event becomes one JSON object on stdout, parsed line by
+line on the Python side.
+
+TCC bundles its policy by bundle, not by binary path, so all three
+forms inherit the same permission grants.
+
+## Permissions in Info.plist
+
+The bundle declares two TCC entitlements:
+
+- `NSLocationUsageDescription` / `NSLocationWhenInUseUsageDescription`
+  — required so CoreWLAN returns unredacted SSID / BSSID for every
+  network in the scan list.
+- `NSBluetoothAlwaysUsageDescription` (added in 0.5.0) — required so
+  `CBCentralManager` enters `.poweredOn` and starts delivering
+  `centralManager(_:didDiscover:advertisementData:rssi:)` callbacks.
+
+Both are requested by the GUI mode on launch; one Allow click per
+prompt covers both CLI subcommands.
+
+## ble-scan output schema
+
+One JSON object per line (no enclosing array, no trailing comma) so
+the Python side can read line-by-line. Schema:
+
+```json
+{
+  "ts": "2026-05-06T12:34:56.789Z",
+  "id": "550E8400-E29B-41D4-A716-446655440000",
+  "name": "AirPods Pro",
+  "rssi_dbm": -52,
+  "is_connectable": true,
+  "service_uuids": ["180D", "1812"],
+  "manufacturer_id": 76,
+  "manufacturer_hex": "4c001907..."
+}
+```
+
+Permission denial emits a single `{"error": "..."}` line on stdout
+and exits with code 3 so the Python poller can distinguish "no grant"
+from "no devices yet" or "subprocess crashed".

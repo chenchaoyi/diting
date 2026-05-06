@@ -11,6 +11,54 @@
 
 _暂无未发布的变更。_
 
+## [0.5.0] — 2026-05-06
+
+「我身边到底有哪些电子设备」版本。
+
+### 新增
+- **附近 BLE 设备视图**，通过新增的 `n` 绑定切换。它在原位替换
+  「附近 BSSID」面板（Diagnostics、Connection、漫游日志三个面板
+  不变），改成可滚动的 BLE 设备列表 —— AirPods、Apple Watch、BLE
+  键盘、Find My 信标、智能家居小物、iBeacon 等等。两个轮询器在
+  app mount 时同时启动，所以在两个视图之间切换是即时的，不会出
+  现「扫描中…」的过渡态。
+- **通过现有辅助进程获得蓝牙权限。** `helper/wifiscope-helper.app`
+  现在多承担一个 TCC 入口（`NSBluetoothAlwaysUsageDescription`），
+  并新增 `ble-scan` 子命令把广告事件以 JSON Lines 流出。GUI 模式
+  在启动时同时请求「定位服务」与「蓝牙」—— 一次点 Allow 同时覆盖
+  两项。Python 侧不引入新依赖；现有的「权限隔离」架构保持不变。
+- **打包好的 Bluetooth SIG 厂商表** 位于
+  `src/wifiscope/data/bluetooth_vendors.json`（4021 条），新增
+  `make update-vendors` 目标，会拉取上游 YAML、记录源仓库 commit
+  hash 后重写文件。运行时不发起任何网络请求。
+- **UUID 轮换的模糊合并。** 现代 BLE 设备会为隐私轮换标识；合并
+  策略把 `(vendor_id, name)` 相同、RSSI 在 ±10 dB 内的条目折叠成
+  一行，并显示 `(合并 N)` 徽章 —— 合并永远显式可见，不会静默。
+  完全匿名的信标（厂商和名字都为空）永不合并，避免错误归并。
+- **BLE 预览 SVG** 位于 `docs/preview-ble.svg` 与
+  `docs/preview-ble.zh.svg`，与原有的 Wi-Fi 预览并列。README 头图
+  现在同时展示两份，并附小字说明各自对应的视图。
+- **8 个新的 BLE 单元测试** 在 `tests/test_ble.py`，覆盖 JSONL 解析、
+  厂商查找、服务类别推断（心率 / HID / 音频 / 查找网络）、TTL 过期、
+  模糊合并、权限拒绝处理、子进程崩溃韧性，以及 JSON 解析错误恢复。
+- **i18n 字典条目** 覆盖每条新出现的用户可见字符串 —— 面板标题、
+  视图副标题、服务类别（`音频` / `键盘` / `心率` / `查找网络`；
+  按规范 iBeacon 保持英文）、占位提示、合并徽章。
+
+### 变更
+- `make preview` 现在生成 4 份 SVG（Wi-Fi + BLE，EN + ZH），新增
+  `preview-ble-en` 与 `preview-ble-zh` 子目标可单独生成 BLE 视图。
+  Wi-Fi 子目标行为不变。
+- 帮助模态新增对 `n` 绑定的说明。
+- 头部副标题新增 `view: wifi` / `view: ble` 段，让当前视图随时可见。
+
+### 已知限制
+- 本版仅 BLE，不涉及 macOS Bluetooth Classic / BR-EDR。
+- 暂无 Linux / Windows BLE backend。
+- 暂无 GATT 连接、配对，或单设备详情模态。
+- Apple Continuity / Handoff 载荷统一显示为通用 Apple 设备 ——
+  我们不会逆向解析这种私有格式。
+
 ## [0.4.0] — 2026-05-06
 
 「也讲中文」版本。
