@@ -493,10 +493,12 @@ class WifiScopeApp(App):
         # (it usually does; the OS treats scan as "find roam targets",
         # not "list everything").
         self._latest_connection: Connection | None = None
-        # Scan-list sort mode — toggled by the 's' binding. 'signal'
-        # sorts every BSSID by RSSI desc with the current AP pinned.
-        # 'ap' groups by physical AP and adds a per-group summary line.
-        self._sort_mode: str = "signal"
+        # Scan-list sort mode — toggled by the 's' binding. 'ap' (the
+        # default) groups by physical AP with a per-group summary line;
+        # 'signal' falls back to a flat RSSI-sorted list with the
+        # current AP pinned. The grouped view is more readable on dense
+        # corporate networks where one AP broadcasts many BSSIDs.
+        self._sort_mode: str = "ap"
         self.title = "wifiscope"
         self.sub_title = self._build_subtitle()
 
