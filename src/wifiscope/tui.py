@@ -271,13 +271,27 @@ def _help_content() -> Text:
     body.append(" " * 8 + "strongest BSSID — fixes sticky associations)\n")
     line("h", "toggle this help")
 
-    section("Configure")
+    section("Inventory")
     body.append(
         "  Drop ~/.config/wifiscope/aps.yaml listing your APs by management\n"
-        "  MAC; wifiscope renders friendly names instead of MAC fragments.\n"
-        "  A Swift helper bundle (auto-built on first launch) owns macOS\n"
-        "  Location Services so the Nearby APs panel can show real SSIDs\n"
-        "  and BSSIDs. See the README for full details.\n"
+        "  MAC; wifiscope renders friendly names ('1F-bedroom') in place of\n"
+        "  MAC fragments ('?af:5e:a7'). Without inventory the tool still\n"
+        "  works — it auto-clusters BSSIDs by chip serial bits — but each\n"
+        "  AP is just labelled by its three middle MAC octets.\n"
+    )
+
+    section("Helper")
+    body.append(
+        "  macOS 14.4+ redacts the SSID and BSSID of every AP in the scan\n"
+        "  list to None unless the calling process has Location Services\n"
+        "  permission, and a Python CLI launched from Terminal cannot get\n"
+        "  on that list. The helper is a tiny Swift `.app` bundle that\n"
+        "  can — wifiscope auto-builds and `open`s it once on first launch,\n"
+        "  the user clicks Allow in the macOS prompt, and from then on\n"
+        "  wifiscope shells out to the bundle's binary for unredacted scan\n"
+        "  data. The TCC grant is persistent; the helper window auto-\n"
+        "  closes on grant. Without it the Nearby APs panel works but\n"
+        "  every row shows '(redacted)' for SSID and BSSID.\n"
     )
 
     section("Tunables")
