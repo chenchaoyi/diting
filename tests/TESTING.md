@@ -1,10 +1,11 @@
 # Test Design
 
-This document is the **canonical test plan** for wifiscope. It
-describes what we test, why, and the exact set of scenarios captured
-as automated cases. Tests in [`tests/`](tests/) **must conform** to
-this document — adjustments / new scenarios start by editing this file
-and only then translate into Python.
+This document is the **canonical test plan** for wifiscope. It lives
+next to the test code in `tests/`. It describes what we test, why,
+and the exact set of scenarios captured as automated cases. Tests in
+this directory **must conform** to this document — adjustments / new
+scenarios start by editing this file and only then translate into
+Python.
 
 If you are reviewing a PR, this is what to read first; the code
 should match it case-for-case.

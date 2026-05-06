@@ -190,10 +190,10 @@ uv sync --all-groups          # installs runtime + dev deps (pytest)
 uv run pytest                 # runs the full test suite
 ```
 
-[`TESTING.md`](TESTING.md) is the canonical test plan — every
-automated test corresponds to a row in that document, and changes to
-test scenarios start there before touching `tests/`. Read it first
-when reviewing a PR or extending coverage.
+[`tests/TESTING.md`](tests/TESTING.md) is the canonical test plan —
+every automated test corresponds to a row in that document, and
+changes to test scenarios start there before touching the test
+files. Read it first when reviewing a PR or extending coverage.
 
 GitHub Actions runs the suite on every push and pull request to
 `main`, against Python 3.11 / 3.12 / 3.13 on macOS. CoreWLAN and
