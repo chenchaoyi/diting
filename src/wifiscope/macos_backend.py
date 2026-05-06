@@ -185,20 +185,23 @@ class MacOSWiFiBackend(WiFiBackend):
         ch_num, ch_width, ch_band = _channel_fields(channel)
         ssid = iface.ssid()
         bssid = iface.bssid()
-        # If CoreWLAN redacted either, try the SCDynamicStore fallback —
-        # see _dynamic_store.py for why this works without permission.
-        if ssid is None or bssid is None:
-            cached = _dynamic_store.read_current_identity(iface.interfaceName())
-            ssid = ssid or cached.ssid
-            bssid = bssid or cached.bssid
-            # Channel from wlanChannel() oscillates because macOS does
-            # periodic background scans. The cached record describes the
-            # associated AP itself, so its channel is stable. Override
-            # only when fallback is in play, since CoreWLAN-with-permission
-            # is fully reliable.
-            if cached.channel is not None:
-                ch_num = cached.channel
-                ch_band = _band_from_channel_number(cached.channel)
+        # Always consult SCDynamicStore. Two reasons:
+        #   1. ssid/bssid are TCC-redacted to None for unprivileged
+        #      processes; the CachedScanRecord side-channel still has
+        #      them.
+        #   2. wlanChannel().channelNumber follows the radio's *current*
+        #      tune, which momentarily moves to scan targets during
+        #      macOS background scans, even when the user has Location
+        #      Services granted. CachedScanRecord.CHANNEL describes the
+        #      AP itself and is stable regardless of our radio's state.
+        # The dynamic-store read is microseconds, so doing it on every
+        # 1 Hz tick is negligible.
+        cached = _dynamic_store.read_current_identity(iface.interfaceName())
+        ssid = ssid or cached.ssid
+        bssid = bssid or cached.bssid
+        if cached.channel is not None:
+            ch_num = cached.channel
+            ch_band = _band_from_channel_number(cached.channel)
         # MCS index and spatial-stream count are private CoreWLAN
         # methods (mcsIndex / numberOfSpatialStreams). They are not in
         # the public docs but exist as ObjC selectors and back the

@@ -53,12 +53,13 @@ def read_current_identity(interface_name: str) -> CachedAssociation:
     every poll tick (cheap; a single SCDynamicStore lookup plus a small
     bplist parse).
 
-    Channel comes from this source (rather than CoreWLAN.wlanChannel())
-    because macOS does periodic background scans while associated, and a
-    1 Hz CoreWLAN poll catches the radio mid-scan often enough that its
-    reported channel oscillates between the AP's real channel and a
-    scan target. The CachedScanRecord channel describes the AP itself
-    and is stable.
+    Channel comes from the **top-level CHANNEL** field of the AirPort
+    state dict, which the OS maintains as the radio's current associated
+    channel. It is updated when the link changes and is not affected by
+    background scans like CoreWLAN.wlanChannel() is. We do NOT use
+    CachedScanRecord.CHANNEL as the primary source because that field is
+    a beacon-scan snapshot and can lag if the AP has hopped to another
+    channel since (DFS, dynamic channel selection on enterprise APs).
     """
     empty = CachedAssociation(bssid=None, ssid=None, channel=None)
     ds = SCDynamicStoreCreate(None, "wifiscope", None, None)
@@ -69,33 +70,44 @@ def read_current_identity(interface_name: str) -> CachedAssociation:
     )
     if val is None:
         return empty
+
+    # Top-level CHANNEL is reliable; SSID and BSSID at the top level are
+    # redacted to a placeholder when TCC is not granted, so for those we
+    # parse the bplist below (which is *not* redacted — see header).
+    top_channel = val.get("CHANNEL")
+    channel = (
+        top_channel
+        if isinstance(top_channel, int) and top_channel > 0
+        else None
+    )
+
+    bssid: str | None = None
+    ssid: str | None = None
     csr = val.get("CachedScanRecord")
-    if csr is None:
-        return empty
+    if csr is not None:
+        try:
+            plist = plistlib.loads(bytes(csr))
+            root = _resolve_ns_dict(plist["$objects"], plist["$top"]["root"])
+        except Exception:
+            root = None
+        if root is not None:
+            age_ms = root.get("AGE")
+            stale = isinstance(age_ms, (int, float)) and age_ms > _MAX_AGE_MS
+            if not stale:
+                raw_b = root.get("BSSID")
+                if isinstance(raw_b, str) and raw_b != _REDACTED_BSSID:
+                    bssid = raw_b.lower()
+                raw_s = root.get("SSID_STR")
+                if isinstance(raw_s, str) and raw_s:
+                    ssid = raw_s
+                # Last-ditch channel source if the top-level field was
+                # missing for some reason. Possibly stale, but better
+                # than None.
+                if channel is None:
+                    raw_c = root.get("CHANNEL")
+                    if isinstance(raw_c, int) and raw_c > 0:
+                        channel = raw_c
 
-    try:
-        plist = plistlib.loads(bytes(csr))
-        root = _resolve_ns_dict(plist["$objects"], plist["$top"]["root"])
-    except Exception:
-        return empty
-    if root is None:
-        return empty
-
-    age_ms = root.get("AGE")
-    if isinstance(age_ms, (int, float)) and age_ms > _MAX_AGE_MS:
-        return empty
-
-    bssid = root.get("BSSID")
-    ssid = root.get("SSID_STR")
-    channel = root.get("CHANNEL")
-    if not isinstance(bssid, str) or bssid == _REDACTED_BSSID:
-        bssid = None
-    else:
-        bssid = bssid.lower()
-    if not isinstance(ssid, str) or ssid == "":
-        ssid = None
-    if not isinstance(channel, int) or channel <= 0:
-        channel = None
     return CachedAssociation(bssid=bssid, ssid=ssid, channel=channel)
 
 

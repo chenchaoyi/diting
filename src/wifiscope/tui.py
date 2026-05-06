@@ -142,7 +142,16 @@ class ScanPanel(Static):
         if not results:
             self.update(Text("(no APs from last scan — likely throttle, retrying)", style="dim italic"))
             return
-        rows = sorted(results, key=lambda r: r.rssi_dbm if r.rssi_dbm is not None else -200, reverse=True)
+        # Pin the currently-associated AP at the top of the list, then
+        # sort everything else by RSSI desc. With dense corporate scans
+        # (100+ APs) the user's own row would otherwise sort by signal
+        # and be cropped below the panel's viewport — defeating the
+        # whole point of the synth row injection.
+        cur = (current_bssid or "").lower()
+        current_rows = [r for r in results if r.bssid and r.bssid.lower() == cur]
+        other_rows = [r for r in results if not (r.bssid and r.bssid.lower() == cur)]
+        other_rows.sort(key=lambda r: r.rssi_dbm if r.rssi_dbm is not None else -200, reverse=True)
+        rows = current_rows + other_rows
         # Hand-rolled aligned table — DataTable is overkill for read-only display
         # and adds focus / scroll behaviour we do not want here.
         lines: list[Text] = []
@@ -190,21 +199,22 @@ class RoamLogPanel(RichLog):
 def _merge_current(
     scan: list[ScanResult], conn: Connection | None
 ) -> list[ScanResult]:
-    """Synthesise a ScanResult from the current Connection and prepend it
-    if the scan list does not already include the associated BSSID.
+    """Ensure the panel shows a row for the currently associated AP, with
+    Connection-derived values, even when CoreWLAN's scan omitted it or
+    reported stale channel data.
 
-    macOS's CoreWLAN scan typically excludes the currently-associated
-    AP (the OS treats scan as 'find roam targets', not 'list everything'),
-    which makes the most useful row in the panel — the one for the AP
-    the user is on — invisible. Synthesising from the Connection puts
-    it back, with real-time RSSI / channel from the radio rather than
-    cached beacon values.
+    Two behaviours combined:
+    - If the scan list does not include the associated BSSID, prepend a
+      synthetic row built from the Connection.
+    - If it does, replace the existing scan row with the synthetic row
+      so the user sees the same RSSI / channel as the Connection panel
+      above. Scan beacons can lag the radio's actual association state
+      (DFS / channel hops) and we do not want the panel to show two
+      different channels for the same BSSID at the same instant.
     """
     if conn is None or conn.bssid is None:
         return scan
     target = conn.bssid.lower()
-    if any(r.bssid and r.bssid.lower() == target for r in scan):
-        return scan
     synth = ScanResult(
         ssid=conn.ssid,
         bssid=conn.bssid,
@@ -218,7 +228,17 @@ def _merge_current(
         timestamp=conn.timestamp,
         country_code=conn.country_code,
     )
-    return [synth, *scan]
+    out: list[ScanResult] = []
+    replaced = False
+    for r in scan:
+        if r.bssid and r.bssid.lower() == target:
+            out.append(synth)
+            replaced = True
+        else:
+            out.append(r)
+    if not replaced:
+        return [synth, *out]
+    return out
 
 
 def _fmt(value, suffix: str = "") -> str:
