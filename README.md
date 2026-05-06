@@ -51,7 +51,11 @@ In the TUI:
 - middle panel: nearby APs sorted by RSSI, your current one starred
 - bottom panel: roam log, tagged `[band switch on …]` or
   `[inter-AP roam]`
-- bindings: `q` quit · `p` pause · `r` force rescan
+- bindings: `q` quit · `p` pause · `r` force rescan · `s` cycle sort
+  (signal / by AP) · `c` force re-roam (disassociate so macOS picks
+  the strongest BSSID for the current saved network — fastest fix
+  when your Mac is sticking to a weak AP despite a stronger one
+  being in range)
 
 ### One-time helper grant (automatic on first launch)
 
@@ -166,6 +170,15 @@ fallback is active.
 `scan`, and `permission_state` methods; macOS lives in
 `MacOSWiFiBackend`. A future Linux backend (`nl80211` / `iw`) drops
 in without touching the polling, alias, or UI layers.
+
+**`Tx Rate` vs `Max Link Speed`.** Apple's `transmitRate` and
+`maximumLinkSpeed` use different definitions and can diverge —
+`transmitRate` reports the data link rate at the moment of polling
+(can include frame aggregation), while `maximumLinkSpeed` is the
+radio capability ceiling derived from the negotiated PHY/MCS/NSS at
+the current channel width. Reading "current ≤ max" is therefore not
+guaranteed; we expose both with a footnote in the Connection panel
+rather than hide the discrepancy.
 
 ## License
 

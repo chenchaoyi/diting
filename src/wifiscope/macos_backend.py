@@ -240,6 +240,21 @@ class MacOSWiFiBackend(WiFiBackend):
             max_link_speed_mbps=_maybe_int(max_link),
         )
 
+    def force_reroam(self) -> bool:
+        """Disassociate from the current AP. macOS's auto-rejoin then
+        re-picks the strongest BSSID for any saved SSID. The most
+        practical fix for the 'macOS sticks to a weak AP even though a
+        stronger one is in range' problem.
+
+        Returns True if disassociate was called, False if there was no
+        WiFi interface to act on.
+        """
+        iface = self._interface()
+        if iface is None:
+            return False
+        iface.disassociate()
+        return True
+
     def permission_state(self) -> PermissionState:
         # CoreLocation could give a definitive answer, but it requires the
         # process to be a bundled .app to even prompt the user — useless

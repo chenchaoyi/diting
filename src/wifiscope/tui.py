@@ -42,7 +42,7 @@ class ConnectionPanel(Static):
     DEFAULT_CSS = """
     ConnectionPanel {
         height: auto;
-        min-height: 14;
+        min-height: 16;
         border: heavy $accent;
         padding: 0 1;
     }
@@ -111,7 +111,22 @@ class ConnectionPanel(Static):
         signal_line.append(_rssi_text(conn.rssi_dbm))
         signal_line.append("  ")
         signal_line.append(signal_bar)
-        self.update(Group(header, Text(""), body, signal_line))
+
+        # Footnote: Apple's transmitRate (current data rate, can include
+        # frame aggregation) and maximumLinkSpeed (radio capability max
+        # at the negotiated PHY/MCS) come from different APIs and do not
+        # always satisfy "current ≤ max". The WiFi panel in System
+        # Settings shows transmitRate only; we expose both, with this
+        # caveat.
+        if conn.tx_rate_mbps is not None and conn.max_link_speed_mbps is not None:
+            footnote = Text()
+            footnote.append(
+                "  * Tx and Max use different CoreWLAN APIs and may diverge.",
+                style="dim italic",
+            )
+            self.update(Group(header, Text(""), body, signal_line, Text(""), footnote))
+        else:
+            self.update(Group(header, Text(""), body, signal_line))
 
 
 class ScanPanel(Static):
@@ -457,6 +472,7 @@ class WifiScopeApp(App):
         Binding("p", "toggle_pause", "Pause"),
         Binding("r", "rescan", "Rescan"),
         Binding("s", "cycle_sort", "Sort"),
+        Binding("c", "reroam", "Re-roam"),
     ]
 
     def __init__(self, backend: WiFiBackend, inv: NetworkInventory) -> None:
@@ -541,6 +557,22 @@ class WifiScopeApp(App):
         # Rebuild the scan panel immediately so the user sees the change
         # without waiting for the next 1 Hz connection update.
         self._refresh_scan_panel()
+
+    def action_reroam(self) -> None:
+        """Force a fresh association so the OS reselects the best BSSID.
+
+        macOS will not roam off a 'good enough' AP (~ -75 dBm threshold,
+        independent of nearby alternatives), so this is the most reliable
+        in-app fix for sticky roaming. A single disassociate triggers
+        auto-rejoin via Keychain credentials — works for WPA personal
+        and WPA2 / WPA3 Enterprise alike since the existing keychain
+        item carries the 802.1X identity.
+        """
+        ok = bool(getattr(self._backend, "force_reroam", lambda: False)())
+        if ok:
+            self.notify("disassociated — Mac will reconnect to the strongest BSSID")
+        else:
+            self.notify("no WiFi interface", severity="warning")
 
     def _build_subtitle(self) -> str:
         bits = [f"{len(self._inv.aps)} APs"]
