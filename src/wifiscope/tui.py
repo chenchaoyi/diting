@@ -561,16 +561,17 @@ class WifiScopeApp(App):
     def action_reroam(self) -> None:
         """Force a fresh association so the OS reselects the best BSSID.
 
-        macOS will not roam off a 'good enough' AP (~ -75 dBm threshold,
-        independent of nearby alternatives), so this is the most reliable
-        in-app fix for sticky roaming. A single disassociate triggers
-        auto-rejoin via Keychain credentials — works for WPA personal
-        and WPA2 / WPA3 Enterprise alike since the existing keychain
-        item carries the 802.1X identity.
+        macOS does not roam off a 'good enough' AP (~ -75 dBm threshold,
+        independent of nearby alternatives). This binding cycles the
+        WiFi radio off then on, which is the same path as
+        click-menu-off, click-menu-on — full auto-join with Keychain
+        credentials, works for both WPA personal and 802.1X Enterprise.
         """
         ok = bool(getattr(self._backend, "force_reroam", lambda: False)())
         if ok:
-            self.notify("disassociated — Mac will reconnect to the strongest BSSID")
+            self.notify(
+                "WiFi off → on — reconnecting via auto-join (2-5 s)"
+            )
         else:
             self.notify("no WiFi interface", severity="warning")
 

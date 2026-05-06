@@ -11,6 +11,7 @@ fields still work and `bssid` comes back as None — the UI surfaces this.
 """
 
 import subprocess
+import time
 from datetime import datetime
 
 from CoreWLAN import CWWiFiClient
@@ -241,18 +242,32 @@ class MacOSWiFiBackend(WiFiBackend):
         )
 
     def force_reroam(self) -> bool:
-        """Disassociate from the current AP. macOS's auto-rejoin then
-        re-picks the strongest BSSID for any saved SSID. The most
-        practical fix for the 'macOS sticks to a weak AP even though a
-        stronger one is in range' problem.
+        """Cycle WiFi power so macOS re-associates with the strongest
+        BSSID for the currently saved SSID, the same path the user
+        gets by toggling the WiFi menu icon off then on.
 
-        Returns True if disassociate was called, False if there was no
-        WiFi interface to act on.
+        We do not use `iface.disassociate()`: it tears down the link
+        but does not always trigger auto-rejoin on Enterprise / 802.1X
+        networks (no Keychain unlock prompt fires, the OS sees a clean
+        manual disconnect, and you sit there disconnected). Power-
+        cycling the radio goes through the full Network Manager flow
+        — auto-join, EAP / RADIUS handshake, Keychain credential
+        lookup — which is exactly what 'click WiFi menu, click my SSID'
+        ends up doing.
+
+        Returns True if both setPower calls were issued; the caller
+        should not assume the link is already back up — re-association
+        takes 2-5 seconds for personal, longer for Enterprise.
         """
         iface = self._interface()
         if iface is None:
             return False
-        iface.disassociate()
+        iface.setPower_error_(False, None)
+        # Brief pause so the OS commits the off state before we flip
+        # back. ~0.3 s is empirically enough; faster cycles sometimes
+        # collapse into a no-op.
+        time.sleep(0.3)
+        iface.setPower_error_(True, None)
         return True
 
     def permission_state(self) -> PermissionState:

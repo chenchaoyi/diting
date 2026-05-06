@@ -52,10 +52,11 @@ In the TUI:
 - bottom panel: roam log, tagged `[band switch on …]` or
   `[inter-AP roam]`
 - bindings: `q` quit · `p` pause · `r` force rescan · `s` cycle sort
-  (signal / by AP) · `c` force re-roam (disassociate so macOS picks
-  the strongest BSSID for the current saved network — fastest fix
-  when your Mac is sticking to a weak AP despite a stronger one
-  being in range)
+  (signal / by AP) · `c` force re-roam (cycle WiFi power so macOS
+  re-runs auto-join and picks the strongest BSSID — same path as
+  click-menu-off / click-menu-on, works for both WPA personal and
+  802.1X Enterprise; fastest fix when your Mac is sticking to a
+  weak AP despite a stronger one being in range)
 
 ### One-time helper grant (automatic on first launch)
 
