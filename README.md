@@ -34,9 +34,13 @@ black box into a TUI:
 - a top panel with everything Apple's "Option-click WiFi" panel
   shows, plus IP / Router / interface MAC / MCS / NSS / max link
   speed
-- a middle panel listing every BSSID in range, **grouped by
-  physical AP** so a single AP that broadcasts five SSIDs collapses
-  into one labelled cluster
+- a Diagnostics panel that translates a dense scan into plain
+  findings: visible BSSID counts, open/no-password BSSIDs,
+  channel crowding, least-crowded channel hints, current-link
+  health, and a simple roam score
+- a scrollable Nearby BSSIDs panel listing every BSSID in range,
+  **grouped by physical AP** so a single AP that broadcasts five
+  SSIDs collapses into one labelled cluster
 - a bottom panel that **logs roam events as they happen**, tagged
   `[band switch on <AP>]` for same-AP radio changes vs
   `[inter-AP roam]` for genuine moves between physical APs
@@ -81,6 +85,7 @@ is persistent.
 | `s` | cycle scan sort: by AP ↔ by signal |
 | `c` | force re-roam — cycle Wi-Fi off/on so macOS re-picks the strongest BSSID |
 | `h` | open / close the in-app help screen |
+| `b` | open / close Wi-Fi Basics: SSID, BSSID, channel, band, security, roam score |
 
 `watch` and `once` subcommands run wifiscope in plain-text modes —
 useful for piping into a logger or for a one-shot diagnostic:
@@ -142,7 +147,20 @@ and `maximumLinkSpeed` (radio capability ceiling at the negotiated
 PHY/MCS/NSS) come from different CoreWLAN APIs; "current ≤ max" is
 not guaranteed. The Connection panel shows both with a footnote.
 
-**Without the helper, the Nearby APs scan list is fully redacted.**
+**The Diagnostics panel is a guide, not an RF survey tool.** Channel
+recommendations and roam scores are estimated from the BSSIDs
+visible to CoreWLAN in the latest scan. They reward stronger RSSI,
+better SNR, cleaner bands, and less crowded channels, and they
+penalize open networks and security mismatches. Treat them as
+"where to look next" hints rather than as Apple's official roaming
+decision.
+
+**`OPEN` means no Wi-Fi-layer password/encryption.** Captive portals
+can still ask for login after association, but the radio link itself
+is open. The Nearby BSSIDs panel marks these rows so you can assess
+guest networks and accidentally-open SSIDs quickly.
+
+**Without the helper, the Nearby BSSIDs scan list is fully redacted.**
 RSSI, channel, band, and width still come through, but every SSID
 shows `(redacted)` and every BSSID `(redacted)`. The Connection
 panel itself is unaffected — `wifiscope` reads SSID and BSSID for
