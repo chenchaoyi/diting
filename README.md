@@ -101,19 +101,25 @@ SKUs), add a `radio_overrides` map; see [`aps.example.yaml`](aps.example.yaml).
 
 ## How it works (design notes)
 
-**Resolving an AP from a BSSID.** Two rules in order:
+**Resolving an AP from a BSSID.** Two rules in order, both gated by a
+last-byte proximity check:
 
-1. **First five octets match.** Chipsets allocate radio and VAP MACs
-   from one NIC by varying only the last octet — a hardware-level
-   convention shared across most consumer + SMB gear. Catches the
-   common case.
-2. **Middle four octets match** (octets 2..5 of the MAC). Some
-   vendors — H3C in particular — assign one OUI block to a chip's
-   "user" SSIDs (e.g. `40:fe:95:...`) and a sibling OUI block to
-   the same chip's "vendor-internal" SSIDs (`44:fe:95:...`). Octets
-   2..5 carry the chip's serial bits and are the same across both
-   blocks, so this rule reliably groups them. False-match probability
-   against an unrelated nearby AP is ~1/2³².
+1. **First five octets match + last-byte window.** Radios and VAPs
+   are allocated as `mgmt + N` for small N (typically 1..6). When
+   several APs share an OUI block the first five octets alone are
+   not enough — e.g. an H3C controller assigning APs at
+   `…3c:07`, `…3c:15`, `…3c:54` would map every BSSID with the
+   common prefix to the first list entry. We require the BSSID's
+   last byte to fall within 8 above the AP's mgmt MAC last byte and
+   pick the closest one. Three APs in the same OUI now resolve
+   independently.
+2. **Octets 2..5 match + same window.** Some vendors — H3C in
+   particular — assign one OUI block to a chip's "user" SSIDs
+   (`40:fe:95:…`) and a sibling OUI block to the same chip's
+   "vendor-internal" SSIDs (`44:fe:95:…`). Octets 2..5 carry the
+   chip's serial bits and stay the same across both blocks, so this
+   rule reliably groups them. False-match probability against an
+   unrelated nearby AP is ~1/2³².
 
 If neither rule fits a deployment (rare; some Cisco Meraki SKUs
 randomise per-radio MACs), explicit `radio_overrides` entries win

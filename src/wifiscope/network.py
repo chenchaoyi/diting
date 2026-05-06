@@ -63,26 +63,50 @@ class NetworkInventory:
         b = bssid.lower()
         if b in self.radio_overrides:
             return self.radio_overrides[b]
-        # Primary: first five octets match. Catches all radios / VAPs
-        # that come out of the same NIC OUI pool (the most common case).
-        prefix = _prefix5(b)
-        for ap in self.aps:
-            if ap.prefix == prefix:
-                return ap.name
-        # Secondary: middle four octets match (octets 2..5). Some
-        # vendors — H3C in particular — assign a chip's "user" SSIDs
-        # to one OUI block (e.g. 40:fe:95:...) and the same chip's
-        # "vendor-internal" SSIDs to a sibling OUI block (44:fe:95:...).
-        # Octets 2..5 carry the chip's serial bits and are the same
-        # across both blocks, so this rule reliably groups them while
-        # the chance of a false match against an unrelated nearby AP
-        # is ~1/2^32. If a real deployment hits a conflict, the user
-        # can pin specific BSSIDs in radio_overrides which wins above.
-        mid = _mid4(b)
-        for ap in self.aps:
-            if _mid4(ap.mgmt_mac) == mid:
-                return ap.name
+        last = _last_byte(b)
+
+        # Primary: first five octets match AND the BSSID's last byte is
+        # within a small window above the AP's mgmt MAC last byte.
+        # Radios and VAPs of one chip are allocated as `mgmt + N` for
+        # small N (typically 1..6), and prefix5 alone is not enough to
+        # disambiguate when the user's controller hands out APs with
+        # adjacent mgmt MACs from one OUI pool — e.g. an H3C AC with
+        # APs at 40:fe:95:8a:3c:07, :15, :54 all share prefix5 and
+        # would all map to the first list entry without this rule.
+        best = self._closest_in_window(
+            last, predicate=lambda ap: ap.prefix == _prefix5(b)
+        )
+        if best is not None:
+            return best.name
+
+        # Secondary: octets 2..5 match (covers vendors that allocate a
+        # chip's "user" radios from one OUI block and "vendor-internal"
+        # radios from a sibling OUI block, e.g. H3C 40:.../ 44:...).
+        # Same proximity rule keeps closely-spaced mgmt MACs separated.
+        best = self._closest_in_window(
+            last, predicate=lambda ap: _mid4(ap.mgmt_mac) == _mid4(b)
+        )
+        if best is not None:
+            return best.name
         return None
+
+    def _closest_in_window(
+        self, bssid_last: int, *, predicate, window: int = 8
+    ) -> APEntry | None:
+        """Of the APs satisfying `predicate`, return the one whose mgmt
+        MAC last byte is the largest value not exceeding `bssid_last`,
+        within `window` of it. Returns None if no AP qualifies.
+        """
+        best_ap: APEntry | None = None
+        best_distance = window + 1
+        for ap in self.aps:
+            if not predicate(ap):
+                continue
+            distance = bssid_last - _last_byte(ap.mgmt_mac)
+            if 0 <= distance < best_distance:
+                best_distance = distance
+                best_ap = ap
+        return best_ap
 
     def is_same_ap(self, a: str | None, b: str | None) -> bool:
         """True if two BSSIDs are radios of the same physical AP."""
@@ -108,6 +132,14 @@ def _mid4(mac: str) -> str:
     if len(parts) != 6:
         return mac.lower()
     return ":".join(parts[1:5])
+
+
+def _last_byte(mac: str) -> int:
+    """Last octet of a MAC as int. Returns -1 on malformed input."""
+    try:
+        return int(mac.lower().rsplit(":", 1)[-1], 16)
+    except (ValueError, IndexError):
+        return -1
 
 
 def default_config_path() -> Path:
