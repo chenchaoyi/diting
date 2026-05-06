@@ -9,13 +9,32 @@ maintainer's environment. Re-run any time the UI changes:
 
 The env var WIFISCOPE_LANG also flips the output filename, since the
 two SVGs sit side by side in docs/.
+
+CJK NOTE
+--------
+Textual's ``export_screenshot`` writes ``textLength`` on every
+``<text>`` element using ``len(text)`` (code-point count) rather than
+``cell_len(text)``. ASCII content has 1 cell per code point so it
+renders correctly, but CJK glyphs are 2 cells each and end up
+visually compressed (or overlapping with neighbours) when the SVG
+viewer applies ``lengthAdjust='spacing'`` to fit the under-sized
+``textLength``. We post-process the export and rewrite each
+``textLength`` to ``cell_len(text) * cell_width`` so CJK glyphs render
+at their natural width. The next element's anchor ``x`` already
+accounts for cell width in Textual's layout (verified empirically
+across our preview), so simply expanding textLength does not require
+shifting any downstream element.
 """
 from __future__ import annotations
 
 import asyncio
+import html
 import os
+import re
 from datetime import datetime
 from pathlib import Path
+
+from rich.cells import cell_len
 
 from wifiscope import i18n
 from wifiscope.backend import WiFiBackend
@@ -134,10 +153,40 @@ async def main() -> None:
         )
         await pilot.pause(0.3)
         out = pilot.app.export_screenshot(title="wifiscope")
+    out = _fix_cjk_textlength(out)
     suffix = ".zh.svg" if i18n.get_lang() == i18n.ZH else ".svg"
     target = Path(__file__).parent / f"preview{suffix}"
     target.write_text(out)
     print(f"wrote {target} ({len(out):,} bytes)")
+
+
+# Pattern matches Textual's <text ... textLength="N" ...>BODY</text>
+# format. The capture group order is documented in the regex; rewrite
+# extracts the body, recomputes the cell-aware width, and edits the
+# attribute in place. We do not touch ``x`` or downstream elements
+# because Textual lays the next-anchor x out cell-aware already — see
+# the module docstring for the verification.
+_TEXT_RX = re.compile(
+    r'(<text[^>]*\btextLength=")([0-9.]+)("[^>]*>)([^<]*)(</text>)'
+)
+
+
+def _fix_cjk_textlength(svg: str, cell_width_px: float = 12.2) -> str:
+    """Rewrite each ``<text>`` element's ``textLength`` to match
+    ``cell_len(body)`` × ``cell_width_px``. ASCII rows are unchanged
+    (1 cell per code point); CJK rows expand so glyphs render natural-
+    width without lengthAdjust compression.
+    """
+    def _rewrite(match: re.Match) -> str:
+        prefix, _old_len, mid, body, suffix = match.groups()
+        # html.unescape because Textual emits &#160; (NBSP), which
+        # cell_len would otherwise count as zero-width if we left it
+        # as the escape sequence.
+        decoded = html.unescape(body)
+        new_len = cell_len(decoded) * cell_width_px
+        return f'{prefix}{new_len:g}{mid}{body}{suffix}'
+
+    return _TEXT_RX.sub(_rewrite, svg)
 
 
 if __name__ == "__main__":
