@@ -187,6 +187,40 @@ class RoamLogPanel(RichLog):
 
 # ---------- helpers ----------
 
+def _merge_current(
+    scan: list[ScanResult], conn: Connection | None
+) -> list[ScanResult]:
+    """Synthesise a ScanResult from the current Connection and prepend it
+    if the scan list does not already include the associated BSSID.
+
+    macOS's CoreWLAN scan typically excludes the currently-associated
+    AP (the OS treats scan as 'find roam targets', not 'list everything'),
+    which makes the most useful row in the panel — the one for the AP
+    the user is on — invisible. Synthesising from the Connection puts
+    it back, with real-time RSSI / channel from the radio rather than
+    cached beacon values.
+    """
+    if conn is None or conn.bssid is None:
+        return scan
+    target = conn.bssid.lower()
+    if any(r.bssid and r.bssid.lower() == target for r in scan):
+        return scan
+    synth = ScanResult(
+        ssid=conn.ssid,
+        bssid=conn.bssid,
+        rssi_dbm=conn.rssi_dbm,
+        noise_dbm=conn.noise_dbm,
+        channel=conn.channel,
+        channel_width_mhz=conn.channel_width_mhz,
+        channel_band=conn.channel_band,
+        phy_mode=conn.phy_mode,
+        security=conn.security,
+        timestamp=conn.timestamp,
+        country_code=conn.country_code,
+    )
+    return [synth, *scan]
+
+
 def _fmt(value, suffix: str = "") -> str:
     if value is None:
         return "n/a"
@@ -320,6 +354,11 @@ class WifiScopeApp(App):
         self._cached_scan: list[ScanResult] = []
         self._last_successful_scan_at: float | None = None
         self._latest_bssid: str | None = None
+        # Latest Connection — merged into the scan list as a synthetic
+        # row when CoreWLAN's scan omits the currently associated AP
+        # (it usually does; the OS treats scan as "find roam targets",
+        # not "list everything").
+        self._latest_connection: Connection | None = None
         self.title = "wifiscope"
         self.sub_title = self._build_subtitle()
 
@@ -338,25 +377,33 @@ class WifiScopeApp(App):
             if self._paused:
                 continue
             if isinstance(event, ConnectionUpdate):
-                self._latest_bssid = event.connection.bssid if event.connection else None
+                self._latest_connection = event.connection
+                self._latest_bssid = (
+                    event.connection.bssid if event.connection else None
+                )
                 self.query_one("#conn", ConnectionPanel).update_connection(
                     event.connection, self._inv
                 )
+                # Refresh the scan panel too so the synthesised row for
+                # the current AP picks up live RSSI / channel changes
+                # between scans (1 Hz vs 7 Hz).
+                self._refresh_scan_panel()
             elif isinstance(event, ScanUpdate):
                 if event.results:
                     self._cached_scan = event.results
                     self._last_successful_scan_at = time.monotonic()
-                # Always re-render: even if results were empty, we want
-                # the "scanned Ns ago" counter (which now refers to the
-                # last *successful* scan) to keep ticking.
-                self.query_one("#scan", ScanPanel).update_scan(
-                    self._cached_scan,
-                    self._latest_bssid,
-                    self._last_successful_scan_at,
-                    self._inv,
-                )
+                self._refresh_scan_panel()
             elif isinstance(event, RoamEvent):
                 self.query_one("#roam", RoamLogPanel).append_roam(event, self._inv)
+
+    def _refresh_scan_panel(self) -> None:
+        merged = _merge_current(self._cached_scan, self._latest_connection)
+        self.query_one("#scan", ScanPanel).update_scan(
+            merged,
+            self._latest_bssid,
+            self._last_successful_scan_at,
+            self._inv,
+        )
 
     def action_toggle_pause(self) -> None:
         self._paused = not self._paused
