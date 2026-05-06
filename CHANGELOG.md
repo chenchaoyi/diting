@@ -8,16 +8,7 @@ behaviours between releases.
 
 ## [Unreleased]
 
-### Added
-- `tests/` directory with pytest-driven coverage of the data-flow
-  layer: inventory resolution (prefix5 + last-byte proximity, cross-
-  OUI fallback, overrides, cluster_label), helper JSON parse for
-  schema v1 and v2, TUI `_merge_current` and `_group_by_ap`, and a
-  headless `run_test` smoke pass over every binding.
-- GitHub Actions workflow `tests` running pytest on macOS-latest
-  against Python 3.11 / 3.12 / 3.13 for every push and pull request
-  to `main`.
-- `CHANGELOG.md` (this file) and a CI badge in the README.
+_No unreleased changes._
 
 ## [0.2.0] — 2026-05-06
 
@@ -60,6 +51,20 @@ release.
   `(hidden)` rather than `(no SSID)`.
 - **`WIFISCOPE_SCAN_INTERVAL` env var** to override the 7 s default
   scan cadence (3 s minimum).
+- **Test suite under `tests/`** with 83 cases (58 functions; some
+  parametrised) covering inventory resolution, helper JSON parsing,
+  TUI merge / group helpers, and a headless `run_test` smoke pass
+  over every binding. [`tests/TESTING.md`](tests/TESTING.md) is the
+  canonical test plan — every automated case has a row in that
+  document and changes start there.
+- **GitHub Actions CI** running pytest on macOS-latest against
+  Python 3.11 / 3.12 / 3.13 for every push and pull request to
+  `main`.
+- **`CHANGELOG.md`** (this file) and CI / release / license badges
+  in the README.
+- **User-first README**: hero screenshot, problem statement up
+  front, technical design notes deferred. Logo + a deterministic
+  TUI preview SVG live under `docs/`.
 
 ### Changed
 - Scan-list `AP` column renamed to `AP host`. The original "AP" was
