@@ -1,98 +1,103 @@
-# wifiscope
+<p align="center">
+  <img src="docs/logo.svg" alt="wifiscope" width="320">
+</p>
 
-[![tests](https://github.com/chenchaoyi/wifiscope/actions/workflows/test.yml/badge.svg)](https://github.com/chenchaoyi/wifiscope/actions/workflows/test.yml)
+<p align="center">
+  <strong>See which Wi-Fi AP your Mac is on, when it switches, and how strong the signal really is — all in your terminal.</strong>
+</p>
 
-A terminal WiFi monitor for macOS, focused on **roaming visibility** —
-which AP your Mac is on, when it switches, and how strong the signal
-is, all in one screen.
+<p align="center">
+  <a href="https://github.com/chenchaoyi/wifiscope/actions/workflows/test.yml"><img src="https://github.com/chenchaoyi/wifiscope/actions/workflows/test.yml/badge.svg" alt="tests"></a>
+  <a href="https://github.com/chenchaoyi/wifiscope/releases"><img src="https://img.shields.io/github/v/release/chenchaoyi/wifiscope?display_name=tag" alt="release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/chenchaoyi/wifiscope" alt="license"></a>
+</p>
 
-Built for multi-AP home / SMB networks (AC + panel APs, mesh systems)
-where the same SSID is broadcast by 5+ radios and you cannot tell at
-a glance whether sticky roaming is causing your Zoom call to drop.
+---
 
-## What you see
+<p align="center">
+  <img src="docs/preview.svg" alt="wifiscope TUI" width="100%">
+</p>
 
-- **Current connection**: SSID, BSSID, RSSI, noise, tx rate, channel,
-  width, band, PHY mode, security
-- **Roam events**: tagged `[band switch on <AP>]` for same-AP radio
-  changes vs `[inter-AP roam]` for genuine moves between physical APs
-- **Nearby APs**: scan list (every 5 s) sorted by signal strength
-- **Friendly names** for each AP from a YAML inventory (you provide
-  AP-level mgmt MACs; wifiscope figures out the per-radio attribution)
+## Why
 
-## Status
+You set up multiple APs at home or at the office, you walk between
+rooms, and your Mac stays glued to the AP it associated with five
+hours ago at -75 dBm — even though there's a new AP within reach
+broadcasting the same SSID at -45 dBm. Zoom stutters; you grumble;
+you blame the WiFi.
 
-v0.1 (TUI + AP inventory + roam classification, scan list TCC-redacted)
-shipped — see [the v0.1.0 release](https://github.com/chenchaoyi/wifiscope/releases/tag/v0.1.0).
+Apple's WiFi panel will tell you the *current* signal but nothing
+about *which AP* you're on, *whether you should be on a different
+one*, or *when* the OS roamed (or didn't). `wifiscope` turns that
+black box into a TUI:
 
-v0.2 in progress: a Swift `.app` sidecar at [`helper/`](helper/) owns
-Location Services and unredacts the scan list. macOS only; Linux is
-still on the long roadmap.
+- a top panel with everything Apple's "Option-click WiFi" panel
+  shows, plus IP / Router / interface MAC / MCS / NSS / max link
+  speed
+- a middle panel listing every BSSID in range, **grouped by
+  physical AP** so a single AP that broadcasts five SSIDs collapses
+  into one labelled cluster
+- a bottom panel that **logs roam events as they happen**, tagged
+  `[band switch on <AP>]` for same-AP radio changes vs
+  `[inter-AP roam]` for genuine moves between physical APs
 
-## Install & run
+Stuck on a weak AP? Hit `c` and `wifiscope` cycles the WiFi radio so
+macOS re-runs auto-join and reassociates with the strongest BSSID.
+That's the same path as click-menu-off-then-on, but in one keystroke.
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+## Quick start
+
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/), plus the
+Xcode Command Line Tools (the helper bundle is built from a small
+Swift source on first launch).
 
 ```bash
 git clone git@github.com:chenchaoyi/wifiscope.git
 cd wifiscope
 uv sync
+uv run wifiscope
 ```
 
-Three modes — the TUI is the default:
+On first run, `wifiscope` builds and opens a tiny **helper bundle**
+that asks for Location Services permission. Click Allow once; the
+window auto-closes; the TUI launches with full SSID and BSSID for
+every visible AP. Subsequent runs go straight to the TUI — the grant
+is persistent.
+
+> **Why the helper?** macOS 14.4+ redacts SSID and BSSID to None
+> unless the calling process has Location Services. A Python CLI
+> launched from Terminal cannot get on that list, but a tiny `.app`
+> bundle can. `wifiscope` shells out to it for scan data and gets
+> the real values back. Press `h` inside the TUI for the full
+> story.
+
+## Bindings
+
+| Key | Action |
+|-----|--------|
+| `q` | quit |
+| `p` | pause / resume polling |
+| `r` | force a rescan now (CoreWLAN ~5 s throttle still applies) |
+| `s` | cycle scan sort: by AP ↔ by signal |
+| `c` | force re-roam — cycle Wi-Fi off/on so macOS re-picks the strongest BSSID |
+| `h` | open / close the in-app help screen |
+
+`watch` and `once` subcommands run wifiscope in plain-text modes —
+useful for piping into a logger or for a one-shot diagnostic:
 
 ```bash
-uv run wifiscope          # Textual TUI dashboard (default)
-uv run wifiscope once     # one-shot snapshot, exit
-uv run wifiscope watch    # stream events as plain text until Ctrl+C
+uv run wifiscope once     # snapshot of current connection, exit
+uv run wifiscope watch    # streaming events until Ctrl+C
 ```
 
-In the TUI:
+## Configuration
 
-- top panel: current connection (AP name, SSID/BSSID, signal bar)
-- middle panel: nearby APs sorted by RSSI, your current one starred
-- bottom panel: roam log, tagged `[band switch on …]` or
-  `[inter-AP roam]`
-- bindings: `q` quit · `p` pause · `r` force rescan · `s` cycle sort
-  (signal / by AP) · `c` force re-roam (cycle WiFi power so macOS
-  re-runs auto-join and picks the strongest BSSID — same path as
-  click-menu-off / click-menu-on, works for both WPA personal and
-  802.1X Enterprise; fastest fix when your Mac is sticking to a
-  weak AP despite a stronger one being in range)
+### AP inventory
 
-### One-time helper grant (automatic on first launch)
-
-The Nearby APs panel needs Location Services permission to show each
-neighbour's SSID and BSSID; without it everything in the scan list
-comes back `(redacted)`. wifiscope handles this automatically on first
-launch:
-
-1. `uv run wifiscope`
-2. wifiscope detects the missing permission, builds the Swift helper
-   bundle (`helper/build.sh`, requires Xcode CLT) if needed, then
-   `open`s it so macOS shows its Location Services prompt.
-3. Click Allow. The helper window auto-closes; wifiscope's terminal
-   detects the grant within ~2 seconds and launches the TUI.
-
-The grant is persistent — subsequent runs go straight to the TUI.
-Ctrl+C during the wait skips the grant and starts the TUI with
-redacted scan rows. See [`helper/README.md`](helper/README.md) for
-manual control (custom install path, override via `WIFISCOPE_HELPER`,
-etc.).
-
-`watch` only prints when something meaningful changes — identity
-fields differ, RSSI moves ≥ 5 dBm, or a 10-second heartbeat fires —
-so it stays readable over long sessions, and is handy for piping
-into a logger.
-
-## Configure: AP inventory
-
-Most WiFi controllers (H3C, Aruba, Ubiquiti, Cisco, ASUS mesh, ...)
-only expose the AP-level **management MAC**, not the per-radio BSSIDs
-the AP actually broadcasts. List the mgmt MACs once; wifiscope derives
-radio attribution at runtime.
-
-Drop an `aps.yaml` at `~/.config/wifiscope/`:
+Most controllers (H3C, Aruba, Ubiquiti, Cisco, ASUS mesh, …) only
+expose AP-level **management MACs**, not the per-radio BSSIDs the
+APs actually broadcast. List the mgmt MACs once at
+`~/.config/wifiscope/aps.yaml`:
 
 ```yaml
 aps:
@@ -100,88 +105,92 @@ aps:
     mgmt_mac: 40:fe:95:8a:3c:07
   - name: 2F-living
     mgmt_mac: 40:fe:95:8a:3c:54
+  - name: 3F-attic
+    mgmt_mac: bc:22:47:ca:79:46
 ```
 
-Output then renders `2F-living (5G) (40:fe:95:8a:3c:58)` instead of
-the raw BSSID, and roam events read `[band switch on 2F-living: 5G
--> 2.4G]` or `[inter-AP roam]`. Override the config path with
-`WIFISCOPE_INVENTORY=/some/aps.yaml`.
+`wifiscope` then renders **`2F-living (5G)` (40:fe:95:8a:3c:58)** in
+place of the raw BSSID, and roam events read `[band switch on
+2F-living: 5G → 2.4G]` or `[inter-AP roam]`.
 
-For vendors that randomize per-radio MACs (rare; some Cisco Meraki
-SKUs), add a `radio_overrides` map; see [`aps.example.yaml`](aps.example.yaml).
+If your AP vendor randomises per-radio MACs (rare; some Cisco
+Meraki SKUs), add a `radio_overrides` map mapping specific BSSIDs
+to AP names. See [`aps.example.yaml`](aps.example.yaml).
 
-## How it works (design notes)
+Without any inventory file `wifiscope` still works — every BSSID
+gets an auto-clustered label like `?AB:CD:EF` so radios of the same
+chip group together visually.
 
-**Resolving an AP from a BSSID.** Two rules in order, both gated by a
+### Environment variables
+
+| Variable | Default | Effect |
+|---|---|---|
+| `WIFISCOPE_INVENTORY` | `~/.config/wifiscope/aps.yaml` | Path to the AP inventory YAML. |
+| `WIFISCOPE_HELPER` | searched in `/Applications`, `~/Applications`, repo `helper/` | Path to the `wifiscope-helper.app` bundle or its binary. |
+| `WIFISCOPE_SCAN_INTERVAL` | `7` | Seconds between scans. CoreWLAN throttles around 5 s, so values below ~6 yield empty scans every other call. Floor 3. |
+
+## macOS caveats
+
+**Some neighbours' SSIDs come back `(hidden)`.** That's the 802.11
+hidden-SSID bit — the AP is broadcasting normally, just with the
+SSID information element blanked. BSSID, channel, signal, and
+capabilities are all still visible. Hidden ≠ undetectable.
+
+**`Tx Rate` and `Max Link Speed` may diverge.** Apple's
+`transmitRate` (current data rate, can include frame aggregation)
+and `maximumLinkSpeed` (radio capability ceiling at the negotiated
+PHY/MCS/NSS) come from different CoreWLAN APIs; "current ≤ max" is
+not guaranteed. The Connection panel shows both with a footnote.
+
+**Without the helper, the Nearby APs scan list is fully redacted.**
+RSSI, channel, band, and width still come through, but every SSID
+shows `(redacted)` and every BSSID `(redacted)`. The Connection
+panel itself is unaffected — `wifiscope` reads SSID and BSSID for
+the *current* AP through a separate SCDynamicStore tunnel that
+macOS forgot to redact.
+
+**`disassociate()` is unreliable for forcing a roam.** Earlier
+versions of `wifiscope` used `iface.disassociate()` for the `c`
+binding; on 802.1X enterprise networks it would tear down the link
+and macOS would not auto-rejoin. Cycling power via
+`setPower(false)` then `setPower(true)` mirrors the WiFi-menu
+off/on path and reliably triggers full auto-join with Keychain
+credentials.
+
+## How it works
+
+This section is for the curious; everyday use does not require
+reading it.
+
+**Resolving an AP from a BSSID.** Two rules, both gated by a
 last-byte proximity check:
 
-1. **First five octets match + last-byte window.** Radios and VAPs
+1. *First five octets match + last-byte window.* Radios and VAPs
    are allocated as `mgmt + N` for small N (typically 1..6). When
-   several APs share an OUI block the first five octets alone are
-   not enough — e.g. an H3C controller assigning APs at
-   `…3c:07`, `…3c:15`, `…3c:54` would map every BSSID with the
-   common prefix to the first list entry. We require the BSSID's
-   last byte to fall within 8 above the AP's mgmt MAC last byte and
-   pick the closest one. Three APs in the same OUI now resolve
-   independently.
-2. **Octets 2..5 match + same window.** Some vendors — H3C in
-   particular — assign one OUI block to a chip's "user" SSIDs
-   (`40:fe:95:…`) and a sibling OUI block to the same chip's
-   "vendor-internal" SSIDs (`44:fe:95:…`). Octets 2..5 carry the
-   chip's serial bits and stay the same across both blocks, so this
-   rule reliably groups them. False-match probability against an
-   unrelated nearby AP is ~1/2³².
+   several APs share an OUI block (e.g. an H3C controller handing
+   out APs at `…3c:07`, `…3c:15`, `…3c:54`), the prefix alone is
+   ambiguous; we require the BSSID's last byte to fall within 8
+   above the AP's mgmt MAC last byte and pick the closest match.
+2. *Octets 2..5 match + same window.* Some vendors split a chip's
+   "user" SSIDs and "vendor-internal" SSIDs across sibling OUI
+   blocks (H3C uses `40:fe:95:…` and `44:fe:95:…`). Octets 2..5
+   carry the chip's serial bits and stay the same across both
+   blocks; this rule groups them under one AP. False-match
+   probability is ~1 / 2³².
 
-If neither rule fits a deployment (rare; some Cisco Meraki SKUs
-randomise per-radio MACs), explicit `radio_overrides` entries win
-above both rules.
+`radio_overrides` always wins above both rules.
 
-**Band labels (2.4G / 5G).** Derived from the channel number, never
-the MAC: 1–14 → 2.4G, 32–177 → 5G. Vendor-independent.
+**Channel comes from `SCDynamicStore`'s top-level `CHANNEL` field**,
+not from `CWInterface.wlanChannel().channelNumber()`. macOS does
+periodic background scans while associated, and a 1 Hz CoreWLAN
+poll catches the radio mid-scan often enough that the channel
+appears to oscillate. The `SCDynamicStore` field reflects the OS's
+notion of the radio's current associated channel and is stable.
 
-**SCDynamicStore fallback for the connection's SSID / BSSID.** macOS
-14.4+ redacts CoreWLAN's `bssid()` / `ssid()` to `None` unless the
-host process has Location Services permission. On macOS 26 terminal
-apps (Warp, Terminal.app, iTerm) often do not appear in the Location
-Services list at all — there is no "+" to add them. wifiscope reads
-`CachedScanRecord` from SCDynamicStore at
-`State:/Network/Interface/<iface>/AirPort`; the nested NSKeyedArchiver
-bplist describing the currently associated AP keeps its real BSSID
-and SSID even though the dictionary's top-level fields are also
-redacted. Almost certainly an Apple oversight that may be closed in
-a future release.
-
-**Swift helper sidecar for the scan list.** The same TCC redaction
-hits every neighbour in the scan list, and SCDynamicStore has no
-neighbour-list equivalent to tunnel through. The fix is a tiny
-Cocoa `.app` (`helper/`) that exists solely to own Location
-Services. When installed and granted, `MacOSWiFiBackend.scan()`
-shells out to it as a subprocess and gets unredacted JSON for every
-visible AP. Without the helper the backend silently falls back to
-direct CoreWLAN — RSSI / channel / band still work, identity comes
-back redacted.
-
-**Channel from the cache, not the radio, in fallback mode.** macOS
-does periodic background scans while associated. A 1 Hz CoreWLAN
-poll catches the radio mid-scan often enough that
-`wlanChannel().channelNumber()` oscillates between the AP's real
-channel and the scan target. `CachedScanRecord` describes the AP
-itself, so its channel is stable; we use it whenever the SCDynamicStore
-fallback is active.
-
-**Pluggable backend.** `WiFiBackend` is an ABC with `get_connection`,
-`scan`, and `permission_state` methods; macOS lives in
-`MacOSWiFiBackend`. A future Linux backend (`nl80211` / `iw`) drops
-in without touching the polling, alias, or UI layers.
-
-**`Tx Rate` vs `Max Link Speed`.** Apple's `transmitRate` and
-`maximumLinkSpeed` use different definitions and can diverge —
-`transmitRate` reports the data link rate at the moment of polling
-(can include frame aggregation), while `maximumLinkSpeed` is the
-radio capability ceiling derived from the negotiated PHY/MCS/NSS at
-the current channel width. Reading "current ≤ max" is therefore not
-guaranteed; we expose both with a footnote in the Connection panel
-rather than hide the discrepancy.
+**Pluggable backend.** `WiFiBackend` is an ABC with
+`get_connection`, `scan`, and `permission_state` methods; macOS
+lives in `MacOSWiFiBackend`. A future Linux backend (`nl80211` /
+`iw`) drops in without touching the polling, alias, or UI layers.
 
 ## Development
 
@@ -193,15 +202,26 @@ uv run pytest                 # runs the full test suite
 [`tests/TESTING.md`](tests/TESTING.md) is the canonical test plan —
 every automated test corresponds to a row in that document, and
 changes to test scenarios start there before touching the test
-files. Read it first when reviewing a PR or extending coverage.
+files. **Read it first** when reviewing a PR or extending coverage.
 
 GitHub Actions runs the suite on every push and pull request to
 `main`, against Python 3.11 / 3.12 / 3.13 on macOS. CoreWLAN and
 SCDynamicStore are not exercised live in CI — those surfaces are
 mocked at the subprocess and dynamic-store boundaries.
 
-See [CHANGELOG.md](CHANGELOG.md) for the version-by-version log.
+See [`CHANGELOG.md`](CHANGELOG.md) for the version-by-version log.
+
+## Roadmap
+
+- **CSV / JSONL session logging** — a `wifiscope log` mode that
+  appends every connection / scan / roam event to a file for later
+  analysis.
+- **Trend graphs in the TUI** — RSSI over time, time-on-AP per BSSID.
+- **Linux backend** — `nl80211` via `pyroute2` or shelling out to
+  `iw scan`.
+- **Optional menu-bar app** for ambient awareness without keeping a
+  terminal open.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [`LICENSE`](LICENSE).
