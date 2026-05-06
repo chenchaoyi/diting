@@ -10,6 +10,39 @@ behaviours between releases.
 
 _No unreleased changes._
 
+## [0.3.0] — 2026-05-06
+
+The "make dense Wi-Fi scans understandable" release.
+
+### Added
+- **Diagnostics panel** with visible BSSID totals, band distribution,
+  hidden-in-this-scan count, open/no-password BSSID count, wide
+  2.4 GHz channel warnings, country-code spread, current-channel
+  peer count, least-crowded channel hints, current-link health, and
+  a simple roam score.
+- **Same-SSID roam candidate scoring**. wifiscope now compares the
+  current BSSID with clearly better same-name BSSIDs and explains
+  when pressing `c` may help the Mac re-roam.
+- **Wi-Fi Basics modal** on `b`, explaining SSID, BSSID, AP host,
+  RSSI, noise/SNR, band, channel, width, security, roam, and roam
+  score in plain language.
+- **Scrollable Nearby BSSIDs panel**, so dense office scans can be
+  inspected beyond the visible terminal height.
+- **Security badges** in scan rows, including an obvious `OPEN`
+  marker for no-password BSSIDs.
+- **Security decoding** from the macOS helper scan payload.
+
+### Changed
+- Nearby scan terminology now uses **BSSID** instead of AP/network
+  where the underlying row is one radio identity.
+- The scan-list `ch` column is now `channel`, with wider spacing
+  around `band`.
+- Diagnostics wording distinguishes **hidden in this scan** from
+  visible BSSID totals, since hidden SSID beacons can vary between
+  CoreWLAN scan snapshots.
+- Least-crowded channel hints say `(no AP heard)` when the suggested
+  channel was absent from the current scan sample.
+
 ## [0.2.0] — 2026-05-06
 
 The "macOS scan list is no longer redacted, and the tool grew up"

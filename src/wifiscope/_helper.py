@@ -32,6 +32,17 @@ from .models import ScanResult
 # straight through so we can decode them once on this side.
 _BAND = {0: None, 1: "2.4 GHz", 2: "5 GHz", 3: "6 GHz"}
 _WIDTH_MHZ = {0: None, 1: 20, 2: 40, 3: 80, 4: 160}
+_SECURITY = {
+    -1: None,
+    0: "Open",
+    1: "WEP",
+    2: "WPA Personal",
+    4: "WPA2 Personal",
+    7: "WPA Enterprise",
+    9: "WPA2 Enterprise",
+    11: "WPA3 Personal",
+    12: "WPA3 Enterprise",
+}
 
 
 def find_helper() -> str | None:
@@ -109,7 +120,7 @@ def scan(binary: str, timeout: float = 12.0) -> tuple[list[ScanResult], dict]:
                 channel_width_mhz=_WIDTH_MHZ.get(net.get("channel_width_raw") or 0),
                 channel_band=_BAND.get(net.get("channel_band_raw") or 0),
                 phy_mode=None,   # CWNetwork does not expose activePHYMode
-                security=None,   # helper only sends a coarse probe, not a label
+                security=_SECURITY.get(net.get("security_raw", -1)),
                 timestamp=ts,
                 country_code=net.get("country_code") or None,
             )

@@ -23,7 +23,7 @@ from rich.console import Group
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Center, Vertical
+from textual.containers import Center, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, RichLog, Static
 
@@ -131,22 +131,28 @@ class ConnectionPanel(Static):
             self.update(Group(header, Text(""), body, signal_line))
 
 
-class ScanPanel(Static):
+class ScanPanel(VerticalScroll):
     DEFAULT_CSS = """
     ScanPanel {
         height: 1fr;
         border: heavy $accent;
         padding: 0 1;
     }
+    ScanPanel > #scan-body {
+        height: auto;
+    }
     """
 
+    def compose(self) -> ComposeResult:
+        yield Static(Text("(scanning...)", style="dim italic"), id="scan-body")
+
     def on_mount(self) -> None:
-        self.border_title = "Nearby APs"
-        self.update(Text("(scanning...)", style="dim italic"))
+        self.border_title = "Nearby BSSIDs"
 
     def update_scan(
         self,
         results: list[ScanResult],
+        current: Connection | None,
         current_bssid: str | None,
         scanned_at: float | None,
         inv: NetworkInventory,
@@ -159,10 +165,13 @@ class ScanPanel(Static):
         identity = "  · identity TCC-redacted" if all_redacted else ""
         sort_label = f"  · sort: {sort_mode}"
         self.border_title = (
-            f"Nearby APs ({len(results)}){ago}{identity}{sort_label}"
+            f"Nearby BSSIDs ({len(results)}){ago}{identity}{sort_label}"
         )
         if not results:
-            self.update(Text("(no APs from last scan — likely throttle, retrying)", style="dim italic"))
+            self.query_one("#scan-body", Static).update(
+                Text("(no APs from last scan — likely throttle, retrying)",
+                     style="dim italic")
+            )
             return
 
         lines: list[Text] = [_header_line()]
@@ -189,7 +198,33 @@ class ScanPanel(Static):
             )
             for r in current_rows + other_rows:
                 lines.append(_scan_line(r, current_bssid, inv))
-        self.update(Group(*lines))
+        self.query_one("#scan-body", Static).update(Group(*lines))
+
+
+class EnvironmentPanel(Static):
+    DEFAULT_CSS = """
+    EnvironmentPanel {
+        height: auto;
+        min-height: 7;
+        border: heavy $accent;
+        padding: 0 1;
+    }
+    """
+
+    def on_mount(self) -> None:
+        self.border_title = "Diagnostics"
+        self.update(Text("(waiting for scan data...)", style="dim italic"))
+
+    def update_environment(
+        self,
+        results: list[ScanResult],
+        current: Connection | None,
+    ) -> None:
+        self.border_title = "Diagnostics"
+        if not results:
+            self.update(Text("(waiting for scan data...)", style="dim italic"))
+            return
+        self.update(Group(*_environment_lines(results, current)))
 
 
 class HelpScreen(ModalScreen):
@@ -270,6 +305,7 @@ def _help_content() -> Text:
     line("c", "force re-roam (cycle WiFi off/on so the OS re-picks the")
     body.append(" " * 8 + "strongest BSSID — fixes sticky associations)\n")
     line("h", "toggle this help")
+    line("b", "open Wi-Fi basics for SSID, BSSID, channel, band, security")
 
     section("Inventory")
     body.append(
@@ -315,6 +351,112 @@ def _help_content() -> Text:
     )
     body.append("\n")
     body.append("Esc or h to close", style="dim italic")
+    return body
+
+
+class BasicsScreen(ModalScreen):
+    """Short glossary for users who are not Wi-Fi specialists."""
+
+    BINDINGS = [
+        Binding("escape,b,q", "app.pop_screen", "Close"),
+    ]
+
+    DEFAULT_CSS = """
+    BasicsScreen {
+        align: center middle;
+    }
+    BasicsScreen > #basics-box {
+        width: 84;
+        height: auto;
+        max-height: 90%;
+        border: heavy $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+    BasicsScreen #basics-box Static {
+        height: auto;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(_basics_content(), id="basics-content"),
+            id="basics-box",
+        )
+
+
+def _basics_content() -> Text:
+    body = Text(no_wrap=False)
+
+    def term(name: str, desc: str) -> None:
+        body.append(f"\n{name}\n", style="bold yellow")
+        body.append("  " + desc + "\n")
+
+    body.append("Wi-Fi Basics", style="bold cyan")
+    body.append("  ·  the words wifiscope uses in the dashboard\n", style="dim")
+
+    term(
+        "SSID",
+        "The Wi-Fi name people choose from, such as Meituan or Guest. "
+        "Many access points can broadcast the same SSID.",
+    )
+    term(
+        "BSSID",
+        "The radio identity behind one SSID on one AP/radio. A single "
+        "physical AP may expose many BSSIDs when it broadcasts several "
+        "SSIDs on 2.4 GHz and 5 GHz.",
+    )
+    term(
+        "AP host",
+        "wifiscope's best guess for the physical access point that owns "
+        "a BSSID. Inventory names are most accurate; ? labels are inferred "
+        "from MAC address patterns.",
+    )
+    term(
+        "RSSI / Signal",
+        "Received signal strength. Less negative is stronger: -45 dBm is "
+        "excellent, -65 dBm is usable, and around -75 dBm is weak.",
+    )
+    term(
+        "Noise / SNR",
+        "Noise is background radio energy. SNR is signal minus noise; "
+        "higher is better. Low SNR can cause retries even when the AP is visible.",
+    )
+    term(
+        "Band",
+        "The radio range: 2.4 GHz reaches farther but is crowded; 5 GHz is "
+        "faster with shorter range; 6 GHz is newer, cleaner, and shorter range.",
+    )
+    term(
+        "Channel",
+        "The slice of a band the AP is using. APs on the same or nearby "
+        "channels share airtime, so a quieter channel can help.",
+    )
+    term(
+        "Width",
+        "How much spectrum the AP uses, such as 20/40/80 MHz. Wider can be "
+        "faster but also easier to interfere with, especially on 2.4 GHz.",
+    )
+    term(
+        "Security",
+        "OPEN means no Wi-Fi-layer password/encryption. ENT means enterprise "
+        "authentication. WPA2/WPA3 are password or modern secured modes.",
+    )
+    term(
+        "Roam",
+        "When the Mac moves from one BSSID to another. Same SSID does not "
+        "guarantee the Mac picked the strongest or best AP.",
+    )
+    term(
+        "Roam score",
+        "A simple 0-100 guide, not a standard. It rewards strong RSSI, good "
+        "SNR, cleaner bands, and quieter channels, and penalizes weak signal, "
+        "busy channels, open networks, and security mismatches. A better "
+        "candidate is shown only when the same SSID scores clearly higher.",
+    )
+
+    body.append("\n")
+    body.append("Esc or b to close", style="dim italic")
     return body
 
 
@@ -483,6 +625,422 @@ def _fmt(value, suffix: str = "") -> str:
     return f"{value}{suffix}"
 
 
+def _environment_lines(
+    results: list[ScanResult], current: Connection | None
+) -> list[Text]:
+    return [
+        _visible_networks_line(results),
+        _environment_warnings_line(results, current),
+        _recommendations_line(results),
+        _health_line(results, current),
+        _score_line(results, current),
+    ]
+
+
+def _visible_networks_line(results: list[ScanResult]) -> Text:
+    counts = _band_counts(results)
+    hidden = sum(1 for r in results if not r.ssid and not (r.ssid is None and r.bssid is None))
+    redacted = sum(1 for r in results if r.ssid is None and r.bssid is None)
+    countries = _country_codes(results)
+
+    line = Text()
+    line.append("Visible BSSIDs  ", style="bold dim")
+    line.append(
+        f"{len(results)} total  "
+        f"2.4 GHz: {counts['2.4G']}  "
+        f"5 GHz: {counts['5G']}  "
+        f"6 GHz: {counts['6G']}",
+        style="white",
+    )
+    if hidden:
+        line.append(f"  hidden in this scan: {hidden}", style="dim")
+    if redacted:
+        line.append(f"  redacted: {redacted}", style="dim italic")
+    if countries:
+        style = "yellow" if len(countries) > 1 else "dim"
+        line.append(f"  country codes: {'/'.join(countries)}", style=style)
+    return line
+
+
+def _environment_warnings_line(
+    results: list[ScanResult], current: Connection | None
+) -> Text:
+    open_count = sum(1 for r in results if r.security == "Open")
+    ht40_2g = sum(
+        1 for r in results
+        if _band_bucket(r) == "2.4G" and (r.channel_width_mhz or 0) >= 40
+    )
+    current_load = _current_channel_load(results, current)
+    warnings: list[tuple[str, str]] = []
+    if open_count:
+        warnings.append((f"{open_count} open/no-password BSSIDs", "yellow"))
+    if ht40_2g:
+        warnings.append((f"{ht40_2g} wide 2.4 GHz BSSIDs", "yellow"))
+    if current_load is not None:
+        style = "yellow" if current_load >= 5 else "dim"
+        warnings.append((f"{current_load} other BSSIDs on your channel", style))
+    if len(_country_codes(results)) > 1:
+        warnings.append(("mixed country codes nearby", "yellow"))
+
+    line = Text()
+    line.append("Things to notice  ", style="bold dim")
+    if not warnings:
+        line.append("No obvious environment warnings from the scan.", style="green")
+        return line
+    for i, (msg, style) in enumerate(warnings):
+        if i:
+            line.append("  ·  ", style="dim")
+        line.append(msg, style=style)
+    return line
+
+
+def _recommendations_line(results: list[ScanResult]) -> Text:
+    rec_2g = _recommended_channel(results, "2.4G")
+    rec_5g = _recommended_channel(results, "5G")
+    line = Text()
+    line.append("Least crowded channels  ", style="bold dim")
+    line.append("Estimated from the scan.", style="dim")
+    if rec_2g is not None:
+        line.append(_channel_hint("2.4 GHz", rec_2g, results))
+    if rec_5g is not None:
+        line.append(_channel_hint("5 GHz", rec_5g, results))
+    return line
+
+
+def _channel_hint(label: str, channel: int, results: list[ScanResult]) -> Text:
+    text = Text()
+    text.append(f"  {label}: ch{channel}", style="cyan")
+    if not any(r.channel == channel for r in results):
+        text.append(" (no AP heard)", style="dim")
+    return text
+
+
+def _environment_line(results: list[ScanResult], current: Connection | None) -> Text:
+    """Compact Wireless-Diagnostics-style summary of the visible RF scene."""
+    counts = _band_counts(results)
+    hidden = sum(1 for r in results if not r.ssid and not (r.ssid is None and r.bssid is None))
+    redacted = sum(1 for r in results if r.ssid is None and r.bssid is None)
+    open_count = sum(1 for r in results if r.security == "Open")
+    ht40_2g = sum(
+        1 for r in results
+        if _band_bucket(r) == "2.4G" and (r.channel_width_mhz or 0) >= 40
+    )
+    countries = _country_codes(results)
+    rec_2g = _recommended_channel(results, "2.4G")
+    rec_5g = _recommended_channel(results, "5G")
+    country_part = "CC " + (
+        "/".join(countries) if countries else "?"
+    )
+    current_load = _current_channel_load(results, current)
+
+    line = Text()
+    line.append("Env  ", style="bold dim")
+    line.append(
+        f"{len(results)} BSSIDs  "
+        f"2.4G {counts['2.4G']}  5G {counts['5G']}  6G {counts['6G']}  "
+        f"hidden in this scan: {hidden}",
+        style="white",
+    )
+    if redacted:
+        line.append(f"  redacted {redacted}", style="dim italic")
+    if open_count:
+        line.append(f"  open {open_count}", style="yellow")
+    if ht40_2g:
+        line.append(f"  2.4G HT40 {ht40_2g}", style="yellow")
+    line.append(f"  {country_part}", style="yellow" if len(countries) > 1 else "dim")
+    if current_load is not None:
+        line.append(f"  current ch peers {current_load}", style="dim")
+    if rec_2g is not None or rec_5g is not None:
+        line.append("  best", style="dim")
+        if rec_2g is not None:
+            line.append(f" 2.4G ch{rec_2g}", style="cyan")
+        if rec_5g is not None:
+            line.append(f" 5G ch{rec_5g}", style="cyan")
+    return line
+
+
+def _health_line(results: list[ScanResult], current: Connection | None) -> Text:
+    """Explain the current association in terms a human can act on."""
+    line = Text()
+    line.append("Current link  ", style="bold dim")
+    if current is None:
+        line.append("not associated", style="dim italic")
+        return line
+
+    issues: list[tuple[str, str]] = []
+    if current.rssi_dbm is not None:
+        if current.rssi_dbm <= -75:
+            issues.append((f"weak signal {current.rssi_dbm} dBm", "red"))
+        elif current.rssi_dbm <= -67:
+            issues.append((f"fair signal {current.rssi_dbm} dBm", "yellow"))
+    if current.rssi_dbm is not None and current.noise_dbm is not None:
+        snr = current.rssi_dbm - current.noise_dbm
+        if snr < 25:
+            issues.append((f"SNR {snr} dB", "yellow"))
+
+    better = _best_same_ssid_candidate(results, current)
+    if better is not None:
+        candidate, delta = better
+        label = _fmt(candidate.bssid)
+        if candidate.channel is not None:
+            label += f" ch{candidate.channel}"
+        issues.append((f"stronger same-name AP nearby: +{delta} dB ({label})", "bold cyan"))
+
+    if not issues:
+        line.append("Looks OK", style="green")
+        return line
+    for i, (msg, style) in enumerate(issues):
+        if i:
+            line.append("  ")
+        line.append(msg, style=style)
+    if better is not None:
+        line.append("  press c to re-roam", style="dim")
+    return line
+
+
+def _score_line(results: list[ScanResult], current: Connection | None) -> Text:
+    line = Text()
+    line.append("Roam score  ", style="bold dim")
+    if current is None:
+        line.append("not associated", style="dim italic")
+        return line
+    current_score = _link_score(current, results, baseline=current)
+    candidate = _best_roam_candidate(results, current)
+    line.append(f"current {current_score.score}/100", style=_score_style(current_score.score))
+    if current_score.reasons:
+        line.append(f" ({', '.join(current_score.reasons[:2])})", style="dim")
+    if candidate is None:
+        line.append("  ·  no clearly better same-SSID BSSID", style="dim")
+        return line
+    row, score = candidate
+    delta = score.score - current_score.score
+    line.append(
+        f"  ·  better candidate {score.score}/100",
+        style=_score_style(score.score),
+    )
+    line.append(f" (+{delta})", style="cyan")
+    if row.channel is not None:
+        line.append(f" ch{row.channel}", style="dim")
+    if row.bssid:
+        line.append(f" {row.bssid}", style="dim")
+    if score.reasons:
+        line.append(f" ({', '.join(score.reasons[:2])})", style="dim")
+    line.append("  press c to re-roam", style="dim")
+    return line
+
+
+@dataclass(frozen=True, slots=True)
+class _LinkScore:
+    score: int
+    reasons: tuple[str, ...]
+
+
+def _link_score(
+    link: Connection | ScanResult,
+    results: list[ScanResult],
+    *,
+    baseline: Connection,
+) -> _LinkScore:
+    score = 50
+    reasons: list[str] = []
+    rssi = link.rssi_dbm
+    if rssi is None:
+        reasons.append("no signal reading")
+    elif rssi >= -55:
+        score += 30
+        reasons.append("strong signal")
+    elif rssi >= -67:
+        score += 20
+        reasons.append("good signal")
+    elif rssi >= -75:
+        score += 8
+        reasons.append("usable signal")
+    else:
+        score -= 15
+        reasons.append("weak signal")
+
+    noise = link.noise_dbm
+    if rssi is not None and noise is not None:
+        snr = rssi - noise
+        if snr >= 35:
+            score += 10
+        elif snr >= 25:
+            score += 5
+        else:
+            score -= 8
+            reasons.append("low SNR")
+
+    band = _band_bucket(link)
+    if band == "6G":
+        score += 8
+        reasons.append("cleaner 6 GHz band")
+    elif band == "5G":
+        score += 5
+        reasons.append("5 GHz")
+    elif band == "2.4G":
+        score -= 5
+        reasons.append("2.4 GHz crowding risk")
+
+    channel_load = _channel_load(results, link.channel, exclude_bssid=link.bssid)
+    if channel_load >= 8:
+        score -= 10
+        reasons.append("busy channel")
+    elif channel_load >= 4:
+        score -= 5
+        reasons.append("some channel sharing")
+
+    if link.security and baseline.security and link.security != baseline.security:
+        score -= 15
+        reasons.append("different security")
+    elif link.security == "Open":
+        score -= 10
+        reasons.append("open network")
+
+    return _LinkScore(score=max(0, min(100, score)), reasons=tuple(reasons))
+
+
+def _best_roam_candidate(
+    results: list[ScanResult],
+    current: Connection,
+    *,
+    min_score_gain: int = 10,
+) -> tuple[ScanResult, _LinkScore] | None:
+    if not current.ssid:
+        return None
+    current_score = _link_score(current, results, baseline=current)
+    cur_bssid = (current.bssid or "").lower()
+    candidates = [
+        r for r in results
+        if r.ssid == current.ssid
+        and r.bssid
+        and r.bssid.lower() != cur_bssid
+    ]
+    if not candidates:
+        return None
+    scored = [(r, _link_score(r, results, baseline=current)) for r in candidates]
+    best = max(scored, key=lambda item: item[1].score)
+    if best[1].score - current_score.score < min_score_gain:
+        return None
+    return best
+
+
+def _score_style(score: int) -> str:
+    if score >= 75:
+        return "green"
+    if score >= 55:
+        return "yellow"
+    return "red"
+
+
+def _band_counts(results: list[ScanResult]) -> dict[str, int]:
+    counts = {"2.4G": 0, "5G": 0, "6G": 0}
+    for r in results:
+        band = _band_bucket(r)
+        if band in counts:
+            counts[band] += 1
+    return counts
+
+
+def _country_codes(results: list[ScanResult]) -> list[str]:
+    return sorted({r.country_code.upper() for r in results if r.country_code})
+
+
+def _band_bucket(r: ScanResult) -> str | None:
+    label = band_label(r.channel)
+    if label is not None:
+        return label
+    if r.channel_band == "6 GHz":
+        return "6G"
+    return None
+
+
+def _current_channel_load(
+    results: list[ScanResult], current: Connection | None
+) -> int | None:
+    if current is None or current.channel is None:
+        return None
+    return _channel_load(results, current.channel, exclude_bssid=current.bssid)
+
+
+def _channel_load(
+    results: list[ScanResult],
+    channel: int | None,
+    *,
+    exclude_bssid: str | None = None,
+) -> int:
+    if channel is None:
+        return 0
+    exclude = (exclude_bssid or "").lower()
+    return sum(
+        1 for r in results
+        if r.channel == channel
+        and not (r.bssid and r.bssid.lower() == exclude)
+    )
+
+
+def _recommended_channel(results: list[ScanResult], band: str) -> int | None:
+    """Pick a low-observed-load channel from common non-DFS choices.
+
+    This is scan-based occupancy, not Apple's private CCA measurement.
+    Stronger APs cost more; for 2.4 GHz adjacent channels also count.
+    """
+    seen = [r for r in results if _band_bucket(r) == band and r.channel is not None]
+    if band == "2.4G":
+        candidates = [1, 6, 11]
+    else:
+        # Include channels actually visible in the scan so the hint
+        # feels connected to the table, then add common non-DFS choices
+        # for nearby open alternatives.
+        visible = sorted({r.channel for r in seen if r.channel is not None})
+        candidates = sorted({*visible, 36, 40, 44, 48, 149, 153, 157, 161})
+    if not seen:
+        return candidates[0] if candidates else None
+
+    def score(ch: int) -> int:
+        total = 0
+        for r in seen:
+            assert r.channel is not None
+            distance = abs(r.channel - ch)
+            if band == "2.4G" and distance > 4:
+                continue
+            if band != "2.4G" and distance != 0:
+                continue
+            weight = 1
+            if r.rssi_dbm is not None:
+                if r.rssi_dbm >= -65:
+                    weight = 4
+                elif r.rssi_dbm >= -75:
+                    weight = 2
+            total += weight
+        return total
+
+    return min(candidates, key=lambda ch: (score(ch), ch))
+
+
+def _best_same_ssid_candidate(
+    results: list[ScanResult],
+    current: Connection,
+    *,
+    threshold_db: int = 15,
+) -> tuple[ScanResult, int] | None:
+    if not current.ssid or current.rssi_dbm is None:
+        return None
+    cur_bssid = (current.bssid or "").lower()
+    candidates = [
+        r for r in results
+        if r.ssid == current.ssid
+        and r.rssi_dbm is not None
+        and not (r.bssid and r.bssid.lower() == cur_bssid)
+    ]
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda r: r.rssi_dbm or -200)
+    delta = (best.rssi_dbm or -200) - current.rssi_dbm
+    if delta < threshold_db:
+        return None
+    return best, delta
+
+
 def _signal_bar(rssi: int | None, length: int = 12) -> Text:
     if rssi is None:
         return Text("░" * length, style="dim")
@@ -511,10 +1069,11 @@ def _rssi_color(rssi: int) -> str:
 
 _COL_RSSI = 4
 _COL_SIGNAL = 8
-_COL_CH = 4
+_COL_CH = 8
 _COL_BAND = 4
 _COL_AP = 18
 _COL_SSID = 22
+_COL_SEC = 7
 _COL_BSSID = 17
 _COL_WIDTH = 6
 
@@ -523,9 +1082,10 @@ def _header_line() -> Text:
     h = Text(style="bold dim")
     h.append(
         f" {'★':<2}{'RSSI':>{_COL_RSSI}}  {'signal':<{_COL_SIGNAL}}  "
-        f"{'ch':<{_COL_CH}}{'band':<{_COL_BAND}}  "
+        f"{'channel':<{_COL_CH}}  {'band':<{_COL_BAND}}  "
         f"{'AP host':<{_COL_AP}}  {'SSID':<{_COL_SSID}}  "
-        f"{'BSSID':<{_COL_BSSID}}  {'width':<{_COL_WIDTH}}"
+        f"{'security':<{_COL_SEC}}  {'BSSID':<{_COL_BSSID}}  "
+        f"{'width':<{_COL_WIDTH}}"
     )
     return h
 
@@ -547,6 +1107,7 @@ def _scan_line(r: ScanResult, current_bssid: str | None, inv: NetworkInventory) 
         ap_text, ap_style = "(redacted)", "dim italic"
         ssid_text, ssid_style = "(redacted)", "dim italic"
         bssid_text, bssid_style = "(redacted)", "dim italic"
+        security_text, security_style = "?", "dim"
     else:
         ap_name = inv.resolve(r.bssid)
         if ap_name is not None:
@@ -565,6 +1126,7 @@ def _scan_line(r: ScanResult, current_bssid: str | None, inv: NetworkInventory) 
         ssid_style = "white" if r.ssid else "dim italic"
         bssid_text = r.bssid or "???"
         bssid_style = "dim"
+        security_text, security_style = _security_badge(r.security)
 
     # band display uses the short form (2.4G / 5G) derived from the
     # channel number — fixed width 4 keeps subsequent columns aligned.
@@ -577,16 +1139,33 @@ def _scan_line(r: ScanResult, current_bssid: str | None, inv: NetworkInventory) 
     line.append(f"{r.rssi_dbm if r.rssi_dbm is not None else '?':>{_COL_RSSI}}  ", style=rssi_color)
     line.append(_signal_bar(r.rssi_dbm, length=_COL_SIGNAL))
     line.append("  ")
-    line.append(f"{r.channel if r.channel is not None else '?':<{_COL_CH}}", style="white")
+    line.append(f"{r.channel if r.channel is not None else '?':<{_COL_CH}}  ", style="white")
     line.append(f"{band_short:<{_COL_BAND}}  ", style="white")
     line.append(f"{ap_text[:_COL_AP]:<{_COL_AP}}  ", style=ap_style)
     line.append(f"{ssid_text[:_COL_SSID]:<{_COL_SSID}}  ", style=ssid_style)
+    line.append(f"{security_text:<{_COL_SEC}}  ", style=security_style)
     line.append(f"{bssid_text:<{_COL_BSSID}}  ", style=bssid_style)
     width_str = f"{r.channel_width_mhz}MHz" if r.channel_width_mhz else "?"
     line.append(f"{width_str:<{_COL_WIDTH}}", style="white")
     if is_current:
         line.stylize("on grey15")
     return line
+
+
+def _security_badge(security: str | None) -> tuple[str, str]:
+    if security == "Open":
+        return "OPEN", "bold yellow"
+    if security is None:
+        return "?", "dim"
+    if "Enterprise" in security:
+        return "ENT", "dim"
+    if "WPA3" in security:
+        return "WPA3", "dim"
+    if "WPA2" in security:
+        return "WPA2", "dim"
+    if "WPA" in security:
+        return "WPA", "dim"
+    return security[:_COL_SEC], "dim"
 
 
 # ---------- app ----------
@@ -602,6 +1181,7 @@ class WifiScopeApp(App):
         Binding("s", "cycle_sort", "Sort"),
         Binding("c", "reroam", "Re-roam"),
         Binding("h", "show_help", "Help"),
+        Binding("b", "show_basics", "Basics"),
     ]
 
     def __init__(
@@ -640,6 +1220,7 @@ class WifiScopeApp(App):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield ConnectionPanel(id="conn")
+        yield EnvironmentPanel(id="env")
         yield ScanPanel(id="scan")
         yield RoamLogPanel(id="roam")
         yield Footer()
@@ -673,8 +1254,13 @@ class WifiScopeApp(App):
 
     def _refresh_scan_panel(self) -> None:
         merged = _merge_current(self._cached_scan, self._latest_connection)
+        self.query_one("#env", EnvironmentPanel).update_environment(
+            merged,
+            self._latest_connection,
+        )
         self.query_one("#scan", ScanPanel).update_scan(
             merged,
+            self._latest_connection,
             self._latest_bssid,
             self._last_successful_scan_at,
             self._inv,
@@ -697,6 +1283,9 @@ class WifiScopeApp(App):
 
     def action_show_help(self) -> None:
         self.push_screen(HelpScreen())
+
+    def action_show_basics(self) -> None:
+        self.push_screen(BasicsScreen())
 
     def action_reroam(self) -> None:
         """Force a fresh association so the OS reselects the best BSSID.

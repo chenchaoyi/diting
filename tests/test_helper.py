@@ -88,6 +88,7 @@ def test_scan_v2_returns_networks_and_iface_meta():
     assert r.channel == 48
     assert r.channel_band == "5 GHz"
     assert r.channel_width_mhz == 80
+    assert r.security == "WPA2 Personal"
     assert meta["country_code"] == "CN"
     assert meta["hardware_address"] == "84:2f:57:9b:15:59"
 

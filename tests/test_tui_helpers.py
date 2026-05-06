@@ -11,7 +11,19 @@ import pytest
 
 from wifiscope.models import Connection, ScanResult
 from wifiscope.network import APEntry, NetworkInventory
-from wifiscope.tui import _group_by_ap, _merge_current
+from wifiscope.tui import (
+    _best_same_ssid_candidate,
+    _channel_hint,
+    _environment_line,
+    _group_by_ap,
+    _health_line,
+    _link_score,
+    _merge_current,
+    _score_line,
+    _recommended_channel,
+    _scan_line,
+    _security_badge,
+)
 
 
 def _conn(bssid="40:fe:95:89:c7:e3", ssid="tedo_5G", rssi=-60, channel=48):
@@ -23,11 +35,21 @@ def _conn(bssid="40:fe:95:89:c7:e3", ssid="tedo_5G", rssi=-60, channel=48):
     )
 
 
-def _scan(bssid, ssid="x", rssi=-70, channel=36):
+def _scan(
+    bssid,
+    ssid="x",
+    rssi=-70,
+    channel=36,
+    *,
+    width=20,
+    security=None,
+    country_code=None,
+):
     return ScanResult(
         ssid=ssid, bssid=bssid, rssi_dbm=rssi, noise_dbm=-94,
-        channel=channel, channel_width_mhz=20, channel_band="5 GHz",
-        phy_mode=None, security=None, timestamp=datetime.now(),
+        channel=channel, channel_width_mhz=width, channel_band="5 GHz",
+        phy_mode=None, security=security, timestamp=datetime.now(),
+        country_code=country_code,
     )
 
 
@@ -161,3 +183,125 @@ def test_group_by_ap_unaliased_uses_cluster_label():
 
 def test_group_by_ap_empty_input():
     assert _group_by_ap([], current_bssid=None, inv=INVENTORY) == []
+
+
+# --- environment / health summaries ---------------------------------
+
+def test_best_same_ssid_candidate_requires_meaningful_delta():
+    conn = _conn(bssid="aa:aa:aa:aa:aa:01", ssid="office", rssi=-75)
+    rows = [
+        _scan("aa:aa:aa:aa:aa:01", ssid="office", rssi=-75),
+        _scan("aa:aa:aa:aa:aa:02", ssid="office", rssi=-63),
+        _scan("aa:aa:aa:aa:aa:03", ssid="guest", rssi=-40),
+    ]
+    assert _best_same_ssid_candidate(rows, conn) is None
+    rows[1] = _scan("aa:aa:aa:aa:aa:02", ssid="office", rssi=-55)
+    best = _best_same_ssid_candidate(rows, conn)
+    assert best is not None
+    assert best[0].bssid == "aa:aa:aa:aa:aa:02"
+    assert best[1] == 20
+
+
+def test_recommended_channel_prefers_less_busy_common_channel():
+    rows = [
+        _scan("aa:aa:aa:aa:aa:01", channel=1, rssi=-50),
+        _scan("aa:aa:aa:aa:aa:02", channel=6, rssi=-80),
+        _scan("aa:aa:aa:aa:aa:03", channel=36, rssi=-50),
+        _scan("aa:aa:aa:aa:aa:04", channel=36, rssi=-60),
+    ]
+    assert _recommended_channel(rows, "2.4G") == 11
+    assert _recommended_channel(rows, "5G") == 40
+
+
+def test_channel_hint_explains_channel_absent_from_scan_list():
+    rows = [_scan("aa:aa:aa:aa:aa:01", channel=36, rssi=-45)]
+    assert "(no AP heard)" in _channel_hint("5 GHz", 44, rows).plain
+    assert "(no AP heard)" not in _channel_hint("5 GHz", 36, rows).plain
+
+
+def test_environment_line_surfaces_scan_diagnostics():
+    conn = _conn(channel=36)
+    rows = [
+        _scan("aa:aa:aa:aa:aa:01", ssid="x", channel=1, width=40,
+              security="Open", country_code="CN"),
+        _scan("aa:aa:aa:aa:aa:02", ssid="", channel=6, width=20,
+              country_code="US"),
+        _scan("aa:aa:aa:aa:aa:03", ssid="y", channel=36,
+              country_code="CN"),
+    ]
+    text = _environment_line(rows, conn).plain
+    assert "3 BSSIDs" in text
+    assert "2.4G 2" in text
+    assert "hidden in this scan: 1" in text
+    assert "open 1" in text
+    assert "2.4G HT40 1" in text
+    assert "CC CN/US" in text
+    assert "current ch peers 1" in text
+
+
+def test_health_line_explains_weak_signal_and_better_ap():
+    conn = _conn(bssid="aa:aa:aa:aa:aa:01", ssid="office", rssi=-75)
+    rows = [
+        _scan("aa:aa:aa:aa:aa:01", ssid="office", rssi=-75),
+        _scan("aa:aa:aa:aa:aa:02", ssid="office", rssi=-50, channel=44),
+    ]
+    text = _health_line(rows, conn).plain
+    assert "weak signal -75 dBm" in text
+    assert "SNR 19 dB" in text
+    assert "stronger same-name AP nearby: +25 dB" in text
+    assert "press c to re-roam" in text
+
+
+def test_security_badge_marks_open_networks():
+    assert _security_badge("Open") == ("OPEN", "bold yellow")
+    assert _security_badge("WPA2 Enterprise") == ("ENT", "dim")
+    assert _security_badge("WPA3 Personal") == ("WPA3", "dim")
+
+
+def test_scan_line_includes_open_security_marker():
+    row = _scan(
+        "aa:bb:cc:dd:ee:ff",
+        ssid="guest",
+        rssi=-50,
+        security="Open",
+    )
+    text = _scan_line(row, current_bssid=None, inv=NetworkInventory()).plain
+    assert "OPEN" in text
+
+
+def test_link_score_rewards_stronger_cleaner_candidate():
+    current = _conn(
+        bssid="aa:aa:aa:aa:aa:01",
+        ssid="office",
+        rssi=-75,
+        channel=52,
+    )
+    candidate = _scan(
+        "aa:aa:aa:aa:aa:02",
+        ssid="office",
+        rssi=-50,
+        channel=44,
+        security="WPA2 Personal",
+    )
+    rows = [candidate]
+    assert _link_score(candidate, rows, baseline=current).score > (
+        _link_score(current, rows, baseline=current).score
+    )
+
+
+def test_score_line_reports_better_same_ssid_candidate():
+    current = _conn(
+        bssid="aa:aa:aa:aa:aa:01",
+        ssid="office",
+        rssi=-76,
+        channel=52,
+    )
+    rows = [
+        _scan("aa:aa:aa:aa:aa:01", ssid="office", rssi=-76, channel=52),
+        _scan("aa:aa:aa:aa:aa:02", ssid="office", rssi=-48, channel=44,
+              security="WPA2 Personal"),
+    ]
+    text = _score_line(rows, current).plain
+    assert "current" in text
+    assert "better candidate" in text
+    assert "press c to re-roam" in text
