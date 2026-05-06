@@ -1,12 +1,23 @@
-# wifiscope AP inventory — sample config
+# wifiscope AP aliases — sample config
 #
-# Copy to ~/.config/wifiscope/aps.yaml (or set WIFISCOPE_INVENTORY env
-# var) and replace with your network's APs. Most controllers (H3C,
-# Aruba, Ubiquiti, Cisco, ...) only expose the AP-level **management
-# MAC** — not the per-radio BSSIDs the AP actually broadcasts. Just
-# list the mgmt MACs here. wifiscope derives radio attribution at
-# runtime by two rules, both gated by a last-byte proximity check
-# (radios are mgmt + N for small N):
+# This file is OPTIONAL. Without it, wifiscope still groups every
+# BSSID by physical AP using auto-cluster labels like '?40:fe:95',
+# which is enough for daily use on enterprise networks where you
+# cannot pull mgmt MACs out of the controller anyway.
+#
+# To get human-readable AP names ('1F-bedroom' instead of '?40:fe:95'):
+#   1. cp aps.example.yaml aps.yaml          (next to this file)
+#   2. fill in the entries below from your router or AP controller's
+#      management UI ('AP list' / 'Access points' page)
+#   3. wifiscope will pick it up automatically; no restart needed
+#
+# Override the location with WIFISCOPE_INVENTORY=/full/path/aps.yaml.
+#
+# Most controllers (H3C, Aruba, Ubiquiti, Cisco, ASUS mesh, ...) only
+# expose the AP-level **management MAC** — not the per-radio BSSIDs
+# the AP actually broadcasts. Just list the mgmt MACs here. wifiscope
+# derives radio attribution at runtime by two rules, both gated by a
+# last-byte proximity check (radios are mgmt + N for small N):
 #   1. first five octets match (chip's primary OUI block — the common
 #      case for nearly all consumer / SMB gear)
 #   2. middle four octets match (chip serial bits; covers vendors that

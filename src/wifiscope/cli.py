@@ -15,6 +15,8 @@ import sys
 import time
 from datetime import datetime
 
+from . import i18n
+from .i18n import t
 from .macos_backend import MacOSWiFiBackend
 from .models import Connection
 from .network import (
@@ -32,15 +34,17 @@ from .poller import (
     WiFiPoller,
 )
 
-_DENIED_HINT = (
-    "WARNING: SSID and BSSID are hidden. CoreWLAN is redacted by Location\n"
-    "         Services and the SCDynamicStore fallback also returned\n"
-    "         nothing. Grant Location Services to your terminal app, or\n"
-    "         see README's macOS 26 caveats section.\n"
-)
-_FALLBACK_HINT = (
-    "note: SSID/BSSID via SCDynamicStore fallback (CoreWLAN is redacted).\n"
-)
+def _denied_hint() -> str:
+    return t(
+        "WARNING: SSID and BSSID are hidden. CoreWLAN is redacted by Location\n"
+        "         Services and the SCDynamicStore fallback also returned\n"
+        "         nothing. Grant Location Services to your terminal app, or\n"
+        "         see README's macOS 26 caveats section.\n"
+    )
+
+
+def _fallback_hint() -> str:
+    return t("note: SSID/BSSID via SCDynamicStore fallback (CoreWLAN is redacted).\n")
 
 
 def _fmt(value: object, suffix: str = "") -> str:
@@ -52,48 +56,56 @@ def _fmt(value: object, suffix: str = "") -> str:
 # ---------- one-shot mode ----------
 
 def _print_connection(c: Connection, inv: NetworkInventory) -> None:
+    # Acronyms that mean the same thing in both languages keep their
+    # English form (SSID / BSSID / RSSI / MCS / NSS / IP / Tx Rate /
+    # Max Link / PHY Mode); only the descriptive labels translate.
     rows: list[tuple[str, str]] = [
         ("SSID", _fmt(c.ssid)),
         ("BSSID", format_bssid(c.bssid, c.channel, inv)),
         ("RSSI", _fmt(c.rssi_dbm, " dBm")),
-        ("Noise", _fmt(c.noise_dbm, " dBm")),
+        (t("Noise"), _fmt(c.noise_dbm, " dBm")),
         ("Tx Rate", _fmt(c.tx_rate_mbps, " Mbps")),
         ("Max Link", _fmt(c.max_link_speed_mbps, " Mbps")),
-        ("Channel", _fmt(c.channel)),
-        ("Width", _fmt(c.channel_width_mhz, " MHz")),
-        ("Band", _fmt(c.channel_band)),
+        (t("Channel"), _fmt(c.channel)),
+        (t("Width"), _fmt(c.channel_width_mhz, " MHz")),
+        (t("Band"), _fmt(c.channel_band)),
         ("PHY Mode", _fmt(c.phy_mode)),
-        ("Security", _fmt(c.security)),
+        (t("Security"), _fmt(c.security)),
         ("MCS", _fmt(c.mcs_index)),
         ("NSS", _fmt(c.nss)),
-        ("Country", _fmt(c.country_code)),
-        ("This Mac", _fmt(c.interface_mac)),
+        (t("Country"), _fmt(c.country_code)),
+        (t("This Mac"), _fmt(c.interface_mac)),
         ("IP", _fmt(c.ip_address)),
-        ("Router", _fmt(c.router_ip)),
+        (t("Router"), _fmt(c.router_ip)),
     ]
-    label_w = max(len(label) for label, _ in rows)
+    # cell-aware width so a Chinese label like "本机 MAC" (8 cells)
+    # lines up with an ASCII label like "Tx Rate" (7 cells) in the
+    # same column instead of the byte-counting str.ljust default.
+    from .i18n import pad_cells
+    from rich.cells import cell_len
+    label_w = max(cell_len(label) for label, _ in rows)
     for label, value in rows:
-        print(f"  {label:<{label_w}}  {value}")
+        print(f"  {pad_cells(label, label_w)}  {value}")
 
 
 def _run_once() -> None:
     backend = MacOSWiFiBackend()
     inv = load_inventory()
     conn = backend.get_connection()
-    print(f"backend:    {backend.name}")
+    print(t("backend:    {name}", name=backend.name))
     if conn is None:
-        print("status:     not associated")
+        print(t("status:     not associated"))
         sys.exit(1)
-    print(f"timestamp:  {conn.timestamp.isoformat(timespec='seconds')}")
+    print(t("timestamp:  {ts}", ts=conn.timestamp.isoformat(timespec="seconds")))
     print()
     _print_connection(conn, inv)
     state = backend.permission_state()
     if state == "denied":
         print()
-        print(_DENIED_HINT, end="")
+        print(_denied_hint(), end="")
     elif state == "fallback":
         print()
-        print(_FALLBACK_HINT, end="")
+        print(_fallback_hint(), end="")
 
 
 # ---------- watch mode ----------
@@ -152,18 +164,20 @@ def _format_roam_line(event: RoamEvent, inv: NetworkInventory) -> str:
 async def _run_watch() -> None:
     backend = MacOSWiFiBackend()
     inv = load_inventory()
-    print(f"backend: {backend.name}  (Ctrl+C to quit)")
+    print(t("backend: {name}  (Ctrl+C to quit)", name=backend.name))
     if inv.aps or inv.radio_overrides:
-        print(
-            f"inventory: {len(inv.aps)} APs, "
-            f"{len(inv.radio_overrides)} overrides — {resolve_config_path()}"
-        )
+        print(t(
+            "inventory: {n_aps} APs, {n_overrides} overrides — {path}",
+            n_aps=len(inv.aps),
+            n_overrides=len(inv.radio_overrides),
+            path=resolve_config_path(),
+        ))
     perm = backend.permission_state()
     if perm == "denied":
         print()
-        print(_DENIED_HINT, end="")
+        print(_denied_hint(), end="")
     elif perm == "fallback":
-        print(_FALLBACK_HINT, end="")
+        print(_fallback_hint(), end="")
     print()
 
     poller = WiFiPoller(backend)
@@ -213,14 +227,49 @@ def _render(event: Event, state: dict, inv: NetworkInventory) -> str | None:
 
 # ---------- entry ----------
 
-_USAGE = """\
-usage: wifiscope [SUBCOMMAND]
+def _usage() -> str:
+    """Compose the --help text using the active language. Resolved at
+    print time, not at module import, so ``--lang zh --help`` sees the
+    Chinese version after :func:`main` has applied the language."""
+    return t(
+        "usage: wifiscope [--lang en|zh] [SUBCOMMAND]\n"
+        "\n"
+        "  (no args)   launch the TUI dashboard (default)\n"
+        "  once        print the current connection and exit\n"
+        "  watch       stream events as plain text until Ctrl+C\n"
+        "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
+        "              then to the system locale (zh_* → zh, anything else → en).\n"
+        "  -h, --help  show this message\n"
+    )
 
-  (no args)   launch the TUI dashboard (default)
-  once        print the current connection and exit
-  watch       stream events as plain text until Ctrl+C
-  -h, --help  show this message
-"""
+
+def _extract_lang_arg(argv: list[str]) -> str | None:
+    """Pop ``--lang`` and its value from ``argv`` in place.
+
+    Supports both ``--lang zh`` and ``--lang=zh`` forms. Returns the
+    value, or ``None`` if the flag is absent. An invalid value triggers
+    SystemExit so the caller does not have to repeat the validation.
+    """
+    for i, arg in enumerate(argv):
+        if arg == "--lang":
+            if i + 1 >= len(argv):
+                print("--lang requires a value (en|zh)", file=sys.stderr)
+                sys.exit(2)
+            value = argv[i + 1]
+            del argv[i:i + 2]
+            return _validate_lang(value)
+        if arg.startswith("--lang="):
+            value = arg.split("=", 1)[1]
+            del argv[i]
+            return _validate_lang(value)
+    return None
+
+
+def _validate_lang(value: str) -> str:
+    if value not in (i18n.EN, i18n.ZH):
+        print(f"unknown language {value!r}; expected en or zh", file=sys.stderr)
+        sys.exit(2)
+    return value
 
 
 def _run_tui() -> None:
@@ -275,10 +324,12 @@ def _ensure_helper_ready() -> None:
     if binary is None:
         binary = _helper.try_build()
     if binary is None:
-        print("note: wifiscope-helper not found and could not be built.")
-        print("      Scan list will be TCC-redacted. To fix, install the")
-        print("      Swift toolchain (Xcode CLT) and rerun, or build helper/")
-        print("      manually. See README's helper section.")
+        print(t(
+            "note: wifiscope-helper not found and could not be built.\n"
+            "      Scan list will be TCC-redacted. To fix, install the\n"
+            "      Swift toolchain (Xcode CLT) and rerun, or build helper/\n"
+            "      manually. See README's helper section."
+        ))
         print()
         return
 
@@ -288,14 +339,16 @@ def _ensure_helper_ready() -> None:
     bundle = _helper.bundle_path(binary)
     if bundle is None:
         # Standalone binary outside a bundle — no UI to launch.
-        print("note: helper found but not in an .app bundle; cannot trigger")
-        print("      Location Services prompt. Scan list will be redacted.")
+        print(t(
+            "note: helper found but not in an .app bundle; cannot trigger\n"
+            "      Location Services prompt. Scan list will be redacted."
+        ))
         print()
         return
 
-    print(f"Launching helper {bundle}")
-    print("to grant Location Services. Click Allow when macOS asks.")
-    print("(Ctrl+C to skip and start the TUI with redacted scan rows.)")
+    print(t("Launching helper {bundle}", bundle=bundle))
+    print(t("to grant Location Services. Click Allow when macOS asks."))
+    print(t("(Ctrl+C to skip and start the TUI with redacted scan rows.)"))
     print()
     try:
         subprocess.Popen(
@@ -303,7 +356,7 @@ def _ensure_helper_ready() -> None:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except OSError as e:
-        print(f"  failed to open helper: {e}")
+        print(t("  failed to open helper: {err}", err=e))
         return
 
     waited = 0.0
@@ -314,7 +367,7 @@ def _ensure_helper_ready() -> None:
             time.sleep(interval)
             waited += interval
             if _helper.has_permission(binary):
-                print("Permission granted — starting TUI.")
+                print(t("Permission granted — starting TUI."))
                 # Brief pause lets the helper window show its
                 # confirmation message before auto-quitting.
                 time.sleep(0.5)
@@ -322,15 +375,20 @@ def _ensure_helper_ready() -> None:
             sys.stdout.write(".")
             sys.stdout.flush()
         print()
-        print(f"(no grant after {int(timeout)}s; starting TUI anyway.")
-        print(" rerun wifiscope after granting to see unredacted scan.)")
+        print(t(
+            "(no grant after {n}s; starting TUI anyway.\n"
+            " rerun wifiscope after granting to see unredacted scan.)",
+            n=int(timeout),
+        ))
     except KeyboardInterrupt:
         print()
-        print("Skipped; starting TUI with redacted scan.")
+        print(t("Skipped; starting TUI with redacted scan."))
 
 
 def main() -> None:
     args = sys.argv[1:]
+    cli_lang = _extract_lang_arg(args)
+    i18n.set_lang(i18n.resolve_lang(cli_lang))
     if not args:
         _run_tui()
         return
@@ -345,8 +403,9 @@ def main() -> None:
             pass
         return
     if cmd in ("-h", "--help"):
-        print(_USAGE, end="")
+        print(_usage(), end="")
         return
-    print(f"wifiscope: unknown subcommand {cmd!r}\n", file=sys.stderr)
-    print(_USAGE, end="", file=sys.stderr)
+    print(t("wifiscope: unknown subcommand {cmd!r}", cmd=cmd) + "\n",
+          file=sys.stderr)
+    print(_usage(), end="", file=sys.stderr)
     sys.exit(2)

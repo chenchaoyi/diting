@@ -36,5 +36,10 @@ helper/.swiftpm/
 helper/Package.resolved
 helper/wifiscope-helper.app/
 
+# User's own AP aliases — created by copying aps.example.yaml. Contains
+# the user's network topology (mgmt MACs + AP names), which has no
+# business in version control and would expose private deployment info.
+aps.yaml
+
 # NOTE: do NOT ignore uv.lock or .python-version — both are committed for
 # reproducible installs (uv treats this as an application, not a library).

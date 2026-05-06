@@ -28,6 +28,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, RichLog, Static
 
 from .backend import WiFiBackend
+from .i18n import fit_cells, pad_cells, t
 from .models import Connection, ScanResult
 from .network import NetworkInventory, band_label, cluster_label, format_bssid
 from .poller import (
@@ -51,7 +52,7 @@ class ConnectionPanel(Static):
     """
 
     def on_mount(self) -> None:
-        self.border_title = "Connection"
+        self.border_title = t("Connection")
         self._paint(None)
 
     def update_connection(self, conn: Connection | None, inv: NetworkInventory) -> None:
@@ -59,17 +60,17 @@ class ConnectionPanel(Static):
 
     def _paint(self, conn: Connection | None, inv: NetworkInventory | None = None) -> None:
         if conn is None:
-            self.update(Text("not associated", style="dim italic"))
+            self.update(Text(t("not associated"), style="dim italic"))
             return
         assert inv is not None
-        ap_name = inv.resolve(conn.bssid) or "(unknown)"
+        ap_name = inv.resolve(conn.bssid) or t("(unknown)")
         band = band_label(conn.channel)
         header = Text()
         header.append(ap_name, style="bold cyan")
         if band:
             header.append(f"  {band}", style="cyan")
         if conn.country_code:
-            header.append(f"  · country {conn.country_code}", style="dim")
+            header.append(t("  · country {cc}", cc=conn.country_code), style="dim")
 
         signal_bar = _signal_bar(conn.rssi_dbm)
 
@@ -77,39 +78,42 @@ class ConnectionPanel(Static):
         # rather than printing 'n/a' lines that take vertical space and
         # tell the user nothing.
         rows: list[tuple[str, str]] = [
-            ("SSID", _fmt(conn.ssid)),
-            ("BSSID", _fmt(conn.bssid)),
+            (t("SSID"), _fmt(conn.ssid)),
+            (t("BSSID"), _fmt(conn.bssid)),
             (
-                "Channel",
+                t("Channel"),
                 f"{_fmt(conn.channel)}  {_fmt(conn.channel_width_mhz, ' MHz')}  "
                 f"{_fmt(conn.channel_band)}",
             ),
-            ("PHY / Sec", f"{_fmt(conn.phy_mode)}   {_fmt(conn.security)}"),
+            (t("PHY / Sec"), f"{_fmt(conn.phy_mode)}   {_fmt(conn.security)}"),
             (
-                "Tx / Max",
-                f"{_fmt(conn.tx_rate_mbps, ' Mbps')}  /  "
-                f"{_fmt(conn.max_link_speed_mbps, ' Mbps')} max",
+                t("Tx / Max"),
+                t("{tx}  /  {max} max",
+                  tx=_fmt(conn.tx_rate_mbps, " Mbps"),
+                  max=_fmt(conn.max_link_speed_mbps, " Mbps")),
             ),
             (
-                "MCS / NSS",
-                f"{_fmt(conn.mcs_index)}  ·  {_fmt(conn.nss, ' streams')}",
+                t("MCS / NSS"),
+                t("{mcs}  ·  {nss}",
+                  mcs=_fmt(conn.mcs_index),
+                  nss=_fmt(conn.nss, t(" streams"))),
             ),
-            ("Noise", _fmt(conn.noise_dbm, " dBm")),
+            (t("Noise"), _fmt(conn.noise_dbm, " dBm")),
         ]
         if conn.ip_address or conn.router_ip:
             rows.append((
-                "IP / Router",
+                t("IP / Router"),
                 f"{_fmt(conn.ip_address)}  →  {_fmt(conn.router_ip)}",
             ))
         if conn.interface_mac:
-            rows.append(("This Mac", conn.interface_mac))
+            rows.append((t("This Mac"), conn.interface_mac))
 
         body = Text()
         for label, value in rows:
-            body.append(f"  {label:<11}", style="dim")
+            body.append("  " + pad_cells(label, 11), style="dim")
             body.append(f"{value}\n")
         signal_line = Text()
-        signal_line.append(f"  {'Signal':<11}", style="dim")
+        signal_line.append("  " + pad_cells(t("Signal"), 11), style="dim")
         signal_line.append(_rssi_text(conn.rssi_dbm))
         signal_line.append("  ")
         signal_line.append(signal_bar)
@@ -123,7 +127,7 @@ class ConnectionPanel(Static):
         if conn.tx_rate_mbps is not None and conn.max_link_speed_mbps is not None:
             footnote = Text()
             footnote.append(
-                "  * Tx and Max use different CoreWLAN APIs and may diverge.",
+                t("  * Tx and Max use different CoreWLAN APIs and may diverge."),
                 style="dim italic",
             )
             self.update(Group(header, Text(""), body, signal_line, Text(""), footnote))
@@ -144,10 +148,10 @@ class ScanPanel(VerticalScroll):
     """
 
     def compose(self) -> ComposeResult:
-        yield Static(Text("(scanning...)", style="dim italic"), id="scan-body")
+        yield Static(Text(t("(scanning...)"), style="dim italic"), id="scan-body")
 
     def on_mount(self) -> None:
-        self.border_title = "Nearby BSSIDs"
+        self.border_title = t("Nearby BSSIDs")
 
     def update_scan(
         self,
@@ -158,18 +162,20 @@ class ScanPanel(VerticalScroll):
         inv: NetworkInventory,
         sort_mode: str = "signal",
     ) -> None:
-        ago = "" if scanned_at is None else f"  · scanned {int(time.monotonic() - scanned_at)}s ago"
+        ago = "" if scanned_at is None else t(
+            "  · scanned {n}s ago", n=int(time.monotonic() - scanned_at)
+        )
         all_redacted = bool(results) and all(
             r.bssid is None and r.ssid is None for r in results
         )
-        identity = "  · identity TCC-redacted" if all_redacted else ""
-        sort_label = f"  · sort: {sort_mode}"
+        identity = t("  · identity TCC-redacted") if all_redacted else ""
+        sort_label = t("  · sort: {mode}", mode=t(sort_mode))
         self.border_title = (
-            f"Nearby BSSIDs ({len(results)}){ago}{identity}{sort_label}"
+            t("Nearby BSSIDs") + f" ({len(results)}){ago}{identity}{sort_label}"
         )
         if not results:
             self.query_one("#scan-body", Static).update(
-                Text("(no APs from last scan — likely throttle, retrying)",
+                Text(t("(no APs from last scan — likely throttle, retrying)"),
                      style="dim italic")
             )
             return
@@ -212,17 +218,17 @@ class EnvironmentPanel(Static):
     """
 
     def on_mount(self) -> None:
-        self.border_title = "Diagnostics"
-        self.update(Text("(waiting for scan data...)", style="dim italic"))
+        self.border_title = t("Diagnostics")
+        self.update(Text(t("(waiting for scan data...)"), style="dim italic"))
 
     def update_environment(
         self,
         results: list[ScanResult],
         current: Connection | None,
     ) -> None:
-        self.border_title = "Diagnostics"
+        self.border_title = t("Diagnostics")
         if not results:
-            self.update(Text("(waiting for scan data...)", style="dim italic"))
+            self.update(Text(t("(waiting for scan data...)"), style="dim italic"))
             return
         self.update(Group(*_environment_lines(results, current)))
 
@@ -238,7 +244,7 @@ class HelpScreen(ModalScreen):
     """
 
     BINDINGS = [
-        Binding("escape,h,q", "app.pop_screen", "Close"),
+        Binding("escape,h,q", "app.pop_screen", t("Close")),
     ]
 
     DEFAULT_CSS = """
@@ -269,6 +275,12 @@ def _help_content() -> Text:
     """Build the help dialog body as a Rich Text. OSC 8 link on the
     GitHub URL renders clickable in modern terminals; falls back to
     plain text where unsupported.
+
+    Each section header and paragraph is fed through ``t()`` so the
+    Chinese reader sees a complete translation rather than a mix of
+    English structure and Chinese inserts. Single-character bindings
+    (``q`` / ``p`` / ``r`` …) stay literal — translating them would
+    detach the description from the actual key the user has to press.
     """
     body = Text(no_wrap=False)
 
@@ -282,42 +294,43 @@ def _help_content() -> Text:
 
     body.append("wifiscope", style="bold cyan")
     body.append(
-        "  ·  terminal WiFi monitor for macOS, focused on roaming visibility.\n",
+        t("  ·  terminal WiFi monitor for macOS, focused on roaming visibility.\n"),
         style="dim",
     )
 
-    section("What")
-    body.append(
+    section(t("What"))
+    body.append(t(
         "  See which AP you are on, when your Mac switches, and how strong\n"
         "  the signal is — the things macOS hides from its own WiFi panel.\n"
-    )
+    ))
 
-    section("Panels")
-    line("Conn.", "current AP, signal bar, link / IP / radio details")
-    line("Scan",  "every BSSID in range, grouped by physical AP")
-    line("Roam",  "band-switch and inter-AP roam events as they happen")
+    section(t("Panels"))
+    line("Conn.", t("current AP, signal bar, link / IP / radio details"))
+    line("Scan",  t("every BSSID in range, grouped by physical AP"))
+    line("Roam",  t("band-switch and inter-AP roam events as they happen"))
 
-    section("Bindings")
-    line("q", "quit")
-    line("p", "pause / resume polling")
-    line("r", "force a rescan now (CoreWLAN ~5s throttle still applies)")
-    line("s", "cycle scan sort:  by AP  ↔  by signal")
-    line("c", "force re-roam (cycle WiFi off/on so the OS re-picks the")
-    body.append(" " * 8 + "strongest BSSID — fixes sticky associations)\n")
-    line("h", "toggle this help")
-    line("b", "open Wi-Fi basics for SSID, BSSID, channel, band, security")
+    section(t("Bindings"))
+    line("q", t("quit"))
+    line("p", t("pause / resume polling"))
+    line("r", t("force a rescan now (CoreWLAN ~5s throttle still applies)"))
+    line("s", t("cycle scan sort:  by AP  ↔  by signal"))
+    line("c", t("force re-roam (cycle WiFi off/on so the OS re-picks the"))
+    body.append(" " * 8 + t("strongest BSSID — fixes sticky associations)\n"))
+    line("h", t("toggle this help"))
+    line("b", t("open Wi-Fi basics for SSID, BSSID, channel, band, security"))
 
-    section("Inventory")
-    body.append(
-        "  Drop ~/.config/wifiscope/aps.yaml listing your APs by management\n"
-        "  MAC; wifiscope renders friendly names ('1F-bedroom') in place of\n"
-        "  MAC fragments ('?af:5e:a7'). Without inventory the tool still\n"
-        "  works — it auto-clusters BSSIDs by chip serial bits — but each\n"
-        "  AP is just labelled by its three middle MAC octets.\n"
-    )
+    section(t("AP aliases (optional)"))
+    body.append(t(
+        "  Drop ./aps.yaml (next to aps.example.yaml in the cloned repo)\n"
+        "  listing your APs by management MAC; wifiscope renders friendly\n"
+        "  names ('1F-bedroom') in place of MAC fragments ('?af:5e:a7').\n"
+        "  Without the file the tool still works — every BSSID gets an\n"
+        "  auto-cluster label like '?AB:CD:EF' so radios of the same\n"
+        "  physical AP still group together.\n"
+    ))
 
-    section("Helper")
-    body.append(
+    section(t("Helper"))
+    body.append(t(
         "  macOS 14.4+ redacts the SSID and BSSID of every AP in the scan\n"
         "  list to None unless the calling process has Location Services\n"
         "  permission, and a Python CLI launched from Terminal cannot get\n"
@@ -328,21 +341,22 @@ def _help_content() -> Text:
         "  data. The TCC grant is persistent; the helper window auto-\n"
         "  closes on grant. Without it the Nearby APs panel works but\n"
         "  every row shows '(redacted)' for SSID and BSSID.\n"
-    )
+    ))
 
-    section("Tunables")
-    body.append(
+    section(t("Tunables"))
+    body.append(t(
         "  WIFISCOPE_SCAN_INTERVAL=N    seconds between scans, default 7.\n"
         "                                CoreWLAN throttles around 5 s,\n"
         "                                so values below ~6 yield empty\n"
         "                                scans every other call. Min 3.\n"
         "  WIFISCOPE_INVENTORY=path     override aps.yaml location.\n"
         "  WIFISCOPE_HELPER=path        override helper.app path.\n"
-    )
+        "  WIFISCOPE_LANG=en|zh         override interface language.\n"
+    ))
 
     body.append("\n")
     body.append("─" * 70 + "\n", style="dim")
-    body.append("made by ", style="dim")
+    body.append(t("made by "), style="dim")
     body.append("ccy", style="bold dim")
     body.append("  ·  ", style="dim")
     body.append(
@@ -350,7 +364,7 @@ def _help_content() -> Text:
         style="dim underline link https://github.com/chenchaoyi/wifiscope",
     )
     body.append("\n")
-    body.append("Esc or h to close", style="dim italic")
+    body.append(t("Esc or h to close"), style="dim italic")
     return body
 
 
@@ -358,7 +372,7 @@ class BasicsScreen(ModalScreen):
     """Short glossary for users who are not Wi-Fi specialists."""
 
     BINDINGS = [
-        Binding("escape,b,q", "app.pop_screen", "Close"),
+        Binding("escape,b,q", "app.pop_screen", t("Close")),
     ]
 
     DEFAULT_CSS = """
@@ -392,71 +406,98 @@ def _basics_content() -> Text:
         body.append(f"\n{name}\n", style="bold yellow")
         body.append("  " + desc + "\n")
 
-    body.append("Wi-Fi Basics", style="bold cyan")
-    body.append("  ·  the words wifiscope uses in the dashboard\n", style="dim")
+    body.append(t("Wi-Fi Basics"), style="bold cyan")
+    body.append(t("  ·  the words wifiscope uses in the dashboard\n"), style="dim")
 
+    # Term names that are themselves industry acronyms (SSID, BSSID,
+    # RSSI) keep their English form in the heading; the explanation
+    # paragraph is what changes between languages.
     term(
         "SSID",
-        "The Wi-Fi name people choose from, such as Meituan or Guest. "
-        "Many access points can broadcast the same SSID.",
+        t(
+            "The Wi-Fi name people choose from, such as Meituan or Guest. "
+            "Many access points can broadcast the same SSID."
+        ),
     )
     term(
         "BSSID",
-        "The radio identity behind one SSID on one AP/radio. A single "
-        "physical AP may expose many BSSIDs when it broadcasts several "
-        "SSIDs on 2.4 GHz and 5 GHz.",
+        t(
+            "The radio identity behind one SSID on one AP/radio. A single "
+            "physical AP may expose many BSSIDs when it broadcasts several "
+            "SSIDs on 2.4 GHz and 5 GHz."
+        ),
     )
     term(
-        "AP host",
-        "wifiscope's best guess for the physical access point that owns "
-        "a BSSID. Inventory names are most accurate; ? labels are inferred "
-        "from MAC address patterns.",
+        t("AP host"),
+        t(
+            "wifiscope's best guess for the physical access point that owns "
+            "a BSSID. Names you set in ./aps.yaml (optional, next to "
+            "aps.example.yaml in the repo) are most accurate; ? labels are "
+            "auto-inferred from MAC address patterns when no aps.yaml entry "
+            "matches."
+        ),
     )
     term(
-        "RSSI / Signal",
-        "Received signal strength. Less negative is stronger: -45 dBm is "
-        "excellent, -65 dBm is usable, and around -75 dBm is weak.",
+        t("RSSI / Signal"),
+        t(
+            "Received signal strength. Less negative is stronger: -45 dBm is "
+            "excellent, -65 dBm is usable, and around -75 dBm is weak."
+        ),
     )
     term(
-        "Noise / SNR",
-        "Noise is background radio energy. SNR is signal minus noise; "
-        "higher is better. Low SNR can cause retries even when the AP is visible.",
+        t("Noise / SNR"),
+        t(
+            "Noise is background radio energy. SNR is signal minus noise; "
+            "higher is better. Low SNR can cause retries even when the AP is visible."
+        ),
     )
     term(
-        "Band",
-        "The radio range: 2.4 GHz reaches farther but is crowded; 5 GHz is "
-        "faster with shorter range; 6 GHz is newer, cleaner, and shorter range.",
+        t("Band"),
+        t(
+            "The radio range: 2.4 GHz reaches farther but is crowded; 5 GHz is "
+            "faster with shorter range; 6 GHz is newer, cleaner, and shorter range."
+        ),
     )
     term(
-        "Channel",
-        "The slice of a band the AP is using. APs on the same or nearby "
-        "channels share airtime, so a quieter channel can help.",
+        t("Channel"),
+        t(
+            "The slice of a band the AP is using. APs on the same or nearby "
+            "channels share airtime, so a quieter channel can help."
+        ),
     )
     term(
-        "Width",
-        "How much spectrum the AP uses, such as 20/40/80 MHz. Wider can be "
-        "faster but also easier to interfere with, especially on 2.4 GHz.",
+        t("Width"),
+        t(
+            "How much spectrum the AP uses, such as 20/40/80 MHz. Wider can be "
+            "faster but also easier to interfere with, especially on 2.4 GHz."
+        ),
     )
     term(
-        "Security",
-        "OPEN means no Wi-Fi-layer password/encryption. ENT means enterprise "
-        "authentication. WPA2/WPA3 are password or modern secured modes.",
+        t("Security"),
+        t(
+            "OPEN means no Wi-Fi-layer password/encryption. ENT means enterprise "
+            "authentication. WPA2/WPA3 are password or modern secured modes."
+        ),
     )
     term(
-        "Roam",
-        "When the Mac moves from one BSSID to another. Same SSID does not "
-        "guarantee the Mac picked the strongest or best AP.",
+        t("Roam"),
+        t(
+            "When the Mac moves from one BSSID to another. Same SSID does not "
+            "guarantee the Mac picked the strongest or best AP."
+        ),
     )
     term(
-        "Roam score",
-        "A simple 0-100 guide, not a standard. It rewards strong RSSI, good "
-        "SNR, cleaner bands, and quieter channels, and penalizes weak signal, "
-        "busy channels, open networks, and security mismatches. A better "
-        "candidate is shown only when the same SSID scores clearly higher.",
+        t("Roam score"),
+        t(
+            "A simple 0-100 guide, not a standard. It rewards strong RSSI, good "
+            "SNR, cleaner bands, and quieter channels, and penalizes weak signal, "
+            "busy channels, open networks, and security mismatches. A better "
+            "candidate is shown only when the same SSID scores clearly higher."
+        ),
     )
 
     body.append("\n")
-    body.append("Esc or b to close", style="dim italic")
+    body.append(t("Esc or b to close"), style="dim italic")
     return body
 
 
@@ -470,21 +511,24 @@ class RoamLogPanel(RichLog):
     """
 
     def on_mount(self) -> None:
-        self.border_title = "Roam log"
-        self.write(Text("(no roam events yet)", style="dim italic"))
+        self.border_title = t("Roam log")
+        self.write(Text(t("(no roam events yet)"), style="dim italic"))
 
     def append_roam(self, event: RoamEvent, inv: NetworkInventory) -> None:
         ts = event.timestamp.strftime("%H:%M:%S")
         prev = format_bssid(event.previous_bssid, event.previous_channel, inv)
         new = format_bssid(event.new_bssid, event.new_channel, inv)
         if inv.is_same_ap(event.previous_bssid, event.new_bssid):
-            ap = inv.resolve(event.new_bssid) or "same AP"
+            ap = inv.resolve(event.new_bssid) or t("same AP")
             prev_band = band_label(event.previous_channel) or "?"
             new_band = band_label(event.new_channel) or "?"
-            tag = f"[band switch on {ap}: {prev_band} -> {new_band}]"
+            tag = t(
+                "[band switch on {ap}: {prev_band} -> {new_band}]",
+                ap=ap, prev_band=prev_band, new_band=new_band,
+            )
             style = "yellow"
         else:
-            tag = "[inter-AP roam]"
+            tag = t("[inter-AP roam]")
             style = "bold magenta"
         line = Text()
         line.append(f"{ts}  ", style="dim")
@@ -553,24 +597,29 @@ def _group_header(group: _APGroup, inv: NetworkInventory) -> Text:
     worst = min(rssis) if rssis else None
     ssids = sorted({r.ssid for r in group.rows if r.ssid})
     n = len(group.rows)
-    bssid_word = "BSSID" if n == 1 else "BSSIDs"
+    # English distinguishes singular / plural; the Chinese catalog
+    # collapses both onto the same translation, so the call site does
+    # not branch on language.
+    bssid_word = t("BSSID") if n == 1 else t("BSSIDs")
     rssi_part = (
         f"{best} dBm" if best == worst or best is None or worst is None
         else f"{best}..{worst} dBm"
     )
     ssid_part = (
-        f"  ·  {len(ssids)} SSID{'s' if len(ssids) != 1 else ''}"
-        if ssids else ""
+        t("  ·  {n} SSID", n=len(ssids)) if len(ssids) == 1
+        else t("  ·  {n} SSIDs", n=len(ssids)) if ssids
+        else ""
     )
     line = Text()
     line.append("  ── ", style="dim")
     # cluster labels start with '?'; inventory names never do.
     name_style = "bold dim" if group.key.startswith("?") else "bold cyan"
     line.append(group.key, style=name_style)
-    line.append(f"  ·  {n} {bssid_word}  ·  {rssi_part}{ssid_part}",
+    line.append(t("  ·  {n} {bssid_word}  ·  {rssi_part}",
+                  n=n, bssid_word=bssid_word, rssi_part=rssi_part) + ssid_part,
                 style="dim")
     if group.is_current:
-        line.append("  · current", style="bold cyan")
+        line.append(t("  · current"), style="bold cyan")
     return line
 
 
@@ -644,21 +693,22 @@ def _visible_networks_line(results: list[ScanResult]) -> Text:
     countries = _country_codes(results)
 
     line = Text()
-    line.append("Visible BSSIDs  ", style="bold dim")
+    line.append(t("Visible BSSIDs  "), style="bold dim")
     line.append(
-        f"{len(results)} total  "
-        f"2.4 GHz: {counts['2.4G']}  "
-        f"5 GHz: {counts['5G']}  "
-        f"6 GHz: {counts['6G']}",
+        t(
+            "{n} total  2.4 GHz: {n2}  5 GHz: {n5}  6 GHz: {n6}",
+            n=len(results), n2=counts["2.4G"], n5=counts["5G"], n6=counts["6G"],
+        ),
         style="white",
     )
     if hidden:
-        line.append(f"  hidden in this scan: {hidden}", style="dim")
+        line.append(t("  hidden in this scan: {n}", n=hidden), style="dim")
     if redacted:
-        line.append(f"  redacted: {redacted}", style="dim italic")
+        line.append(t("  redacted: {n}", n=redacted), style="dim italic")
     if countries:
         style = "yellow" if len(countries) > 1 else "dim"
-        line.append(f"  country codes: {'/'.join(countries)}", style=style)
+        line.append(t("  country codes: {codes}", codes="/".join(countries)),
+                    style=style)
     return line
 
 
@@ -673,19 +723,22 @@ def _environment_warnings_line(
     current_load = _current_channel_load(results, current)
     warnings: list[tuple[str, str]] = []
     if open_count:
-        warnings.append((f"{open_count} open/no-password BSSIDs", "yellow"))
+        warnings.append((t("{n} open/no-password BSSIDs", n=open_count), "yellow"))
     if ht40_2g:
-        warnings.append((f"{ht40_2g} wide 2.4 GHz BSSIDs", "yellow"))
+        warnings.append((t("{n} wide 2.4 GHz BSSIDs", n=ht40_2g), "yellow"))
     if current_load is not None:
         style = "yellow" if current_load >= 5 else "dim"
-        warnings.append((f"{current_load} other BSSIDs on your channel", style))
+        warnings.append(
+            (t("{n} other BSSIDs on your channel", n=current_load), style)
+        )
     if len(_country_codes(results)) > 1:
-        warnings.append(("mixed country codes nearby", "yellow"))
+        warnings.append((t("mixed country codes nearby"), "yellow"))
 
     line = Text()
-    line.append("Things to notice  ", style="bold dim")
+    line.append(t("Things to notice  "), style="bold dim")
     if not warnings:
-        line.append("No obvious environment warnings from the scan.", style="green")
+        line.append(t("No obvious environment warnings from the scan."),
+                    style="green")
         return line
     for i, (msg, style) in enumerate(warnings):
         if i:
@@ -698,8 +751,8 @@ def _recommendations_line(results: list[ScanResult]) -> Text:
     rec_2g = _recommended_channel(results, "2.4G")
     rec_5g = _recommended_channel(results, "5G")
     line = Text()
-    line.append("Least crowded channels  ", style="bold dim")
-    line.append("Estimated from the scan.", style="dim")
+    line.append(t("Least crowded channels  "), style="bold dim")
+    line.append(t("Estimated from the scan."), style="dim")
     if rec_2g is not None:
         line.append(_channel_hint("2.4 GHz", rec_2g, results))
     if rec_5g is not None:
@@ -709,9 +762,9 @@ def _recommendations_line(results: list[ScanResult]) -> Text:
 
 def _channel_hint(label: str, channel: int, results: list[ScanResult]) -> Text:
     text = Text()
-    text.append(f"  {label}: ch{channel}", style="cyan")
+    text.append(t("  {band}: ch{n}", band=label, n=channel), style="cyan")
     if not any(r.channel == channel for r in results):
-        text.append(" (no AP heard)", style="dim")
+        text.append(t(" (no AP heard)"), style="dim")
     return text
 
 
@@ -762,21 +815,21 @@ def _environment_line(results: list[ScanResult], current: Connection | None) -> 
 def _health_line(results: list[ScanResult], current: Connection | None) -> Text:
     """Explain the current association in terms a human can act on."""
     line = Text()
-    line.append("Current link  ", style="bold dim")
+    line.append(t("Current link  "), style="bold dim")
     if current is None:
-        line.append("not associated", style="dim italic")
+        line.append(t("not associated"), style="dim italic")
         return line
 
     issues: list[tuple[str, str]] = []
     if current.rssi_dbm is not None:
         if current.rssi_dbm <= -75:
-            issues.append((f"weak signal {current.rssi_dbm} dBm", "red"))
+            issues.append((t("weak signal {dbm} dBm", dbm=current.rssi_dbm), "red"))
         elif current.rssi_dbm <= -67:
-            issues.append((f"fair signal {current.rssi_dbm} dBm", "yellow"))
+            issues.append((t("fair signal {dbm} dBm", dbm=current.rssi_dbm), "yellow"))
     if current.rssi_dbm is not None and current.noise_dbm is not None:
         snr = current.rssi_dbm - current.noise_dbm
         if snr < 25:
-            issues.append((f"SNR {snr} dB", "yellow"))
+            issues.append((t("SNR {db} dB", db=snr), "yellow"))
 
     better = _best_same_ssid_candidate(results, current)
     if better is not None:
@@ -784,38 +837,47 @@ def _health_line(results: list[ScanResult], current: Connection | None) -> Text:
         label = _fmt(candidate.bssid)
         if candidate.channel is not None:
             label += f" ch{candidate.channel}"
-        issues.append((f"stronger same-name AP nearby: +{delta} dB ({label})", "bold cyan"))
+        issues.append((
+            t("stronger same-name AP nearby: +{delta} dB ({label})",
+              delta=delta, label=label),
+            "bold cyan",
+        ))
 
     if not issues:
-        line.append("Looks OK", style="green")
+        line.append(t("Looks OK"), style="green")
         return line
     for i, (msg, style) in enumerate(issues):
         if i:
             line.append("  ")
         line.append(msg, style=style)
     if better is not None:
-        line.append("  press c to re-roam", style="dim")
+        line.append(t("  press c to re-roam"), style="dim")
     return line
 
 
 def _score_line(results: list[ScanResult], current: Connection | None) -> Text:
     line = Text()
-    line.append("Roam score  ", style="bold dim")
+    line.append(t("Roam score  "), style="bold dim")
     if current is None:
-        line.append("not associated", style="dim italic")
+        line.append(t("not associated"), style="dim italic")
         return line
     current_score = _link_score(current, results, baseline=current)
     candidate = _best_roam_candidate(results, current)
-    line.append(f"current {current_score.score}/100", style=_score_style(current_score.score))
+    line.append(t("current {n}/100", n=current_score.score),
+                style=_score_style(current_score.score))
     if current_score.reasons:
-        line.append(f" ({', '.join(current_score.reasons[:2])})", style="dim")
+        # Each reason is its own catalog key so the Chinese version is
+        # natural ("信号强") rather than a literal translation of every
+        # space-separated word.
+        translated = [t(r) for r in current_score.reasons[:2]]
+        line.append(f" ({', '.join(translated)})", style="dim")
     if candidate is None:
-        line.append("  ·  no clearly better same-SSID BSSID", style="dim")
+        line.append(t("  ·  no clearly better same-SSID BSSID"), style="dim")
         return line
     row, score = candidate
     delta = score.score - current_score.score
     line.append(
-        f"  ·  better candidate {score.score}/100",
+        t("  ·  better candidate {n}/100", n=score.score),
         style=_score_style(score.score),
     )
     line.append(f" (+{delta})", style="cyan")
@@ -824,8 +886,9 @@ def _score_line(results: list[ScanResult], current: Connection | None) -> Text:
     if row.bssid:
         line.append(f" {row.bssid}", style="dim")
     if score.reasons:
-        line.append(f" ({', '.join(score.reasons[:2])})", style="dim")
-    line.append("  press c to re-roam", style="dim")
+        translated = [t(r) for r in score.reasons[:2]]
+        line.append(f" ({', '.join(translated)})", style="dim")
+    line.append(t("  press c to re-roam"), style="dim")
     return line
 
 
@@ -1079,13 +1142,22 @@ _COL_WIDTH = 6
 
 
 def _header_line() -> Text:
+    # All left-aligned columns route through pad_cells so CJK headers
+    # (e.g. "信号", "频段") consume their two cells per glyph instead of
+    # str.ljust's one-byte-per-char accounting. The RSSI column is the
+    # only right-aligned one and keeps str.format alignment because its
+    # header "RSSI" is ASCII in both languages.
     h = Text(style="bold dim")
     h.append(
-        f" {'★':<2}{'RSSI':>{_COL_RSSI}}  {'signal':<{_COL_SIGNAL}}  "
-        f"{'channel':<{_COL_CH}}  {'band':<{_COL_BAND}}  "
-        f"{'AP host':<{_COL_AP}}  {'SSID':<{_COL_SSID}}  "
-        f"{'security':<{_COL_SEC}}  {'BSSID':<{_COL_BSSID}}  "
-        f"{'width':<{_COL_WIDTH}}"
+        f" {'★':<2}{t('RSSI'):>{_COL_RSSI}}  "
+        f"{pad_cells(t('signal'), _COL_SIGNAL)}  "
+        f"{pad_cells(t('channel'), _COL_CH)}  "
+        f"{pad_cells(t('band'), _COL_BAND)}  "
+        f"{pad_cells(t('AP host'), _COL_AP)}  "
+        f"{pad_cells(t('SSID'), _COL_SSID)}  "
+        f"{pad_cells(t('security'), _COL_SEC)}  "
+        f"{pad_cells(t('BSSID'), _COL_BSSID)}  "
+        f"{pad_cells(t('width'), _COL_WIDTH)}"
     )
     return h
 
@@ -1104,9 +1176,9 @@ def _scan_line(r: ScanResult, current_bssid: str | None, inv: NetworkInventory) 
     # it does not look like an AP with an empty SSID.
     redacted = r.bssid is None and r.ssid is None
     if redacted:
-        ap_text, ap_style = "(redacted)", "dim italic"
-        ssid_text, ssid_style = "(redacted)", "dim italic"
-        bssid_text, bssid_style = "(redacted)", "dim italic"
+        ap_text, ap_style = t("(redacted)"), "dim italic"
+        ssid_text, ssid_style = t("(redacted)"), "dim italic"
+        bssid_text, bssid_style = t("(redacted)"), "dim italic"
         security_text, security_style = "?", "dim"
     else:
         ap_name = inv.resolve(r.bssid)
@@ -1122,7 +1194,7 @@ def _scan_line(r: ScanResult, current_bssid: str | None, inv: NetworkInventory) 
         # is broadcasting normally, just with the SSID IE blanked. Use
         # "(hidden)" rather than "(no SSID)" since the SSID does exist,
         # it just is not in the air.
-        ssid_text = r.ssid or "(hidden)"
+        ssid_text = r.ssid or t("(hidden)")
         ssid_style = "white" if r.ssid else "dim italic"
         bssid_text = r.bssid or "???"
         bssid_style = "dim"
@@ -1139,10 +1211,14 @@ def _scan_line(r: ScanResult, current_bssid: str | None, inv: NetworkInventory) 
     line.append(f"{r.rssi_dbm if r.rssi_dbm is not None else '?':>{_COL_RSSI}}  ", style=rssi_color)
     line.append(_signal_bar(r.rssi_dbm, length=_COL_SIGNAL))
     line.append("  ")
+    # ASCII-only fields keep str.format alignment for speed; ap_text
+    # and ssid_text can hold CJK (user-defined inventory names, real
+    # network SSIDs in foreign locales) so they go through fit_cells
+    # which counts terminal cells and never chops a wide glyph.
     line.append(f"{r.channel if r.channel is not None else '?':<{_COL_CH}}  ", style="white")
     line.append(f"{band_short:<{_COL_BAND}}  ", style="white")
-    line.append(f"{ap_text[:_COL_AP]:<{_COL_AP}}  ", style=ap_style)
-    line.append(f"{ssid_text[:_COL_SSID]:<{_COL_SSID}}  ", style=ssid_style)
+    line.append(fit_cells(ap_text, _COL_AP) + "  ", style=ap_style)
+    line.append(fit_cells(ssid_text, _COL_SSID) + "  ", style=ssid_style)
     line.append(f"{security_text:<{_COL_SEC}}  ", style=security_style)
     line.append(f"{bssid_text:<{_COL_BSSID}}  ", style=bssid_style)
     width_str = f"{r.channel_width_mhz}MHz" if r.channel_width_mhz else "?"
@@ -1174,14 +1250,18 @@ class WifiScopeApp(App):
     CSS = """
     Screen { layout: vertical; }
     """
+    # Footer labels go through ``t()`` at class-define time, which
+    # means the language must be set before WifiScopeApp is imported.
+    # cli.main() calls i18n.set_lang() before lazy-importing tui, so by
+    # the time this BINDINGS list is built the catalog is final.
     BINDINGS = [
-        Binding("q", "quit", "Quit"),
-        Binding("p", "toggle_pause", "Pause"),
-        Binding("r", "rescan", "Rescan"),
-        Binding("s", "cycle_sort", "Sort"),
-        Binding("c", "reroam", "Re-roam"),
-        Binding("h", "show_help", "Help"),
-        Binding("b", "show_basics", "Basics"),
+        Binding("q", "quit", t("Quit")),
+        Binding("p", "toggle_pause", t("Pause")),
+        Binding("r", "rescan", t("Rescan")),
+        Binding("s", "cycle_sort", t("Sort")),
+        Binding("c", "reroam", t("Re-roam")),
+        Binding("h", "show_help", t("Help")),
+        Binding("b", "show_basics", t("Basics")),
     ]
 
     def __init__(
@@ -1299,10 +1379,10 @@ class WifiScopeApp(App):
         ok = bool(getattr(self._backend, "force_reroam", lambda: False)())
         if ok:
             self.notify(
-                "WiFi off → on — reconnecting via auto-join (2-5 s)"
+                t("WiFi off → on — reconnecting via auto-join (2-5 s)")
             )
         else:
-            self.notify("no WiFi interface", severity="warning")
+            self.notify(t("no WiFi interface"), severity="warning")
 
     def _build_subtitle(self) -> str:
         # Header subtitle is dynamic state and live diagnostics — what
@@ -1311,9 +1391,9 @@ class WifiScopeApp(App):
         # (inventory size, backend name, helper presence) live in the
         # AttributionBar / panel titles instead.
         scan_s = int(getattr(self._poller, "_scan_interval", 0))
-        bits = [f"sort: {self._sort_mode}"]
+        bits = [t("sort: {mode}", mode=t(self._sort_mode))]
         if scan_s:
-            bits.append(f"scan {scan_s}s")
+            bits.append(t("scan {n}s", n=scan_s))
         if self._paused:
-            bits.append("PAUSED")
+            bits.append(t("PAUSED"))
         return " · ".join(bits)

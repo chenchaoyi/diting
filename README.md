@@ -1,3 +1,7 @@
+<p align="right">
+  <strong>English</strong> · <a href="docs/zh/README.md">中文</a>
+</p>
+
 <p align="center">
   <img src="docs/logo.svg" alt="wifiscope" width="320">
 </p>
@@ -75,6 +79,16 @@ is persistent.
 > the real values back. Press `h` inside the TUI for the full
 > story.
 
+## Switching language
+
+```bash
+uv run wifiscope --lang zh           # force Chinese
+WIFISCOPE_LANG=zh uv run wifiscope   # via env var
+```
+
+With no override, `wifiscope` autodetects the system locale —
+`LANG=zh_CN.UTF-8` defaults to Chinese; everything else stays English.
+
 ## Bindings
 
 | Key | Action |
@@ -97,12 +111,17 @@ uv run wifiscope watch    # streaming events until Ctrl+C
 
 ## Configuration
 
-### AP inventory
+### AP aliases (optional)
 
-Most controllers (H3C, Aruba, Ubiquiti, Cisco, ASUS mesh, …) only
-expose AP-level **management MACs**, not the per-radio BSSIDs the
-APs actually broadcast. List the mgmt MACs once at
-`~/.config/wifiscope/aps.yaml`:
+`wifiscope` works fine without any AP-name configuration — every
+BSSID gets an auto-clustered label like `?AB:CD:EF` so radios of the
+same physical AP group together visually, and roam classification
+between APs still works.
+
+If you want **human-readable AP names** (`2F-living` instead of
+`?40:fe:95`) in the scan list and roam log, drop a file at
+`./aps.yaml` (next to the executable / the cloned repo's
+`aps.example.yaml`):
 
 ```yaml
 aps:
@@ -118,19 +137,33 @@ aps:
 place of the raw BSSID, and roam events read `[band switch on
 2F-living: 5G → 2.4G]` or `[inter-AP roam]`.
 
+**Where the mgmt MACs come from.** Most controllers (H3C, Aruba,
+Ubiquiti, Cisco, ASUS mesh, …) expose only an AP-level **management
+MAC** per access point, not the per-radio BSSIDs each AP actually
+broadcasts. Read those off the controller's **AP list page** —
+typically at the controller's web UI under "Access Points" / "AP
+列表" / "Devices" — then paste them into `aps.yaml` with whatever
+spatial labels make sense to you.
+
+**When to skip this entirely.** On enterprise / shared / unfamiliar
+networks where you can't access the controller, just don't create
+`aps.yaml`. The auto-cluster labels (`?AB:CD:EF`) already correctly
+group every radio of one physical AP under a single label — you
+lose the friendly name, but every other feature works.
+
 If your AP vendor randomises per-radio MACs (rare; some Cisco
 Meraki SKUs), add a `radio_overrides` map mapping specific BSSIDs
 to AP names. See [`aps.example.yaml`](aps.example.yaml).
 
-Without any inventory file `wifiscope` still works — every BSSID
-gets an auto-clustered label like `?AB:CD:EF` so radios of the same
-chip group together visually.
+Set `WIFISCOPE_INVENTORY=/some/path/aps.yaml` to load the file from
+somewhere other than the current working directory.
 
 ### Environment variables
 
 | Variable | Default | Effect |
 |---|---|---|
-| `WIFISCOPE_INVENTORY` | `~/.config/wifiscope/aps.yaml` | Path to the AP inventory YAML. |
+| `WIFISCOPE_LANG` | autodetected | UI language: `en` or `zh`. Equivalent to `--lang`. |
+| `WIFISCOPE_INVENTORY` | `./aps.yaml` (CWD-relative) | Path to the AP-aliases YAML. The file is optional; if absent, wifiscope uses auto-cluster labels. |
 | `WIFISCOPE_HELPER` | searched in `/Applications`, `~/Applications`, repo `helper/` | Path to the `wifiscope-helper.app` bundle or its binary. |
 | `WIFISCOPE_SCAN_INTERVAL` | `7` | Seconds between scans. CoreWLAN throttles around 5 s, so values below ~6 yield empty scans every other call. Floor 3. |
 
@@ -214,7 +247,9 @@ lives in `MacOSWiFiBackend`. A future Linux backend (`nl80211` /
 
 ```bash
 uv sync --all-groups          # installs runtime + dev deps (pytest)
-uv run pytest                 # runs the full test suite
+make test                     # full pytest suite
+make preview                  # regenerate BOTH preview SVGs (EN + ZH)
+make help                     # list all make targets
 ```
 
 [`tests/TESTING.md`](tests/TESTING.md) is the canonical test plan —
@@ -226,6 +261,31 @@ GitHub Actions runs the suite on every push and pull request to
 `main`, against Python 3.11 / 3.12 / 3.13 on macOS. CoreWLAN and
 SCDynamicStore are not exercised live in CI — those surfaces are
 mocked at the subprocess and dynamic-store boundaries.
+
+### Maintaining bilingual UI / docs
+
+Two languages live in this repo and they must move together:
+
+1. **Strings.** Every user-visible literal in `src/wifiscope/`
+   routes through `i18n.t(...)`. When you add or edit one, also
+   add the matching key to `_ZH` in `src/wifiscope/i18n.py`. A
+   missing key falls back to the English source, so a stale
+   catalog never breaks the app — but it does silently skip
+   translation, so translation lag is on the author of the change.
+2. **Docs.** Every English doc has a Chinese mirror under
+   `docs/zh/`. When you edit one, edit the other in the same
+   commit. The cross-link strip at the top of each file
+   (`English · 中文`) makes drift visible to readers.
+3. **Preview SVGs.** `docs/preview.svg` (English) and
+   `docs/preview.zh.svg` (Chinese) are both rendered from the
+   same fake backend in `docs/_capture_preview.py`. **Any UI
+   change that affects rendering means rerunning `make preview`**
+   so both SVGs stay in sync with the code. A drift here is
+   immediately visible in the README hero shot.
+
+`make test-all` exercises the suite under EN, ZH, and locale-
+autodetected ZH defaults to catch any binding-order or catalog-
+shape regression that one language would not surface alone.
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the version-by-version log.
 

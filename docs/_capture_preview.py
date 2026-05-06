@@ -3,19 +3,32 @@
 Data is synthetic — no real BSSIDs, IPs, or MAC addresses from the
 maintainer's environment. Re-run any time the UI changes:
 
-    uv run python docs/_capture_preview.py
+    uv run python docs/_capture_preview.py            # English → docs/preview.svg
+    WIFISCOPE_LANG=zh uv run python docs/_capture_preview.py
+                                                      # Chinese → docs/preview.zh.svg
+
+The env var WIFISCOPE_LANG also flips the output filename, since the
+two SVGs sit side by side in docs/.
 """
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime
 from pathlib import Path
 
+from wifiscope import i18n
 from wifiscope.backend import WiFiBackend
 from wifiscope.models import Connection, ScanResult
 from wifiscope.network import APEntry, NetworkInventory
 from wifiscope.poller import RoamEvent
-from wifiscope.tui import WifiScopeApp
+
+# Language must be locked in before WifiScopeApp imports — its
+# BINDINGS list calls t() at class-definition time, so a late
+# set_lang() would not retranslate the footer hints.
+i18n.set_lang(i18n.resolve_lang(None, os.environ))
+
+from wifiscope.tui import WifiScopeApp  # noqa: E402  (import after set_lang)
 
 
 class _FakeBackend(WiFiBackend):
@@ -121,7 +134,8 @@ async def main() -> None:
         )
         await pilot.pause(0.3)
         out = pilot.app.export_screenshot(title="wifiscope")
-    target = Path(__file__).parent / "preview.svg"
+    suffix = ".zh.svg" if i18n.get_lang() == i18n.ZH else ".svg"
+    target = Path(__file__).parent / f"preview{suffix}"
     target.write_text(out)
     print(f"wrote {target} ({len(out):,} bytes)")
 

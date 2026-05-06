@@ -1,3 +1,5 @@
+<sub>**English** · [中文](../docs/zh/TESTING.md)</sub>
+
 # Test Design
 
 This document is the **canonical test plan** for wifiscope. It lives
@@ -219,7 +221,7 @@ uv run pytest --collect-only -q          # list every case without running
 
 CI runs `uv run pytest` on macos-latest against Python 3.11 / 3.12 /
 3.13 for every push and pull request to `main`. See
-[`.github/workflows/test.yml`](.github/workflows/test.yml).
+[`.github/workflows/test.yml`](../.github/workflows/test.yml).
 
 ---
 

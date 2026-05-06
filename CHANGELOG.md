@@ -1,3 +1,5 @@
+<sub>**English** · [中文](docs/zh/CHANGELOG.md)</sub>
+
 # Changelog
 
 All notable changes to wifiscope are recorded here. The format is
@@ -9,6 +11,65 @@ behaviours between releases.
 ## [Unreleased]
 
 _No unreleased changes._
+
+## [0.4.0] — 2026-05-06
+
+The "speak Chinese too" release.
+
+### Added
+- **Simplified Chinese UI**. Every panel title, footer hint, status
+  message, diagnostics line, roam-log tag, Help modal section, and
+  Wi-Fi Basics term has a Chinese translation that reads naturally
+  rather than as a word-for-word port. Industry acronyms (SSID /
+  BSSID / RSSI / dBm / SNR / WPA2 / OPEN / ENT / MCS / NSS / Tx / Max)
+  stay in English in both languages by design.
+- **Static-at-launch language switch.** New `--lang en|zh` CLI flag
+  and `WIFISCOPE_LANG` environment variable; with neither, wifiscope
+  autodetects from `LC_ALL` / `LC_MESSAGES` / `LANG` (`zh_*` →
+  Chinese, anything else → English).
+- **CJK-aware column padding.** New `wifiscope.i18n.pad_cells` and
+  `fit_cells` use `rich.cells.cell_len`, so a Chinese inventory name
+  like `1F-书房` or a translated table header like `频段` consumes its
+  two cells per glyph instead of one byte per char. The Connection
+  panel labels and the Nearby BSSIDs table header / cells are routed
+  through these helpers.
+- **Chinese mirror of every doc** under `docs/zh/`: `README.md`,
+  `CHANGELOG.md`, `TESTING.md`, `HELPER.md`. Each English original
+  carries a `English · 中文` switcher at the top, and each Chinese
+  doc links back.
+- **Chinese preview SVG** at `docs/preview.zh.svg`, generated from
+  the same fake backend as the English `preview.svg`. Run
+  `WIFISCOPE_LANG=zh uv run python docs/_capture_preview.py` to
+  refresh.
+
+### Changed
+- **AP-aliases default path** moves from
+  `~/.config/wifiscope/aps.yaml` to `./aps.yaml` (resolved against
+  the current working directory). This is a breaking change for
+  anyone who already populated the XDG path; `WIFISCOPE_INVENTORY`
+  still overrides, so `export WIFISCOPE_INVENTORY=~/.config/wifiscope/aps.yaml`
+  preserves the old behaviour. Rationale: most uses run wifiscope
+  from the cloned repo, so a CWD-local file lives next to
+  `aps.example.yaml` and skips the `mkdir -p ~/.config/wifiscope`
+  ceremony. Added `aps.yaml` to `.gitignore` so users do not
+  accidentally commit their network topology.
+- README's AP-config section reframed as **AP aliases (optional)**
+  with a clearer explanation of where mgmt MACs come from (router /
+  controller management UI), and an explicit "skip this on
+  enterprise networks" note.
+- Help modal "Tunables" section now lists `WIFISCOPE_LANG=en|zh` next
+  to the existing scan / inventory / helper overrides.
+- README "Configuration" table gains a `WIFISCOPE_LANG` row alongside
+  the existing env vars.
+
+### Added
+- **Makefile** at the repo root with `test`, `test-all`, `preview`,
+  `preview-en`, `preview-zh`, `helper`, and `help` targets so the
+  bilingual workflow ("UI change → regenerate both preview SVGs")
+  is one command instead of remembering an env var.
+- README "Maintaining bilingual UI / docs" subsection codifying the
+  three sync rules between English and Chinese surfaces (strings,
+  docs, preview SVGs).
 
 ## [0.3.0] — 2026-05-06
 

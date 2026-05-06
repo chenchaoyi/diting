@@ -1,3 +1,5 @@
+<sub>**English** · [中文](../docs/zh/HELPER.md)</sub>
+
 # wifiscope-helper
 
 A minimal Cocoa `.app` that owns macOS Location Services permission so
