@@ -301,7 +301,11 @@ def _scan_line(r: ScanResult, current_bssid: str | None, inv: NetworkInventory) 
             # not added it to inventory. Lets a brand-new install make
             # sense of the scan without any config.
             ap_text, ap_style = cluster_label(r.bssid), "dim"
-        ssid_text = r.ssid or "(no SSID)"
+        # An empty SSID in a beacon is the 802.11 'hidden' bit — the AP
+        # is broadcasting normally, just with the SSID IE blanked. Use
+        # "(hidden)" rather than "(no SSID)" since the SSID does exist,
+        # it just is not in the air.
+        ssid_text = r.ssid or "(hidden)"
         ssid_style = "white" if r.ssid else "dim italic"
         bssid_text = r.bssid or "???"
         bssid_style = "dim"
