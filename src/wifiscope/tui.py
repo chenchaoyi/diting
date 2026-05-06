@@ -23,6 +23,8 @@ from rich.console import Group
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Center, Vertical
+from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, RichLog, Static
 
 from .backend import WiFiBackend
@@ -190,35 +192,116 @@ class ScanPanel(Static):
         self.update(Group(*lines))
 
 
-class AttributionBar(Static):
-    """One-line attribution at the very bottom of the screen.
+class HelpScreen(ModalScreen):
+    """Modal overlay that documents the tool, the bindings, and the
+    project. Triggered by the 'h' binding from WifiScopeApp; dismissed
+    by Esc or h again.
 
-    The Header bar above only carries volatile state (sort mode,
-    pause); this bar is the static "who made this and where to find
-    it" line. Uses an OSC 8 hyperlink for the GitHub URL so terminals
-    that support it (Warp, iTerm 3, Terminal.app on macOS, kitty,
-    WezTerm, ...) render it clickable; in a terminal that ignores
-    OSC 8 it just shows the URL inline.
+    The content lives here rather than scattered around the README
+    because at the moment a user reaches for help they want it in the
+    terminal in front of them, not on a webpage.
     """
 
+    BINDINGS = [
+        Binding("escape,h,q", "app.pop_screen", "Close"),
+    ]
+
     DEFAULT_CSS = """
-    AttributionBar {
-        height: 1;
-        padding: 0 1;
-        color: $text-muted;
+    HelpScreen {
+        align: center middle;
+    }
+    HelpScreen > #help-box {
+        width: 78;
+        height: auto;
+        max-height: 90%;
+        border: heavy $accent;
+        padding: 1 2;
         background: $surface;
+    }
+    HelpScreen #help-box Static {
+        height: auto;
     }
     """
 
-    def on_mount(self) -> None:
-        text = Text(no_wrap=True)
-        text.append("wifiscope", style="bold dim")
-        text.append("  ·  made by ccy  ·  ", style="dim")
-        text.append(
-            "github.com/chenchaoyi/wifiscope",
-            style="dim underline link https://github.com/chenchaoyi/wifiscope",
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Static(_help_content(), id="help-content"),
+            id="help-box",
         )
-        self.update(text)
+
+
+def _help_content() -> Text:
+    """Build the help dialog body as a Rich Text. OSC 8 link on the
+    GitHub URL renders clickable in modern terminals; falls back to
+    plain text where unsupported.
+    """
+    body = Text(no_wrap=False)
+
+    def section(title: str) -> None:
+        body.append("\n" + title + "\n", style="bold yellow")
+
+    def line(label: str, desc: str) -> None:
+        body.append("  ")
+        body.append(f"{label:<6}", style="bold")
+        body.append(desc + "\n")
+
+    body.append("wifiscope", style="bold cyan")
+    body.append(
+        "  ·  terminal WiFi monitor for macOS, focused on roaming visibility.\n",
+        style="dim",
+    )
+
+    section("What")
+    body.append(
+        "  See which AP you are on, when your Mac switches, and how strong\n"
+        "  the signal is — the things macOS hides from its own WiFi panel.\n"
+    )
+
+    section("Panels")
+    line("Conn.", "current AP, signal bar, link / IP / radio details")
+    line("Scan",  "every BSSID in range, grouped by physical AP")
+    line("Roam",  "band-switch and inter-AP roam events as they happen")
+
+    section("Bindings")
+    line("q", "quit")
+    line("p", "pause / resume polling")
+    line("r", "force a rescan now (CoreWLAN ~5s throttle still applies)")
+    line("s", "cycle scan sort:  by AP  ↔  by signal")
+    line("c", "force re-roam (cycle WiFi off/on so the OS re-picks the")
+    body.append(" " * 8 + "strongest BSSID — fixes sticky associations)\n")
+    line("h", "toggle this help")
+
+    section("Configure")
+    body.append(
+        "  Drop ~/.config/wifiscope/aps.yaml listing your APs by management\n"
+        "  MAC; wifiscope renders friendly names instead of MAC fragments.\n"
+        "  A Swift helper bundle (auto-built on first launch) owns macOS\n"
+        "  Location Services so the Nearby APs panel can show real SSIDs\n"
+        "  and BSSIDs. See the README for full details.\n"
+    )
+
+    section("Tunables")
+    body.append(
+        "  WIFISCOPE_SCAN_INTERVAL=N    seconds between scans, default 7.\n"
+        "                                CoreWLAN throttles around 5 s,\n"
+        "                                so values below ~6 yield empty\n"
+        "                                scans every other call. Min 3.\n"
+        "  WIFISCOPE_INVENTORY=path     override aps.yaml location.\n"
+        "  WIFISCOPE_HELPER=path        override helper.app path.\n"
+    )
+
+    body.append("\n")
+    body.append("─" * 70 + "\n", style="dim")
+    body.append("made by ", style="dim")
+    body.append("ccy", style="bold dim")
+    body.append("  ·  ", style="dim")
+    body.append(
+        "github.com/chenchaoyi/wifiscope",
+        style="dim underline link https://github.com/chenchaoyi/wifiscope",
+    )
+    body.append("\n")
+    body.append("Esc or h to close", style="dim italic")
+    return body
 
 
 class RoamLogPanel(RichLog):
@@ -504,13 +587,20 @@ class WifiScopeApp(App):
         Binding("r", "rescan", "Rescan"),
         Binding("s", "cycle_sort", "Sort"),
         Binding("c", "reroam", "Re-roam"),
+        Binding("h", "show_help", "Help"),
     ]
 
-    def __init__(self, backend: WiFiBackend, inv: NetworkInventory) -> None:
+    def __init__(
+        self,
+        backend: WiFiBackend,
+        inv: NetworkInventory,
+        *,
+        scan_interval: float = 7.0,
+    ) -> None:
         super().__init__()
         self._backend = backend
         self._inv = inv
-        self._poller = WiFiPoller(backend)
+        self._poller = WiFiPoller(backend, scan_interval=scan_interval)
         self._paused = False
         # Cache the most recent *non-empty* scan. CoreWLAN's throttle
         # produces empty results periodically; replacing the panel with
@@ -538,12 +628,6 @@ class WifiScopeApp(App):
         yield ConnectionPanel(id="conn")
         yield ScanPanel(id="scan")
         yield RoamLogPanel(id="roam")
-        # AttributionBar flows naturally between the panels and the
-        # docked Footer below it. Two widgets both `dock: bottom` would
-        # conflict on Textual's footer layer and Footer's binding hints
-        # would disappear, so AttributionBar is in normal flow with a
-        # fixed height of 1.
-        yield AttributionBar()
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -596,6 +680,9 @@ class WifiScopeApp(App):
         # Rebuild the scan panel immediately so the user sees the change
         # without waiting for the next 1 Hz connection update.
         self._refresh_scan_panel()
+
+    def action_show_help(self) -> None:
+        self.push_screen(HelpScreen())
 
     def action_reroam(self) -> None:
         """Force a fresh association so the OS reselects the best BSSID.

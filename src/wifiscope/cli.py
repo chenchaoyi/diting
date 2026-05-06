@@ -231,7 +231,26 @@ def _run_tui() -> None:
     _ensure_helper_ready()
     backend = MacOSWiFiBackend()
     inv = load_inventory()
-    WifiScopeApp(backend, inv).run()
+    WifiScopeApp(backend, inv, scan_interval=_scan_interval()).run()
+
+
+def _scan_interval() -> float:
+    """Resolve scan interval from the WIFISCOPE_SCAN_INTERVAL env var.
+
+    Default is 7 s, which empirically sits above CoreWLAN's ~5 s
+    throttle window — going below it just produces alternating empty
+    scans (silent because of the panel's last-non-empty cache, but
+    wasteful). Hard floor 3 s is the documented absolute minimum from
+    the platform; smaller values are clamped.
+    """
+    import os
+    raw = os.environ.get("WIFISCOPE_SCAN_INTERVAL")
+    if not raw:
+        return 7.0
+    try:
+        return max(3.0, float(raw))
+    except ValueError:
+        return 7.0
 
 
 def _ensure_helper_ready() -> None:
