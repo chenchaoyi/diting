@@ -27,16 +27,16 @@ class _FakeBackend(WiFiBackend):
     def get_connection(self) -> Connection:
         return Connection(
             ssid="Office-WiFi",
-            bssid="aa:bb:cc:11:22:53",  # 1F-bedroom 5G radio
-            rssi_dbm=-58,
+            bssid="aa:bb:cc:11:22:53",  # 1F-bedroom 5G radio — fair signal
+            rssi_dbm=-68,
             noise_dbm=-95,
-            tx_rate_mbps=720.0,
+            tx_rate_mbps=360.0,
             channel=48,
             channel_width_mhz=80,
             channel_band="5 GHz",
             phy_mode="802.11ax",
-            security="WPA2 Personal",
-            mcs_index=9,
+            security="WPA2 Enterprise",
+            mcs_index=7,
             nss=2,
             timestamp=datetime.now(),
             interface_mac="de:ad:be:ef:00:01",
@@ -48,20 +48,29 @@ class _FakeBackend(WiFiBackend):
 
     def scan(self) -> list[ScanResult]:
         ts = datetime.now()
-        rows: list[tuple[str, str, int, int, int]] = [
-            # ssid, bssid, rssi, channel, width
-            ("Office-WiFi",   "aa:bb:cc:11:22:53", -58, 48, 80),
-            ("Office-Guest",  "aa:bb:cc:11:22:54", -58, 48, 80),
-            ("Office-WiFi",   "aa:bb:cc:11:22:50", -55,  6, 40),
-            ("Office-Guest",  "aa:bb:cc:11:22:51", -56,  6, 40),
-            ("Office-WiFi",   "aa:bb:cc:33:44:13", -65, 36, 80),
-            ("Office-Guest",  "aa:bb:cc:33:44:14", -65, 36, 80),
-            ("Office-WiFi",   "aa:bb:cc:33:44:10", -68, 11, 40),
-            ("Office-Guest",  "aa:bb:cc:33:44:11", -68, 11, 40),
-            ("Office-WiFi",   "aa:bb:cc:55:66:0b", -76, 36, 80),
-            ("Office-WiFi",   "aa:bb:cc:55:66:08", -78,  1, 40),
-            ("neighbour",     "f2:11:22:33:44:55", -82,  6, 20),
-            ("",              "f2:11:22:33:44:56", -82,  6, 20),  # hidden
+        rows: list[tuple[str, str, int, int, int, str]] = [
+            # ssid, bssid, rssi, channel, width, security
+            # 1F-bedroom — current AP, stuck here on 5 GHz at fair signal
+            ("Office-WiFi",   "aa:bb:cc:11:22:53", -68, 48, 80, "WPA2 Enterprise"),
+            ("Office-Guest",  "aa:bb:cc:11:22:54", -68, 48, 80, "Open"),
+            ("Office-IoT",    "aa:bb:cc:11:22:50", -65,  6, 40, "WPA2 Personal"),
+            ("Office-Guest",  "aa:bb:cc:11:22:51", -66,  6, 40, "Open"),
+            # 2F-living
+            ("Office-WiFi",   "aa:bb:cc:33:44:13", -60, 36, 80, "WPA2 Enterprise"),
+            ("Office-Guest",  "aa:bb:cc:33:44:14", -61, 36, 80, "Open"),
+            ("Office-IoT",    "aa:bb:cc:33:44:10", -68, 11, 40, "WPA2 Personal"),
+            ("Office-Guest",  "aa:bb:cc:33:44:11", -68, 11, 40, "Open"),
+            # 3F-attic — same SSID, much stronger; should trigger the
+            # "stronger same-name AP nearby" diagnostic + roam hint
+            ("Office-WiFi",   "aa:bb:cc:55:66:0b", -52, 48, 80, "WPA2 Enterprise"),
+            ("Office-Guest",  "aa:bb:cc:55:66:0c", -53, 48, 80, "Open"),
+            ("Office-IoT",    "aa:bb:cc:55:66:08", -56,  1, 40, "WPA2 Personal"),
+            # Cafe across the corridor — open guest portal on the same
+            # 5 GHz channel as the user; feeds the channel-load warning.
+            ("guest-cafe",    "96:de:ad:be:ef:01", -75, 48, 20, "Open"),
+            # Unrelated neighbours
+            ("neighbour-2g",  "f2:11:22:33:44:55", -78,  6, 20, "WPA2 Personal"),
+            ("",              "f2:11:22:33:44:56", -82,  6, 20, "WPA2 Personal"),
         ]
         return [
             ScanResult(
@@ -73,10 +82,11 @@ class _FakeBackend(WiFiBackend):
                 channel_width_mhz=width,
                 channel_band="5 GHz" if ch >= 32 else "2.4 GHz",
                 phy_mode=None,
-                security=None,
+                security=security,
                 timestamp=ts,
+                country_code="CN",
             )
-            for ssid, bssid, rssi, ch, width in rows
+            for ssid, bssid, rssi, ch, width, security in rows
         ]
 
     def permission_state(self) -> str:
@@ -94,7 +104,7 @@ _INVENTORY = NetworkInventory(
 
 async def main() -> None:
     app = WifiScopeApp(_FakeBackend(), _INVENTORY)
-    async with app.run_test(size=(120, 38)) as pilot:
+    async with app.run_test(size=(160, 56)) as pilot:
         # let one connection update + one scan land
         await pilot.pause(2.0)
         # seed a roam event so the bottom panel has content
