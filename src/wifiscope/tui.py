@@ -190,6 +190,38 @@ class ScanPanel(Static):
         self.update(Group(*lines))
 
 
+class AttributionBar(Static):
+    """One-line attribution at the very bottom of the screen.
+
+    The Header bar above only carries volatile state (sort mode,
+    pause); this bar is the static "who made this and where to find
+    it" line. Uses an OSC 8 hyperlink for the GitHub URL so terminals
+    that support it (Warp, iTerm 3, Terminal.app on macOS, kitty,
+    WezTerm, ...) render it clickable; in a terminal that ignores
+    OSC 8 it just shows the URL inline.
+    """
+
+    DEFAULT_CSS = """
+    AttributionBar {
+        dock: bottom;
+        height: 1;
+        padding: 0 1;
+        color: $text-muted;
+        background: $surface;
+    }
+    """
+
+    def on_mount(self) -> None:
+        text = Text(no_wrap=True)
+        text.append("wifiscope", style="bold dim")
+        text.append("  ·  made by ccy  ·  ", style="dim")
+        text.append(
+            "github.com/chenchaoyi/wifiscope",
+            style="dim underline link https://github.com/chenchaoyi/wifiscope",
+        )
+        self.update(text)
+
+
 class RoamLogPanel(RichLog):
     DEFAULT_CSS = """
     RoamLogPanel {
@@ -508,6 +540,11 @@ class WifiScopeApp(App):
         yield ScanPanel(id="scan")
         yield RoamLogPanel(id="roam")
         yield Footer()
+        # AttributionBar docks to the bottom; with Footer also docked
+        # bottom and composed earlier, the layout stacks Footer above
+        # this bar. Static "made by" line lives there so the Header
+        # subtitle can stay clean for volatile state only.
+        yield AttributionBar()
 
     async def on_mount(self) -> None:
         self.run_worker(self._consume_events(), exclusive=True, name="poller")
@@ -578,15 +615,13 @@ class WifiScopeApp(App):
             self.notify("no WiFi interface", severity="warning")
 
     def _build_subtitle(self) -> str:
-        bits = [f"{len(self._inv.aps)} APs"]
-        if self._inv.radio_overrides:
-            bits.append(f"{len(self._inv.radio_overrides)} overrides")
-        bits.append(self._backend.name)
-        # Helper presence is informational; permission state shows up in
-        # the Nearby APs panel title via the redacted-row check.
-        if getattr(self._backend, "_helper_path", None):
-            bits.append("helper")
-        bits.append(f"sort: {self._sort_mode}")
+        # Header subtitle is dynamic state only — what changes as the
+        # user interacts. Static facts (inventory size, backend name,
+        # helper presence) are either obvious from the panels below or
+        # would just clutter the bar with information that does not
+        # actually reflect the current run state. Permission issues
+        # already surface in the Nearby APs panel title.
+        bits = [f"sort: {self._sort_mode}"]
         if self._paused:
             bits.append("PAUSED")
         return " · ".join(bits)
