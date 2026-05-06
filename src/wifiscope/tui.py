@@ -203,7 +203,6 @@ class AttributionBar(Static):
 
     DEFAULT_CSS = """
     AttributionBar {
-        dock: bottom;
         height: 1;
         padding: 0 1;
         color: $text-muted;
@@ -539,12 +538,13 @@ class WifiScopeApp(App):
         yield ConnectionPanel(id="conn")
         yield ScanPanel(id="scan")
         yield RoamLogPanel(id="roam")
-        yield Footer()
-        # AttributionBar docks to the bottom; with Footer also docked
-        # bottom and composed earlier, the layout stacks Footer above
-        # this bar. Static "made by" line lives there so the Header
-        # subtitle can stay clean for volatile state only.
+        # AttributionBar flows naturally between the panels and the
+        # docked Footer below it. Two widgets both `dock: bottom` would
+        # conflict on Textual's footer layer and Footer's binding hints
+        # would disappear, so AttributionBar is in normal flow with a
+        # fixed height of 1.
         yield AttributionBar()
+        yield Footer()
 
     async def on_mount(self) -> None:
         self.run_worker(self._consume_events(), exclusive=True, name="poller")
@@ -615,13 +615,15 @@ class WifiScopeApp(App):
             self.notify("no WiFi interface", severity="warning")
 
     def _build_subtitle(self) -> str:
-        # Header subtitle is dynamic state only — what changes as the
-        # user interacts. Static facts (inventory size, backend name,
-        # helper presence) are either obvious from the panels below or
-        # would just clutter the bar with information that does not
-        # actually reflect the current run state. Permission issues
-        # already surface in the Nearby APs panel title.
+        # Header subtitle is dynamic state and live diagnostics — what
+        # changes as the user interacts, plus the poll cadence so the
+        # user can see when the next scan is due. Static facts
+        # (inventory size, backend name, helper presence) live in the
+        # AttributionBar / panel titles instead.
+        scan_s = int(getattr(self._poller, "_scan_interval", 0))
         bits = [f"sort: {self._sort_mode}"]
+        if scan_s:
+            bits.append(f"scan {scan_s}s")
         if self._paused:
             bits.append("PAUSED")
         return " · ".join(bits)
