@@ -21,7 +21,7 @@
     <string>APPL</string>
 
     <key>CFBundleShortVersionString</key>
-    <string>0.2.0</string>
+    <string>0.5.0</string>
 
     <key>CFBundleVersion</key>
     <string>1</string>
@@ -40,6 +40,9 @@
 
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>wifiscope reads nearby Wi-Fi network names and BSSIDs to label access points and detect roaming. Location data never leaves your machine.</string>
+
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>wifiscope scans nearby BLE advertisements so the TUI can show you what devices are around</string>
 
     <key>LSUIElement</key>
     <false/>
