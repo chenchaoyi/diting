@@ -280,7 +280,17 @@ def _run_tui() -> None:
     _ensure_helper_ready()
     backend = MacOSWiFiBackend()
     inv = load_inventory()
-    WifiScopeApp(backend, inv, scan_interval=_scan_interval()).run()
+    # Resolve the helper bundle's binary so the BLE poller can spawn
+    # `wifiscope-helper ble-scan` directly. find_helper() returns the
+    # same path the Wi-Fi scan path uses, so a single TCC grant covers
+    # both.
+    from . import _helper
+    ble_binary = _helper.find_helper()
+    WifiScopeApp(
+        backend, inv,
+        scan_interval=_scan_interval(),
+        ble_helper_path=ble_binary,
+    ).run()
 
 
 def _scan_interval() -> float:

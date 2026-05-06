@@ -154,6 +154,7 @@ _ZH: dict[str, str] = {
     "Connection": "连接",
     "Diagnostics": "诊断",
     "Nearby BSSIDs": "附近 BSSID",
+    "Nearby BLE devices": "附近 BLE 设备",
     "Roam log": "漫游日志",
 
     # ---- footer / app bindings ----
@@ -162,6 +163,7 @@ _ZH: dict[str, str] = {
     "Rescan": "重扫",
     "Sort": "排序",
     "Re-roam": "断开重连",
+    "View": "视图",
     "Help": "帮助",
     "Basics": "基础知识",
     "Close": "关闭",
@@ -172,6 +174,9 @@ _ZH: dict[str, str] = {
     "PAUSED": "已暂停",
     "ap": "AP",
     "signal": "信号",
+    "view: {mode}": "视图：{mode}",
+    "wifi": "Wi-Fi",
+    "ble": "BLE",
 
     # ---- Connection panel ----
     "not associated": "未连接",
@@ -234,6 +239,27 @@ _ZH: dict[str, str] = {
 
     # ---- Diagnostics: waiting state ----
     "(waiting for scan data...)": "(等待扫描数据…)",
+
+    # ---- BLE panel ----
+    "(no BLE devices yet — scanning...)": "(暂无 BLE 设备，扫描中…)",
+    "(BLE permission required)": "(需要蓝牙权限)",
+    "(BLE merged {n})": "(合并 {n})",
+    "  · {n}s ago": "  · {n}s 前",
+    "{n}s": "{n}s",
+    "now": "刚刚",
+    "vendor": "厂商",
+    "name": "名称",
+    "services": "服务",
+    "last seen": "最近",
+    "id": "ID",
+    # Service categories — translation matches the spec list. Anything
+    # not in this catalog (raw 16-bit UUIDs etc.) passes through as-is.
+    "Audio": "音频",
+    "HID": "HID",
+    "HID Keyboard": "键盘",
+    "HID Mouse": "鼠标",
+    "Heart Rate": "心率",
+    "Find My": "查找网络",
 
     # ---- CLI --help ----
     "usage: wifiscope [--lang en|zh] [SUBCOMMAND]\n"
@@ -385,6 +411,8 @@ _ZH: dict[str, str] = {
     "strongest BSSID — fixes sticky associations)\n":
         "最强 BSSID —— 解决卡死在弱 AP 的问题）\n",
     "toggle this help": "打开 / 关闭本帮助",
+    "toggle Nearby view: Wi-Fi BSSIDs ↔ BLE devices":
+        "切换附近视图：Wi-Fi BSSID ↔ BLE 设备",
     "open Wi-Fi basics for SSID, BSSID, channel, band, security":
         "打开 Wi-Fi 基础知识：SSID / BSSID / 信道 / 频段 / 加密",
     "AP aliases (optional)": "AP 别名（可选）",
