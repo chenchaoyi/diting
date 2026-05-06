@@ -16,6 +16,7 @@ Bindings: q quit · p pause · r force-rescan.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from datetime import datetime
 
 from rich.console import Group
@@ -132,32 +133,45 @@ class ScanPanel(Static):
         current_bssid: str | None,
         scanned_at: float | None,
         inv: NetworkInventory,
+        sort_mode: str = "signal",
     ) -> None:
         ago = "" if scanned_at is None else f"  · scanned {int(time.monotonic() - scanned_at)}s ago"
         all_redacted = bool(results) and all(
             r.bssid is None and r.ssid is None for r in results
         )
         identity = "  · identity TCC-redacted" if all_redacted else ""
-        self.border_title = f"Nearby APs ({len(results)}){ago}{identity}"
+        sort_label = f"  · sort: {sort_mode}"
+        self.border_title = (
+            f"Nearby APs ({len(results)}){ago}{identity}{sort_label}"
+        )
         if not results:
             self.update(Text("(no APs from last scan — likely throttle, retrying)", style="dim italic"))
             return
-        # Pin the currently-associated AP at the top of the list, then
-        # sort everything else by RSSI desc. With dense corporate scans
-        # (100+ APs) the user's own row would otherwise sort by signal
-        # and be cropped below the panel's viewport — defeating the
-        # whole point of the synth row injection.
-        cur = (current_bssid or "").lower()
-        current_rows = [r for r in results if r.bssid and r.bssid.lower() == cur]
-        other_rows = [r for r in results if not (r.bssid and r.bssid.lower() == cur)]
-        other_rows.sort(key=lambda r: r.rssi_dbm if r.rssi_dbm is not None else -200, reverse=True)
-        rows = current_rows + other_rows
-        # Hand-rolled aligned table — DataTable is overkill for read-only display
-        # and adds focus / scroll behaviour we do not want here.
-        lines: list[Text] = []
-        lines.append(_header_line())
-        for r in rows:
-            lines.append(_scan_line(r, current_bssid, inv))
+
+        lines: list[Text] = [_header_line()]
+        if sort_mode == "ap":
+            # Group by physical AP (inventory name or cluster_label),
+            # sort within each group by RSSI desc, sort groups by best
+            # RSSI desc with the current AP's group floated to position
+            # 0. Each group gets a 1-line summary header above its rows.
+            for group in _group_by_ap(results, current_bssid, inv):
+                lines.append(_group_header(group, inv))
+                for r in group.rows:
+                    lines.append(_scan_line(r, current_bssid, inv))
+        else:
+            # Default 'signal' mode. Pin the currently associated AP at
+            # the top, sort everything else by RSSI desc — without the
+            # pin a corporate scan with 100+ rows would push the user's
+            # own row off the viewport.
+            cur = (current_bssid or "").lower()
+            current_rows = [r for r in results if r.bssid and r.bssid.lower() == cur]
+            other_rows = [r for r in results if not (r.bssid and r.bssid.lower() == cur)]
+            other_rows.sort(
+                key=lambda r: r.rssi_dbm if r.rssi_dbm is not None else -200,
+                reverse=True,
+            )
+            for r in current_rows + other_rows:
+                lines.append(_scan_line(r, current_bssid, inv))
         self.update(Group(*lines))
 
 
@@ -195,6 +209,85 @@ class RoamLogPanel(RichLog):
 
 
 # ---------- helpers ----------
+
+@dataclass(frozen=True, slots=True)
+class _APGroup:
+    """One physical AP and the BSSIDs we observed it broadcasting."""
+    key: str            # inventory name when matched, else cluster_label
+    is_current: bool    # whether the user's current connection is in here
+    rows: tuple[ScanResult, ...]
+
+
+def _group_by_ap(
+    results: list[ScanResult],
+    current_bssid: str | None,
+    inv: NetworkInventory,
+) -> list[_APGroup]:
+    """Bucket scan rows by their physical AP, then sort.
+
+    Group key is `inv.resolve(bssid)` if known, else `cluster_label(bssid)`
+    — this means inventory names and auto-clustered MACs share the same
+    grouping space (an AP that has both is impossible since a name can
+    only resolve to one inventory entry).
+
+    Within each group rows are sorted by RSSI desc. Groups themselves
+    are sorted by the best RSSI in each group, with the group containing
+    the user's current connection floated to the top regardless of
+    signal — same rationale as the pin in 'signal' mode.
+    """
+    buckets: dict[str, list[ScanResult]] = {}
+    for r in results:
+        key = inv.resolve(r.bssid)
+        if key is None:
+            key = cluster_label(r.bssid) if r.bssid else "(redacted)"
+        buckets.setdefault(key, []).append(r)
+    cur = (current_bssid or "").lower()
+    groups: list[_APGroup] = []
+    for key, rows in buckets.items():
+        rows.sort(
+            key=lambda r: r.rssi_dbm if r.rssi_dbm is not None else -200,
+            reverse=True,
+        )
+        is_current = any(r.bssid and r.bssid.lower() == cur for r in rows)
+        groups.append(_APGroup(key=key, is_current=is_current, rows=tuple(rows)))
+    groups.sort(
+        key=lambda g: (
+            0 if g.is_current else 1,
+            -max(
+                (r.rssi_dbm if r.rssi_dbm is not None else -200) for r in g.rows
+            ),
+        )
+    )
+    return groups
+
+
+def _group_header(group: _APGroup, inv: NetworkInventory) -> Text:
+    """Render a one-line summary above each group in 'ap' mode."""
+    rssis = [r.rssi_dbm for r in group.rows if r.rssi_dbm is not None]
+    best = max(rssis) if rssis else None
+    worst = min(rssis) if rssis else None
+    ssids = sorted({r.ssid for r in group.rows if r.ssid})
+    n = len(group.rows)
+    bssid_word = "BSSID" if n == 1 else "BSSIDs"
+    rssi_part = (
+        f"{best} dBm" if best == worst or best is None or worst is None
+        else f"{best}..{worst} dBm"
+    )
+    ssid_part = (
+        f"  ·  {len(ssids)} SSID{'s' if len(ssids) != 1 else ''}"
+        if ssids else ""
+    )
+    line = Text()
+    line.append("  ── ", style="dim")
+    # cluster labels start with '?'; inventory names never do.
+    name_style = "bold dim" if group.key.startswith("?") else "bold cyan"
+    line.append(group.key, style=name_style)
+    line.append(f"  ·  {n} {bssid_word}  ·  {rssi_part}{ssid_part}",
+                style="dim")
+    if group.is_current:
+        line.append("  · current", style="bold cyan")
+    return line
+
 
 def _merge_current(
     scan: list[ScanResult], conn: Connection | None
@@ -288,7 +381,7 @@ def _header_line() -> Text:
     h.append(
         f" {'★':<2}{'RSSI':>{_COL_RSSI}}  {'signal':<{_COL_SIGNAL}}  "
         f"{'ch':<{_COL_CH}}{'band':<{_COL_BAND}}  "
-        f"{'AP':<{_COL_AP}}  {'SSID':<{_COL_SSID}}  "
+        f"{'AP host':<{_COL_AP}}  {'SSID':<{_COL_SSID}}  "
         f"{'BSSID':<{_COL_BSSID}}  {'width':<{_COL_WIDTH}}"
     )
     return h
@@ -363,6 +456,7 @@ class WifiScopeApp(App):
         Binding("q", "quit", "Quit"),
         Binding("p", "toggle_pause", "Pause"),
         Binding("r", "rescan", "Rescan"),
+        Binding("s", "cycle_sort", "Sort"),
     ]
 
     def __init__(self, backend: WiFiBackend, inv: NetworkInventory) -> None:
@@ -383,6 +477,10 @@ class WifiScopeApp(App):
         # (it usually does; the OS treats scan as "find roam targets",
         # not "list everything").
         self._latest_connection: Connection | None = None
+        # Scan-list sort mode — toggled by the 's' binding. 'signal'
+        # sorts every BSSID by RSSI desc with the current AP pinned.
+        # 'ap' groups by physical AP and adds a per-group summary line.
+        self._sort_mode: str = "signal"
         self.title = "wifiscope"
         self.sub_title = self._build_subtitle()
 
@@ -427,6 +525,7 @@ class WifiScopeApp(App):
             self._latest_bssid,
             self._last_successful_scan_at,
             self._inv,
+            self._sort_mode,
         )
 
     def action_toggle_pause(self) -> None:
@@ -435,6 +534,13 @@ class WifiScopeApp(App):
 
     def action_rescan(self) -> None:
         self._poller.force_rescan()
+
+    def action_cycle_sort(self) -> None:
+        self._sort_mode = "ap" if self._sort_mode == "signal" else "signal"
+        self.sub_title = self._build_subtitle()
+        # Rebuild the scan panel immediately so the user sees the change
+        # without waiting for the next 1 Hz connection update.
+        self._refresh_scan_panel()
 
     def _build_subtitle(self) -> str:
         bits = [f"{len(self._inv.aps)} APs"]
@@ -445,6 +551,7 @@ class WifiScopeApp(App):
         # the Nearby APs panel title via the redacted-row check.
         if getattr(self._backend, "_helper_path", None):
             bits.append("helper")
+        bits.append(f"sort: {self._sort_mode}")
         if self._paused:
             bits.append("PAUSED")
         return " · ".join(bits)
