@@ -228,9 +228,86 @@ def _run_tui() -> None:
     # pull in textual / rich on every invocation.
     from .tui import WifiScopeApp
 
+    _ensure_helper_ready()
     backend = MacOSWiFiBackend()
     inv = load_inventory()
     WifiScopeApp(backend, inv).run()
+
+
+def _ensure_helper_ready() -> None:
+    """Ensure the Swift helper exists and has Location Services permission
+    before the TUI launches.
+
+    Steps, each silent unless something needs the user's attention:
+    1. Locate the helper. Build it from `helper/build.sh` if not found
+       and the Swift toolchain is available (works for the editable /
+       cloned install, where the source ships next to the package).
+    2. Probe permission with a one-shot helper scan.
+    3. If permission is missing, `open` the .app so macOS shows its
+       Location Services prompt, then poll every 2 s until permission
+       lands. The helper's window auto-closes on grant. Ctrl+C skips
+       the wait and the TUI launches with redacted scan rows — useful
+       when the user wants to inspect cached state without granting.
+    """
+    import json as _json  # avoid import-cycle hint at module top
+    from . import _helper
+
+    binary = _helper.find_helper()
+    if binary is None:
+        binary = _helper.try_build()
+    if binary is None:
+        print("note: wifiscope-helper not found and could not be built.")
+        print("      Scan list will be TCC-redacted. To fix, install the")
+        print("      Swift toolchain (Xcode CLT) and rerun, or build helper/")
+        print("      manually. See README's helper section.")
+        print()
+        return
+
+    if _helper.has_permission(binary):
+        return
+
+    bundle = _helper.bundle_path(binary)
+    if bundle is None:
+        # Standalone binary outside a bundle — no UI to launch.
+        print("note: helper found but not in an .app bundle; cannot trigger")
+        print("      Location Services prompt. Scan list will be redacted.")
+        print()
+        return
+
+    print(f"Launching helper {bundle}")
+    print("to grant Location Services. Click Allow when macOS asks.")
+    print("(Ctrl+C to skip and start the TUI with redacted scan rows.)")
+    print()
+    try:
+        subprocess.Popen(
+            ["/usr/bin/open", bundle],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError as e:
+        print(f"  failed to open helper: {e}")
+        return
+
+    waited = 0.0
+    interval = 2.0
+    timeout = 120.0
+    try:
+        while waited < timeout:
+            time.sleep(interval)
+            waited += interval
+            if _helper.has_permission(binary):
+                print("Permission granted — starting TUI.")
+                # Brief pause lets the helper window show its
+                # confirmation message before auto-quitting.
+                time.sleep(0.5)
+                return
+            sys.stdout.write(".")
+            sys.stdout.flush()
+        print()
+        print(f"(no grant after {int(timeout)}s; starting TUI anyway.")
+        print(" rerun wifiscope after granting to see unredacted scan.)")
+    except KeyboardInterrupt:
+        print()
+        print("Skipped; starting TUI with redacted scan.")
 
 
 def main() -> None:

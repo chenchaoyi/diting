@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -121,3 +122,64 @@ def _or_none_zero(value):
         return None
     v = int(value)
     return v if v != 0 else None
+
+
+# ---------- one-shot setup helpers ----------
+
+def has_permission(binary: str) -> bool:
+    """Quick liveness check: did the helper return at least one BSSID?
+
+    A redacted scan returns networks with all BSSIDs as None. Seeing
+    even one populated BSSID proves Location Services is granted to
+    the helper bundle.
+    """
+    try:
+        proc = subprocess.run(
+            [binary, "scan"], capture_output=True, timeout=12, check=False
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    if proc.returncode != 0:
+        return False
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return False
+    return any(net.get("bssid") for net in (data.get("networks") or []))
+
+
+def bundle_path(binary: str) -> str | None:
+    """Resolve the .app directory enclosing a helper binary, or None."""
+    p = Path(binary).resolve()
+    for ancestor in [p, *p.parents]:
+        if ancestor.suffix == ".app":
+            return str(ancestor)
+    return None
+
+
+def try_build() -> str | None:
+    """Run helper/build.sh if the source tree is reachable.
+
+    Returns the binary path on success, None if Swift isn't installed,
+    the source isn't reachable (e.g. wifiscope was pip-installed without
+    the Swift sources), or the build fails.
+    """
+    # Walk up from this module to find the repo root that ships the
+    # `helper/` directory. wifiscope is normally installed editable
+    # via `uv sync`, so __file__ points inside the repo's src/.
+    repo_root = Path(__file__).resolve().parents[2]
+    helper_dir = repo_root / "helper"
+    build_script = helper_dir / "build.sh"
+    if not build_script.is_file():
+        return None
+    if shutil.which("swift") is None:
+        return None
+    try:
+        subprocess.run(
+            ["/bin/bash", str(build_script)],
+            cwd=helper_dir, check=True,
+            capture_output=True, timeout=300,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+    return find_helper()

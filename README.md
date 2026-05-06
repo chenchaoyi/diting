@@ -53,21 +53,25 @@ In the TUI:
   `[inter-AP roam]`
 - bindings: `q` quit · `p` pause · `r` force rescan
 
-### Optional: install the Swift helper for unredacted scan list
+### One-time helper grant (automatic on first launch)
 
-The Nearby APs panel will show every neighbour's SSID and BSSID as
-`(redacted)` on macOS 26 unless you install the helper bundle:
+The Nearby APs panel needs Location Services permission to show each
+neighbour's SSID and BSSID; without it everything in the scan list
+comes back `(redacted)`. wifiscope handles this automatically on first
+launch:
 
-```bash
-cd helper
-./build.sh                                  # produces wifiscope-helper.app
-mv wifiscope-helper.app /Applications/
-open /Applications/wifiscope-helper.app     # grant Location Services once
-```
+1. `uv run wifiscope`
+2. wifiscope detects the missing permission, builds the Swift helper
+   bundle (`helper/build.sh`, requires Xcode CLT) if needed, then
+   `open`s it so macOS shows its Location Services prompt.
+3. Click Allow. The helper window auto-closes; wifiscope's terminal
+   detects the grant within ~2 seconds and launches the TUI.
 
-After that, `wifiscope`'s `MacOSWiFiBackend` finds the helper, shells
-out to it for each scan, and the panel shows real identity for every
-visible AP. See [`helper/README.md`](helper/README.md) for details.
+The grant is persistent — subsequent runs go straight to the TUI.
+Ctrl+C during the wait skips the grant and starts the TUI with
+redacted scan rows. See [`helper/README.md`](helper/README.md) for
+manual control (custom install path, override via `WIFISCOPE_HELPER`,
+etc.).
 
 `watch` only prints when something meaningful changes — identity
 fields differ, RSSI moves ≥ 5 dBm, or a 10-second heartbeat fires —

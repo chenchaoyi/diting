@@ -177,7 +177,14 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
                 "Open System Settings → Privacy & Security → Location Services → " +
                 "wifiscope-helper, toggle ON, then relaunch this app."
         case .authorizedAlways, .authorizedWhenInUse:
-            statusLabel.stringValue = "✓ Permission granted. wifiscope (Python) is ready to use; you may quit this window."
+            statusLabel.stringValue = "Permission granted. This window will close automatically..."
+            // Give the user ~1.5 s to read the message, then exit so
+            // they do not have to find Cmd+Q. The TCC grant is
+            // persistent — wifiscope's Python TUI immediately picks
+            // it up the next time it polls the helper.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                NSApp.terminate(nil)
+            }
         @unknown default:
             statusLabel.stringValue = "Unknown auth state \(status.rawValue)"
         }
