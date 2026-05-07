@@ -10,8 +10,16 @@ from datetime import datetime
 import pytest
 
 from wifiscope.ble import BLEDevice
+from wifiscope.environment import RFStirEvent
+from wifiscope.events import (
+    LatencySpikeEvent,
+    LinkStateEvent,
+    LossBurstEvent,
+)
+from wifiscope.latency import LatencyAggregate
 from wifiscope.models import Connection, ScanResult
 from wifiscope.network import APEntry, NetworkInventory
+from wifiscope.poller import RoamEvent
 from wifiscope.tui import (
     _best_same_ssid_candidate,
     _ble_categories_line,
@@ -22,15 +30,19 @@ from wifiscope.tui import (
     _ble_vendors_line,
     _ble_visible_line,
     _channel_hint,
+    _environment_diagnostic_line,
     _environment_line,
+    _event_format_line,
     _group_by_ap,
     _health_line,
+    _link_diagnostic_line,
     _link_score,
     _merge_current,
     _score_line,
     _recommended_channel,
     _scan_line,
     _security_badge,
+    _sigma_sparkline,
 )
 
 
@@ -491,6 +503,171 @@ def test_ble_label_summary_uses_device_class_when_no_type():
     laptop from a watch among the rotating Apple beacons."""
     iphone = _ble_dev(services=(), device_class="iPhone")
     assert _ble_label_summary(iphone) == "iPhone"
+
+
+# --- v0.7.0 Link / Environment / Events ----------------------------
+
+def _agg(target, *, rtt=None, loss=None, jitter=None, samples=10, ip="192.168.1.1"):
+    return LatencyAggregate(
+        target=target, target_ip=ip, rtt_ms=rtt, loss_pct=loss,
+        jitter_ms=jitter, sample_count=samples,
+    )
+
+
+def test_link_diagnostic_line_good_link():
+    """A healthy gateway and WAN render numbers, no warning glyph."""
+    gw = _agg("router", rtt=12.0, loss=0.0, jitter=2.0)
+    wan = _agg("wan", rtt=18.0, loss=0.0, jitter=3.0, ip="1.1.1.1")
+    text = _link_diagnostic_line(gw, wan, None).plain
+    assert "gw 12 ms" in text
+    assert "0% loss" in text
+    assert "WAN 18 ms" in text
+    assert "jitter" in text
+    assert "⚠" not in text
+
+
+def test_link_diagnostic_line_loss_marks_warning():
+    gw = _agg("router", rtt=412.0, loss=25.0, jitter=12.0)
+    text = _link_diagnostic_line(gw, None, None).plain
+    assert "⚠" in text
+    assert "412 ms" in text
+    assert "25% loss" in text
+
+
+def test_link_diagnostic_line_wan_unreachable_when_no_dns():
+    """No SCDynamicStore answer → WAN n/a label."""
+    gw = _agg("router", rtt=12.0, loss=0.0, jitter=2.0)
+    text = _link_diagnostic_line(gw, None, "no_dns").plain
+    assert "WAN n/a" in text
+    assert "DNS == gateway" not in text
+
+
+def test_link_diagnostic_line_wan_dns_eq_gateway_explains():
+    """The home-router case: DNS is the gateway. Render the
+    explanatory ``WAN n/a (DNS == gateway)`` so the user knows why
+    the second column is missing."""
+    gw = _agg("router", rtt=12.0, loss=0.0, jitter=2.0)
+    text = _link_diagnostic_line(gw, None, "dns_eq_gateway").plain
+    assert "WAN n/a" in text
+    assert "DNS == gateway" in text
+
+
+def test_environment_diagnostic_line_stable():
+    text = _environment_diagnostic_line("stable", 1.2, None).plain
+    assert "stable" in text
+    assert "σ" in text
+    assert "1.2" in text
+
+
+def test_environment_diagnostic_line_active_marks_warning():
+    """The 'active' label gets a ⚠ prefix and surfaces last-event-ago."""
+    last = datetime.now()
+    text = _environment_diagnostic_line("active", 7.8, last).plain
+    assert "⚠" in text
+    assert "active" in text
+    assert "7.8" in text
+    assert "last event" in text
+
+
+def test_environment_diagnostic_line_quiet_when_calibrated():
+    text = _environment_diagnostic_line("quiet", 0.7, None).plain
+    assert "quiet" in text
+    assert "0.7" in text
+
+
+def _stir_event():
+    return RFStirEvent(
+        timestamp=datetime(2026, 5, 7, 9, 0, 0),
+        bssid="aa:bb:cc:11:22:53",
+        location="1F-bedroom",
+        magnitude_db=8.3,
+        duration_s=12.0,
+        confidence="high",
+        mode="co_located",
+    )
+
+
+def _spike_event():
+    return LatencySpikeEvent(
+        timestamp=datetime(2026, 5, 7, 9, 0, 5),
+        target="router", target_ip="192.168.1.1",
+        rtt_ms=412.0, loss_pct=25.0,
+    )
+
+
+def _loss_event():
+    return LossBurstEvent(
+        timestamp=datetime(2026, 5, 7, 9, 0, 9),
+        target="wan", target_ip="1.1.1.1",
+        loss_pct=80.0, lost_in_window=4,
+    )
+
+
+def _link_event():
+    return LinkStateEvent(
+        timestamp=datetime(2026, 5, 7, 9, 0, 11),
+        state="associated", bssid="aa:bb:cc:11:22:53", ssid="office",
+    )
+
+
+def _roam_event():
+    return RoamEvent(
+        timestamp=datetime(2026, 5, 7, 9, 0, 13),
+        previous_bssid="aa:bb:cc:11:22:50",
+        previous_channel=36,
+        new_bssid="aa:bb:cc:33:44:10",
+        new_channel=48,
+    )
+
+
+def test_event_format_line_rf_stir():
+    text = _event_format_line(_stir_event(), NetworkInventory()).plain
+    assert "[STIR]" in text
+    assert "1F-bedroom" in text
+    assert "8.3" in text
+    assert "high" in text
+
+
+def test_event_format_line_latency_spike():
+    text = _event_format_line(_spike_event(), NetworkInventory()).plain
+    assert "[LATENCY]" in text
+    assert "router" in text
+    assert "412" in text
+
+
+def test_event_format_line_loss_burst():
+    text = _event_format_line(_loss_event(), NetworkInventory()).plain
+    assert "[LOSS]" in text
+    assert "wan" in text
+    assert "80%" in text
+
+
+def test_event_format_line_link_state():
+    text = _event_format_line(_link_event(), NetworkInventory()).plain
+    assert "[LINK]" in text
+    assert "office" in text
+
+
+def test_event_format_line_roam_uses_inventory():
+    inv = NetworkInventory(aps=(
+        APEntry(name="1F-living", mgmt_mac="aa:bb:cc:11:22:4f"),
+        APEntry(name="2F-study",  mgmt_mac="aa:bb:cc:33:44:0f"),
+    ))
+    text = _event_format_line(_roam_event(), inv).plain
+    assert "[ROAM]" in text
+
+
+def test_sigma_sparkline_renders_bars():
+    """A non-empty σ history renders as a row of block characters with
+    the max σ surfaced. Empty history yields the placeholder."""
+    points = [
+        (datetime(2026, 5, 7, 9, j, 0), float(j))
+        for j in range(10)
+    ]
+    text = _sigma_sparkline(points).plain
+    # Must contain at least one block character and the max σ label.
+    assert any(c in text for c in "▁▂▃▄▅▆▇█")
+    assert "max σ 9.0" in text
 
 
 def test_ble_connected_line_counts_peripherals_and_categories():

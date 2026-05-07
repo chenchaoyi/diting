@@ -15,7 +15,10 @@ Bindings: q quit · p pause · r force-rescan.
 
 from __future__ import annotations
 
+import asyncio
+import os
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -29,7 +32,16 @@ from textual.widgets import Footer, Header, RichLog, Static
 
 from .backend import WiFiBackend
 from .ble import BLEDevice, BLEPoller, BLEScanUpdate, service_category
+from .environment import APBaseline, EnvironmentMonitor, RFStirEvent
+from .events import (
+    Event as MonitorEvent,
+    EventRing,
+    LatencySpikeEvent,
+    LinkStateEvent,
+    LossBurstEvent,
+)
 from .i18n import fit_cells, pad_cells, t
+from .latency import LatencyAggregate
 from .models import Connection, ScanResult
 from .network import NetworkInventory, band_label, cluster_label, format_bssid
 from .poller import (
@@ -226,14 +238,22 @@ class EnvironmentPanel(Static):
         self,
         results: list[ScanResult],
         current: Connection | None,
+        *,
+        link=None,
+        env=None,
     ) -> None:
         """Render Wi-Fi-side diagnostics. Used while the user is on the
-        Wi-Fi (default) view."""
+        Wi-Fi (default) view.
+
+        ``link`` and ``env`` are the optional v0.7.0 tuples described
+        in :func:`_environment_lines`; passing them in extends the
+        existing five rows with the Link / Environment lines.
+        """
         self.border_title = t("Diagnostics")
         if not results:
             self.update(Text(t("(waiting for scan data...)"), style="dim italic"))
             return
-        self.update(Group(*_environment_lines(results, current)))
+        self.update(Group(*_environment_lines(results, current, link=link, env=env)))
 
     def update_environment_ble(
         self,
@@ -401,6 +421,184 @@ def _help_content() -> Text:
     body.append("\n")
     body.append(t("Esc or h to close"), style="dim italic")
     return body
+
+
+class EventsScreen(ModalScreen):
+    """Full-screen browser for the unified event ring buffer.
+
+    Layout, top to bottom:
+
+    1. Header line: ``Events (N)  filter: roam|stir|latency|loss|all``
+    2. Newest-first scroll of every event in the buffer.
+    3. Per-AP σ baseline mini-table (one row per non-ignored AP).
+    4. Last-hour σ sparkline.
+    5. Footer: filter + close hints.
+
+    Bindings: ``m``/``Esc``/``q`` close. ``1`` filter to roam, ``2``
+    stir, ``3`` latency+loss, ``4`` link, ``0`` clear filter.
+    """
+
+    BINDINGS = [
+        Binding("escape,m,q", "app.pop_screen", t("Close")),
+        Binding("0", "set_filter('all')", show=False),
+        Binding("1", "set_filter('roam')", show=False),
+        Binding("2", "set_filter('stir')", show=False),
+        Binding("3", "set_filter('latency')", show=False),
+        Binding("4", "set_filter('link')", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    EventsScreen {
+        align: center middle;
+    }
+    EventsScreen > #events-box {
+        width: 96;
+        height: 90%;
+        border: heavy $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+    EventsScreen #events-box Static {
+        height: auto;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        ring_snapshot: list[object],
+        baselines: list[APBaseline],
+        sigma_history: list[tuple[datetime, float]],
+    ) -> None:
+        super().__init__()
+        self._ring = ring_snapshot
+        self._baselines = baselines
+        self._sigma_history = sigma_history
+        self._filter: str = "all"
+        # WeakRef-style references — live Static widgets we re-render
+        # when the filter changes.
+        self._body: Static | None = None
+        self._footer_static: Static | None = None
+
+    def compose(self) -> ComposeResult:
+        body = Static(self._render_body(), id="events-content")
+        footer = Static(self._render_footer(), id="events-footer")
+        self._body = body
+        self._footer_static = footer
+        yield Vertical(body, footer, id="events-box")
+
+    def action_set_filter(self, mode: str) -> None:
+        self._filter = mode if mode in {"all", "roam", "stir", "latency", "loss", "link"} else "all"
+        if self._body is not None:
+            self._body.update(self._render_body())
+        if self._footer_static is not None:
+            self._footer_static.update(self._render_footer())
+
+    def _render_body(self) -> Group:
+        inv = getattr(self.app, "_inv", NetworkInventory())
+        events = [
+            ev for ev in self._ring
+            if _events_filter_match(ev, self._filter)
+        ]
+        header = Text()
+        header.append(t("Events ({n})", n=len(events)), style="bold cyan")
+        header.append(t("  filter: {mode}", mode=t(self._filter)), style="dim")
+
+        if not events:
+            body_lines: list[Text] = [Text(t("(no events yet)"), style="dim italic")]
+        else:
+            body_lines = []
+            for ev in events:
+                line = _event_format_line(ev, inv)
+                if line is not None:
+                    body_lines.append(line)
+
+        sections: list = [header, Text("")]
+        sections.extend(body_lines)
+        sections.append(Text(""))
+        sections.append(Text(t("Per-AP σ baseline"), style="bold yellow"))
+        sections.append(_baseline_table(self._baselines))
+        sections.append(Text(""))
+        sections.append(Text(t("Last hour σ sparkline"), style="bold yellow"))
+        sections.append(_sigma_sparkline(self._sigma_history))
+        return Group(*sections)
+
+    def _render_footer(self) -> Text:
+        line = Text()
+        line.append(t("Press 1/2/3/4/0 to filter; m or Esc to close"),
+                    style="dim italic")
+        return line
+
+
+def _events_filter_match(event: object, mode: str) -> bool:
+    if mode == "all":
+        return True
+    if mode == "roam":
+        return isinstance(event, RoamEvent)
+    if mode == "stir":
+        return isinstance(event, RFStirEvent)
+    if mode == "latency":
+        return isinstance(event, (LatencySpikeEvent, LossBurstEvent))
+    if mode == "loss":
+        return isinstance(event, LossBurstEvent)
+    if mode == "link":
+        return isinstance(event, LinkStateEvent)
+    return True
+
+
+def _baseline_table(rows: list[APBaseline]) -> Text:
+    """Compact per-AP σ snapshot for the modal."""
+    if not rows:
+        return Text(t("(no events yet)"), style="dim italic")
+    text = Text()
+    text.append(
+        f"  {'mode':<16}  {'location':<22}  {'baseline σ':>10}  "
+        f"{'current σ':>10}  {'samples':>8}  {'last RSSI':>10}\n",
+        style="bold dim",
+    )
+    for r in rows:
+        text.append(
+            f"  {r.mode:<16}  {fit_cells(r.location, 22)}  "
+            f"{(r.baseline_sigma if r.baseline_sigma is not None else '?'):>10}  "
+            f"{(r.current_sigma if r.current_sigma is not None else '?'):>10}  "
+            f"{r.samples:>8}  "
+            f"{(r.last_rssi if r.last_rssi is not None else '?'):>10}\n",
+        )
+    return text
+
+
+def _sigma_sparkline(history: list[tuple[datetime, float]]) -> Text:
+    """Render σ over the last hour as a Unicode block sparkline.
+
+    ``history`` is ``[(timestamp, max σ across non-ignored APs)]``
+    from the EnvironmentMonitor's stir-event log; we bin into 30
+    buckets (~2 min each) and pick the max σ in each bucket so a
+    transient spike still shows up after the bucket aggregates.
+    """
+    if not history:
+        return Text(t("(no events yet)"), style="dim italic")
+    blocks = " ▁▂▃▄▅▆▇█"
+    max_sigma = max((s for _, s in history), default=0.0) or 1.0
+    n_buckets = 30
+    buckets: list[float] = [0.0] * n_buckets
+    if len(history) == 1:
+        buckets[-1] = history[0][1]
+    else:
+        first = history[0][0]
+        last = history[-1][0]
+        span = (last - first).total_seconds() or 1.0
+        for ts, sigma in history:
+            idx = int((ts - first).total_seconds() / span * (n_buckets - 1))
+            idx = max(0, min(n_buckets - 1, idx))
+            if sigma > buckets[idx]:
+                buckets[idx] = sigma
+    line = Text()
+    for v in buckets:
+        level = int(round(v / max_sigma * 8))
+        level = max(0, min(8, level))
+        line.append(blocks[level])
+    line.append(f"  max σ {max_sigma:.1f} dB", style="dim")
+    return line
 
 
 class BasicsScreen(ModalScreen):
@@ -640,9 +838,18 @@ class BLEPanel(VerticalScroll):
                              style="dim italic"))
 
 
-class RoamLogPanel(RichLog):
+class EventsPanel(RichLog):
+    """Unified Events panel.
+
+    Replaces the v0.6.0 ``Roam log`` widget at the same slot and
+    same height. Accepts roam, rf_stir, latency_spike, loss_burst,
+    and link_state events through one ``append_event`` entry
+    point; events are typed by a leading ``[ROAM]`` / ``[STIR]`` /
+    ``[LATENCY]`` / ``[LOSS]`` / ``[LINK]`` prefix.
+    """
+
     DEFAULT_CSS = """
-    RoamLogPanel {
+    EventsPanel {
         height: 8;
         border: heavy $accent;
         padding: 0 1;
@@ -650,30 +857,124 @@ class RoamLogPanel(RichLog):
     """
 
     def on_mount(self) -> None:
-        self.border_title = t("Roam log")
-        self.write(Text(t("(no roam events yet)"), style="dim italic"))
+        self.border_title = t("Events")
+        self.write(Text(t("(no events yet)"), style="dim italic"))
 
+    def append_event(self, event: object, inv: NetworkInventory) -> None:
+        line = _event_format_line(event, inv)
+        if line is not None:
+            self.write(line)
+
+    # Back-compat shim so callers that still hand us roam events
+    # straight from the WiFi poller (the docs/_capture_preview.py
+    # synthetic seed in particular) keep working.
     def append_roam(self, event: RoamEvent, inv: NetworkInventory) -> None:
-        ts = event.timestamp.strftime("%H:%M:%S")
-        prev = format_bssid(event.previous_bssid, event.previous_channel, inv)
-        new = format_bssid(event.new_bssid, event.new_channel, inv)
-        if inv.is_same_ap(event.previous_bssid, event.new_bssid):
-            ap = inv.resolve(event.new_bssid) or t("same AP")
-            prev_band = band_label(event.previous_channel) or "?"
-            new_band = band_label(event.new_channel) or "?"
-            tag = t(
-                "[band switch on {ap}: {prev_band} -> {new_band}]",
-                ap=ap, prev_band=prev_band, new_band=new_band,
-            )
-            style = "yellow"
-        else:
-            tag = t("[inter-AP roam]")
-            style = "bold magenta"
-        line = Text()
-        line.append(f"{ts}  ", style="dim")
-        line.append(f"{prev}  ->  {new}   ", style="white")
-        line.append(tag, style=style)
-        self.write(line)
+        self.append_event(event, inv)
+
+
+def _event_format_line(event: object, inv: NetworkInventory) -> Text | None:
+    """Render a single event as a one-line :class:`Text`.
+
+    Returns ``None`` for unsupported event types so the caller can
+    skip them rather than crashing.
+    """
+    if isinstance(event, RoamEvent):
+        return _format_roam_event(event, inv)
+    if isinstance(event, RFStirEvent):
+        return _format_rf_stir_event(event)
+    if isinstance(event, LatencySpikeEvent):
+        return _format_latency_spike_event(event)
+    if isinstance(event, LossBurstEvent):
+        return _format_loss_burst_event(event)
+    if isinstance(event, LinkStateEvent):
+        return _format_link_state_event(event)
+    return None
+
+
+def _format_roam_event(event: RoamEvent, inv: NetworkInventory) -> Text:
+    ts = event.timestamp.strftime("%H:%M:%S")
+    prev = format_bssid(event.previous_bssid, event.previous_channel, inv)
+    new = format_bssid(event.new_bssid, event.new_channel, inv)
+    if inv.is_same_ap(event.previous_bssid, event.new_bssid):
+        ap = inv.resolve(event.new_bssid) or t("same AP")
+        prev_band = band_label(event.previous_channel) or "?"
+        new_band = band_label(event.new_channel) or "?"
+        tag = t(
+            "[band switch on {ap}: {prev_band} -> {new_band}]",
+            ap=ap, prev_band=prev_band, new_band=new_band,
+        )
+        style = "yellow"
+    else:
+        tag = t("[inter-AP roam]")
+        style = "bold magenta"
+    line = Text()
+    line.append(f"{ts}  ", style="dim")
+    line.append(t("[ROAM]") + "  ", style="bold magenta")
+    line.append(f"{prev}  ->  {new}   ", style="white")
+    line.append(tag, style=style)
+    return line
+
+
+def _format_rf_stir_event(event: RFStirEvent) -> Text:
+    ts = event.timestamp.strftime("%H:%M:%S")
+    line = Text()
+    line.append(f"{ts}  ", style="dim")
+    style = "bold yellow" if event.confidence == "high" else "yellow"
+    line.append(t("[STIR]") + "  ", style=style)
+    line.append(t("RF stir at {location}", location=event.location), style="white")
+    line.append(
+        f"  σ {event.magnitude_db:.1f} dB  ·  {event.confidence}",
+        style="dim",
+    )
+    return line
+
+
+def _format_latency_spike_event(event: LatencySpikeEvent) -> Text:
+    ts = event.timestamp.strftime("%H:%M:%S")
+    line = Text()
+    line.append(f"{ts}  ", style="dim")
+    line.append(t("[LATENCY]") + "  ", style="bold red")
+    line.append(
+        t("{target} latency spike: {ms} ms",
+          target=event.target, ms=int(round(event.rtt_ms))),
+        style="red",
+    )
+    if event.loss_pct:
+        line.append(
+            f"  ·  {int(round(event.loss_pct))}% loss",
+            style="dim",
+        )
+    return line
+
+
+def _format_loss_burst_event(event: LossBurstEvent) -> Text:
+    ts = event.timestamp.strftime("%H:%M:%S")
+    line = Text()
+    line.append(f"{ts}  ", style="dim")
+    line.append(t("[LOSS]") + "  ", style="bold red")
+    line.append(
+        t("{target} loss burst: {loss}%",
+          target=event.target, loss=int(round(event.loss_pct))),
+        style="red",
+    )
+    return line
+
+
+def _format_link_state_event(event: LinkStateEvent) -> Text:
+    ts = event.timestamp.strftime("%H:%M:%S")
+    line = Text()
+    line.append(f"{ts}  ", style="dim")
+    line.append(t("[LINK]") + "  ", style="bold cyan")
+    if event.state == "associated":
+        line.append(t("associated to {ssid}", ssid=event.ssid or "?"), style="white")
+    else:
+        line.append(t("disassociated"), style="white")
+    return line
+
+
+# Back-compat alias: existing tests / capture script still import
+# RoamLogPanel by name.
+RoamLogPanel = EventsPanel
 
 
 # ---------- helpers ----------
@@ -814,15 +1115,160 @@ def _fmt(value, suffix: str = "") -> str:
 
 
 def _environment_lines(
-    results: list[ScanResult], current: Connection | None
+    results: list[ScanResult],
+    current: Connection | None,
+    *,
+    link: tuple[LatencyAggregate | None, LatencyAggregate | None, str | None] | None = None,
+    env: tuple[str, float | None, datetime | None] | None = None,
+    spike_window_s: float = 5.0,
 ) -> list[Text]:
-    return [
+    """Compose the Diagnostics panel rows.
+
+    ``link`` carries the latency aggregates (gateway, wan,
+    skipped_reason) when the LatencyPoller is wired up; ``env``
+    carries the EnvironmentMonitor's (label, σ, last_event_at)
+    triple. Both are optional — the panel renders the legacy five
+    rows when either is missing, so a TUI booted before the new
+    pollers warm up shows the v0.6.0 surface.
+    """
+    rows: list[Text] = [
         _visible_networks_line(results),
         _environment_warnings_line(results, current),
         _recommendations_line(results),
         _health_line(results, current),
         _score_line(results, current),
     ]
+    if link is not None:
+        rows.append(_link_diagnostic_line(*link))
+    if env is not None:
+        rows.append(_environment_diagnostic_line(*env, spike_window_s=spike_window_s))
+    return rows
+
+
+def _link_diagnostic_line(
+    gateway: LatencyAggregate | None,
+    wan: LatencyAggregate | None,
+    wan_skipped_reason: str | None,
+) -> Text:
+    """One-line latency / loss / jitter summary for the Diagnostics panel.
+
+    Format::
+
+        Link  gw 12 ms · 0% loss · WAN 18 ms · 0% loss · jitter 3 ms
+        Link  ⚠ gw 412 ms · 25% loss · WAN unreachable
+
+    The leading ⚠ glyph appears when *either* target is in trouble
+    (lossy / very slow). Loss is rendered as an integer percentage
+    so the line stays scannable; jitter is the higher of the two
+    targets (the user's eye lands on the worse one anyway).
+    """
+    line = Text()
+    line.append(t("Link  "), style="bold dim")
+    if gateway is None or gateway.sample_count == 0:
+        # No samples yet — first probe in flight.
+        line.append(t("(measuring...)"), style="dim italic")
+        return line
+    bad = (
+        (gateway.loss_pct or 0) >= 10
+        or (gateway.rtt_ms or 0) >= 200
+        or (wan is not None and (wan.loss_pct or 0) >= 10)
+    )
+    if bad:
+        line.append("⚠ ", style="bold red")
+    line.append(_link_target_text("gw", gateway))
+    if wan is not None and wan.sample_count > 0:
+        line.append("  ·  ", style="dim")
+        line.append(_link_target_text("WAN", wan))
+    elif wan is not None and wan.sample_count == 0 and gateway.sample_count > 0:
+        # Probe configured but no samples yet (first WAN tick) —
+        # render in flight rather than as 'unreachable'.
+        line.append("  ·  ", style="dim")
+        line.append(t("WAN {ms} ms", ms="…"), style="dim italic")
+    else:
+        line.append("  ·  ", style="dim")
+        if wan_skipped_reason == "dns_eq_gateway":
+            line.append(t("WAN n/a (DNS == gateway)"), style="dim italic")
+        elif wan_skipped_reason == "no_dns":
+            line.append(t("WAN n/a"), style="dim italic")
+        else:
+            line.append(t("WAN unreachable"), style="yellow")
+    # Jitter: use whichever target reported a non-None MAD; pick the
+    # larger of the two when both are present.
+    jitters = [
+        a.jitter_ms for a in (gateway, wan) if a is not None and a.jitter_ms is not None
+    ]
+    if jitters:
+        line.append("  ·  ", style="dim")
+        line.append(t("jitter {ms} ms", ms=int(round(max(jitters)))), style="dim")
+    return line
+
+
+def _link_target_text(label: str, agg: LatencyAggregate) -> Text:
+    """Render one ``gw 12 ms · 0% loss`` half of the Link line."""
+    text = Text()
+    rtt = agg.rtt_ms
+    loss = agg.loss_pct
+    if rtt is None and (loss or 0) >= 50:
+        # Heavy loss with no rtt readings — render as unreachable.
+        text.append(f"{label} ", style="dim")
+        text.append(t("WAN unreachable" if label == "WAN" else "WAN unreachable"),
+                    style="red")
+        return text
+    rtt_str = "?" if rtt is None else f"{int(round(rtt))}"
+    style = "white"
+    if rtt is not None and rtt >= 200:
+        style = "red"
+    elif rtt is not None and rtt >= 80:
+        style = "yellow"
+    text.append(f"{label} {rtt_str} ms", style=style)
+    if loss is not None:
+        text.append("  ·  ", style="dim")
+        loss_int = int(round(loss))
+        loss_style = "white"
+        if loss_int >= 25:
+            loss_style = "red"
+        elif loss_int >= 5:
+            loss_style = "yellow"
+        text.append(t("{loss}% loss", loss=loss_int), style=loss_style)
+    return text
+
+
+def _environment_diagnostic_line(
+    label: str,
+    sigma: float | None,
+    last_event_at: datetime | None,
+    *,
+    spike_window_s: float = 5.0,
+) -> Text:
+    """One-line σ summary for the Diagnostics panel.
+
+    Format::
+
+        Environment  stable σ 1.2 dB / 60 s
+        Environment  ⚠ active σ 7.8 dB / 60 s · last event 12s ago
+    """
+    line = Text()
+    line.append(t("Environment  "), style="bold dim")
+    if label == "active":
+        line.append("⚠ ", style="bold yellow")
+    style = (
+        "yellow" if label == "active"
+        else "green" if label == "quiet"
+        else "white"
+    )
+    line.append(t(label), style=style)
+    if sigma is not None:
+        line.append("  ", style="dim")
+        line.append(
+            t("σ {db} dB / {n}s",
+              db=f"{sigma:.1f}", n=int(spike_window_s)),
+            style="dim",
+        )
+    if last_event_at is not None:
+        line.append("  ·  ", style="dim")
+        elapsed = max(0, int((datetime.now() - last_event_at).total_seconds()))
+        line.append(t("last event {n}s ago", n=elapsed), style="dim")
+    return line
 
 
 # ---------------------------------------------------------------------
@@ -1770,7 +2216,7 @@ class GroupedFooter(Static):
                 ("n", t("→ {view}", view=next_view)),
                 ("c", t("Re-roam")),
             ],
-            [("h", t("Help")), ("b", t("Basics"))],
+            [("m", t("Events")), ("h", t("Help")), ("b", t("Basics"))],
         ]
 
         out = Text()
@@ -1802,6 +2248,7 @@ class WifiScopeApp(App):
         Binding("s", "cycle_sort", t("Sort")),
         Binding("n", "toggle_view", t("Toggle Wi-Fi / BLE view")),
         Binding("c", "reroam", t("Re-roam")),
+        Binding("m", "show_events", t("Events")),
         Binding("h", "show_help", t("Help")),
         Binding("b", "show_basics", t("Basics")),
     ]
@@ -1813,11 +2260,29 @@ class WifiScopeApp(App):
         *,
         scan_interval: float = 7.0,
         ble_helper_path: str | None = None,
+        enable_latency: bool = True,
+        enable_environment: bool = True,
+        calibration_path: str | None = None,
     ) -> None:
         super().__init__()
         self._backend = backend
         self._inv = inv
         self._poller = WiFiPoller(backend, scan_interval=scan_interval)
+        self._enable_latency = enable_latency
+        self._enable_environment = enable_environment
+        self._calibration_path = calibration_path
+        # LatencyPoller / EnvironmentMonitor lazy-init in on_mount so
+        # tests / preview captures that disable them with the kwargs
+        # above don't pay the import / state cost.
+        self._latency_poller = None  # set in on_mount
+        self._environment_monitor: EnvironmentMonitor | None = None
+        # Most recent aggregates rendered by the Diagnostics panel.
+        self._latency_gw_agg: LatencyAggregate | None = None
+        self._latency_wan_agg: LatencyAggregate | None = None
+        # Unified events ring buffer + sparkline history (for the
+        # modal's last-hour σ chart).
+        self._events_ring: EventRing = EventRing()
+        self._sigma_history: deque[tuple[datetime, float]] = deque(maxlen=120)
         # The BLE poller spawns wifiscope-helper ble-scan as a long-
         # running subprocess. If no helper path is supplied, the poller
         # surfaces a permission_state of "unavailable" and yields
@@ -1868,7 +2333,7 @@ class WifiScopeApp(App):
         yield EnvironmentPanel(id="env")
         yield ScanPanel(id="scan")
         yield BLEPanel(id="ble")
-        yield RoamLogPanel(id="roam")
+        yield EventsPanel(id="roam")
         yield GroupedFooter(id="footer")
 
     async def on_mount(self) -> None:
@@ -1876,11 +2341,31 @@ class WifiScopeApp(App):
         # scan panel; only one is visible at a time. Hide it on mount
         # so the default 'wifi' view shows the scan panel.
         self.query_one("#ble", BLEPanel).display = False
+        # EnvironmentMonitor: instantiated on mount so tests can opt
+        # out via enable_environment=False (preview captures, smoke
+        # tests). Calibration is loaded lazily from the configured
+        # path; missing file means adaptive baseline only.
+        if self._enable_environment:
+            from .environment import load_calibration
+            cal = load_calibration(self._calibration_path)
+            self._environment_monitor = EnvironmentMonitor(
+                inventory=self._inv, calibration=cal,
+            )
         self.run_worker(self._consume_events(), exclusive=True, name="poller")
         if self._ble_helper_path:
             self._ble_poller = BLEPoller(self._ble_helper_path)
             self.run_worker(
                 self._consume_ble_events(), exclusive=False, name="ble-poller",
+            )
+        # LatencyPoller starts after we have a known gateway IP — the
+        # first ConnectionUpdate primes _latest_connection.router_ip.
+        # We schedule the boot worker here regardless so it can come
+        # online as soon as the IP shows up.
+        if self._enable_latency:
+            self.run_worker(
+                self._consume_latency_events(),
+                exclusive=False,
+                name="latency",
             )
 
     async def _consume_events(self) -> None:
@@ -1895,6 +2380,22 @@ class WifiScopeApp(App):
                 self.query_one("#conn", ConnectionPanel).update_connection(
                     event.connection, self._inv
                 )
+                # Feed the EnvironmentMonitor with the live connection
+                # RSSI on every tick (1 Hz). This is the highest-rate
+                # samples we get for the AP we are actually using —
+                # neighbour BSSIDs piggyback off the slower scan
+                # updates below.
+                if (
+                    self._environment_monitor is not None
+                    and event.connection is not None
+                    and event.connection.bssid is not None
+                ):
+                    self._environment_monitor.ingest(
+                        event.connection.bssid,
+                        event.connection.rssi_dbm,
+                        event.connection.timestamp,
+                    )
+                    self._collect_environment_events(event.connection.timestamp)
                 # Refresh the scan panel too so the synthesised row for
                 # the current AP picks up live RSSI / channel changes
                 # between scans (1 Hz vs 7 Hz).
@@ -1903,9 +2404,124 @@ class WifiScopeApp(App):
                 if event.results:
                     self._cached_scan = event.results
                     self._last_successful_scan_at = time.monotonic()
+                # Every BSSID seen in the scan feeds the monitor too;
+                # this is what lets neighbour APs (the 'spatial channel'
+                # bucket) ever build up enough samples to fire events.
+                if self._environment_monitor is not None and event.results:
+                    now = datetime.now()
+                    for r in event.results:
+                        if r.bssid is not None:
+                            self._environment_monitor.ingest(
+                                r.bssid, r.rssi_dbm, r.timestamp,
+                            )
+                    self._collect_environment_events(now)
                 self._refresh_scan_panel()
             elif isinstance(event, RoamEvent):
-                self.query_one("#roam", RoamLogPanel).append_roam(event, self._inv)
+                self._events_ring.push(event)
+                self.query_one("#roam", EventsPanel).append_event(event, self._inv)
+
+    def _collect_environment_events(self, now: datetime) -> None:
+        """Fire any pending stir events into the ring buffer + panel.
+
+        Called on every connection/scan update; the monitor itself
+        does the deduplication via per-AP cooldowns. Sparkline
+        history follows along so the modal's last-hour chart picks
+        up the σ value at fire time.
+        """
+        if self._environment_monitor is None:
+            return
+        events = self._environment_monitor.fire_events(now)
+        panel = self.query_one("#roam", EventsPanel)
+        for ev in events:
+            self._events_ring.push(ev)
+            panel.append_event(ev, self._inv)
+            self._sigma_history.append((now, ev.magnitude_db))
+        # Even when nothing fires, snapshot the aggregate σ for the
+        # sparkline so the chart looks alive.
+        label, sigma, _ = self._environment_monitor.aggregate_sigma(now)
+        if sigma is not None:
+            self._sigma_history.append((now, sigma))
+        self._refresh_environment_panel()
+
+    async def _consume_latency_events(self) -> None:
+        """Bring the LatencyPoller online once we know the gateway IP.
+
+        We wait up to ~30 s for a Connection.router_ip from the WiFi
+        consumer; if none arrives the latency probe stays dormant
+        (the diagnostics line then renders ``Link  (measuring...)``
+        until a network appears). Both detectors run on every sample
+        so spike / loss events fire in real time.
+        """
+        from .latency import (
+            LatencyPoller,
+            detect_latency_spike,
+            detect_loss_burst,
+        )
+        # Spin until the user has a gateway IP, polling our cached
+        # connection rather than peeking at the WiFi backend (avoids
+        # the duplicated subprocess from _get_default_router).
+        for _ in range(60):
+            if (
+                self._latest_connection is not None
+                and self._latest_connection.router_ip
+            ):
+                break
+            await asyncio.sleep(0.5)
+        gw = (
+            self._latest_connection.router_ip
+            if self._latest_connection is not None else None
+        )
+        wan_override = (os.environ.get("WIFISCOPE_LATENCY_WAN_TARGET") or "").strip() or None
+        poller = LatencyPoller(gateway_ip=gw, wan_ip=wan_override)
+        self._latency_poller = poller
+        panel = self.query_one("#roam", EventsPanel)
+        try:
+            async for sample in poller.events():
+                if self._paused:
+                    continue
+                # Refresh aggregates whenever a sample lands; the panel
+                # reads them on the next tick.
+                self._latency_gw_agg = poller.aggregate("router")
+                self._latency_wan_agg = poller.aggregate("wan")
+                # Spike / loss detectors over the rolling window.
+                history = list(poller._history.get(sample.target, ()))
+                if not history:
+                    continue
+                spike = detect_latency_spike(history)
+                if spike is not None and sample is spike:
+                    agg = (
+                        self._latency_gw_agg if sample.target == "router"
+                        else self._latency_wan_agg
+                    )
+                    ev = LatencySpikeEvent(
+                        timestamp=sample.ts,
+                        target=sample.target,
+                        target_ip=sample.target_ip,
+                        rtt_ms=sample.rtt_ms or 0.0,
+                        loss_pct=(agg.loss_pct or 0.0) if agg else 0.0,
+                    )
+                    self._events_ring.push(ev)
+                    panel.append_event(ev, self._inv)
+                if sample.lost and detect_loss_burst(history):
+                    agg = (
+                        self._latency_gw_agg if sample.target == "router"
+                        else self._latency_wan_agg
+                    )
+                    lost_count = sum(1 for s in history[-5:] if s.lost)
+                    ev = LossBurstEvent(
+                        timestamp=sample.ts,
+                        target=sample.target,
+                        target_ip=sample.target_ip,
+                        loss_pct=(agg.loss_pct or 0.0) if agg else 0.0,
+                        lost_in_window=lost_count,
+                    )
+                    self._events_ring.push(ev)
+                    panel.append_event(ev, self._inv)
+                self._refresh_environment_panel()
+        except Exception:
+            # Same pattern as the BLE consumer — a poller hiccup
+            # must not tear down the TUI.
+            pass
 
     async def _consume_ble_events(self) -> None:
         """Drain BLE snapshots from the poller into the BLE panel.
@@ -1984,7 +2600,31 @@ class WifiScopeApp(App):
             merged = _merge_current(
                 self._cached_scan, self._latest_connection,
             )
-            panel.update_environment(merged, self._latest_connection)
+            panel.update_environment(
+                merged, self._latest_connection,
+                link=self._link_diagnostic_tuple(),
+                env=self._environment_diagnostic_tuple(),
+            )
+
+    def _link_diagnostic_tuple(self):
+        """Return ``(gateway_agg, wan_agg, skipped_reason)`` or None.
+
+        Decoupled from the panel so a test can poke at the same
+        rendering path without spinning up a real LatencyPoller.
+        """
+        if not self._enable_latency or self._latency_poller is None:
+            return None
+        return (
+            self._latency_gw_agg,
+            self._latency_wan_agg,
+            self._latency_poller.wan_skipped_reason,
+        )
+
+    def _environment_diagnostic_tuple(self):
+        """``(label, sigma, last_event_at)`` from the EnvironmentMonitor."""
+        if self._environment_monitor is None:
+            return None
+        return self._environment_monitor.aggregate_sigma(datetime.now())
 
     def action_toggle_pause(self) -> None:
         self._paused = not self._paused
@@ -2037,6 +2677,17 @@ class WifiScopeApp(App):
 
     def action_show_basics(self) -> None:
         self.push_screen(BasicsScreen())
+
+    def action_show_events(self) -> None:
+        """Open the modal Events browser bound to the unified ring."""
+        baselines: list[APBaseline] = []
+        if self._environment_monitor is not None:
+            baselines = self._environment_monitor.baseline_summary()
+        self.push_screen(EventsScreen(
+            ring_snapshot=self._events_ring.snapshot(),
+            baselines=baselines,
+            sigma_history=list(self._sigma_history),
+        ))
 
     def action_reroam(self) -> None:
         """Force a fresh association so the OS reselects the best BSSID.

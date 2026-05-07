@@ -156,6 +156,8 @@ _ZH: dict[str, str] = {
     "Nearby BSSIDs": "附近 BSSID",
     "Nearby BLE devices": "附近 BLE 设备",
     "Roam log": "漫游日志",
+    "Events": "事件",
+    "Events log": "事件日志",
 
     # ---- footer / app bindings ----
     "Quit": "退出",
@@ -229,6 +231,7 @@ _ZH: dict[str, str] = {
 
     # ---- Roam log ----
     "(no roam events yet)": "(暂无漫游事件)",
+    "(no events yet)": "(暂无事件)",
     "same AP": "同一 AP",
     "[band switch on {ap}: {prev_band} -> {new_band}]":
         "[同 AP 切频段 {ap}：{prev_band} → {new_band}]",
@@ -615,4 +618,53 @@ _ZH: dict[str, str] = {
         "频段干净、信道空闲会加分；信号弱、信道拥挤、开放网络、"
         "加密类型不一致会扣分。只有同名 SSID 候选明显更高时才会显示。",
     "Esc or b to close": "Esc 或 b 关闭",
+
+    # ---- v0.7.0 Diagnostics rows: Link / Environment ----
+    "Link  ": "链路  ",
+    "Environment  ": "环境  ",
+    "stable": "稳定",
+    "active": "活跃",
+    "quiet": "安静",
+    "σ {db} dB / {n}s": "σ {db} dB / {n}s",
+    "gw {ms} ms": "网关 {ms} ms",
+    "{loss}% loss": "丢包 {loss}%",
+    "WAN {ms} ms": "WAN {ms} ms",
+    "jitter {ms} ms": "抖动 {ms} ms",
+    "WAN unreachable": "WAN 不可达",
+    "WAN n/a (DNS == gateway)": "WAN n/a (DNS = 网关)",
+    "WAN n/a": "WAN n/a",
+    "(measuring...)": "(测量中…)",
+    "last event {n}s ago": "上次事件 {n}s 前",
+
+    # ---- Unified Events panel + modal ----
+    "Events log": "事件日志",
+    "[ROAM]": "[漫游]",
+    "[STIR]": "[扰动]",
+    "[LATENCY]": "[延迟]",
+    "[LOSS]": "[丢包]",
+    "[LINK]": "[链路]",
+    "RF stir at {location}": "{location} 处 RF 扰动",
+    "{target} latency spike: {ms} ms": "{target} 延迟尖峰：{ms} ms",
+    "{target} loss burst: {loss}%": "{target} 丢包风暴：{loss}%",
+    "associated to {ssid}": "已连接至 {ssid}",
+    "disassociated": "已断开",
+    "Events ({n})": "事件 ({n})",
+    "  filter: {mode}": "  过滤：{mode}",
+    "all": "全部",
+    "roam": "漫游",
+    "stir": "扰动",
+    "latency": "延迟",
+    "loss": "丢包",
+    "Per-AP σ baseline": "各 AP σ 基线",
+    "Last hour σ sparkline": "最近一小时 σ 走势",
+    "Press 1/2/3/4/0 to filter; m or Esc to close":
+        "按 1/2/3/4/0 切换过滤；m 或 Esc 关闭",
+
+    # ---- Calibration CLI ----
+    "Calibrating environment baseline ({n}s remaining)...":
+        "正在采集基线（剩余 {n}s）…",
+    "Baseline saved to {path}": "基线已保存至 {path}",
+    "Calibration cancelled.": "已取消采集。",
+    "No samples captured — leave the radio on a single network and retry.":
+        "未采集到样本 —— 保持连在同一个网络后重试。",
 }
