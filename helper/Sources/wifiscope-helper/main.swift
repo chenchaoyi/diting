@@ -78,7 +78,13 @@ func runScanAndDumpJSON() -> Never {
     if let hw = iface.hardwareAddress() { ifaceMeta["hardware_address"] = hw }
 
     let payload: [String: Any] = [
-        "schema": 2,
+        // schema 3 = v0.6.0+: BLE deep-ID fields (type / device_class)
+        // and connected-peripheral lines. The Wi-Fi scan output itself
+        // is unchanged from schema 2 — we bump the version so the
+        // Python side can tell at a glance whether the helper bundle
+        // it found is BLE-capable, even before it spawns the BLE
+        // subprocess.
+        "schema": 3,
         "interface": ifaceMeta,
         "timestamp": timestamp,
         "networks": out,
@@ -119,6 +125,144 @@ func emitError(_ message: String) -> Never {
 // ---------------------------------------------------------------------
 // CLI mode: ble-scan
 // ---------------------------------------------------------------------
+
+/// Result of running the public-format detection over a single
+/// advertisement payload. Both fields are optional and either or both
+/// may be nil when nothing is recognisable. We deliberately stop short
+/// of decoding encrypted Continuity bits — only well-documented,
+/// publicly-defined formats are surfaced.
+struct BLEDetection {
+    let type: String?         // "iBeacon" | "AirTag" | "Eddystone-URL" | ...
+    let deviceClass: String?  // "iPhone" | "Mac" | "Apple Watch" | ...
+}
+
+/// Public-format BLE advertisement classifier. Mirrors the Python-side
+/// fallback in `wifiscope/ble.py` byte-for-byte; both implementations
+/// share the same conservative scope (Tier 1 categories only). See
+/// `docs/specs/v0.6.0-ble-deep-identification.md` for the detection
+/// rules.
+enum BLEAdParser {
+    /// Bluetooth SIG company IDs (little-endian uint16) we branch on.
+    private static let companyAppleID = 0x004C
+    private static let companyMicrosoftID = 0x0006
+    private static let companySamsungID = 0x0075
+
+    static func detect(advertisementData: [String: Any]) -> BLEDetection {
+        let services = serviceUUIDStrings(advertisementData)
+        let mfg = (advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data)
+            .flatMap { d -> [UInt8]? in d.count >= 2 ? Array(d) : nil }
+        let companyID: Int? = mfg.map { Int($0[0]) | (Int($0[1]) << 8) }
+
+        // 1. Manufacturer-data branches are checked first because they
+        //    carry richer disambiguators than service UUIDs alone (the
+        //    same FD5A UUID covers Apple Find My and Samsung SmartTag,
+        //    for example, and only the company ID resolves the ambiguity).
+        if let bytes = mfg, let cid = companyID {
+            if cid == companyAppleID, bytes.count >= 3 {
+                let typeByte = bytes[2]
+                switch typeByte {
+                case 0x02:
+                    return BLEDetection(type: "iBeacon", deviceClass: nil)
+                case 0x10:
+                    // Apple Nearby Info. The device-class nibble sits
+                    // in the high half of byte index 5 (after the type
+                    // and length). Bytes beyond that are encrypted.
+                    let dc = bytes.count >= 6 ? appleNearbyInfoDeviceClass(bytes[5]) : nil
+                    return BLEDetection(type: nil, deviceClass: dc)
+                case 0x12:
+                    // Apple Find My target. Distinguish AirTag (owner-
+                    // paired sub-type, length >= 25) from a generic
+                    // Find My target (lost mode, shorter payload).
+                    let isAirTag = bytes.count >= 25
+                    return BLEDetection(
+                        type: isAirTag ? "AirTag" : "Find My target",
+                        deviceClass: nil,
+                    )
+                default:
+                    break
+                }
+            }
+            if cid == companyMicrosoftID, bytes.count >= 3 {
+                if bytes[2] == 0x03 {
+                    return BLEDetection(type: "Swift Pair", deviceClass: nil)
+                }
+            }
+            if cid == companySamsungID, services.contains("FD5A") {
+                return BLEDetection(type: "SmartTag", deviceClass: nil)
+            }
+        }
+
+        // 2. Service-UUID based detections. These are checked after
+        //    manufacturer-data specifically so a Samsung SmartTag (which
+        //    advertises FD5A) is labelled "SmartTag" via the company-ID
+        //    branch above instead of being miscategorised as Apple Find
+        //    My here.
+        if services.contains("FEAA") {
+            // Eddystone — the frame-type byte is the first byte of the
+            // service-data IE (CBAdvertisementDataServiceDataKey).
+            if let serviceData = advertisementData[CBAdvertisementDataServiceDataKey]
+                as? [CBUUID: Data]
+            {
+                for (uuid, data) in serviceData where
+                    uuid.uuidString.uppercased().hasSuffix("FEAA")
+                {
+                    if let frameType = data.first {
+                        switch frameType {
+                        case 0x00: return BLEDetection(type: "Eddystone-UID", deviceClass: nil)
+                        case 0x10: return BLEDetection(type: "Eddystone-URL", deviceClass: nil)
+                        case 0x20: return BLEDetection(type: "Eddystone-TLM", deviceClass: nil)
+                        case 0x40: return BLEDetection(type: "Eddystone-EID", deviceClass: nil)
+                        default: break
+                        }
+                    }
+                }
+            }
+            return BLEDetection(type: "Eddystone", deviceClass: nil)
+        }
+        if services.contains("FEED") || services.contains("FEEC") {
+            return BLEDetection(type: "Tile", deviceClass: nil)
+        }
+        if services.contains("FD5A") {
+            // No Samsung company ID with this UUID → Apple Find My
+            // accessory advertising in nearby mode (e.g. AirTag in
+            // Found mode without an owner-ping payload).
+            return BLEDetection(type: "Find My target", deviceClass: nil)
+        }
+
+        return BLEDetection(type: nil, deviceClass: nil)
+    }
+
+    /// Map the high nibble of the Apple Nearby Info action byte to a
+    /// human-readable device class. Lower-nibble bits are activity /
+    /// status flags and we ignore them. Mapping is reverse-engineered
+    /// from the `furiousMAC/continuity` reference; per-model precision
+    /// (iPhone 14 vs 15) is impossible from this byte alone.
+    private static func appleNearbyInfoDeviceClass(_ actionByte: UInt8) -> String? {
+        switch (actionByte >> 4) & 0x0F {
+        case 0x1: return "iPhone"
+        case 0x2: return "iPad"
+        case 0x4: return "Mac"
+        case 0x6: return "Apple TV"
+        case 0x7: return "HomePod"
+        case 0x9: return "Apple Watch"
+        default: return nil
+        }
+    }
+
+    private static func serviceUUIDStrings(_ ad: [String: Any]) -> Set<String> {
+        var out: Set<String> = []
+        if let services = ad[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] {
+            for s in services { out.insert(s.uuidString.uppercased()) }
+        }
+        if let services = ad[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID] {
+            for s in services { out.insert(s.uuidString.uppercased()) }
+        }
+        if let services = ad[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data] {
+            for k in services.keys { out.insert(k.uuidString.uppercased()) }
+        }
+        return out
+    }
+}
 
 /// CBCentralManager driver for the `ble-scan` subcommand. One JSON
 /// object per advertisement is written to stdout, terminated by a
@@ -203,6 +347,13 @@ final class BLEScanner: NSObject, CBCentralManagerDelegate {
             row["manufacturer_id"] = companyID
             row["manufacturer_hex"] = mfg.map { String(format: "%02x", $0) }.joined()
         }
+
+        // Schema-3 deep identification: tag the row with whatever
+        // public-format detection produced. Both fields are optional;
+        // unrecognised devices simply omit them.
+        let detection = BLEAdParser.detect(advertisementData: advertisementData)
+        if let t = detection.type { row["type"] = t }
+        if let dc = detection.deviceClass { row["device_class"] = dc }
 
         emitJSONLine(row)
     }
