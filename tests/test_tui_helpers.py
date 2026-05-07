@@ -10,7 +10,7 @@ from datetime import datetime
 import pytest
 
 from wifiscope.ble import BLEDevice
-from wifiscope.environment import RFStirEvent
+from wifiscope.environment import APBaseline, RFStirEvent
 from wifiscope.events import (
     LatencySpikeEvent,
     LinkStateEvent,
@@ -21,6 +21,8 @@ from wifiscope.models import Connection, ScanResult
 from wifiscope.network import APEntry, NetworkInventory
 from wifiscope.poller import RoamEvent
 from wifiscope.tui import (
+    _aggregate_baselines,
+    _baseline_table,
     _best_same_ssid_candidate,
     _ble_categories_line,
     _ble_closest_line,
@@ -668,6 +670,100 @@ def test_sigma_sparkline_renders_bars():
     # Must contain at least one block character and the max σ label.
     assert any(c in text for c in "▁▂▃▄▅▆▇█")
     assert "max σ 9.0" in text
+
+
+def _baseline(bssid, location, mode="co_located", samples=40,
+              baseline_sigma=None, current_sigma=None, last_rssi=-55):
+    return APBaseline(
+        bssid=bssid, location=location, mode=mode, samples=samples,
+        baseline_sigma=baseline_sigma, current_sigma=current_sigma,
+        last_rssi=last_rssi,
+    )
+
+
+def test_aggregate_baselines_collapses_bssids_to_one_row_per_ap():
+    """The same physical AP broadcasts many BSSIDs (one per SSID×band).
+    The aggregator must fold those back to a single row keyed on the
+    AP-level location label, otherwise the modal shows the AP up to
+    ten times."""
+    rows = [
+        _baseline("a8:5b:f7:e1:a3:e0", "?f7:e1:a3", samples=40, last_rssi=-46),
+        _baseline("a8:5b:f7:e1:a3:f0", "?f7:e1:a3", samples=322,
+                  baseline_sigma=2.8, current_sigma=2.4, last_rssi=-52),
+        _baseline("a8:5b:f7:e1:a3:f4", "?f7:e1:a3", samples=40, last_rssi=-58),
+        _baseline("a8:5b:f7:e1:d5:a0", "?f7:e1:d5", samples=40, last_rssi=-43),
+        _baseline("a8:5b:f7:e1:d5:b4", "?f7:e1:d5", samples=40, last_rssi=-52),
+    ]
+    groups = _aggregate_baselines(rows)
+    assert len(groups) == 2
+    by_loc = {g["location"]: g for g in groups}
+    a3 = by_loc["?f7:e1:a3"]
+    assert a3["bssid_count"] == 3
+    assert a3["samples"] == 40 + 322 + 40
+    # Loudest BSSID's σ wins; closest RSSI wins (max because dBm is
+    # negative).
+    assert a3["baseline_sigma"] == 2.8
+    assert a3["current_sigma"] == 2.4
+    assert a3["last_rssi"] == -46
+    d5 = by_loc["?f7:e1:d5"]
+    assert d5["bssid_count"] == 2
+    assert d5["baseline_sigma"] is None
+    assert d5["current_sigma"] is None
+
+
+def test_aggregate_baselines_picks_strongest_mode_per_ap():
+    """If at least one of an AP's BSSIDs classifies as co_located, the
+    AP row should report co_located — the closer signal wins because
+    that is the band the user is actually associating to."""
+    rows = [
+        _baseline("aa:bb:cc:dd:ee:01", "loc", mode="spatial_channel"),
+        _baseline("aa:bb:cc:dd:ee:02", "loc", mode="co_located"),
+    ]
+    groups = _aggregate_baselines(rows)
+    assert groups[0]["mode"] == "co_located"
+
+
+def test_baseline_table_folds_pending_aps_into_a_single_line():
+    """APs with no baseline σ and no current σ haven't accumulated
+    enough samples to say anything. They should not each get their
+    own row of question marks; the table must fold them into one
+    "(N APs still collecting samples)" footer line."""
+    rows = [
+        _baseline("a8:5b:f7:e1:a3:f0", "?f7:e1:a3", samples=322,
+                  baseline_sigma=2.8, current_sigma=2.4, last_rssi=-52),
+        _baseline("a8:5b:f7:e1:d5:a0", "?f7:e1:d5", samples=40,
+                  last_rssi=-43),
+        _baseline("a8:5b:f7:e0:cd:80", "?f7:e0:cd", samples=40,
+                  last_rssi=-56),
+    ]
+    text = _baseline_table(rows).plain
+    # Exactly one ready row.
+    assert text.count("?f7:e1:a3") == 1
+    # Both pending APs collapsed into the footer.
+    assert "?f7:e1:d5" not in text
+    assert "?f7:e0:cd" not in text
+    assert "2 APs still collecting samples" in text or \
+        "2 个 AP 仍在采集样本" in text
+
+
+def test_baseline_table_marks_stirring_when_current_exceeds_baseline_x3():
+    """The status badge follows the same fire rule as the events log:
+    current σ ≥ 5 dB AND > baseline × 3 → 'stirring'. Anything else →
+    'stable'."""
+    rows_quiet = [
+        _baseline("aa:bb:cc:dd:ee:01", "loc-quiet", samples=200,
+                  baseline_sigma=1.0, current_sigma=1.2, last_rssi=-55),
+    ]
+    rows_loud = [
+        _baseline("aa:bb:cc:dd:ee:02", "loc-loud", samples=200,
+                  baseline_sigma=1.0, current_sigma=8.0, last_rssi=-55),
+    ]
+    quiet_text = _baseline_table(rows_quiet).plain
+    loud_text = _baseline_table(rows_loud).plain
+    # Use either English source or Chinese translation depending on
+    # locale; both should be present in their respective rows.
+    assert ("stable" in quiet_text) or ("稳定" in quiet_text)
+    assert ("stirring" in loud_text) or ("抖动" in loud_text)
 
 
 def test_ble_connected_line_counts_peripherals_and_categories():

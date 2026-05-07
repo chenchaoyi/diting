@@ -662,7 +662,22 @@ _ZH: dict[str, str] = {
     "stir": "扰动",
     "latency": "延迟",
     "loss": "丢包",
-    "Per-AP σ baseline": "各 AP σ 基线",
+    "Per-AP σ baseline": "各 AP 环境稳定度",
+    "σ = RSSI stddev; current σ over baseline ×3 fires [STIR]":
+        "σ 是 RSSI 抖动；当前 σ 超过基线 ×3 时报告 [扰动]",
+    "AP": "AP",
+    "mode": "模式",
+    "BSSIDs": "BSSID",
+    "baseline σ": "基线 σ",
+    "current σ": "当前 σ",
+    "RSSI": "RSSI",
+    "status": "状态",
+    "co-located": "同位",
+    "spatial channel": "邻信道",
+    "ignored": "忽略",
+    "stirring": "抖动",
+    "({n} APs still collecting samples)":
+        "({n} 个 AP 仍在采集样本)",
     "Last hour σ sparkline": "最近一小时 σ 走势",
     "Press 1/2/3/4/0 to filter; m or Esc to close":
         "按 1/2/3/4/0 切换过滤；m 或 Esc 关闭",

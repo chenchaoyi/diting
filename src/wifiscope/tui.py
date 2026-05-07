@@ -546,24 +546,147 @@ def _events_filter_match(event: object, mode: str) -> bool:
     return True
 
 
+_MODE_PRIORITY = {"co_located": 0, "spatial_channel": 1, "ignored": 2}
+
+
+def _mode_label(mode: str) -> str:
+    """Human-readable translation key for a fusion mode."""
+    if mode == "co_located":
+        return t("co-located")
+    if mode == "spatial_channel":
+        return t("spatial channel")
+    if mode == "ignored":
+        return t("ignored")
+    return mode
+
+
+def _aggregate_baselines(rows: list[APBaseline]) -> list[dict]:
+    """Collapse per-BSSID baselines into per-AP groups.
+
+    The same physical AP broadcasts on multiple SSID×band BSSIDs, so
+    the raw per-BSSID list repeats each AP up to ~10 times. We group
+    by ``location`` (which the monitor already resolves to inventory
+    name or stable cluster label) and pick the loudest values across
+    each AP's BSSIDs — that is the data point the user actually
+    cares about ("is this AP stable?"), not which SSID-name happened
+    to fire.
+    """
+    by_loc: dict[str, list[APBaseline]] = {}
+    for r in rows:
+        by_loc.setdefault(r.location, []).append(r)
+
+    groups: list[dict] = []
+    for location, group_rows in by_loc.items():
+        mode = min(
+            (r.mode for r in group_rows),
+            key=lambda m: _MODE_PRIORITY.get(m, 9),
+        )
+        baselines = [r.baseline_sigma for r in group_rows
+                     if r.baseline_sigma is not None]
+        currents = [r.current_sigma for r in group_rows
+                    if r.current_sigma is not None]
+        rssis = [r.last_rssi for r in group_rows
+                 if r.last_rssi is not None]
+        groups.append({
+            "location": location,
+            "mode": mode,
+            "bssid_count": len(group_rows),
+            "samples": sum(r.samples for r in group_rows),
+            "baseline_sigma": (max(baselines) if baselines else None),
+            "current_sigma": (max(currents) if currents else None),
+            # Closest signal across the AP's radios — max because RSSI
+            # is negative dBm.
+            "last_rssi": (max(rssis) if rssis else None),
+        })
+    return groups
+
+
 def _baseline_table(rows: list[APBaseline]) -> Text:
-    """Compact per-AP σ snapshot for the modal."""
+    """Per-AP σ snapshot for the modal.
+
+    Aggregates BSSIDs back to physical APs (one row per AP), shows
+    only APs that have enough samples for a meaningful number, and
+    folds the remaining "still warming up" APs into a single footer
+    line. Each ready row carries a stable / stirring badge so a
+    glance at the table answers "is anything in my space moving?".
+    """
     if not rows:
         return Text(t("(no events yet)"), style="dim italic")
+
+    groups = _aggregate_baselines(rows)
+
+    def sort_key(g: dict) -> tuple:
+        has_data = (g["baseline_sigma"] is not None
+                    or g["current_sigma"] is not None)
+        return (
+            0 if has_data else 1,
+            _MODE_PRIORITY.get(g["mode"], 9),
+            -(g["last_rssi"] or -200),
+        )
+    groups.sort(key=sort_key)
+
+    ready = [g for g in groups
+             if g["baseline_sigma"] is not None
+             or g["current_sigma"] is not None]
+    pending = [g for g in groups
+               if g["baseline_sigma"] is None
+               and g["current_sigma"] is None]
+
     text = Text()
     text.append(
-        f"  {'mode':<16}  {'location':<22}  {'baseline σ':>10}  "
-        f"{'current σ':>10}  {'samples':>8}  {'last RSSI':>10}\n",
+        t("σ = RSSI stddev; current σ over baseline ×3 fires [STIR]")
+        + "\n",
+        style="dim italic",
+    )
+    text.append(
+        f"  {pad_cells(t('AP'), 22)}  "
+        f"{pad_cells(t('mode'), 12)}  "
+        f"{pad_cells(t('BSSIDs'), 7)}  "
+        f"{pad_cells(t('baseline σ'), 11)}  "
+        f"{pad_cells(t('current σ'), 11)}  "
+        f"{pad_cells(t('RSSI'), 6)}  "
+        f"{t('status')}\n",
         style="bold dim",
     )
-    for r in rows:
-        text.append(
-            f"  {r.mode:<16}  {fit_cells(r.location, 22)}  "
-            f"{(r.baseline_sigma if r.baseline_sigma is not None else '?'):>10}  "
-            f"{(r.current_sigma if r.current_sigma is not None else '?'):>10}  "
-            f"{r.samples:>8}  "
-            f"{(r.last_rssi if r.last_rssi is not None else '?'):>10}\n",
+
+    for g in ready:
+        # Stirring iff current σ is large enough on its own AND
+        # noticeably above the AP's own baseline. Mirrors the
+        # firing rule in EnvironmentMonitor.fire_events so the
+        # badge agrees with what the events log would say.
+        cur = g["current_sigma"]
+        base = g["baseline_sigma"]
+        stirring = (
+            cur is not None
+            and cur >= 5.0
+            and base is not None
+            and cur > base * 3.0
         )
+        status = t("stirring") if stirring else t("stable")
+        status_style = "yellow" if stirring else "green"
+
+        base_s = "?" if base is None else f"{base:.1f}"
+        cur_s = "?" if cur is None else f"{cur:.1f}"
+        rssi_s = "?" if g["last_rssi"] is None else str(g["last_rssi"])
+
+        text.append(
+            f"  {fit_cells(g['location'], 22)}  "
+            f"{pad_cells(_mode_label(g['mode']), 12)}  "
+            f"{g['bssid_count']:>7}  "
+            f"{base_s:>11}  "
+            f"{cur_s:>11}  "
+            f"{rssi_s:>6}  ",
+        )
+        text.append(f"{status}\n", style=status_style)
+
+    if pending:
+        text.append(
+            "  "
+            + t("({n} APs still collecting samples)", n=len(pending))
+            + "\n",
+            style="dim italic",
+        )
+
     return text
 
 
