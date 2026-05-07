@@ -253,6 +253,24 @@ _ZH: dict[str, str] = {
         "(BLE 出错 —— 系统蓝牙可能在控制中心被关掉了)",
     "(BLE state unknown — waiting for helper)":
         "(BLE 状态未知 —— 等待辅助进程)",
+
+    # ---- BLE diagnostics panel (parallel to Wi-Fi diagnostics) ----
+    "(BLE diagnostics will appear after permission is granted)":
+        "(授权后才会显示 BLE 诊断)",
+    "Visible BLE  ": "可见 BLE  ",
+    "{n} total": "共 {n} 个",
+    "  ·  {n} connectable": "  ·  {n} 可连接",
+    "  ·  {n} anonymous": "  ·  {n} 匿名",
+    "Vendors  ": "厂商  ",
+    "Categories  ": "类别  ",
+    "Closest  ": "最近  ",
+    "(none)": "(无)",
+    "(anonymous)": "(匿名)",
+    "? {n}": "? {n}",
+    "{n} other": "{n} 其他",
+    # Service-category labels for ble.py.service_category() return values
+    # are already translated below in the BLE table area; nothing extra
+    # needed here.
     "(merged {n})": "(合并 {n})",
     "  · {n}s ago": "  · {n}s 前",
     "{n}s": "{n}s",
