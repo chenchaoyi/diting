@@ -1,0 +1,2 @@
+{"ts":"2026-05-07T15:21:55.014256+00:00","type":"link_state","state":"associated","ssid":"tedo_5G","bssid":"40:fe:95:89:c7:e3"}
+{"ts":"2026-05-07T15:21:56.020109+00:00","type":"rf_stir","magnitude_db":4.2,"location":"AX51-E_3-2F","bssid":"40:fe:95:89:c7:e3","duration_s":1.0,"confidence":"medium","mode":"spatial_channel"}

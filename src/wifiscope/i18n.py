@@ -1042,8 +1042,10 @@ _ZH: dict[str, str] = {
 
     # ---- analyze CLI ----
     "wifiscope analyse {path}": "wifiscope 分析 {path}",
-    "Time range: {start} → {end}  ({mins} min)":
-        "时间范围：{start} → {end}  （{mins} 分钟）",
+    "Time range: {start} → {end}  ({duration})":
+        "时间范围：{start} → {end}  （{duration}）",
+    "{n} min": "{n} 分钟",
+    "{h}h {m}m": "{h}小时{m}分",
     "Total events: {n}": "事件总数：{n}",
     "Latest association: {ssid} @ {bssid}":
         "最近一次关联：{ssid} @ {bssid}",

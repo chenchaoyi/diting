@@ -462,6 +462,22 @@ def _run_heuristics(
 
 # ---------- rendering ----------
 
+def _format_duration(seconds: float) -> str:
+    """Pick the right unit for a duration so a 1-second span does
+    not read as '1 min'. Three shapes: seconds-only when under a
+    minute, minutes when under an hour, hours+minutes beyond.
+    """
+    secs = int(seconds)
+    if secs < 60:
+        return t("{n}s", n=secs)
+    minutes = secs // 60
+    if minutes < 60:
+        return t("{n} min", n=minutes)
+    hours = minutes // 60
+    rem = minutes % 60
+    return t("{h}h {m}m", h=hours, m=rem)
+
+
 def render(report: Report) -> str:
     """Format the report as a multi-line string suitable for
     plain stdout. Keeps to ASCII art so it stays grep-friendly
@@ -475,10 +491,10 @@ def render(report: Report) -> str:
     if report.span_start and report.span_end:
         delta = report.span_end - report.span_start
         lines.append(t(
-            "Time range: {start} → {end}  ({mins} min)",
+            "Time range: {start} → {end}  ({duration})",
             start=report.span_start.astimezone().strftime("%Y-%m-%d %H:%M:%S"),
             end=report.span_end.astimezone().strftime("%H:%M:%S"),
-            mins=int(delta.total_seconds() // 60) or 1,
+            duration=_format_duration(delta.total_seconds()),
         ))
     lines.append(t("Total events: {n}", n=report.total_events))
     if report.counts_by_type:
