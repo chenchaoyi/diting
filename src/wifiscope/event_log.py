@@ -9,6 +9,19 @@ through unchanged via ``ensure_ascii=False`` so a Chinese SSID
 like ``咖啡馆`` survives readable in the log instead of becoming
 ``\\u54d6\\u5561\\u9986``.
 
+Durability. File-mode loggers open in append mode with line
+buffering AND explicit flush after every write, so each event
+hits the kernel page cache before the producer side moves on.
+A SIGKILL or hard crash after the flush call does not lose
+data — the kernel still writes the cached bytes to disk. Only
+a kernel panic or power loss between flush and the next disk
+sync window can drop already-emitted events. ``atexit``
+registration is the belt-and-suspenders for exit paths that
+skip the normal close (Textual exception path, sys.exit on a
+worker thread): every file-mode logger registers itself so the
+file is closed cleanly even when the host App's on_unmount
+does not run.
+
 The logger is forgiving about transient I/O errors — a disk-full
 or NFS hiccup must not crash the long-running TUI / monitor. We
 log to stderr once per failure class and keep the in-memory
@@ -16,8 +29,11 @@ event stream flowing.
 """
 from __future__ import annotations
 
+import atexit
 import json
+import os
 import sys
+import weakref
 from datetime import datetime, timezone
 from typing import IO, Any
 
@@ -79,9 +95,28 @@ class EventLogger:
     def to_path(cls, path: str) -> "EventLogger":
         """Open ``path`` in append mode with line buffering. The
         directory must exist; create it before constructing if
-        needed. We never silently mkdir — that would mask typos."""
+        needed. We never silently mkdir — that would mask typos.
+
+        Each file-mode logger registers a weak-ref atexit hook so
+        an unexpected exit path (Textual exception, kill -15,
+        a worker calling sys.exit) still flushes and closes the
+        file. Already-flushed bytes survive even harder kills
+        because line-buffering pushes them through write(2) on
+        every newline."""
         sink = open(path, "a", buffering=1, encoding="utf-8")
-        return cls(sink, owns_sink=True)
+        logger = cls(sink, owns_sink=True)
+        # Weakref so we don't keep the logger alive past intended
+        # explicit close(); atexit just needs a function it can
+        # call, not the logger object itself.
+        ref = weakref.ref(logger)
+
+        def _atexit_close() -> None:
+            obj = ref()
+            if obj is not None:
+                obj.close()
+
+        atexit.register(_atexit_close)
+        return logger
 
     @classmethod
     def to_stdout(cls) -> "EventLogger":

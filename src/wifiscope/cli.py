@@ -503,7 +503,7 @@ def _usage() -> str:
     print time, not at module import, so ``--lang zh --help`` sees the
     Chinese version after :func:`main` has applied the language."""
     return t(
-        "usage: wifiscope [--lang en|zh] [--log PATH] [SUBCOMMAND]\n"
+        "usage: wifiscope [--lang en|zh] [--log [PATH]] [SUBCOMMAND]\n"
         "\n"
         "  (no args)   launch the TUI dashboard (default)\n"
         "  once        print the current connection and exit\n"
@@ -514,9 +514,11 @@ def _usage() -> str:
         "              flags: --duration SECONDS\n"
         "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
         "              then to the system locale (zh_* → zh, anything else → en).\n"
-        "  --log PATH  also write JSONL events to PATH while the TUI runs.\n"
-        "              Same schema as `wifiscope monitor`. Append-mode; safe\n"
-        "              to leave running for days. Env: WIFISCOPE_LOG=PATH.\n"
+        "  --log[PATH] also write JSONL events while the TUI runs. With no\n"
+        "              path, writes ./wifiscope-YYYYMMDD-HHMMSS.jsonl in cwd.\n"
+        "              Same schema as `wifiscope monitor`; append-mode + line-\n"
+        "              flushed so already-emitted events survive Ctrl+C / kill /\n"
+        "              traceback. Env: WIFISCOPE_LOG=PATH (or =auto for default).\n"
         "  -h, --help  show this message\n"
     )
 
@@ -550,40 +552,92 @@ def _validate_lang(value: str) -> str:
     return value
 
 
-def _extract_log_arg(argv: list[str]) -> str | None:
-    """Pop ``--log`` and its value from ``argv`` in place.
+# Sentinel for "user said --log but did not supply a path → use a
+# timestamped default in the current directory". Distinct from None
+# (flag absent) and from a regular path string.
+_LOG_DEFAULT = object()
 
-    Supports both ``--log path`` and ``--log=path``. Returns the
-    raw path string or ``None`` if the flag is absent. The path
-    is not resolved here — the EventLogger opens it in append
-    mode and surfaces any I/O error at write time.
+_KNOWN_SUBCOMMANDS = {"once", "watch", "monitor", "calibrate"}
+
+
+def _extract_log_arg(argv: list[str]) -> str | object | None:
+    """Pop ``--log`` and (optionally) its value from ``argv`` in place.
+
+    Three return shapes:
+
+    * ``None`` — flag absent.
+    * ``_LOG_DEFAULT`` sentinel — flag present without an explicit
+      value (``wifiscope --log``, or ``--log`` followed by a
+      subcommand / another flag). Caller resolves to a timestamped
+      default file in the cwd.
+    * ``str`` — explicit ``--log path`` or ``--log=path``.
+
+    Heuristic for "is the next token a path or a subcommand": if it
+    begins with ``-`` (another flag) or matches one of the known
+    subcommands we recognise, treat ``--log`` as no-value. Anything
+    else is taken as a path. This is the same trick argparse uses
+    for ``nargs='?'`` and works for the cases the CLI actually
+    sees.
     """
     for i, arg in enumerate(argv):
         if arg == "--log":
-            if i + 1 >= len(argv):
-                print("--log requires a path", file=sys.stderr)
-                sys.exit(2)
-            value = argv[i + 1]
-            del argv[i:i + 2]
+            nxt = argv[i + 1] if i + 1 < len(argv) else None
+            takes_value = (
+                nxt is not None
+                and not nxt.startswith("-")
+                and nxt not in _KNOWN_SUBCOMMANDS
+            )
+            if takes_value:
+                value: str | object = argv[i + 1]
+                del argv[i:i + 2]
+            else:
+                value = _LOG_DEFAULT
+                del argv[i]
             return value
         if arg.startswith("--log="):
             value = arg.split("=", 1)[1]
             del argv[i]
-            return value
+            return value or _LOG_DEFAULT
     return None
 
 
-def _resolve_log_path(cli_value: str | None) -> str | None:
-    """CLI flag wins over WIFISCOPE_LOG env var; both off → no log.
+def _default_log_path() -> str:
+    """Filesystem-safe timestamped default in the current directory.
 
-    A blank env var is treated as unset so users can disable
-    logging in a parent shell with ``WIFISCOPE_LOG= wifiscope``
-    even when their profile sets it globally.
+    Uses local time (the user reads filenames in their own
+    timezone) and replaces colons with hyphens so the file works
+    on macOS / Linux / case-insensitive shares without quoting.
     """
-    if cli_value:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"wifiscope-{stamp}.jsonl"
+
+
+def _resolve_log_path(cli_value: str | object | None) -> str | None:
+    """Materialise the final log path string.
+
+    Resolution order:
+      1. CLI flag with explicit path → that path.
+      2. CLI flag with no value (sentinel) → timestamped default.
+      3. WIFISCOPE_LOG env var matching ``auto`` (any case) →
+         timestamped default. Useful in shells that do not pass
+         positional flags easily (cron, launchd plist).
+      4. WIFISCOPE_LOG env var with a path → that path.
+      5. Otherwise → None (logging disabled).
+
+    A blank env var is treated as "off" so a parent shell can
+    disable logging with ``WIFISCOPE_LOG= wifiscope`` even when
+    the profile sets it globally.
+    """
+    if isinstance(cli_value, str) and cli_value:
         return cli_value
+    if cli_value is _LOG_DEFAULT:
+        return _default_log_path()
     env = (os.environ.get("WIFISCOPE_LOG") or "").strip()
-    return env or None
+    if not env:
+        return None
+    if env.lower() == "auto":
+        return _default_log_path()
+    return env
 
 
 def _run_tui(*, log_path: str | None = None) -> None:
@@ -597,6 +651,14 @@ def _run_tui(*, log_path: str | None = None) -> None:
     # path it returns through so the BLE poller does not re-pick
     # whichever stale older copy find_helper() may still see.
     ble_binary = _ensure_helper_ready()
+    if log_path:
+        # Surface the resolved path BEFORE entering the alt-screen
+        # so the user can see where their data is going. Especially
+        # useful for the timestamped default case where the user
+        # passed --log without a value and won't otherwise know the
+        # filename.
+        abs_path = os.path.abspath(log_path)
+        print(t("note: writing JSONL events to {path}", path=abs_path))
     backend = MacOSWiFiBackend()
     inv = load_inventory()
     WifiScopeApp(

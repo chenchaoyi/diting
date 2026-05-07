@@ -297,6 +297,115 @@ def test_emit_link_state_dataclass_passthrough(tmp_path):
 # 5. ts is ISO-8601 UTC
 # ------------------------------------------------------------------
 
+def test_line_buffered_writes_are_visible_before_close(tmp_path):
+    """Durability guarantee: every emit_X call should land on disk
+    before the next one returns. A reader opening the file mid-
+    session must see fully-formed JSONL lines, not buffered
+    fragments. This is the property that protects already-emitted
+    events from crashes / kills — the kernel page cache holds the
+    bytes even if Python dies between events."""
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_connection_update(_conn("aa:bb:cc:11:22:33"))
+    # Read the file WITHOUT closing the logger first. The line
+    # must be fully present + terminated by \n; if buffering is
+    # broken we'd see "" or a fragment.
+    contents = path.read_text(encoding="utf-8")
+    assert contents.endswith("\n")
+    parsed = json.loads(contents.strip())
+    assert parsed["state"] == "associated"
+    logger.close()
+
+
+def test_default_log_path_is_timestamped_jsonl():
+    """`wifiscope --log` (no path) generates a timestamped filename
+    in the current directory. The format must be filesystem-safe
+    on macOS / Linux / case-insensitive shares — no colons —
+    and end in .jsonl so editors / log shippers recognise it."""
+    from wifiscope.cli import _default_log_path
+    name = _default_log_path()
+    assert name.startswith("wifiscope-")
+    assert name.endswith(".jsonl")
+    assert ":" not in name
+    # Includes a date-time block: YYYYMMDD-HHMMSS sandwiched between
+    # the prefix and the extension. The exact value is "now" so we
+    # can't assert it equals anything; just sanity-check the shape.
+    middle = name[len("wifiscope-"):-len(".jsonl")]
+    assert "-" in middle
+    date_part, time_part = middle.split("-", 1)
+    assert len(date_part) == 8 and date_part.isdigit()
+    assert len(time_part) == 6 and time_part.isdigit()
+
+
+def test_resolve_log_path_cli_no_value_uses_default():
+    """The CLI flag without a path → timestamped default. This is
+    the user-friendly opt-in path: type `--log` and a sensible
+    file appears in your current directory."""
+    from wifiscope.cli import _LOG_DEFAULT, _resolve_log_path
+    resolved = _resolve_log_path(_LOG_DEFAULT)
+    assert resolved is not None
+    assert resolved.startswith("wifiscope-")
+    assert resolved.endswith(".jsonl")
+
+
+def test_resolve_log_path_cli_explicit_path_wins(tmp_path, monkeypatch):
+    """An explicit CLI path overrides everything else, including a
+    set WIFISCOPE_LOG env var that would otherwise have applied."""
+    from wifiscope.cli import _resolve_log_path
+    monkeypatch.setenv("WIFISCOPE_LOG", "/should/be/ignored.jsonl")
+    explicit = str(tmp_path / "my.jsonl")
+    assert _resolve_log_path(explicit) == explicit
+
+
+def test_resolve_log_path_env_auto_uses_default(monkeypatch):
+    """``WIFISCOPE_LOG=auto`` is the env-var equivalent of bare
+    ``--log`` — useful for cron / launchd plists where positional
+    flags are awkward."""
+    from wifiscope.cli import _resolve_log_path
+    monkeypatch.setenv("WIFISCOPE_LOG", "auto")
+    resolved = _resolve_log_path(None)
+    assert resolved is not None
+    assert resolved.startswith("wifiscope-")
+
+
+def test_resolve_log_path_env_blank_disables(monkeypatch):
+    """Blank env var means off, even if a parent shell set the
+    var globally. Lets users disable logging for one invocation
+    with ``WIFISCOPE_LOG= wifiscope`` without unsetting their
+    profile-level config."""
+    from wifiscope.cli import _resolve_log_path
+    monkeypatch.setenv("WIFISCOPE_LOG", "")
+    assert _resolve_log_path(None) is None
+
+
+def test_extract_log_arg_no_value_returns_sentinel():
+    """`--log` followed by a subcommand or another flag (or
+    nothing) parses as the no-value sentinel. Path-form still
+    works alongside the sentinel form."""
+    from wifiscope.cli import _LOG_DEFAULT, _extract_log_arg
+    # Bare --log at the end.
+    args = ["--log"]
+    assert _extract_log_arg(args) is _LOG_DEFAULT
+    assert args == []
+    # --log followed by a subcommand → no-value.
+    args = ["--log", "monitor"]
+    assert _extract_log_arg(args) is _LOG_DEFAULT
+    assert args == ["monitor"]
+    # --log followed by another flag → no-value.
+    args = ["--log", "--lang", "zh"]
+    assert _extract_log_arg(args) is _LOG_DEFAULT
+    assert args == ["--lang", "zh"]
+    # --log path → explicit path.
+    args = ["--log", "/tmp/x.jsonl"]
+    assert _extract_log_arg(args) == "/tmp/x.jsonl"
+    assert args == []
+    # --log= (empty value) → sentinel too, since `--log=` is
+    # equivalent to bare `--log` in user intent.
+    args = ["--log="]
+    assert _extract_log_arg(args) is _LOG_DEFAULT
+    assert args == []
+
+
 def test_timestamps_are_iso_utc(tmp_path):
     """Every event row carries a top-level 'ts' in ISO-8601 with an
     explicit UTC offset. AI consumers rely on this for sorting /

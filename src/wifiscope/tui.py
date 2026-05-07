@@ -454,16 +454,20 @@ def _help_content() -> tuple[Text, Text]:
 
     section(t("Event log (--log) — TUI + monitor share the schema"))
     body.append(
-        "  uv run wifiscope --log ~/wifi.jsonl   # TUI + log\n"
-        "  WIFISCOPE_LOG=~/wifi.jsonl wifiscope  # same, via env\n",
+        "  uv run wifiscope --log                  # default: ./wifiscope-YYYYMMDD-HHMMSS.jsonl\n"
+        "  uv run wifiscope --log ~/wifi.jsonl     # explicit path\n"
+        "  WIFISCOPE_LOG=auto wifiscope            # env-var equivalent of bare --log\n"
+        "  WIFISCOPE_LOG=~/wifi.jsonl wifiscope    # env-var explicit path\n",
         style="dim",
     )
     body.append(t(
         "\n"
         "  Adds a background JSONL writer to the normal TUI session.\n"
         "  Same event schema as `wifiscope monitor`, append-mode, line-\n"
-        "  buffered — safe to leave running for days and tail concurrently.\n"
-        "  Disabled by default; set the flag or env var to opt in.\n"
+        "  buffered + flushed after every event — already-emitted events\n"
+        "  survive Ctrl+C, kill, or even an unhandled traceback. Only a\n"
+        "  kernel panic / power loss between an event and the next disk\n"
+        "  sync window can drop something.\n"
         "\n"
         "  The schema is locale-stable (English keys / values regardless\n"
         "  of WIFISCOPE_LANG) so log analysis scripts and AI consumers\n"
