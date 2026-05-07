@@ -264,15 +264,44 @@ enum BLEAdParser {
     }
 }
 
+/// 16-bit Bluetooth SIG service UUIDs we ask CoreBluetooth to enumerate
+/// when listing currently-connected peripherals. A deliberately broad
+/// union covering Audio, HID, Heart Rate / Battery / Health Thermometer,
+/// Find My, Eddystone, and Tile — common bands the user likely cares
+/// about. Anything more obscure (Bluetooth Mesh, exotic Health Devices)
+/// is acceptable to miss for v0.6.0.
+private let kConnectedServiceUUIDs: [CBUUID] = [
+    // Audio profiles
+    CBUUID(string: "1108"), CBUUID(string: "110A"), CBUUID(string: "110B"),
+    CBUUID(string: "110C"), CBUUID(string: "110D"), CBUUID(string: "110E"),
+    CBUUID(string: "110F"), CBUUID(string: "111E"),
+    // HID
+    CBUUID(string: "1124"), CBUUID(string: "1812"),
+    // Heart Rate, Battery, Health Thermometer
+    CBUUID(string: "180D"), CBUUID(string: "180F"), CBUUID(string: "1809"),
+    // Find My
+    CBUUID(string: "FD5A"), CBUUID(string: "FE9F"),
+    // Eddystone, Tile
+    CBUUID(string: "FEAA"), CBUUID(string: "FEED"), CBUUID(string: "FEEC"),
+]
+
 /// CBCentralManager driver for the `ble-scan` subcommand. One JSON
 /// object per advertisement is written to stdout, terminated by a
 /// newline; the Python side reads the pipe line-by-line.
+///
+/// In addition to advertisement events, every ~5 s the scanner snapshots
+/// `retrieveConnectedPeripherals(withServices:)` and emits one
+/// `{"connected": true, ...}` JSON line per returned peripheral followed
+/// by a `connected_snapshot` sentinel. This surfaces things the user is
+/// actually using right now (AirPods, Magic Keyboard, Apple Watch) which
+/// are not advertising and so otherwise invisible to the BLE panel.
 ///
 /// Permission failures (`.unauthorized`) emit a single JSON error line
 /// and exit code 3 so the Python poller can distinguish "no Bluetooth
 /// grant" from "no devices yet" or "subprocess crashed".
 final class BLEScanner: NSObject, CBCentralManagerDelegate {
     private var central: CBCentralManager!
+    private var connectedTimer: DispatchSourceTimer?
     private let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -295,6 +324,7 @@ final class BLEScanner: NSObject, CBCentralManagerDelegate {
                 withServices: nil,
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
             )
+            startConnectedSnapshotTimer()
         case .unauthorized:
             emitBLEErrorAndExit("bluetooth unauthorized", code: 3)
         case .poweredOff:
@@ -356,6 +386,56 @@ final class BLEScanner: NSObject, CBCentralManagerDelegate {
         if let dc = detection.deviceClass { row["device_class"] = dc }
 
         emitJSONLine(row)
+    }
+
+    /// Periodic enumeration of connected peripherals. We don't
+    /// `connect()` or `readRSSI()` — both would be invasive perturbations
+    /// of the user's active Bluetooth links. The list comes back without
+    /// a signal reading; the Python panel renders `—` for that column.
+    private func startConnectedSnapshotTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: 5.0)
+        timer.setEventHandler { [weak self] in
+            self?.emitConnectedSnapshot()
+        }
+        timer.resume()
+        connectedTimer = timer
+    }
+
+    private func emitConnectedSnapshot() {
+        guard let central = central, central.state == .poweredOn else { return }
+        let peripherals = central.retrieveConnectedPeripherals(
+            withServices: kConnectedServiceUUIDs,
+        )
+        // Deduplicate across services — the same CBPeripheral often
+        // reports under several of the requested UUIDs (e.g. AirPods
+        // appear under multiple Audio profiles).
+        var seen: Set<UUID> = []
+        var emittedIDs: [String] = []
+        for p in peripherals {
+            if !seen.insert(p.identifier).inserted { continue }
+            emittedIDs.append(p.identifier.uuidString)
+            var row: [String: Any] = [
+                "ts": isoFormatter.string(from: Date()),
+                "connected": true,
+                "id": p.identifier.uuidString,
+            ]
+            if let name = p.name { row["name"] = name }
+            if let services = p.services, !services.isEmpty {
+                row["service_uuids"] = services.map { $0.uuid.uuidString }
+            }
+            emitJSONLine(row)
+        }
+        // Sentinel marker so the Python side can distinguish "this
+        // batch contained zero connected peripherals" (need to clear
+        // stale rows) from "no batch has run yet" (don't clear).
+        let sentinel: [String: Any] = [
+            "ts": isoFormatter.string(from: Date()),
+            "connected_snapshot": true,
+            "count": emittedIDs.count,
+            "ids": emittedIDs,
+        ]
+        emitJSONLine(sentinel)
     }
 
     private func emitJSONLine(_ row: [String: Any]) {
