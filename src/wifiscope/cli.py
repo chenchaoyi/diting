@@ -1,23 +1,45 @@
 """Command-line entry point.
 
-Two modes (no argparse — keep step-6 surface minimal):
+Subcommands:
 
-    wifiscope         one-shot snapshot of the current connection
-    wifiscope watch   streaming event log (Ctrl+C to quit)
-
-The TUI lands in step 8 and will replace `watch` as the default.
+    wifiscope             launch the TUI (default)
+    wifiscope once        one-shot snapshot of the current connection
+    wifiscope watch       streaming event log (Ctrl+C to quit)
+    wifiscope monitor     headless JSONL events for long-runs / Home Assistant
+    wifiscope calibrate   record an "empty room" RSSI baseline
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import subprocess
 import sys
 import time
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, timezone
+from pathlib import Path
 
 from . import i18n
+from .environment import (
+    EnvironmentMonitor,
+    load_calibration,
+    write_calibration,
+)
+from .events import (
+    EventRing,
+    LatencySpikeEvent,
+    LinkStateEvent,
+    LossBurstEvent,
+    event_to_jsonl,
+)
 from .i18n import t
+from .latency import (
+    LatencyPoller,
+    detect_latency_spike,
+    detect_loss_burst,
+)
 from .macos_backend import MacOSWiFiBackend
 from .models import Connection
 from .network import (
@@ -226,6 +248,282 @@ def _render(event: Event, state: dict, inv: NetworkInventory) -> str | None:
     return _format_conn_line(c, inv)
 
 
+# ---------- monitor (headless JSONL) ----------
+
+async def _run_monitor(args: list[str]) -> None:
+    """Long-running headless event stream.
+
+    Spawns WiFiPoller + LatencyPoller + EnvironmentMonitor and emits
+    one JSONL document per event to stdout (or ``--out path.jsonl``
+    when set), with ``--notify`` raising a macOS Notification Centre
+    alert for high-confidence events.
+    """
+    out_path = _arg_value(args, "--out")
+    notify = "--notify" in args
+    gateway_override = _arg_value(args, "--gateway")
+    wan_override = _arg_value(args, "--wan")
+
+    backend = MacOSWiFiBackend()
+    inv = load_inventory()
+    monitor = EnvironmentMonitor(
+        inventory=inv, calibration=load_calibration(),
+    )
+
+    sink: object
+    if out_path:
+        sink = open(out_path, "a", buffering=1)  # line-buffered
+    else:
+        sink = sys.stdout
+
+    poller = WiFiPoller(backend)
+
+    # The latency target list is a moving target — we can only start
+    # the LatencyPoller once we have a gateway. Spin up a small
+    # waiting loop instead of blocking the WiFi consumer with a long
+    # one-shot probe.
+    latency_state: dict = {
+        "poller": None,
+        "wan_override": wan_override,
+        "gateway_override": gateway_override,
+    }
+
+    async def emit(payload: dict) -> None:
+        """Write one JSONL line to the configured sink, plus optional
+        macOS notification."""
+        line = json.dumps(payload, separators=(",", ":"))
+        sink.write(line + "\n")
+        if hasattr(sink, "flush"):
+            sink.flush()
+        if notify and payload.get("confidence") == "high":
+            await _macos_notify(
+                title="wifiscope",
+                message=_notify_message(payload),
+            )
+
+    async def wifi_consumer() -> None:
+        async for event in poller.events():
+            now = datetime.now(timezone.utc)
+            if isinstance(event, ConnectionUpdate):
+                conn = event.connection
+                if conn is None:
+                    payload = {
+                        "ts": _iso(now),
+                        "type": "link_state",
+                        "state": "disassociated",
+                        "bssid": None,
+                        "ssid": None,
+                    }
+                    await emit(payload)
+                    continue
+                # Late-bind LatencyPoller once we know the gateway.
+                if latency_state["poller"] is None and (
+                    latency_state["gateway_override"] or conn.router_ip
+                ):
+                    gateway_ip = (
+                        latency_state["gateway_override"] or conn.router_ip
+                    )
+                    latency_state["poller"] = LatencyPoller(
+                        gateway_ip=gateway_ip,
+                        wan_ip=latency_state["wan_override"],
+                    )
+                    asyncio.get_running_loop().create_task(
+                        latency_consumer(latency_state["poller"]),
+                        name="latency-consumer",
+                    )
+                if conn.bssid is not None and conn.rssi_dbm is not None:
+                    monitor.ingest(
+                        conn.bssid, conn.rssi_dbm, now,
+                    )
+                    for stir in monitor.fire_events(now):
+                        await emit({
+                            "ts": _iso(stir.timestamp),
+                            "type": "rf_stir",
+                            "magnitude_db": stir.magnitude_db,
+                            "location": stir.location,
+                            "bssid": stir.bssid,
+                            "duration_s": stir.duration_s,
+                            "confidence": stir.confidence,
+                            "mode": stir.mode,
+                        })
+            elif isinstance(event, ScanUpdate):
+                for r in event.results:
+                    if r.bssid is not None and r.rssi_dbm is not None:
+                        monitor.ingest(r.bssid, r.rssi_dbm, now)
+                for stir in monitor.fire_events(now):
+                    await emit({
+                        "ts": _iso(stir.timestamp),
+                        "type": "rf_stir",
+                        "magnitude_db": stir.magnitude_db,
+                        "location": stir.location,
+                        "bssid": stir.bssid,
+                        "duration_s": stir.duration_s,
+                        "confidence": stir.confidence,
+                        "mode": stir.mode,
+                    })
+            elif isinstance(event, RoamEvent):
+                await emit({
+                    "ts": _iso(event.timestamp),
+                    "type": "roam",
+                    "previous_bssid": event.previous_bssid,
+                    "new_bssid": event.new_bssid,
+                    "kind": (
+                        "band_switch"
+                        if inv.is_same_ap(event.previous_bssid, event.new_bssid)
+                        else "inter_ap"
+                    ),
+                })
+
+    async def latency_consumer(lp: LatencyPoller) -> None:
+        async for sample in lp.events():
+            history = list(lp._history.get(sample.target, ()))
+            if not history:
+                continue
+            spike = detect_latency_spike(history)
+            if spike is not None and sample is spike:
+                agg = lp.aggregate(sample.target)
+                await emit({
+                    "ts": _iso(sample.ts),
+                    "type": "latency_spike",
+                    "target": sample.target,
+                    "target_ip": sample.target_ip,
+                    "rtt_ms": round(sample.rtt_ms or 0.0, 1),
+                    "loss_pct": round(agg.loss_pct or 0.0, 1),
+                })
+            if sample.lost and detect_loss_burst(history):
+                agg = lp.aggregate(sample.target)
+                await emit({
+                    "ts": _iso(sample.ts),
+                    "type": "loss_burst",
+                    "target": sample.target,
+                    "target_ip": sample.target_ip,
+                    "loss_pct": round(agg.loss_pct or 0.0, 1),
+                    "lost_in_window": sum(1 for s in history[-5:] if s.lost),
+                })
+
+    try:
+        await wifi_consumer()
+    finally:
+        if hasattr(sink, "close") and sink is not sys.stdout:
+            sink.close()
+
+
+def _iso(ts: datetime) -> str:
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _notify_message(payload: dict) -> str:
+    """Compose a short macOS notification body from an event dict."""
+    kind = payload.get("type")
+    if kind == "rf_stir":
+        return (
+            f"RF stir at {payload.get('location', '?')} — "
+            f"σ {payload.get('magnitude_db', '?')} dB"
+        )
+    if kind == "latency_spike":
+        return (
+            f"Latency spike on {payload.get('target', '?')}: "
+            f"{payload.get('rtt_ms', '?')} ms"
+        )
+    if kind == "loss_burst":
+        return (
+            f"Loss burst on {payload.get('target', '?')}: "
+            f"{payload.get('loss_pct', '?')}%"
+        )
+    return f"event {kind}"
+
+
+async def _macos_notify(*, title: str, message: str) -> None:
+    """Fire ``osascript -e 'display notification ...'`` non-blocking."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "/usr/bin/osascript", "-e",
+            f'display notification "{message}" with title "{title}"',
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()
+    except (FileNotFoundError, OSError):
+        pass
+
+
+def _arg_value(args: list[str], flag: str) -> str | None:
+    """Pop ``--flag value`` from ``args`` in place; return the value or None."""
+    for i, a in enumerate(args):
+        if a == flag:
+            if i + 1 < len(args):
+                value = args[i + 1]
+                del args[i:i + 2]
+                return value
+            del args[i]
+            return None
+        if a.startswith(flag + "="):
+            value = a.split("=", 1)[1]
+            del args[i]
+            return value
+    return None
+
+
+# ---------- calibrate ----------
+
+async def _run_calibrate(args: list[str]) -> None:
+    """Record ``duration_s`` of RSSI samples per visible BSSID and
+    persist the result to ``./wifiscope-baseline.json``.
+
+    Used by EnvironmentMonitor to override the adaptive baseline
+    with a fixed "empty-room" σ, which makes the ``stable`` /
+    ``active`` / ``quiet`` qualifier on the diagnostic line
+    meaningful.
+    """
+    duration_s = 300
+    raw = _arg_value(args, "--duration")
+    if raw is not None:
+        try:
+            duration_s = max(10, int(raw))
+        except ValueError:
+            print(f"--duration expects an integer (got {raw!r})", file=sys.stderr)
+            sys.exit(2)
+
+    backend = MacOSWiFiBackend()
+    poller = WiFiPoller(backend)
+    samples: dict[str, list[int]] = defaultdict(list)
+    deadline = time.monotonic() + duration_s
+    print(t("Calibrating environment baseline ({n}s remaining)...", n=duration_s),
+          flush=True)
+    last_print = time.monotonic()
+
+    try:
+        async for event in poller.events():
+            if time.monotonic() >= deadline:
+                break
+            if isinstance(event, ConnectionUpdate):
+                conn = event.connection
+                if conn is not None and conn.bssid and conn.rssi_dbm is not None:
+                    samples[conn.bssid.lower()].append(int(conn.rssi_dbm))
+            elif isinstance(event, ScanUpdate):
+                for r in event.results:
+                    if r.bssid and r.rssi_dbm is not None:
+                        samples[r.bssid.lower()].append(int(r.rssi_dbm))
+            now = time.monotonic()
+            if now - last_print >= 30:
+                last_print = now
+                remaining = max(0, int(deadline - now))
+                print(t(
+                    "Calibrating environment baseline ({n}s remaining)...",
+                    n=remaining,
+                ), flush=True)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print(t("Calibration cancelled."))
+        return
+
+    if not samples:
+        print(t("No samples captured — leave the radio on a single network and retry."))
+        return
+    path = write_calibration(samples)
+    print(t("Baseline saved to {path}", path=path))
+
+
 # ---------- entry ----------
 
 def _usage() -> str:
@@ -238,6 +536,10 @@ def _usage() -> str:
         "  (no args)   launch the TUI dashboard (default)\n"
         "  once        print the current connection and exit\n"
         "  watch       stream events as plain text until Ctrl+C\n"
+        "  monitor     headless JSONL events (long-runs / Home Assistant)\n"
+        "              flags: --out FILE  --notify  --gateway IP  --wan IP\n"
+        "  calibrate   record an empty-room RSSI baseline (default 300 s)\n"
+        "              flags: --duration SECONDS\n"
         "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
         "              then to the system locale (zh_* → zh, anything else → en).\n"
         "  -h, --help  show this message\n"
@@ -485,6 +787,18 @@ def main() -> None:
             asyncio.run(_run_watch())
         except KeyboardInterrupt:
             pass
+        return
+    if cmd == "monitor":
+        try:
+            asyncio.run(_run_monitor(args[1:]))
+        except KeyboardInterrupt:
+            pass
+        return
+    if cmd == "calibrate":
+        try:
+            asyncio.run(_run_calibrate(args[1:]))
+        except KeyboardInterrupt:
+            print(t("Calibration cancelled."))
         return
     if cmd in ("-h", "--help"):
         print(_usage(), end="")

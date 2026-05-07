@@ -310,6 +310,10 @@ _ZH: dict[str, str] = {
     "  (no args)   launch the TUI dashboard (default)\n"
     "  once        print the current connection and exit\n"
     "  watch       stream events as plain text until Ctrl+C\n"
+    "  monitor     headless JSONL events (long-runs / Home Assistant)\n"
+    "              flags: --out FILE  --notify  --gateway IP  --wan IP\n"
+    "  calibrate   record an empty-room RSSI baseline (default 300 s)\n"
+    "              flags: --duration SECONDS\n"
     "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
     "              then to the system locale (zh_* → zh, anything else → en).\n"
     "  -h, --help  show this message\n":
@@ -318,6 +322,10 @@ _ZH: dict[str, str] = {
         "  (无参数)    启动 TUI 仪表盘（默认）\n"
         "  once        打印当前连接快照后退出\n"
         "  watch       以纯文本流式输出事件，直到 Ctrl+C\n"
+        "  monitor     无 TUI 长时运行，逐行 JSONL 事件\n"
+        "              选项：--out FILE  --notify  --gateway IP  --wan IP\n"
+        "  calibrate   采集「房间没人」基线（默认 300 秒）\n"
+        "              选项：--duration SECONDS\n"
         "  --lang L    界面语言：en、zh。默认读 WIFISCOPE_LANG，\n"
         "              再退到系统 locale（zh_* → zh，其余 → en）。\n"
         "  -h, --help  显示本说明\n",
