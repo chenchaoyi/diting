@@ -41,5 +41,13 @@ helper/wifiscope-helper.app/
 # business in version control and would expose private deployment info.
 aps.yaml
 
+# Event log files produced by `wifiscope --log` and `wifiscope monitor`.
+# Contain MAC addresses / SSIDs / timestamps from the user's network and
+# have no place in source control. The default-named pattern catches
+# anything written via `wifiscope --log` (no path) and the documented
+# example filenames; users who pass an explicit path elsewhere stay
+# uncovered — that location was their choice.
+wifiscope-*.jsonl
+
 # NOTE: do NOT ignore uv.lock or .python-version — both are committed for
 # reproducible installs (uv treats this as an application, not a library).
