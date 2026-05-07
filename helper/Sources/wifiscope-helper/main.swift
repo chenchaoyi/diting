@@ -252,10 +252,21 @@ enum BLEAdParser {
                     let dc = bytes.count >= 6 ? appleNearbyInfoDeviceClass(bytes[5]) : nil
                     return BLEDetection(type: nil, deviceClass: dc)
                 case 0x12:
-                    // Apple Find My target. Distinguish AirTag (owner-
-                    // paired sub-type, length >= 25) from a generic
-                    // Find My target (lost mode, shorter payload).
-                    let isAirTag = bytes.count >= 25
+                    // Apple Find My target. AirTag and AirPods Pro both
+                    // broadcast type 0x12 with length >= 25 when away
+                    // from their owner, so the length-only heuristic
+                    // mis-labels AirPods as AirTag. Real AirTags never
+                    // carry a localName (privacy by design); AirPods /
+                    // Watches do. So presence of any localName forces
+                    // the more general "Find My target" label.
+                    let hasName: Bool
+                    if let s = advertisementData[CBAdvertisementDataLocalNameKey] as? String,
+                       !s.isEmpty {
+                        hasName = true
+                    } else {
+                        hasName = false
+                    }
+                    let isAirTag = bytes.count >= 25 && !hasName
                     return BLEDetection(
                         type: isAirTag ? "AirTag" : "Find My target",
                         deviceClass: nil,

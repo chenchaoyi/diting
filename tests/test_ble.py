@@ -351,6 +351,68 @@ def test_merge_sorts_by_rssi_descending():
     assert merged[1].identifier == "weak"
 
 
+def test_rssi_smooth_seeds_from_first_sample():
+    """The very first observed RSSI must seed rssi_smooth so the
+    device's first appearance lands in its real signal bucket
+    instead of being held back by a non-existent prior value."""
+    line = json.dumps({
+        "id": "AA000000-0000-0000-0000-000000000001",
+        "rssi_dbm": -55,
+    })
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(devices, line, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    assert d.rssi_smooth == -55
+
+
+def test_rssi_smooth_dampens_packet_jitter():
+    """A 5–15 dB single-packet swing (typical BLE radio behaviour) is
+    smoothed so the sort order does not flip on every snapshot. With
+    α=0.4 a 10 dB transient nudges the EMA by 4 dB, not 10. Two
+    successive readings should converge towards the average."""
+    line1 = json.dumps({
+        "id": "BB000000-0000-0000-0000-000000000002",
+        "rssi_dbm": -55,
+    })
+    line2 = json.dumps({
+        "id": "BB000000-0000-0000-0000-000000000002",
+        "rssi_dbm": -65,
+    })
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(devices, line1, vendors=VENDORS)
+    update_from_line(devices, line2, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    # Display still uses the latest packet (-65) so the user sees
+    # live signal; sort uses the EMA which lands at 0.4*(-65) +
+    # 0.6*(-55) = -59.
+    assert d.rssi_dbm == -65
+    assert d.rssi_smooth == -59
+
+
+def test_merge_sort_key_uses_smoothed_rssi():
+    """When two devices have similar EMA-smoothed RSSI but big single-
+    packet jitter, the row order follows the smoothed values, not the
+    snapshot RSSI. Guards against the row-swap-every-second flapping
+    the user reported with bare-RSSI sorting."""
+    now = datetime(2026, 5, 6, 12, 0, 0, tzinfo=timezone.utc)
+    # Device A: live RSSI dropped to -65 this packet but its EMA is
+    # holding at -52. Device B: live RSSI is -50 (stronger) but its
+    # EMA is at -58 because it just walked into range. Sort by EMA
+    # → A above B; sort by raw RSSI → B above A.
+    a = BLEDevice(
+        identifier="aaa", name="X", vendor=None, vendor_id=1,
+        services=(), rssi_dbm=-65, rssi_smooth=-52,
+        is_connectable=False, first_seen=now, last_seen=now, ad_count=4,
+    )
+    b = BLEDevice(
+        identifier="bbb", name="Y", vendor=None, vendor_id=2,
+        services=(), rssi_dbm=-50, rssi_smooth=-58,
+        is_connectable=False, first_seen=now, last_seen=now, ad_count=4,
+    )
+    merged = merge_for_display([a, b])
+    assert [d.identifier for d in merged] == ["aaa", "bbb"]
+
+
 # ------------------------------------------------------------------
 # 6. Permission denied
 # ------------------------------------------------------------------
@@ -636,6 +698,33 @@ def test_apple_continuity_extended_type_bytes(type_hex, expected_label):
     type_, dc = detect_advertisement(obj)
     assert type_ == expected_label
     assert dc is None
+
+
+def test_apple_type_0x12_with_localname_is_find_my_not_airtag():
+    """AirPods Pro / Apple Watch / etc. broadcast Find My beacons
+    with the same length signature as an owner-paired AirTag, so the
+    length-only heuristic mislabelled them as 'AirTag' (the user
+    saw 'AirTag' next to 'Chaoyi's AirPods Pro' on real hardware).
+    A real AirTag never broadcasts a localName by design — so the
+    presence of a name is the deciding signal. Devices with a name
+    drop to 'Find My target' instead of guessing AirTag."""
+    obj_with_name = {
+        "name": "Chaoyi's AirPods Pro",
+        "manufacturer_id": 76,
+        # 25 bytes of payload — same length signature as AirTag.
+        "manufacturer_hex": "4c0012191000" + "00" * 22,
+    }
+    type_, _ = detect_advertisement(obj_with_name)
+    assert type_ == "Find My target"
+
+    # Anonymous owner-paired payload (real AirTag) still gets the
+    # AirTag label so the existing tag-finder UX continues to work.
+    obj_anonymous = {
+        "manufacturer_id": 76,
+        "manufacturer_hex": "4c0012191000" + "00" * 22,
+    }
+    type_, _ = detect_advertisement(obj_anonymous)
+    assert type_ == "AirTag"
 
 
 def test_apple_continuity_unknown_type_byte_passes_through():

@@ -85,6 +85,14 @@ class BLEDevice:
     type: str | None = None
     device_class: str | None = None
     is_connected: bool = False
+    # Exponential-moving-average RSSI used as the *sort* key in the
+    # panel so a 5–15 dB single-packet jitter (normal for BLE) does
+    # not cause neighbouring rows to swap on every snapshot. Display
+    # still uses ``rssi_dbm`` because the user wants to see the live
+    # value, not a smoothed one. ``None`` until at least one valid
+    # RSSI sample arrives; matches ``rssi_dbm`` for the very first
+    # sample so the first render is not artificially weighted.
+    rssi_smooth: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -445,11 +453,19 @@ def detect_advertisement(obj: dict[str, Any]) -> tuple[str | None, str | None]:
                     dc = _apple_nearby_info_device_class(mfg_bytes[5])
                 return None, dc
             if type_byte == 0x12:
-                # Owner-paired AirTag payloads are ~25 bytes; lost-mode
-                # Find My broadcasts are shorter. Use the length as a
-                # cheap discriminator — false negatives just degrade to
-                # "Find My target", which is still actionable.
-                is_airtag = len(mfg_bytes) >= 25
+                # Owner-paired AirTag payloads are ~25 bytes, but
+                # AirPods Pro and other Find My-capable peripherals
+                # broadcast similar-length packets when away from
+                # their owner. The cheap discriminator that holds:
+                # AirTags never broadcast a localName (privacy-by-
+                # design), while AirPods / Watches do. So if the
+                # advertisement carries a name we drop to the more
+                # general "Find My target" label rather than guessing
+                # "AirTag" and getting it wrong on AirPods Pro.
+                has_name = isinstance(obj.get("name"), str) and bool(
+                    obj.get("name")
+                )
+                is_airtag = len(mfg_bytes) >= 25 and not has_name
                 return ("AirTag" if is_airtag else "Find My target"), None
             label = _APPLE_CONTINUITY_TYPE.get(type_byte)
             if label is not None:
@@ -516,6 +532,19 @@ def _build_device(
     # the diagnostic-panel Closest line.
     if rssi is not None and (rssi >= 0 or rssi < -200):
         rssi = None
+
+    # Exponential moving average for the sort key. α = 0.4 weights the
+    # latest packet enough to react to genuine movement (the user
+    # walking with their phone) within ~3 advertisements, while
+    # damping the 5–15 dB single-packet jitter that BLE radios produce
+    # at rest. The first observed RSSI seeds the smoothed value so a
+    # device's first appearance sorts in its real bucket immediately.
+    if rssi is None:
+        rssi_smooth = prior.rssi_smooth if prior is not None else None
+    elif prior is not None and prior.rssi_smooth is not None:
+        rssi_smooth = int(round(0.4 * rssi + 0.6 * prior.rssi_smooth))
+    else:
+        rssi_smooth = rssi
 
     is_connectable = bool(obj.get("is_connectable", False))
 
@@ -588,6 +617,7 @@ def _build_device(
         vendor_id=vendor_id,
         services=services,
         rssi_dbm=rssi,
+        rssi_smooth=rssi_smooth,
         is_connectable=is_connectable,
         first_seen=first_seen,
         last_seen=now,
@@ -784,20 +814,26 @@ def merge_for_display(
             continue
         bucket_groups.setdefault((d.vendor_id, d.name), []).append(d)
 
+    # Use the smoothed RSSI for both clustering and final sort so the
+    # row order is stable across snapshots. Falling back to rssi_dbm
+    # keeps tests written against a single-packet device working,
+    # since they never observe the EMA seed-and-update cycle.
+    def _key(d: BLEDevice) -> int:
+        if d.rssi_smooth is not None:
+            return d.rssi_smooth
+        if d.rssi_dbm is not None:
+            return d.rssi_dbm
+        return -200
+
     for group in bucket_groups.values():
-        remaining = sorted(
-            group,
-            key=lambda d: d.rssi_dbm if d.rssi_dbm is not None else -200,
-            reverse=True,
-        )
+        remaining = sorted(group, key=_key, reverse=True)
         while remaining:
             anchor = remaining[0]
-            anchor_rssi = anchor.rssi_dbm if anchor.rssi_dbm is not None else -200
+            anchor_rssi = _key(anchor)
             cluster = [anchor]
             kept: list[BLEDevice] = []
             for d in remaining[1:]:
-                rssi = d.rssi_dbm if d.rssi_dbm is not None else -200
-                if abs(rssi - anchor_rssi) <= rssi_window_db:
+                if abs(_key(d) - anchor_rssi) <= rssi_window_db:
                     cluster.append(d)
                 else:
                     kept.append(d)
@@ -805,10 +841,7 @@ def merge_for_display(
             remaining = kept
 
     out.extend(unmergeable)
-    out.sort(
-        key=lambda d: d.rssi_dbm if d.rssi_dbm is not None else -200,
-        reverse=True,
-    )
+    out.sort(key=_key, reverse=True)
     return out
 
 
@@ -823,7 +856,10 @@ def _fold_cluster(cluster: list[BLEDevice]) -> BLEDevice:
     """
     primary = max(
         cluster,
-        key=lambda d: d.rssi_dbm if d.rssi_dbm is not None else -200,
+        key=lambda d: (
+            d.rssi_smooth if d.rssi_smooth is not None
+            else (d.rssi_dbm if d.rssi_dbm is not None else -200)
+        ),
     )
     seen: set[str] = set()
     services: list[str] = []
@@ -864,7 +900,12 @@ class BLEPoller:
         helper_path: str,
         *,
         ttl_s: float = 30.0,
-        snapshot_interval_s: float = 1.0,
+        # 2 s strikes a balance: long enough that BLE's per-packet 5–
+        # 15 dB RSSI jitter can be smoothed away by the EMA in
+        # _build_device, short enough that a new device shows up
+        # within "feels live". 1 s caused neighbouring rows to swap
+        # on every render even when nothing real had changed.
+        snapshot_interval_s: float = 2.0,
         vendors: dict[int, str] | None = None,
         ouis: dict[str, str] | None = None,
         member_uuids: dict[str, str] | None = None,
