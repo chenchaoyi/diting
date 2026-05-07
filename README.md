@@ -27,7 +27,7 @@
 <p align="center">
   <img src="docs/preview-ble.svg" alt="wifiscope TUI – BLE view" width="100%">
   <br>
-  <sub><i>BLE view (press <code>n</code> to toggle)</i></sub>
+  <sub><i>BLE view (press <code>n</code> to toggle) — Connected peripherals on top, Advertising devices below, each labelled with its public-format identification.</i></sub>
 </p>
 
 ## Why
@@ -57,9 +57,14 @@ black box into a TUI:
   `[band switch on <AP>]` for same-AP radio changes vs
   `[inter-AP roam]` for genuine moves between physical APs
 - a **Nearby BLE devices** view (press `n` to toggle in place of the
-  scan list) showing AirPods, Apple Watches, BLE keyboards, smart-home
-  gadgets, Find My beacons, and iBeacons — every electronic device
-  around you that the Wi-Fi scan cannot see
+  scan list) split into two sections: **Connected** lists the
+  peripherals you're using *right now* (AirPods, Magic Keyboard,
+  Apple Watch — devices that are not advertising and so otherwise
+  invisible to a BLE scanner), and **Advertising** lists every BLE
+  device broadcasting nearby with **what kind of device it actually
+  is** — `AirTag`, `iBeacon`, `Eddystone-URL`, `Tile`, `SmartTag`,
+  `iPhone`, `Mac`, `Apple Watch`, `HomePod` — instead of the
+  "Apple, Inc. (anonymous) Find My" wall
 
 Stuck on a weak AP? Hit `c` and `wifiscope` cycles the WiFi radio so
 macOS re-runs auto-join and reassociates with the strongest BSSID.
@@ -228,10 +233,23 @@ will feel "smaller" than the Wi-Fi scan even on a busy floor.
 
 **macOS hides the underlying BLE MAC**. CoreBluetooth gives only
 a per-host UUID; vendor identification goes through the
-manufacturer-data company ID field exclusively. Apple Continuity
-payloads use Apple's company ID with an opaque format we do not
-attempt to decode — the row reads as "Apple, Inc." with a
-generic name.
+manufacturer-data company ID field exclusively. wifiscope decodes
+the *public* portions of Apple Continuity (the Nearby Info
+device-class nibble — `iPhone` / `iPad` / `Mac` / `Apple TV` /
+`HomePod` / `Apple Watch`) and the Find My / iBeacon signatures,
+but the encrypted payloads (lock state, AirDrop, Music-playing,
+Handoff session info) stay opaque. Per-model identification
+(iPhone 14 vs 15) is *not* in any public ad packet — anyone
+claiming to do that is reading proprietary GATT services after
+connecting, which we will not do.
+
+**Connected peripherals have no RSSI.** `retrieveConnectedPeripherals`
+gives us the list of devices currently associated with the Mac
+(AirPods you're listening to, Magic Keyboard you're typing on),
+but reading their signal mid-session would require `readRSSI()`
+against an active connection — an invasive perturbation we
+deliberately avoid. The Connected section shows `—` for the
+signal column and sorts alphabetically by name.
 
 **`disassociate()` is unreliable for forcing a roam.** Earlier
 versions of `wifiscope` used `iface.disassociate()` for the `c`

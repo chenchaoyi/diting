@@ -98,7 +98,10 @@ prompt covers both CLI subcommands.
 ## ble-scan output schema
 
 One JSON object per line (no enclosing array, no trailing comma) so
-the Python side can read line-by-line. Schema:
+the Python side can read line-by-line. The stream interleaves three
+kinds of rows:
+
+**Schema-3 advertisement (the per-ad event):**
 
 ```json
 {
@@ -109,10 +112,62 @@ the Python side can read line-by-line. Schema:
   "is_connectable": true,
   "service_uuids": ["180D", "1812"],
   "manufacturer_id": 76,
-  "manufacturer_hex": "4c001907..."
+  "manufacturer_hex": "4c001907...",
+  "type": "AirTag",          // optional, schema-3 only
+  "device_class": "iPhone"   // optional, schema-3 only
 }
 ```
+
+The optional `type` and `device_class` fields are populated by the
+helper's `BLEAdParser` from public-format detection. `type` covers
+`iBeacon`, `AirTag`, `Find My target`, `Eddystone`, `Eddystone-UID`,
+`Eddystone-URL`, `Eddystone-TLM`, `Eddystone-EID`, `Tile`,
+`SmartTag`, and `Swift Pair`. `device_class` covers Apple Nearby
+Info: `iPhone`, `iPad`, `Mac`, `Apple TV`, `HomePod`, `Apple Watch`.
+Both fields are absent when nothing is recognised — the Python side
+defaults them to `None` so a schema-2 helper bundle still parses
+cleanly.
+
+**Schema-3 connected-peripheral row** (emitted every ~5 s for each
+peripheral returned by `retrieveConnectedPeripherals`, deduplicated
+across services):
+
+```json
+{
+  "ts": "2026-05-06T12:34:56.789Z",
+  "connected": true,
+  "id": "AA000000-1111-2222-3333-444455556666",
+  "name": "Magic Keyboard",
+  "service_uuids": ["1812", "180F"]
+}
+```
+
+Vendor / `device_class` / `type` are intentionally omitted —
+`retrieveConnectedPeripherals` returns much less metadata than a
+fresh advertisement. RSSI is not reported (we deliberately do not
+call `readRSSI()` against an active link).
+
+**Schema-3 connected-snapshot sentinel** (emitted once per snapshot
+cycle, after the per-peripheral rows):
+
+```json
+{
+  "ts": "2026-05-06T12:34:56.789Z",
+  "connected_snapshot": true,
+  "count": 2,
+  "ids": ["AA000000-...", "BB000000-..."]
+}
+```
+
+The Python side uses this to prune entries that disappeared between
+snapshots — a Magic Keyboard the user just powered off shows up in
+one batch's `ids` and is absent from the next, signalling it should
+be removed from the Connected section.
 
 Permission denial emits a single `{"error": "..."}` line on stdout
 and exits with code 3 so the Python poller can distinguish "no grant"
 from "no devices yet" or "subprocess crashed".
+
+The Wi-Fi `scan` payload's `schema` field is bumped from `2` to `3`
+in v0.6.0 so the Python side can detect a BLE-capable bundle at a
+glance, even before it spawns the BLE subprocess.

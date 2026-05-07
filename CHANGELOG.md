@@ -12,6 +12,96 @@ behaviours between releases.
 
 _No unreleased changes._
 
+## [0.6.0] — 2026-05-07
+
+The "what kind of device + what's actually connected" release. Two
+questions the v0.5.0 BLE panel could not answer cleanly: *what is
+this thing labelled "Apple, Inc. (anonymous) Find My"?* and *where
+are the AirPods I'm listening to right now in this list?* — both
+have answers now.
+
+### Added
+- **Tier-1 deep identification of public BLE advertisement formats.**
+  The Swift helper's new `BLEAdParser` recognises iBeacon (Apple
+  manufacturer type `0x02`), AirTag / Find My target (Apple type
+  `0x12` ± Find My service `FD5A`), Eddystone in all four frame
+  variants (UID / URL / TLM / EID via service `FEAA`), Tile (`FEED` /
+  `FEEC`), Samsung SmartTag (Samsung company ID + `FD5A`,
+  disambiguated from Apple Find My on the same UUID), and Microsoft
+  Swift Pair (Microsoft company ID + leading `0x03`). Apple Nearby
+  Info type `0x10` is decoded for its unencrypted device-class
+  nibble: `iPhone`, `iPad`, `Mac`, `Apple TV`, `HomePod`, `Apple
+  Watch`. Each row's "services" column now leads with this label so
+  the panel reads `AirTag · Find My` instead of just `Find My`. Out
+  of scope by design: per-model identification (iPhone 14 vs 15
+  needs proprietary GATT) and decryption of Continuity payloads
+  (lock state, Music-playing — encrypted, per-device-key).
+- **Currently-connected peripherals in their own section.** The
+  helper periodically calls `retrieveConnectedPeripherals` over a
+  fixed union of common service UUIDs (Audio, HID, Heart Rate /
+  Battery, Find My, Eddystone, Tile) and emits one
+  `{"connected": true, ...}` JSON line per returned peripheral plus
+  a `connected_snapshot` sentinel that lets the Python side prune
+  rows when a device disappears. The BLE panel renders these as a
+  separate `── Connected (N) ──` block above the existing
+  `── Advertising (N) ──` block, with `—` in the RSSI column (we
+  deliberately do not call `readRSSI()` against an active link —
+  too invasive). Connected entries sort alphabetically by name and
+  skip the fuzzy merger.
+- **`Connected` diagnostic row** appears below the Categories line
+  whenever at least one peripheral is connected, with a per-category
+  breakdown (`Connected  3 peripherals · 2 Audio · 1 HID`). The
+  Categories line itself folds in deep-ID types so iBeacons,
+  AirTags, and labelled iPhones surface alongside Audio / HID /
+  Heart Rate counts.
+- **Schema-3 helper output.** Optional `type` and `device_class`
+  fields on each advertisement JSON line; a separate `connected:
+  true` channel for connected-peripheral rows. The Python TUI
+  tolerates schema-2 helpers (no deep-ID, no connected list) so a
+  freshly-upgraded TUI keeps working until the user rebuilds the
+  helper bundle.
+- **20 new BLE unit tests** in `tests/test_ble.py` plus 7 new TUI
+  helper tests covering the deep-ID detection algorithm
+  (parameterised across all six Apple device classes), the
+  connected-dict routing, the `connected_snapshot` sentinel
+  pruning, schema-2 back-compat, mixed-stream routing, and the
+  `BLEScanUpdate.connected` propagation through the poller. Plus
+  a smoke test that mounts the App, seeds both buffers, presses
+  `n`, and asserts both sections render.
+- **i18n catalog entries** for the section headers (`已连接` /
+  `正在广播`), the peripherals-count phrasing, and the new
+  `Find My target` label. Brand-name types (iBeacon, AirTag, Tile,
+  SmartTag, Swift Pair, Eddystone-{UID,URL,TLM,EID}) and Apple's
+  device-class names stay English in both locales by design — they
+  are proper nouns.
+
+### Changed
+- BLE preview SVGs (English + Chinese) now show both the
+  `Connected (2)` section (AirPods Pro + Magic Keyboard) and the
+  `Advertising (8)` section with at least one of each Tier-1
+  category labelled (iPhone / AirTag / iBeacon / Eddystone-URL /
+  Tile / Mi Band 7 / etc.) so the README hero reflects the v0.6.0
+  shape.
+- `pyproject.toml` version bumped to 0.6.0.
+
+### Known limitations
+- **Apple Continuity encrypted bits stay opaque.** Lock state,
+  Music-playing flag, AirDrop session info — all behind a per-device
+  key Apple does not publish. We surface device_class via type
+  `0x10` only.
+- **Connected peripherals have no RSSI / vendor metadata.**
+  `retrieveConnectedPeripherals` returns much less than a fresh
+  advertisement; the panel renders `—` for the missing signal column
+  and leaves the vendor blank rather than fabricating one.
+- **Service-UUID enumeration in `retrieveConnectedPeripherals` is
+  required.** The hard-coded service list will miss obscure
+  peripherals (Bluetooth Mesh nodes, exotic Health Devices). That
+  is acceptable for v0.6.0.
+- **MAC randomisation persists.** Even with deeper labels, a phone
+  seen across a 30-minute window may rotate identifiers several
+  times. The fuzzy merger now has more signals to work with (`type`,
+  `device_class`) but still cannot guarantee 1:1.
+
 ## [0.5.0] — 2026-05-06
 
 The "what electronic devices are around me right now?" release.

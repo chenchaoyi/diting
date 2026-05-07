@@ -253,6 +253,40 @@ def test_has_ble_scan_subcommand_false_on_timeout():
         assert _helper.has_ble_scan_subcommand("/fake/binary") is False
 
 
+def test_has_bluetooth_permission_true_on_zero_exit():
+    """The helper's bluetooth-status subcommand exits 0 only when
+    CBCentralManager resolves to .poweredOn — i.e. TCC granted and
+    radio is on. Probe wraps that as a clean True/False."""
+    with patch("wifiscope._helper.subprocess.run",
+               return_value=_mock_run("", returncode=0)):
+        assert _helper.has_bluetooth_permission("/fake/binary") is True
+
+
+def test_has_bluetooth_permission_false_on_unauthorized():
+    """Exit 3 (.unauthorized) — user has not granted Bluetooth.
+    Treated as False so the launcher routes through the open-helper
+    flow to prompt."""
+    with patch("wifiscope._helper.subprocess.run",
+               return_value=_mock_run("", returncode=3)):
+        assert _helper.has_bluetooth_permission("/fake/binary") is False
+
+
+def test_has_bluetooth_permission_false_on_timeout():
+    """If TCC silently denies, the helper sits in .unknown forever and
+    its own 2 s timeout fires, exiting 2. The Python timeout (8 s) is
+    a backstop. Either path is "no" from the launcher."""
+    import subprocess
+    with patch("wifiscope._helper.subprocess.run",
+               side_effect=subprocess.TimeoutExpired(cmd="x", timeout=8)):
+        assert _helper.has_bluetooth_permission("/fake/binary") is False
+
+
+def test_has_bluetooth_permission_false_on_oserror():
+    """Defensive: missing / non-executable binary."""
+    with patch("wifiscope._helper.subprocess.run", side_effect=OSError):
+        assert _helper.has_bluetooth_permission("/fake/binary") is False
+
+
 def test_has_ble_scan_subcommand_reads_stderr_too():
     """Some Swift command-line tools route --help to stderr instead of
     stdout. The probe concatenates both streams so the detection is

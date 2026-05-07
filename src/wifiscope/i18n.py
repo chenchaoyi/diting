@@ -289,6 +289,18 @@ _ZH: dict[str, str] = {
     "Heart Rate": "心率",
     "Find My": "查找网络",
 
+    # ---- BLE deep-identification (v0.6.0) ----
+    # Section headers in the two-section BLE panel layout. Brand-name
+    # types stay English (iBeacon, AirTag, Tile, SmartTag, Swift Pair,
+    # Eddystone-{UID,URL,TLM,EID}) — they are proper nouns. Apple's
+    # Nearby Info device classes (iPhone / iPad / Mac / Apple TV /
+    # HomePod / Apple Watch) likewise stay English.
+    "Connected": "已连接",
+    "Advertising": "正在广播",
+    "Connected  ": "已连接  ",
+    "{n} peripherals": "{n} 个外设",
+    "Find My target": "Find My 目标",
+
     # ---- CLI --help ----
     "usage: wifiscope [--lang en|zh] [SUBCOMMAND]\n"
     "\n"
@@ -357,6 +369,33 @@ _ZH: dict[str, str] = {
         " 授权后重新运行 wifiscope 即可看到未隐藏的扫描数据。)",
     "Skipped; starting TUI with redacted scan.":
         "已跳过，TUI 将以隐藏的扫描数据启动。",
+
+    # ---- Bootstrap two-permission flow (Location + Bluetooth) ----
+    "note: helper found but not in an .app bundle; cannot trigger\n"
+    "      macOS permission prompts. Scan list will be redacted\n"
+    "      and BLE view will be empty.":
+        "提示：找到了 helper 但它不在 .app 包内，无法触发 macOS 授权弹窗。\n"
+        "      扫描列表会被遮蔽，BLE 视图会是空的。",
+    "Permissions required:": "需要以下权限：",
+    "Location Services (Wi-Fi scan list)": "定位服务（Wi-Fi 扫描列表）",
+    "Bluetooth (BLE devices view)": "蓝牙（BLE 设备视图）",
+    "Click Allow on each macOS prompt that appears.":
+        "在每个弹出的 macOS 授权窗口中点 Allow。",
+    "(Ctrl+C to skip and start the TUI with degraded views.)":
+        "(按 Ctrl+C 可跳过，TUI 会以受限视图启动。)",
+    "  Location: {loc}    Bluetooth: {bt}":
+        "  定位：{loc}    蓝牙：{bt}",
+    "granted": "已授权",
+    "waiting": "等待中",
+    "All permissions granted — starting TUI.":
+        "所有权限已授予 —— 正在启动 TUI。",
+    "(no full grant after {n}s; starting TUI anyway with whatever\n"
+    " permissions did land. Rerun wifiscope after granting to\n"
+    " unlock the remaining views.)":
+        "({n} 秒内未全部授权，TUI 仍将以当前已有的权限启动。\n"
+        " 授权完整之后重新运行 wifiscope 即可解锁剩余视图。)",
+    "Skipped; starting TUI with whatever permissions are in place.":
+        "已跳过，TUI 将以当前已有的权限启动。",
 
     # ---- Stale-helper detection (0.4.0 → 0.5.0 upgrade path) ----
     "note: installed helper at {bundle} predates 0.5.0 (no\n"

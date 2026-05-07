@@ -11,6 +11,75 @@
 
 _暂无未发布的变更。_
 
+## [0.6.0] — 2026-05-07
+
+「这到底是个什么设备 + 我现在到底连着什么」版本。这是 v0.5.0 BLE
+面板回答不清楚的两个问题：那个写着「Apple, Inc.（匿名）Find My」
+的到底是什么？我现在正在听的 AirPods 又在哪行？现在都有答案了。
+
+### 新增
+- **公开 BLE 广告格式的 Tier-1 深度识别。** Swift 辅助进程新增的
+  `BLEAdParser` 识别 iBeacon（Apple 厂商类型 `0x02`）、AirTag /
+  Find My 目标（Apple 类型 `0x12` ± Find My service `FD5A`）、
+  Eddystone 全四种帧（UID / URL / TLM / EID，service `FEAA`）、
+  Tile（`FEED` / `FEEC`）、Samsung SmartTag（Samsung 公司 ID +
+  `FD5A`，从 Apple Find My 的同一 UUID 上区分出来）、Microsoft
+  Swift Pair（Microsoft 公司 ID + 首字节 `0x03`）。Apple Nearby Info
+  类型 `0x10` 解出未加密的设备类别 nibble：`iPhone`、`iPad`、`Mac`、
+  `Apple TV`、`HomePod`、`Apple Watch`。每行的「服务」列现在以这个
+  标签领头，所以面板会显示 `AirTag · Find My` 而不是只有 `Find My`。
+  按规范不做的事：单机型识别（iPhone 14 vs 15，需要私有 GATT），以及
+  Continuity 加密载荷的解密（锁屏状态、正在播放音乐 —— 加密、每设备
+  一把密钥）。
+- **当前已连接外设单独成段。** 辅助进程定期调用
+  `retrieveConnectedPeripherals`，对一组常见 service UUID（Audio、
+  HID、心率 / 电池、Find My、Eddystone、Tile）取并集，每个返回的
+  外设输出一行 `{"connected": true, ...}`，再补一行
+  `connected_snapshot` 哨兵让 Python 侧能够清理已经断开的旧条目。
+  BLE 面板把它们渲染成单独的 `── 已连接 (N) ──` 区块，放在原有的
+  `── 正在广播 (N) ──` 区块上面，RSSI 列里写 `—`（我们刻意不对活动
+  连接调用 `readRSSI()`，避免打扰）。已连接条目按名字字母排序，
+  绕过模糊合并。
+- **「已连接」诊断行** 出现在「类别」行下方，仅当至少有一个外设
+  连接时显示，并带每类别的细分（`已连接  3 个外设 · 2 音频 · 1 HID`）。
+  「类别」行本身把 deep-ID 类型也算进去，所以 iBeacon、AirTag、被
+  打上 iPhone 标签的设备会与 音频 / HID / 心率 一起出现。
+- **Schema-3 辅助进程输出。** 每行广告 JSON 上多两个可选字段
+  `type` 与 `device_class`；连接外设另起一种行 `connected: true`。
+  Python TUI 兼容 schema-2 辅助进程（无 deep-ID、无连接列表），
+  所以你刚升级 TUI 还没重建 helper bundle 时一切照旧。
+- **20 个新的 BLE 单元测试** 在 `tests/test_ble.py`，加上 7 个新的
+  TUI helper 测试，覆盖 deep-ID 检测算法（六个 Apple 设备类参数化）、
+  connected 字典路由、`connected_snapshot` 哨兵剪枝、schema-2
+  向后兼容、混流路由，以及 `BLEScanUpdate.connected` 在 poller 中的
+  传播。还有一个 smoke 测试启动 App、灌入两个缓冲区、按 `n`、断言
+  两个区块都已渲染。
+- **i18n 字典条目** 覆盖区块标题（`已连接` / `正在广播`）、外设
+  数量措辞、新的 `Find My target` 标签。品牌名类型（iBeacon、
+  AirTag、Tile、SmartTag、Swift Pair、Eddystone-{UID,URL,TLM,EID}）
+  与 Apple 设备类别名按设计在两种语言下都保持英文 —— 它们是专有名词。
+
+### 变更
+- BLE 预览 SVG（英文 + 中文）现在同时展示 `已连接 (2)` 段（AirPods Pro
+  + Magic Keyboard）与 `正在广播 (8)` 段，并且至少给每个 Tier-1 类别
+  一个示例（iPhone / AirTag / iBeacon / Eddystone-URL / Tile /
+  Mi Band 7 等），让 README 头图反映 v0.6.0 的样子。
+- `pyproject.toml` 版本号升到 0.6.0。
+
+### 已知限制
+- **Apple Continuity 的加密位仍然不可见。** 锁屏状态、正在播放音乐、
+  AirDrop 会话信息 —— 这些都在 Apple 不公开的每设备密钥后面。我们只
+  surface 类型 `0x10` 给出的 device_class。
+- **已连接外设没有 RSSI / 厂商。** `retrieveConnectedPeripherals`
+  返回的元数据远比一次新鲜广告少；面板在缺失的信号列里写 `—`，并
+  把厂商列留白，而不是去伪造一个值。
+- **`retrieveConnectedPeripherals` 必须列举服务 UUID。** 硬编码的
+  service 列表会漏掉冷门外设（蓝牙 Mesh 节点、稀有 Health Devices）。
+  对 v0.6.0 来说这个权衡可以接受。
+- **MAC 随机化仍在。** 即使有了更深入的标签，30 分钟时间窗口里见到
+  的同一台手机仍可能轮换好几个标识符。模糊合并器现在多了 `type` 与
+  `device_class` 两个信号，但仍不能保证 1:1。
+
 ## [0.5.0] — 2026-05-06
 
 「我身边到底有哪些电子设备」版本。

@@ -37,6 +37,17 @@ import CoreBluetooth
 import CoreLocation
 import CoreWLAN
 import Foundation
+// IOBluetooth is needed for the connected-peripherals enumeration.
+// CoreBluetooth's retrieveConnectedPeripherals(withServices:) only
+// returns peripherals connected via a CBCentralManager.connect()
+// call from some user-space app — it does NOT see system-level
+// connections (Magic Keyboard / Mouse via HID, AirPods via A2DP,
+// etc.) which are managed entirely outside CoreBluetooth. Those
+// surface only through IOBluetooth's pairedDevices() roster, the
+// same path System Settings and `system_profiler SPBluetoothDataType`
+// take. IOBluetooth is "soft-deprecated" but fully functional on
+// macOS 26 and remains the only public API for this query.
+import IOBluetooth
 
 // ---------------------------------------------------------------------
 // CLI mode: scan
@@ -78,7 +89,13 @@ func runScanAndDumpJSON() -> Never {
     if let hw = iface.hardwareAddress() { ifaceMeta["hardware_address"] = hw }
 
     let payload: [String: Any] = [
-        "schema": 2,
+        // schema 3 = v0.6.0+: BLE deep-ID fields (type / device_class)
+        // and connected-peripheral lines. The Wi-Fi scan output itself
+        // is unchanged from schema 2 — we bump the version so the
+        // Python side can tell at a glance whether the helper bundle
+        // it found is BLE-capable, even before it spawns the BLE
+        // subprocess.
+        "schema": 3,
         "interface": ifaceMeta,
         "timestamp": timestamp,
         "networks": out,
@@ -120,15 +137,182 @@ func emitError(_ message: String) -> Never {
 // CLI mode: ble-scan
 // ---------------------------------------------------------------------
 
+/// Result of running the public-format detection over a single
+/// advertisement payload. Both fields are optional and either or both
+/// may be nil when nothing is recognisable. We deliberately stop short
+/// of decoding encrypted Continuity bits — only well-documented,
+/// publicly-defined formats are surfaced.
+struct BLEDetection {
+    let type: String?         // "iBeacon" | "AirTag" | "Eddystone-URL" | ...
+    let deviceClass: String?  // "iPhone" | "Mac" | "Apple Watch" | ...
+}
+
+/// Public-format BLE advertisement classifier. Mirrors the Python-side
+/// fallback in `wifiscope/ble.py` byte-for-byte; both implementations
+/// share the same conservative scope (Tier 1 categories only). See
+/// `docs/specs/v0.6.0-ble-deep-identification.md` for the detection
+/// rules.
+enum BLEAdParser {
+    /// Bluetooth SIG company IDs (little-endian uint16) we branch on.
+    private static let companyAppleID = 0x004C
+    private static let companyMicrosoftID = 0x0006
+    private static let companySamsungID = 0x0075
+
+    static func detect(advertisementData: [String: Any]) -> BLEDetection {
+        let services = serviceUUIDStrings(advertisementData)
+        let mfg = (advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data)
+            .flatMap { d -> [UInt8]? in d.count >= 2 ? Array(d) : nil }
+        let companyID: Int? = mfg.map { Int($0[0]) | (Int($0[1]) << 8) }
+
+        // 1. Manufacturer-data branches are checked first because they
+        //    carry richer disambiguators than service UUIDs alone (the
+        //    same FD5A UUID covers Apple Find My and Samsung SmartTag,
+        //    for example, and only the company ID resolves the ambiguity).
+        if let bytes = mfg, let cid = companyID {
+            if cid == companyAppleID, bytes.count >= 3 {
+                let typeByte = bytes[2]
+                switch typeByte {
+                case 0x02:
+                    return BLEDetection(type: "iBeacon", deviceClass: nil)
+                case 0x10:
+                    // Apple Nearby Info. The device-class nibble sits
+                    // in the high half of byte index 5 (after the type
+                    // and length). Bytes beyond that are encrypted.
+                    let dc = bytes.count >= 6 ? appleNearbyInfoDeviceClass(bytes[5]) : nil
+                    return BLEDetection(type: nil, deviceClass: dc)
+                case 0x12:
+                    // Apple Find My target. Distinguish AirTag (owner-
+                    // paired sub-type, length >= 25) from a generic
+                    // Find My target (lost mode, shorter payload).
+                    let isAirTag = bytes.count >= 25
+                    return BLEDetection(
+                        type: isAirTag ? "AirTag" : "Find My target",
+                        deviceClass: nil,
+                    )
+                default:
+                    break
+                }
+            }
+            if cid == companyMicrosoftID, bytes.count >= 3 {
+                if bytes[2] == 0x03 {
+                    return BLEDetection(type: "Swift Pair", deviceClass: nil)
+                }
+            }
+            if cid == companySamsungID, services.contains("FD5A") {
+                return BLEDetection(type: "SmartTag", deviceClass: nil)
+            }
+        }
+
+        // 2. Service-UUID based detections. These are checked after
+        //    manufacturer-data specifically so a Samsung SmartTag (which
+        //    advertises FD5A) is labelled "SmartTag" via the company-ID
+        //    branch above instead of being miscategorised as Apple Find
+        //    My here.
+        if services.contains("FEAA") {
+            // Eddystone — the frame-type byte is the first byte of the
+            // service-data IE (CBAdvertisementDataServiceDataKey).
+            if let serviceData = advertisementData[CBAdvertisementDataServiceDataKey]
+                as? [CBUUID: Data]
+            {
+                for (uuid, data) in serviceData where
+                    uuid.uuidString.uppercased().hasSuffix("FEAA")
+                {
+                    if let frameType = data.first {
+                        switch frameType {
+                        case 0x00: return BLEDetection(type: "Eddystone-UID", deviceClass: nil)
+                        case 0x10: return BLEDetection(type: "Eddystone-URL", deviceClass: nil)
+                        case 0x20: return BLEDetection(type: "Eddystone-TLM", deviceClass: nil)
+                        case 0x40: return BLEDetection(type: "Eddystone-EID", deviceClass: nil)
+                        default: break
+                        }
+                    }
+                }
+            }
+            return BLEDetection(type: "Eddystone", deviceClass: nil)
+        }
+        if services.contains("FEED") || services.contains("FEEC") {
+            return BLEDetection(type: "Tile", deviceClass: nil)
+        }
+        if services.contains("FD5A") {
+            // No Samsung company ID with this UUID → Apple Find My
+            // accessory advertising in nearby mode (e.g. AirTag in
+            // Found mode without an owner-ping payload).
+            return BLEDetection(type: "Find My target", deviceClass: nil)
+        }
+
+        return BLEDetection(type: nil, deviceClass: nil)
+    }
+
+    /// Map the high nibble of the Apple Nearby Info action byte to a
+    /// human-readable device class. Lower-nibble bits are activity /
+    /// status flags and we ignore them. Mapping is reverse-engineered
+    /// from the `furiousMAC/continuity` reference; per-model precision
+    /// (iPhone 14 vs 15) is impossible from this byte alone.
+    private static func appleNearbyInfoDeviceClass(_ actionByte: UInt8) -> String? {
+        switch (actionByte >> 4) & 0x0F {
+        case 0x1: return "iPhone"
+        case 0x2: return "iPad"
+        case 0x4: return "Mac"
+        case 0x6: return "Apple TV"
+        case 0x7: return "HomePod"
+        case 0x9: return "Apple Watch"
+        default: return nil
+        }
+    }
+
+    private static func serviceUUIDStrings(_ ad: [String: Any]) -> Set<String> {
+        var out: Set<String> = []
+        if let services = ad[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] {
+            for s in services { out.insert(s.uuidString.uppercased()) }
+        }
+        if let services = ad[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID] {
+            for s in services { out.insert(s.uuidString.uppercased()) }
+        }
+        if let services = ad[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data] {
+            for k in services.keys { out.insert(k.uuidString.uppercased()) }
+        }
+        return out
+    }
+}
+
+/// 16-bit Bluetooth SIG service UUIDs we ask CoreBluetooth to enumerate
+/// when listing currently-connected peripherals. A deliberately broad
+/// union covering Audio, HID, Heart Rate / Battery / Health Thermometer,
+/// Find My, Eddystone, and Tile — common bands the user likely cares
+/// about. Anything more obscure (Bluetooth Mesh, exotic Health Devices)
+/// is acceptable to miss for v0.6.0.
+private let kConnectedServiceUUIDs: [CBUUID] = [
+    // Audio profiles
+    CBUUID(string: "1108"), CBUUID(string: "110A"), CBUUID(string: "110B"),
+    CBUUID(string: "110C"), CBUUID(string: "110D"), CBUUID(string: "110E"),
+    CBUUID(string: "110F"), CBUUID(string: "111E"),
+    // HID
+    CBUUID(string: "1124"), CBUUID(string: "1812"),
+    // Heart Rate, Battery, Health Thermometer
+    CBUUID(string: "180D"), CBUUID(string: "180F"), CBUUID(string: "1809"),
+    // Find My
+    CBUUID(string: "FD5A"), CBUUID(string: "FE9F"),
+    // Eddystone, Tile
+    CBUUID(string: "FEAA"), CBUUID(string: "FEED"), CBUUID(string: "FEEC"),
+]
+
 /// CBCentralManager driver for the `ble-scan` subcommand. One JSON
 /// object per advertisement is written to stdout, terminated by a
 /// newline; the Python side reads the pipe line-by-line.
+///
+/// In addition to advertisement events, every ~5 s the scanner snapshots
+/// `retrieveConnectedPeripherals(withServices:)` and emits one
+/// `{"connected": true, ...}` JSON line per returned peripheral followed
+/// by a `connected_snapshot` sentinel. This surfaces things the user is
+/// actually using right now (AirPods, Magic Keyboard, Apple Watch) which
+/// are not advertising and so otherwise invisible to the BLE panel.
 ///
 /// Permission failures (`.unauthorized`) emit a single JSON error line
 /// and exit code 3 so the Python poller can distinguish "no Bluetooth
 /// grant" from "no devices yet" or "subprocess crashed".
 final class BLEScanner: NSObject, CBCentralManagerDelegate {
     private var central: CBCentralManager!
+    private var connectedTimer: DispatchSourceTimer?
     private let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -151,6 +335,7 @@ final class BLEScanner: NSObject, CBCentralManagerDelegate {
                 withServices: nil,
                 options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
             )
+            startConnectedSnapshotTimer()
         case .unauthorized:
             emitBLEErrorAndExit("bluetooth unauthorized", code: 3)
         case .poweredOff:
@@ -174,8 +359,18 @@ final class BLEScanner: NSObject, CBCentralManagerDelegate {
         var row: [String: Any] = [
             "ts": isoFormatter.string(from: Date()),
             "id": peripheral.identifier.uuidString,
-            "rssi_dbm": RSSI.intValue,
         ]
+        // CoreBluetooth uses RSSI = 127 as the documented "no reading
+        // available" sentinel. Any value at or above ~0 dBm is also
+        // implausible for a received-power reading. Either case: omit
+        // the field so the Python side renders "?" / dim, instead of
+        // letting the sentinel ride into the panel as a "very strong"
+        // signal that climbs to the top of the list and corrupts the
+        // diagnostic-panel Closest line.
+        let rssi = RSSI.intValue
+        if rssi < 0 && rssi > -200 {
+            row["rssi_dbm"] = rssi
+        }
 
         // Apple-provided local name (truthier than the cached
         // peripheral.name when the device rotates its identifier).
@@ -204,7 +399,124 @@ final class BLEScanner: NSObject, CBCentralManagerDelegate {
             row["manufacturer_hex"] = mfg.map { String(format: "%02x", $0) }.joined()
         }
 
+        // Schema-3 deep identification: tag the row with whatever
+        // public-format detection produced. Both fields are optional;
+        // unrecognised devices simply omit them.
+        let detection = BLEAdParser.detect(advertisementData: advertisementData)
+        if let t = detection.type { row["type"] = t }
+        if let dc = detection.deviceClass { row["device_class"] = dc }
+
         emitJSONLine(row)
+    }
+
+    /// Periodic enumeration of connected peripherals. We don't
+    /// `connect()` or `readRSSI()` — both would be invasive perturbations
+    /// of the user's active Bluetooth links. The list comes back without
+    /// a signal reading; the Python panel renders `—` for that column.
+    private func startConnectedSnapshotTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: 5.0)
+        timer.setEventHandler { [weak self] in
+            self?.emitConnectedSnapshot()
+        }
+        timer.resume()
+        connectedTimer = timer
+    }
+
+    private func emitConnectedSnapshot() {
+        // Source the roster via IOBluetooth, NOT
+        // CBCentralManager.retrieveConnectedPeripherals(...) — see the
+        // import-block comment for why CoreBluetooth misses every
+        // system-paired keyboard / mouse / headphone. IOBluetooth's
+        // pairedDevices() roster is what System Settings sees.
+        guard let paired = IOBluetoothDevice.pairedDevices()
+                as? [IOBluetoothDevice] else {
+            // Even an empty list is a useful signal; surface zero with
+            // a sentinel so the Python panel can clear any stale rows.
+            let sentinel: [String: Any] = [
+                "ts": isoFormatter.string(from: Date()),
+                "connected_snapshot": true,
+                "count": 0,
+                "ids": [String](),
+            ]
+            emitJSONLine(sentinel)
+            return
+        }
+
+        var emittedIDs: [String] = []
+        for device in paired {
+            // isConnected() checks live status — paired-but-disconnected
+            // headphones in the next room would otherwise pollute the
+            // "what am I using right now" list.
+            guard device.isConnected() else { continue }
+            // The device's BT MAC is the most stable identifier we have
+            // (CoreBluetooth's per-host UUIDs do not exist for
+            // IOBluetooth-managed devices). Lower-case to match the
+            // Python side's BSSID convention; treat as opaque string
+            // identifier downstream.
+            guard let addr = device.addressString else { continue }
+            let id = addr.lowercased()
+            emittedIDs.append(id)
+            var row: [String: Any] = [
+                "ts": isoFormatter.string(from: Date()),
+                "connected": true,
+                "id": id,
+            ]
+            if let name = device.name, !name.isEmpty {
+                row["name"] = name
+            }
+            // IOBluetoothDevice exposes a "class of device" record, not
+            // an iterable services list like CBPeripheral. Translate
+            // the major class into the primary 16-bit service UUID for
+            // that category, so the Python side's existing
+            // service_category() lookup picks the connected row up
+            // with the same machinery it uses for advertising rows
+            // (no parallel category-hint field needed).
+            if let primaryUUID = bluetoothPrimaryServiceUUID(device) {
+                row["service_uuids"] = [primaryUUID]
+            }
+            emitJSONLine(row)
+        }
+
+        let sentinel: [String: Any] = [
+            "ts": isoFormatter.string(from: Date()),
+            "connected_snapshot": true,
+            "count": emittedIDs.count,
+            "ids": emittedIDs,
+        ]
+        emitJSONLine(sentinel)
+    }
+
+    /// Translate IOBluetooth's major device-class enum into the 16-bit
+    /// Bluetooth SIG service UUID that the Python side's
+    /// `service_category()` already maps to a category label. We pick
+    /// one canonical UUID per category — this is a *display hint* for
+    /// the panel, not an authoritative list of every service the
+    /// peripheral exposes (we cannot enumerate that without an active
+    /// GATT connection). Returns nil when the class does not map.
+    private func bluetoothPrimaryServiceUUID(
+        _ device: IOBluetoothDevice
+    ) -> String? {
+        // Framework constants are declared as Int while
+        // deviceClassMajor is BluetoothDeviceClassMajor (UInt32) —
+        // cast both sides to Int for the switch to accept the patterns.
+        let major = Int(device.deviceClassMajor)
+        switch major {
+        case kBluetoothDeviceClassMajorPeripheral:
+            // Keyboards, mice, joysticks. 1812 = HID Service.
+            return "1812"
+        case kBluetoothDeviceClassMajorAudio:
+            // 110A = Audio Source. Generic enough for the panel to
+            // label as "Audio".
+            return "110A"
+        case kBluetoothDeviceClassMajorHealth:
+            // 180D = Heart Rate Service. Imperfect (Health major class
+            // is broader than HR) but it is the only Health label
+            // mapped in the Python catalog.
+            return "180D"
+        default:
+            return nil
+        }
     }
 
     private func emitJSONLine(_ row: [String: Any]) {
@@ -332,6 +644,56 @@ func runBLEScan() -> Never {
     // Park until the parent closes the pipe (SIGPIPE) or sends SIGTERM.
     // dispatchMain() runs the main run loop forever so CoreBluetooth's
     // delegate callbacks fire.
+    dispatchMain()
+}
+
+/// Lightweight Bluetooth-permission probe used by the Python launcher
+/// to decide whether to prompt the user before starting the TUI. We
+/// initialise CBCentralManager and wait for the first state change,
+/// then exit with a code that maps directly to a permission outcome.
+/// The 2 s timeout exists because TCC silently leaves
+/// `central.state == .unknown` forever when permission was never asked
+/// — a non-event we still need to translate into an exit code.
+final class BluetoothStatusProbe: NSObject, CBCentralManagerDelegate {
+    private var manager: CBCentralManager!
+
+    func start() {
+        manager = CBCentralManager(delegate: self, queue: nil)
+    }
+
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        switch central.state {
+        case .poweredOn:
+            exit(0)
+        case .unauthorized:
+            exit(3)
+        case .poweredOff:
+            exit(4)
+        case .unsupported:
+            exit(5)
+        case .resetting, .unknown:
+            // Wait for the next state update or for the timeout.
+            return
+        @unknown default:
+            exit(2)
+        }
+    }
+}
+
+func runBluetoothStatusProbe() -> Never {
+    // Same disclaim hop as the live ble-scan path so TCC checks against
+    // our own bundle's Info.plist instead of the launching terminal's.
+    if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
+        reExecWithDisclaimedResponsibility()
+    }
+    let probe = BluetoothStatusProbe()
+    probe.start()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        // No state update arrived in time. Could be silent TCC denial
+        // or a transient OS hiccup; both are "not granted" from the
+        // launcher's point of view.
+        exit(2)
+    }
     dispatchMain()
 }
 
@@ -495,20 +857,27 @@ if args.count > 1 {
         runScanAndDumpJSON()
     case "ble-scan":
         runBLEScan()
+    case "bluetooth-status":
+        runBluetoothStatusProbe()
     case "--help", "-h":
         print("""
         wifiscope-helper
 
-          (no args)   Launch the bundle UI; request Location Services and
-                      Bluetooth, keep the window open so the system
-                      prompts can show.
-          scan        Perform a CoreWLAN scan and print one JSON document
-                      to stdout, then exit. Used by the Python backend
-                      as a subprocess.
-          ble-scan    Scan nearby BLE advertisements via CoreBluetooth
-                      and stream JSON Lines (one ad per line) to stdout
-                      until SIGTERM / parent pipe close. Used by the
-                      Python BLEPoller.
+          (no args)         Launch the bundle UI; request Location Services
+                            and Bluetooth, keep the window open so the
+                            system prompts can show.
+          scan              Perform a CoreWLAN scan and print one JSON
+                            document to stdout, then exit. Used by the
+                            Python backend as a subprocess.
+          ble-scan          Scan nearby BLE advertisements via
+                            CoreBluetooth and stream JSON Lines (one ad
+                            per line) to stdout until SIGTERM / parent
+                            pipe close. Used by the Python BLEPoller.
+          bluetooth-status  Probe Bluetooth TCC state and exit non-zero
+                            when not granted. No JSON output. Exit codes:
+                            0 .poweredOn (granted), 2 timeout / unknown,
+                            3 .unauthorized, 4 .poweredOff,
+                            5 .unsupported.
         """)
         exit(0)
     default:

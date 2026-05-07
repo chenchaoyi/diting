@@ -11,6 +11,7 @@ The TUI lands in step 8 and will replace `watch` as the default.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -378,22 +379,43 @@ def _ensure_helper_ready() -> str | None:
             ))
         print()
 
-    if _helper.has_permission(binary):
+    # Probe BOTH grants up front rather than letting the user discover
+    # mid-session that the BLE view is dead. Each probe is independent
+    # — granting one without the other is a real (and historically
+    # common) state, so we report them per-permission rather than as
+    # a single boolean.
+    location_ok = _helper.has_permission(binary)
+    bluetooth_ok = _helper.has_bluetooth_permission(binary)
+    if location_ok and bluetooth_ok:
         return binary
 
     bundle = _helper.bundle_path(binary)
     if bundle is None:
-        # Standalone binary outside a bundle — no UI to launch.
+        # Standalone binary outside a bundle — no UI to launch the
+        # macOS prompts. The TUI will run but with degraded data
+        # surfaces (redacted scan + empty BLE).
         print(t(
             "note: helper found but not in an .app bundle; cannot trigger\n"
-            "      Location Services prompt. Scan list will be redacted."
+            "      macOS permission prompts. Scan list will be redacted\n"
+            "      and BLE view will be empty."
         ))
         print()
         return binary
 
+    # Tell the user exactly which grants are missing so they know what
+    # to expect when the bundle window opens.
+    missing: list[str] = []
+    if not location_ok:
+        missing.append(t("Location Services (Wi-Fi scan list)"))
+    if not bluetooth_ok:
+        missing.append(t("Bluetooth (BLE devices view)"))
+    print(t("Permissions required:"))
+    for item in missing:
+        print(f"  - {item}")
+    print()
     print(t("Launching helper {bundle}", bundle=bundle))
-    print(t("to grant Location Services. Click Allow when macOS asks."))
-    print(t("(Ctrl+C to skip and start the TUI with redacted scan rows.)"))
+    print(t("Click Allow on each macOS prompt that appears."))
+    print(t("(Ctrl+C to skip and start the TUI with degraded views.)"))
     print()
     try:
         subprocess.Popen(
@@ -402,17 +424,32 @@ def _ensure_helper_ready() -> str | None:
         )
     except OSError as e:
         print(t("  failed to open helper: {err}", err=e))
-        return
+        return binary
 
     waited = 0.0
     interval = 2.0
-    timeout = 120.0
+    timeout = 180.0
+    last_status: tuple[bool, bool] = (location_ok, bluetooth_ok)
     try:
         while waited < timeout:
             time.sleep(interval)
             waited += interval
-            if _helper.has_permission(binary):
-                print(t("Permission granted — starting TUI."))
+            location_ok = _helper.has_permission(binary)
+            bluetooth_ok = _helper.has_bluetooth_permission(binary)
+            # Print a status line whenever something flips, so the user
+            # gets feedback as each Allow lands rather than staring at
+            # silent dots until the second grant arrives.
+            current = (location_ok, bluetooth_ok)
+            if current != last_status:
+                last_status = current
+                print()
+                print(t(
+                    "  Location: {loc}    Bluetooth: {bt}",
+                    loc=t("granted") if location_ok else t("waiting"),
+                    bt=t("granted") if bluetooth_ok else t("waiting"),
+                ))
+            if location_ok and bluetooth_ok:
+                print(t("All permissions granted — starting TUI."))
                 # Brief pause lets the helper window show its
                 # confirmation message before auto-quitting.
                 time.sleep(0.5)
@@ -421,13 +458,14 @@ def _ensure_helper_ready() -> str | None:
             sys.stdout.flush()
         print()
         print(t(
-            "(no grant after {n}s; starting TUI anyway.\n"
-            " rerun wifiscope after granting to see unredacted scan.)",
+            "(no full grant after {n}s; starting TUI anyway with whatever\n"
+            " permissions did land. Rerun wifiscope after granting to\n"
+            " unlock the remaining views.)",
             n=int(timeout),
         ))
     except KeyboardInterrupt:
         print()
-        print(t("Skipped; starting TUI with redacted scan."))
+        print(t("Skipped; starting TUI with whatever permissions are in place."))
     return binary
 
 

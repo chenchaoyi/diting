@@ -27,7 +27,7 @@
 <p align="center">
   <img src="../preview-ble.zh.svg" alt="wifiscope TUI – BLE 视图" width="100%">
   <br>
-  <sub><i>BLE 视图（按 <code>n</code> 切换）</i></sub>
+  <sub><i>BLE 视图（按 <code>n</code> 切换）—— 上方是「已连接」外设，下方是「正在广播」设备，每行都给出公开格式识别出的标签。</i></sub>
 </p>
 
 ## 为什么需要它
@@ -48,9 +48,13 @@ Zoom 卡顿，你抱怨网络，却又找不到证据。
   —— 一台 AP 同时广播 5 个 SSID 时会折叠成一组带标签的群
 - 底部面板**实时记录漫游事件**，标记 `[同 AP 切频段]`（同 AP 不同频段切换）
   或 `[跨 AP 漫游]`（真正在 AP 之间移动）
-- **附近 BLE 设备视图**（按 `n` 在原位切换，替换扫描列表）—— 列出
-  AirPods、Apple Watch、BLE 键盘、智能家居、Find My 信标、iBeacon
-  等 Wi-Fi 扫描看不见的电子设备
+- **附近 BLE 设备视图**（按 `n` 在原位切换，替换扫描列表）分成两段：
+  **已连接** 列出你*现在*正在用的外设（AirPods、Magic Keyboard、
+  Apple Watch —— 它们不广播，所以普通 BLE 扫描看不见），**正在广播**
+  列出附近每个广播中的 BLE 设备并标注**它到底是什么类型** —— `AirTag`、
+  `iBeacon`、`Eddystone-URL`、`Tile`、`SmartTag`、`iPhone`、`Mac`、
+  `Apple Watch`、`HomePod` —— 不再是「Apple, Inc.（匿名）Find My」
+  这种墙
 
 卡在弱 AP 上不动？按 `c`，`wifiscope` 会循环关再开 Wi-Fi，让 macOS 重新
 auto-join，重新关联到信号最强的 BSSID。和「点菜单关 Wi-Fi 再开」是同一条路径，
@@ -196,9 +200,18 @@ Watch）会在不同时段以不同 CoreBluetooth UUID 出现。wifiscope 的
 Wi-Fi 扫描"小一圈"，即便在密集楼层也是如此。
 
 **macOS 不暴露 BLE 的底层 MAC**。CoreBluetooth 只给出每台主机一个
-UUID；厂商识别只能走 manufacturer-data 公司 ID 字段。Apple Continuity
-载荷使用 Apple 的公司 ID 加专有的不透明格式，我们不去逆向破解 ——
-对应的行就显示成 "Apple, Inc." 加一个泛化的名字。
+UUID；厂商识别只能走 manufacturer-data 公司 ID 字段。wifiscope 解析
+Apple Continuity 的*公开*部分（Nearby Info 里未加密的设备类别 nibble
+—— `iPhone` / `iPad` / `Mac` / `Apple TV` / `HomePod` / `Apple Watch`）
+以及 Find My / iBeacon 的签名，但加密载荷（锁屏状态、AirDrop、正在
+播放音乐、Handoff 会话信息）保持不可见。**单机型识别**（iPhone 14 vs
+15）不在任何公开广告报文里 —— 谁要是声称做到了，那是 connect 之后
+读取专有 GATT 服务，我们不做这件事。
+
+**已连接外设没有 RSSI。** `retrieveConnectedPeripherals` 给出当前与
+Mac 关联的外设（你正在听的 AirPods、正在敲的 Magic Keyboard），但要
+中途读它们的信号需要对活动连接调用 `readRSSI()` —— 这是一次有副作用
+的打扰，我们刻意不做。已连接段在信号列里写 `—`，按名字字母排序。
 
 **`disassociate()` 在强制漫游上不可靠。** `wifiscope` 早期版本曾用
 `iface.disassociate()` 实现 `c` 键；在 802.1X 企业网络上，它会把链路拆掉

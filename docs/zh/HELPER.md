@@ -91,7 +91,9 @@ bundle 声明了两项 TCC 入口：
 ## ble-scan 输出格式
 
 每行一个 JSON 对象（不外包数组、无尾随逗号），方便 Python 侧逐行
-读取。Schema：
+读取。流里交替三种行：
+
+**Schema-3 广告行（每个广告事件）：**
 
 ```json
 {
@@ -102,10 +104,56 @@ bundle 声明了两项 TCC 入口：
   "is_connectable": true,
   "service_uuids": ["180D", "1812"],
   "manufacturer_id": 76,
-  "manufacturer_hex": "4c001907..."
+  "manufacturer_hex": "4c001907...",
+  "type": "AirTag",          // 可选，仅 schema-3
+  "device_class": "iPhone"   // 可选，仅 schema-3
 }
 ```
+
+可选的 `type` 与 `device_class` 字段由辅助进程的 `BLEAdParser` 通过
+公开格式检测填上。`type` 覆盖 `iBeacon`、`AirTag`、`Find My target`、
+`Eddystone`、`Eddystone-UID`、`Eddystone-URL`、`Eddystone-TLM`、
+`Eddystone-EID`、`Tile`、`SmartTag`、`Swift Pair`。`device_class`
+覆盖 Apple Nearby Info：`iPhone`、`iPad`、`Mac`、`Apple TV`、
+`HomePod`、`Apple Watch`。识别不出来时两个字段都不出现 —— Python
+侧默认 `None`，所以 schema-2 的旧 helper bundle 还能照常解析。
+
+**Schema-3 已连接外设行**（每 ~5s 一轮，对每个由
+`retrieveConnectedPeripherals` 返回的外设输出一行，跨服务去重）：
+
+```json
+{
+  "ts": "2026-05-06T12:34:56.789Z",
+  "connected": true,
+  "id": "AA000000-1111-2222-3333-444455556666",
+  "name": "Magic Keyboard",
+  "service_uuids": ["1812", "180F"]
+}
+```
+
+厂商 / `device_class` / `type` 刻意不填 ——
+`retrieveConnectedPeripherals` 给的元数据远比一次新鲜广告少。RSSI
+也不报告（我们刻意不对活动连接调用 `readRSSI()`）。
+
+**Schema-3 已连接快照哨兵**（每轮快照结束输出一次，紧跟在每外设行
+之后）：
+
+```json
+{
+  "ts": "2026-05-06T12:34:56.789Z",
+  "connected_snapshot": true,
+  "count": 2,
+  "ids": ["AA000000-...", "BB000000-..."]
+}
+```
+
+Python 侧用它来剪掉两轮快照之间断开的外设 —— 用户刚关掉的 Magic
+Keyboard 会出现在某一轮的 `ids` 里、在下一轮缺席，这正好是把它从
+「已连接」段移除的信号。
 
 权限被拒绝时，stdout 上会输出一行 `{"error": "..."}` 并以退出码 3
 结束，让 Python 侧能区分「没授权」、「还没收到设备」、「子进程崩了」
 三种情况。
+
+Wi-Fi `scan` 载荷的 `schema` 字段在 v0.6.0 从 `2` 升到 `3`，让
+Python 侧能在 spawn BLE 子进程之前就知道这个 bundle 是否支持 BLE。
