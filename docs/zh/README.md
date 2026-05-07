@@ -19,7 +19,15 @@
 ---
 
 <p align="center">
-  <img src="../preview.zh.svg" alt="wifiscope TUI" width="100%">
+  <img src="../preview.zh.svg" alt="wifiscope TUI – Wi-Fi 视图" width="100%">
+  <br>
+  <sub><i>Wi-Fi 视图（默认）</i></sub>
+</p>
+
+<p align="center">
+  <img src="../preview-ble.zh.svg" alt="wifiscope TUI – BLE 视图" width="100%">
+  <br>
+  <sub><i>BLE 视图（按 <code>n</code> 切换）</i></sub>
 </p>
 
 ## 为什么需要它
@@ -40,6 +48,9 @@ Zoom 卡顿，你抱怨网络，却又找不到证据。
   —— 一台 AP 同时广播 5 个 SSID 时会折叠成一组带标签的群
 - 底部面板**实时记录漫游事件**，标记 `[同 AP 切频段]`（同 AP 不同频段切换）
   或 `[跨 AP 漫游]`（真正在 AP 之间移动）
+- **附近 BLE 设备视图**（按 `n` 在原位切换，替换扫描列表）—— 列出
+  AirPods、Apple Watch、BLE 键盘、智能家居、Find My 信标、iBeacon
+  等 Wi-Fi 扫描看不见的电子设备
 
 卡在弱 AP 上不动？按 `c`，`wifiscope` 会循环关再开 Wi-Fi，让 macOS 重新
 auto-join，重新关联到信号最强的 BSSID。和「点菜单关 Wi-Fi 再开」是同一条路径，
@@ -84,6 +95,7 @@ WIFISCOPE_LANG=zh uv run wifiscope   # 用环境变量
 | `p` | 暂停 / 恢复轮询 |
 | `r` | 立即重扫（CoreWLAN ~5 秒限流仍然会生效） |
 | `s` | 扫描排序切换：按 AP ↔ 按信号 |
+| `n` | 切换附近视图：Wi-Fi BSSID ↔ BLE 设备 |
 | `c` | 断开重连 —— 关再开 Wi-Fi，让系统重新挑选最强的 BSSID |
 | `h` | 打开 / 关闭应用内帮助页 |
 | `b` | 打开 / 关闭 Wi-Fi 基础知识：SSID、BSSID、信道、频段、加密、漫游评分 |
@@ -172,6 +184,21 @@ BSSID，漫游事件会显示成 `[同 AP 切频段 2F-客厅: 5G → 2.4G]` 或
 带宽仍然可读，但每个 SSID 都显示成 `(已遮蔽)`，每个 BSSID 也是
 `(已遮蔽)`。Connection 面板不受影响 —— `wifiscope` 通过另一条 SCDynamicStore
 旁路读取*当前*关联 AP 的 SSID 与 BSSID，而 macOS 忘了对这条路径脱敏。
+
+**BLE 设备会为隐私轮换标识。** 同一台物理设备（AirTag、手机、Apple
+Watch）会在不同时段以不同 CoreBluetooth UUID 出现。wifiscope 的
+模糊合并器会把 `(vendor_id, name)` 一致且 RSSI 在 ±10 dB 以内的条目
+合并成一行，并在合并后的行上显示 `(合并 N)` 徽章 —— 但策略保守：完全
+匿名（厂商和名字都为空）的信标永远不合并，否则会静默吞掉真实信号。
+名字时有时无的设备多半会多出一两行，属于预期。
+
+**BLE 距离短**（约 10 m，Wi-Fi 约 30 m），所以 BLE 列表通常会比
+Wi-Fi 扫描"小一圈"，即便在密集楼层也是如此。
+
+**macOS 不暴露 BLE 的底层 MAC**。CoreBluetooth 只给出每台主机一个
+UUID；厂商识别只能走 manufacturer-data 公司 ID 字段。Apple Continuity
+载荷使用 Apple 的公司 ID 加专有的不透明格式，我们不去逆向破解 ——
+对应的行就显示成 "Apple, Inc." 加一个泛化的名字。
 
 **`disassociate()` 在强制漫游上不可靠。** `wifiscope` 早期版本曾用
 `iface.disassociate()` 实现 `c` 键；在 802.1X 企业网络上，它会把链路拆掉

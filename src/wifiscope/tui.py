@@ -28,6 +28,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, RichLog, Static
 
 from .backend import WiFiBackend
+from .ble import BLEDevice, BLEPoller, BLEScanUpdate, service_category
 from .i18n import fit_cells, pad_cells, t
 from .models import Connection, ScanResult
 from .network import NetworkInventory, band_label, cluster_label, format_bssid
@@ -226,11 +227,38 @@ class EnvironmentPanel(Static):
         results: list[ScanResult],
         current: Connection | None,
     ) -> None:
+        """Render Wi-Fi-side diagnostics. Used while the user is on the
+        Wi-Fi (default) view."""
         self.border_title = t("Diagnostics")
         if not results:
             self.update(Text(t("(waiting for scan data...)"), style="dim italic"))
             return
         self.update(Group(*_environment_lines(results, current)))
+
+    def update_environment_ble(
+        self,
+        devices: list[BLEDevice],
+        permission_state: str,
+    ) -> None:
+        """Render BLE-side diagnostics. Used while the user is on the
+        BLE view, so the panel describes the pool of personal / IoT
+        devices around them rather than continuing to show Wi-Fi RF
+        info that is irrelevant in this context.
+        """
+        self.border_title = t("Diagnostics")
+        if permission_state != "granted":
+            self.update(Text(
+                t("(BLE diagnostics will appear after permission is granted)"),
+                style="dim italic",
+            ))
+            return
+        if not devices:
+            self.update(Text(
+                t("(no BLE devices yet — scanning...)"),
+                style="dim italic",
+            ))
+            return
+        self.update(Group(*_ble_diagnostic_lines(devices)))
 
 
 class HelpScreen(ModalScreen):
@@ -316,6 +344,7 @@ def _help_content() -> Text:
     line("s", t("cycle scan sort:  by AP  ↔  by signal"))
     line("c", t("force re-roam (cycle WiFi off/on so the OS re-picks the"))
     body.append(" " * 8 + t("strongest BSSID — fixes sticky associations)\n"))
+    line("n", t("toggle Nearby view: Wi-Fi BSSIDs ↔ BLE devices"))
     line("h", t("toggle this help"))
     line("b", t("open Wi-Fi basics for SSID, BSSID, channel, band, security"))
 
@@ -501,6 +530,93 @@ def _basics_content() -> Text:
     return body
 
 
+class BLEPanel(VerticalScroll):
+    """Nearby BLE devices, swapped into the third panel slot when the
+    user toggles to the BLE view via the `n` binding.
+
+    Sort order is RSSI desc by default. The rolling map of devices is
+    owned by :class:`wifiscope.ble.BLEPoller`; this widget renders
+    whatever the latest snapshot contained, including merge-folded
+    rows (which carry a ``(merged N)`` badge so the user can see the
+    fuzzy-merge happening rather than wondering where rotated UUIDs
+    went).
+    """
+
+    DEFAULT_CSS = """
+    BLEPanel {
+        height: 1fr;
+        border: heavy $accent;
+        padding: 0 1;
+    }
+    BLEPanel > #ble-body {
+        height: auto;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            Text(t("(no BLE devices yet — scanning...)"), style="dim italic"),
+            id="ble-body",
+        )
+
+    def on_mount(self) -> None:
+        self.border_title = t("Nearby BLE devices")
+
+    def update_devices(
+        self,
+        devices: list[BLEDevice],
+        permission_state: str,
+    ) -> None:
+        # Only show a "(N)" device-count suffix when scanning is actually
+        # working. In every other state the count would be 0 and the
+        # body explains why — putting (0) in the title alongside a
+        # "permission required" / "Bluetooth off" message reads as a
+        # contradiction (did the scan run and find nothing? did it
+        # never start?). The Swift helper distinguishes 'denied' /
+        # 'unavailable' / 'error' / 'unknown' on purpose; surface each
+        # with its own actionable placeholder rather than collapsing
+        # everything except 'denied' into "scanning...".
+        base_title = t("Nearby BLE devices")
+        body = self.query_one("#ble-body", Static)
+
+        if permission_state == "granted":
+            self.border_title = base_title + f" ({len(devices)})"
+            if not devices:
+                body.update(Text(t("(no BLE devices yet — scanning...)"),
+                                 style="dim italic"))
+                return
+            lines: list[Text] = [_ble_header_line()]
+            now = datetime.now(devices[0].last_seen.tzinfo)
+            for d in devices:
+                lines.append(_ble_row_line(d, now))
+            body.update(Group(*lines))
+            return
+
+        # Non-granted: drop the count, show a state-specific message.
+        self.border_title = base_title
+        if permission_state == "denied":
+            body.update(Text(t("(BLE permission required)"),
+                             style="dim italic"))
+        elif permission_state == "unavailable":
+            body.update(Text(
+                t("(BLE helper unavailable — run `make helper` then re-open it)"),
+                style="dim italic",
+            ))
+        elif permission_state == "incompatible":
+            body.update(Text(
+                t("(installed helper is too old; rebuild with `make helper`)"),
+                style="dim italic",
+            ))
+        elif permission_state == "error":
+            body.update(Text(
+                t("(BLE error — Bluetooth may be off in Control Center)"),
+                style="dim italic",
+            ))
+        else:  # 'unknown' or any future state
+            body.update(Text(t("(BLE state unknown — waiting for helper)"),
+                             style="dim italic"))
+
+
 class RoamLogPanel(RichLog):
     DEFAULT_CSS = """
     RoamLogPanel {
@@ -684,6 +800,128 @@ def _environment_lines(
         _health_line(results, current),
         _score_line(results, current),
     ]
+
+
+# ---------------------------------------------------------------------
+# BLE diagnostics (parallel set used when the user is on the BLE view).
+# Wi-Fi diagnostics describe RF infrastructure ("which AP, how crowded,
+# what should I roam to"); these summarise the pool of personal /
+# IoT devices around the user — the actual question BLE answers, which
+# is "what is here". Layout matches the Wi-Fi panel's vertical density
+# (4–5 short labelled lines).
+# ---------------------------------------------------------------------
+
+def _ble_diagnostic_lines(devices: list[BLEDevice]) -> list[Text]:
+    return [
+        _ble_visible_line(devices),
+        _ble_vendors_line(devices),
+        _ble_categories_line(devices),
+        _ble_closest_line(devices),
+    ]
+
+
+def _ble_visible_line(devices: list[BLEDevice]) -> Text:
+    n = len(devices)
+    connectable = sum(1 for d in devices if d.is_connectable)
+    # An "anonymous" beacon is one with neither vendor nor name — i.e.
+    # we cannot say anything about it. Privacy-rotating phones, generic
+    # iBeacons, and unknown gadgets all surface this way; tracking the
+    # count gives the user a sense of how "private" the local airspace
+    # is at a glance.
+    anonymous = sum(1 for d in devices if not d.vendor and not d.name)
+    line = Text()
+    line.append(t("Visible BLE  "), style="bold dim")
+    line.append(t("{n} total", n=n), style="white")
+    line.append(t("  ·  {n} connectable", n=connectable), style="dim")
+    if anonymous:
+        line.append(t("  ·  {n} anonymous", n=anonymous), style="yellow")
+    return line
+
+
+def _ble_vendors_line(devices: list[BLEDevice]) -> Text:
+    from collections import Counter
+    counts: Counter[str] = Counter()
+    unknown = 0
+    for d in devices:
+        if d.vendor:
+            counts[d.vendor] += 1
+        else:
+            unknown += 1
+    line = Text()
+    line.append(t("Vendors  "), style="bold dim")
+    top = counts.most_common(4)
+    if not top and unknown == 0:
+        line.append(t("(none)"), style="dim")
+        return line
+    parts: list[str] = [f"{vendor} {n}" for vendor, n in top]
+    if unknown:
+        parts.append(t("? {n}", n=unknown))
+    line.append("  ·  ".join(parts), style="white")
+    return line
+
+
+def _ble_categories_line(devices: list[BLEDevice]) -> Text:
+    from collections import Counter
+    counts: Counter[str] = Counter()
+    no_category = 0
+    for d in devices:
+        # Each device may advertise multiple service UUIDs across
+        # categories; collapse to a set so a single Apple Watch
+        # appearing under both Heart Rate and HID counts once per
+        # bucket, never twice in the same one.
+        # service_category() returns the raw UUID for unmapped codes
+        # (e.g. 180A "Device Information"). Those would otherwise leak
+        # into the categories line as opaque hex, displacing useful
+        # named categories — filter to mapped names only and roll the
+        # rest into the "N other" tail.
+        cats: set[str] = set()
+        for s in d.services:
+            cat = service_category(s)
+            if cat and cat != s.upper().replace("-", ""):
+                cats.add(cat)
+        if cats:
+            for c in cats:
+                counts[c] += 1
+        else:
+            no_category += 1
+    line = Text()
+    line.append(t("Categories  "), style="bold dim")
+    common = counts.most_common(4)
+    # Pass each category through t() so 'Audio' becomes '音频' in zh
+    # while 'iBeacon' stays English — matches the established service
+    # category translation policy.
+    parts: list[str] = [f"{t(c)} {n}" for c, n in common]
+    if no_category:
+        parts.append(t("{n} other", n=no_category))
+    line.append("  ·  ".join(parts) if parts else t("(none)"), style="white")
+    return line
+
+
+def _ble_closest_line(devices: list[BLEDevice]) -> Text:
+    line = Text()
+    line.append(t("Closest  "), style="bold dim")
+    if not devices:
+        line.append(t("(none)"), style="dim")
+        return line
+    # Strongest RSSI = nearest. Devices with no RSSI reading sink to
+    # the bottom (-200 sentinel) so the labelled row is always one
+    # we have signal data for.
+    closest = max(
+        devices,
+        key=lambda d: d.rssi_dbm if d.rssi_dbm is not None else -200,
+    )
+    rssi = closest.rssi_dbm
+    if closest.name and closest.vendor:
+        label = f"{closest.name} ({closest.vendor})"
+    else:
+        label = closest.name or closest.vendor or t("(anonymous)")
+    line.append(
+        f"{rssi if rssi is not None else '?'} dBm",
+        style=_rssi_color(rssi) if rssi is not None else "dim",
+    )
+    line.append("  ·  ", style="dim")
+    line.append(label, style="cyan")
+    return line
 
 
 def _visible_networks_line(results: list[ScanResult]) -> Text:
@@ -1244,21 +1482,170 @@ def _security_badge(security: str | None) -> tuple[str, str]:
     return security[:_COL_SEC], "dim"
 
 
+# ---------- BLE table rendering ----------
+
+_COL_BLE_RSSI = 4
+_COL_BLE_SIGNAL = 8
+_COL_BLE_VENDOR = 18
+_COL_BLE_NAME = 22
+_COL_BLE_SERVICES = 16
+_COL_BLE_AGO = 8
+_COL_BLE_ID = 10
+
+
+def _ble_header_line() -> Text:
+    h = Text(style="bold dim")
+    h.append(
+        f" {'★':<2}{t('RSSI'):>{_COL_BLE_RSSI}}  "
+        f"{pad_cells(t('signal'), _COL_BLE_SIGNAL)}  "
+        f"{pad_cells(t('vendor'), _COL_BLE_VENDOR)}  "
+        f"{pad_cells(t('name'), _COL_BLE_NAME)}  "
+        f"{pad_cells(t('services'), _COL_BLE_SERVICES)}  "
+        f"{pad_cells(t('last seen'), _COL_BLE_AGO)}  "
+        f"{pad_cells(t('id'), _COL_BLE_ID)}"
+    )
+    return h
+
+
+def _ble_row_line(d: BLEDevice, now: datetime) -> Text:
+    rssi_color = _rssi_color(d.rssi_dbm) if d.rssi_dbm is not None else "dim"
+    rssi_text = f"{d.rssi_dbm:>{_COL_BLE_RSSI}}" if d.rssi_dbm is not None else f"{'?':>{_COL_BLE_RSSI}}"
+    vendor_text = d.vendor or t("(unknown)")
+    name_text = d.name or t("(unknown)")
+    name_style = "white" if d.name else "dim italic"
+    services_text = _ble_services_summary(d.services)
+    age_text = _ble_age_text(d, now)
+    id_short = d.identifier[:8]
+
+    line = Text()
+    # Selection star reserved for future use; no devices are "current"
+    # in the BLE view because BLE doesn't expose an association concept.
+    line.append(f" {' ':<2}")
+    line.append(f"{rssi_text}  ", style=rssi_color)
+    line.append(_signal_bar(d.rssi_dbm, length=_COL_BLE_SIGNAL))
+    line.append("  ")
+    line.append(fit_cells(vendor_text, _COL_BLE_VENDOR) + "  ",
+                style="cyan" if d.vendor else "dim")
+    line.append(fit_cells(name_text, _COL_BLE_NAME) + "  ", style=name_style)
+    line.append(fit_cells(services_text, _COL_BLE_SERVICES) + "  ", style="dim")
+    # Use fit_cells (not raw f-string ljust) because t("now") resolves
+    # to "刚刚" in zh — 2 code points but 4 terminal cells. str.ljust
+    # would pad to 6 spaces (= 8 code points / 10 cells), shoving the
+    # id column 2 cells right of where the header expects.
+    line.append(fit_cells(age_text, _COL_BLE_AGO) + "  ", style="dim")
+    line.append(f"{id_short:<{_COL_BLE_ID}}", style="dim")
+    if d.merged_count > 1:
+        line.append("  ")
+        line.append(t("(merged {n})", n=d.merged_count), style="cyan")
+    return line
+
+
+def _ble_services_summary(services: tuple[str, ...]) -> str:
+    if not services:
+        return ""
+    cats: list[str] = []
+    seen: set[str] = set()
+    for s in services:
+        cat = service_category(s)
+        # Translate categories that have catalog entries; raw UUIDs
+        # pass through unchanged.
+        translated = t(cat)
+        if translated in seen:
+            continue
+        seen.add(translated)
+        cats.append(translated)
+    return ", ".join(cats[:3])
+
+
+def _ble_age_text(d: BLEDevice, now: datetime) -> str:
+    delta = (now - d.last_seen).total_seconds()
+    if delta < 1:
+        return t("now")
+    return t("{n}s", n=int(delta))
+
+
 # ---------- app ----------
+
+class GroupedFooter(Static):
+    """Custom footer that splits the main app's eight bindings into three
+    semantic groups separated by ``│`` dividers. Replaces Textual's
+    default flat ``Footer`` at the App level so the user can find the
+    right key faster — "is this an app control, a scan action, or an
+    info modal?" — without scanning a long undifferentiated row.
+
+    Group layout, left to right:
+
+    1. **App control**: ``q`` quit · ``p`` pause
+    2. **Scan / view**: ``r`` rescan · ``s`` sort · ``n`` view-toggle ·
+       ``c`` re-roam
+    3. **Info**: ``h`` help · ``b`` basics
+
+    The ``n`` binding's description is **dynamic** — it shows the OTHER
+    view as the literal target ("→ BLE" while in Wi-Fi view, "→ Wi-Fi"
+    while in BLE view). This is more discoverable than a static word
+    like "View" / "视图" which gives the user no idea what pressing it
+    will switch to.
+
+    Modal screens (Help, Basics) keep their own inline close hint and
+    are not affected by this widget.
+    """
+
+    DEFAULT_CSS = """
+    GroupedFooter {
+        dock: bottom;
+        height: 1;
+        background: $primary;
+        color: $text;
+        padding: 0 1;
+    }
+    """
+
+    def on_mount(self) -> None:
+        self.refresh_layout()
+
+    def refresh_layout(self) -> None:
+        view_mode = getattr(self.app, "_view_mode", "wifi")
+        next_view = "BLE" if view_mode == "wifi" else "Wi-Fi"
+
+        groups: list[list[tuple[str, str]]] = [
+            [("q", t("Quit")), ("p", t("Pause"))],
+            [
+                ("r", t("Rescan")),
+                ("s", t("Sort")),
+                ("n", t("→ {view}", view=next_view)),
+                ("c", t("Re-roam")),
+            ],
+            [("h", t("Help")), ("b", t("Basics"))],
+        ]
+
+        out = Text()
+        for group_idx, group in enumerate(groups):
+            if group_idx > 0:
+                out.append("  │  ", style="dim")
+            for binding_idx, (key, desc) in enumerate(group):
+                if binding_idx > 0:
+                    out.append("  ")
+                out.append(f" {key} ", style="reverse bold")
+                out.append(f" {desc}")
+        self.update(out)
+
 
 class WifiScopeApp(App):
     CSS = """
     Screen { layout: vertical; }
     """
-    # Footer labels go through ``t()`` at class-define time, which
-    # means the language must be set before WifiScopeApp is imported.
-    # cli.main() calls i18n.set_lang() before lazy-importing tui, so by
-    # the time this BINDINGS list is built the catalog is final.
+    # Binding descriptions go through ``t()`` at class-define time so
+    # the command palette (Ctrl+P) and any other Textual-driven UI sees
+    # localised strings. The visible footer is rendered separately by
+    # GroupedFooter, which overrides the layout entirely. cli.main()
+    # calls i18n.set_lang() before lazy-importing tui, so by the time
+    # this BINDINGS list is built the catalog is final.
     BINDINGS = [
         Binding("q", "quit", t("Quit")),
         Binding("p", "toggle_pause", t("Pause")),
         Binding("r", "rescan", t("Rescan")),
         Binding("s", "cycle_sort", t("Sort")),
+        Binding("n", "toggle_view", t("Toggle Wi-Fi / BLE view")),
         Binding("c", "reroam", t("Re-roam")),
         Binding("h", "show_help", t("Help")),
         Binding("b", "show_basics", t("Basics")),
@@ -1270,11 +1657,31 @@ class WifiScopeApp(App):
         inv: NetworkInventory,
         *,
         scan_interval: float = 7.0,
+        ble_helper_path: str | None = None,
     ) -> None:
         super().__init__()
         self._backend = backend
         self._inv = inv
         self._poller = WiFiPoller(backend, scan_interval=scan_interval)
+        # The BLE poller spawns wifiscope-helper ble-scan as a long-
+        # running subprocess. If no helper path is supplied, the poller
+        # surfaces a permission_state of "unavailable" and yields
+        # empty snapshots — the BLE panel then renders a placeholder
+        # rather than crashing the TUI.
+        helper_path = ble_helper_path
+        if helper_path is None:
+            helper_path = getattr(backend, "_helper_path", None) or ""
+        self._ble_poller: BLEPoller | None = None
+        self._ble_helper_path = helper_path
+        # Latest BLE snapshot — kept fresh in the background regardless
+        # of which view is active so toggling is instant.
+        self._latest_ble: list[BLEDevice] = []
+        self._ble_permission_state: str = "unknown"
+        # 'wifi' (default) or 'ble' — toggled by `n`. Both panels are
+        # mounted; we flip widget.display rather than mount/unmount so
+        # the widget tree stays stable for tests and the swap is
+        # instantaneous on key press.
+        self._view_mode: str = "wifi"
         self._paused = False
         # Cache the most recent *non-empty* scan. CoreWLAN's throttle
         # produces empty results periodically; replacing the panel with
@@ -1302,11 +1709,21 @@ class WifiScopeApp(App):
         yield ConnectionPanel(id="conn")
         yield EnvironmentPanel(id="env")
         yield ScanPanel(id="scan")
+        yield BLEPanel(id="ble")
         yield RoamLogPanel(id="roam")
-        yield Footer()
+        yield GroupedFooter(id="footer")
 
     async def on_mount(self) -> None:
+        # The BLE panel sits in the same vertical slot as the Wi-Fi
+        # scan panel; only one is visible at a time. Hide it on mount
+        # so the default 'wifi' view shows the scan panel.
+        self.query_one("#ble", BLEPanel).display = False
         self.run_worker(self._consume_events(), exclusive=True, name="poller")
+        if self._ble_helper_path:
+            self._ble_poller = BLEPoller(self._ble_helper_path)
+            self.run_worker(
+                self._consume_ble_events(), exclusive=False, name="ble-poller",
+            )
 
     async def _consume_events(self) -> None:
         async for event in self._poller.events():
@@ -1332,12 +1749,41 @@ class WifiScopeApp(App):
             elif isinstance(event, RoamEvent):
                 self.query_one("#roam", RoamLogPanel).append_roam(event, self._inv)
 
+    async def _consume_ble_events(self) -> None:
+        """Drain BLE snapshots from the poller into the BLE panel.
+
+        Runs in parallel with the Wi-Fi consumer so toggling between
+        views is instantaneous — both data streams update internal
+        state regardless of which view is currently visible.
+        """
+        if self._ble_poller is None:
+            return
+        try:
+            async for event in self._ble_poller.events():
+                if self._paused:
+                    continue
+                if isinstance(event, BLEScanUpdate):
+                    self._latest_ble = event.devices
+                    self._ble_permission_state = event.permission_state
+                    self._refresh_ble_panel()
+        except Exception:
+            # Don't let a poller hiccup tear down the whole TUI.
+            pass
+
+    def _refresh_ble_panel(self) -> None:
+        try:
+            panel = self.query_one("#ble", BLEPanel)
+        except Exception:
+            return
+        panel.update_devices(self._latest_ble, self._ble_permission_state)
+        # Refresh diagnostics whenever the BLE data updates AND the user
+        # is actually looking at the BLE view; otherwise leave the Wi-Fi
+        # diagnostics in place.
+        if self._view_mode == "ble":
+            self._refresh_environment_panel()
+
     def _refresh_scan_panel(self) -> None:
         merged = _merge_current(self._cached_scan, self._latest_connection)
-        self.query_one("#env", EnvironmentPanel).update_environment(
-            merged,
-            self._latest_connection,
-        )
         self.query_one("#scan", ScanPanel).update_scan(
             merged,
             self._latest_connection,
@@ -1346,6 +1792,34 @@ class WifiScopeApp(App):
             self._inv,
             self._sort_mode,
         )
+        # Diagnostics goes through the dispatcher so it follows the
+        # active view rather than always showing Wi-Fi data.
+        if self._view_mode == "wifi":
+            self._refresh_environment_panel()
+
+    def _refresh_environment_panel(self) -> None:
+        """Render diagnostics for whichever view the user is currently on.
+
+        Called from both the Wi-Fi and BLE event consumers (each one is
+        gated on the view it owns) and from action_toggle_view, so the
+        panel content always matches the third-slot panel below it. The
+        BLE view shows vendor / category / closest summaries; the Wi-Fi
+        view continues to show the existing crowding / health / roam
+        score lines.
+        """
+        try:
+            panel = self.query_one("#env", EnvironmentPanel)
+        except Exception:
+            return
+        if self._view_mode == "ble":
+            panel.update_environment_ble(
+                self._latest_ble, self._ble_permission_state,
+            )
+        else:
+            merged = _merge_current(
+                self._cached_scan, self._latest_connection,
+            )
+            panel.update_environment(merged, self._latest_connection)
 
     def action_toggle_pause(self) -> None:
         self._paused = not self._paused
@@ -1360,6 +1834,38 @@ class WifiScopeApp(App):
         # Rebuild the scan panel immediately so the user sees the change
         # without waiting for the next 1 Hz connection update.
         self._refresh_scan_panel()
+
+    def action_toggle_view(self) -> None:
+        """Swap the third panel slot between Wi-Fi scan and BLE list.
+
+        Both pollers keep running in the background; only the visible
+        widget changes. The BLE panel is rendered with the latest
+        snapshot on swap so the user does not see a stale "scanning..."
+        placeholder for a brief moment.
+        """
+        self._view_mode = "ble" if self._view_mode == "wifi" else "wifi"
+        scan = self.query_one("#scan", ScanPanel)
+        ble = self.query_one("#ble", BLEPanel)
+        if self._view_mode == "ble":
+            scan.display = False
+            ble.display = True
+            self._refresh_ble_panel()
+        else:
+            ble.display = False
+            scan.display = True
+            self._refresh_scan_panel()
+        # Diagnostics panel content has to follow the view too, even
+        # on the snapshot the toggle does not trigger a poller event
+        # for. Calling the dispatcher unconditionally is cheap and
+        # avoids one frame of stale Wi-Fi diagnostics under BLE rows
+        # (the original UX wart that motivated this whole feature).
+        self._refresh_environment_panel()
+        self.sub_title = self._build_subtitle()
+        # Refresh the footer so n's "→ BLE" / "→ Wi-Fi" label flips to
+        # match the new view. Done after sub_title so any work that
+        # the toggle triggers is visible before the user's eye drops
+        # to confirm where they are.
+        self.query_one("#footer", GroupedFooter).refresh_layout()
 
     def action_show_help(self) -> None:
         self.push_screen(HelpScreen())
@@ -1385,13 +1891,13 @@ class WifiScopeApp(App):
             self.notify(t("no WiFi interface"), severity="warning")
 
     def _build_subtitle(self) -> str:
-        # Header subtitle is dynamic state and live diagnostics — what
-        # changes as the user interacts, plus the poll cadence so the
-        # user can see when the next scan is due. Static facts
-        # (inventory size, backend name, helper presence) live in the
-        # AttributionBar / panel titles instead.
+        # Header subtitle is for state the user can't otherwise see at
+        # a glance: which view is active, the scan cadence, paused-or-
+        # not. Sort mode used to live here too, but it is already
+        # echoed in the Nearby BSSIDs panel's border title (· sort: ap)
+        # so duplicating it in the header was just clutter.
         scan_s = int(getattr(self._poller, "_scan_interval", 0))
-        bits = [t("sort: {mode}", mode=t(self._sort_mode))]
+        bits = [t("view: {mode}", mode=t(self._view_mode))]
         if scan_s:
             bits.append(t("scan {n}s", n=scan_s))
         if self._paused:

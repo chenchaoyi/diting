@@ -154,6 +154,7 @@ _ZH: dict[str, str] = {
     "Connection": "连接",
     "Diagnostics": "诊断",
     "Nearby BSSIDs": "附近 BSSID",
+    "Nearby BLE devices": "附近 BLE 设备",
     "Roam log": "漫游日志",
 
     # ---- footer / app bindings ----
@@ -162,6 +163,9 @@ _ZH: dict[str, str] = {
     "Rescan": "重扫",
     "Sort": "排序",
     "Re-roam": "断开重连",
+    "View": "视图",  # legacy; kept for command-palette / Ctrl+P
+    "Toggle Wi-Fi / BLE view": "切换 Wi-Fi / BLE 视图",
+    "→ {view}": "→ {view}",
     "Help": "帮助",
     "Basics": "基础知识",
     "Close": "关闭",
@@ -172,6 +176,9 @@ _ZH: dict[str, str] = {
     "PAUSED": "已暂停",
     "ap": "AP",
     "signal": "信号",
+    "view: {mode}": "视图：{mode}",
+    "wifi": "Wi-Fi",
+    "ble": "BLE",
 
     # ---- Connection panel ----
     "not associated": "未连接",
@@ -234,6 +241,53 @@ _ZH: dict[str, str] = {
 
     # ---- Diagnostics: waiting state ----
     "(waiting for scan data...)": "(等待扫描数据…)",
+
+    # ---- BLE panel ----
+    "(no BLE devices yet — scanning...)": "(暂无 BLE 设备，扫描中…)",
+    "(BLE permission required)": "(需要蓝牙权限)",
+    "(BLE helper unavailable — run `make helper` then re-open it)":
+        "(辅助进程不可用 —— 跑 `make helper` 后重新 open 它)",
+    "(installed helper is too old; rebuild with `make helper`)":
+        "(已安装的辅助进程太旧；用 `make helper` 重新构建)",
+    "(BLE error — Bluetooth may be off in Control Center)":
+        "(BLE 出错 —— 系统蓝牙可能在控制中心被关掉了)",
+    "(BLE state unknown — waiting for helper)":
+        "(BLE 状态未知 —— 等待辅助进程)",
+
+    # ---- BLE diagnostics panel (parallel to Wi-Fi diagnostics) ----
+    "(BLE diagnostics will appear after permission is granted)":
+        "(授权后才会显示 BLE 诊断)",
+    "Visible BLE  ": "可见 BLE  ",
+    "{n} total": "共 {n} 个",
+    "  ·  {n} connectable": "  ·  {n} 可连接",
+    "  ·  {n} anonymous": "  ·  {n} 匿名",
+    "Vendors  ": "厂商  ",
+    "Categories  ": "类别  ",
+    "Closest  ": "最近  ",
+    "(none)": "(无)",
+    "(anonymous)": "(匿名)",
+    "? {n}": "? {n}",
+    "{n} other": "{n} 其他",
+    # Service-category labels for ble.py.service_category() return values
+    # are already translated below in the BLE table area; nothing extra
+    # needed here.
+    "(merged {n})": "(合并 {n})",
+    "  · {n}s ago": "  · {n}s 前",
+    "{n}s": "{n}s",
+    "now": "刚刚",
+    "vendor": "厂商",
+    "name": "名称",
+    "services": "服务",
+    "last seen": "最近",
+    "id": "ID",
+    # Service categories — translation matches the spec list. Anything
+    # not in this catalog (raw 16-bit UUIDs etc.) passes through as-is.
+    "Audio": "音频",
+    "HID": "HID",
+    "HID Keyboard": "键盘",
+    "HID Mouse": "鼠标",
+    "Heart Rate": "心率",
+    "Find My": "查找网络",
 
     # ---- CLI --help ----
     "usage: wifiscope [--lang en|zh] [SUBCOMMAND]\n"
@@ -303,6 +357,25 @@ _ZH: dict[str, str] = {
         " 授权后重新运行 wifiscope 即可看到未隐藏的扫描数据。)",
     "Skipped; starting TUI with redacted scan.":
         "已跳过，TUI 将以隐藏的扫描数据启动。",
+
+    # ---- Stale-helper detection (0.4.0 → 0.5.0 upgrade path) ----
+    "note: installed helper at {bundle} predates 0.5.0 (no\n"
+    "      ble-scan subcommand). The BLE view would wedge\n"
+    "      forever. Rebuilding the in-repo helper to use\n"
+    "      instead — replace the installed copy at your\n"
+    "      convenience.":
+        "提示：{bundle} 处的辅助进程比 0.5.0 旧（没有 ble-scan\n"
+        "      子命令）。BLE 视图会卡死。临时构建仓库内的辅助\n"
+        "      进程顶上 —— 等你方便的时候替换掉那个旧的。",
+    "Using freshly-built helper at {path}.":
+        "改用新构建的辅助进程：{path}。",
+    "warning: could not build a 0.5.0-capable helper. The\n"
+    "         BLE view will show an 'incompatible helper'\n"
+    "         placeholder; remove the old bundle from\n"
+    "         /Applications and run `make helper` to fix.":
+        "警告：未能构建 0.5.0 兼容的辅助进程。BLE 视图会显示\n"
+        "      「辅助进程不兼容」占位；删掉 /Applications 下\n"
+        "      的旧 bundle 后跑 `make helper` 修复。",
 
     # ---- Diagnostics: visible networks line ----
     "Visible BSSIDs  ": "可见 BSSID  ",
@@ -385,6 +458,8 @@ _ZH: dict[str, str] = {
     "strongest BSSID — fixes sticky associations)\n":
         "最强 BSSID —— 解决卡死在弱 AP 的问题）\n",
     "toggle this help": "打开 / 关闭本帮助",
+    "toggle Nearby view: Wi-Fi BSSIDs ↔ BLE devices":
+        "切换附近视图：Wi-Fi BSSID ↔ BLE 设备",
     "open Wi-Fi basics for SSID, BSSID, channel, band, security":
         "打开 Wi-Fi 基础知识：SSID / BSSID / 信道 / 频段 / 加密",
     "AP aliases (optional)": "AP 别名（可选）",

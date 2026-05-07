@@ -4,25 +4,34 @@
 # keep the bilingual UI / docs workflow honest: a UI change always means
 # regenerating BOTH preview SVGs.
 
-.PHONY: help test test-all preview preview-en preview-zh helper
+.PHONY: help test test-all preview preview-en preview-zh preview-ble preview-ble-en preview-ble-zh helper update-vendors
 
 help:  ## Show this help
-	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-test:  ## Run the pytest suite (109 cases)
+test:  ## Run the pytest suite
 	uv run pytest -q
 
 test-all: test  ## Run pytest under both EN and ZH default-language settings
 	WIFISCOPE_LANG=zh uv run pytest -q
 	LANG=zh_CN.UTF-8 WIFISCOPE_LANG= uv run pytest -q
 
-preview: preview-en preview-zh  ## Regenerate BOTH README preview SVGs (always run after a UI change)
+preview: preview-en preview-zh preview-ble-en preview-ble-zh  ## Regenerate ALL preview SVGs (Wi-Fi + BLE, EN + ZH)
 
-preview-en:  ## Regenerate docs/preview.svg from the fake backend
-	WIFISCOPE_LANG= uv run python docs/_capture_preview.py
+preview-en:  ## Regenerate docs/preview.svg (Wi-Fi view, English)
+	WIFISCOPE_LANG= WIFISCOPE_PREVIEW_VIEW=wifi uv run python docs/_capture_preview.py
 
-preview-zh:  ## Regenerate docs/preview.zh.svg from the fake backend
-	WIFISCOPE_LANG=zh uv run python docs/_capture_preview.py
+preview-zh:  ## Regenerate docs/preview.zh.svg (Wi-Fi view, Chinese)
+	WIFISCOPE_LANG=zh WIFISCOPE_PREVIEW_VIEW=wifi uv run python docs/_capture_preview.py
 
-helper:  ## Build the Swift Location-Services helper at helper/wifiscope-helper.app
+preview-ble-en:  ## Regenerate docs/preview-ble.svg (BLE view, English)
+	WIFISCOPE_LANG= WIFISCOPE_PREVIEW_VIEW=ble uv run python docs/_capture_preview.py
+
+preview-ble-zh:  ## Regenerate docs/preview-ble.zh.svg (BLE view, Chinese)
+	WIFISCOPE_LANG=zh WIFISCOPE_PREVIEW_VIEW=ble uv run python docs/_capture_preview.py
+
+helper:  ## Build the Swift helper at helper/wifiscope-helper.app
 	cd helper && ./build.sh
+
+update-vendors:  ## Refresh src/wifiscope/data/bluetooth_vendors.json from Bluetooth SIG
+	uv run python scripts/update_vendors.py

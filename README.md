@@ -19,7 +19,15 @@
 ---
 
 <p align="center">
-  <img src="docs/preview.svg" alt="wifiscope TUI" width="100%">
+  <img src="docs/preview.svg" alt="wifiscope TUI – Wi-Fi view" width="100%">
+  <br>
+  <sub><i>Wi-Fi view (default)</i></sub>
+</p>
+
+<p align="center">
+  <img src="docs/preview-ble.svg" alt="wifiscope TUI – BLE view" width="100%">
+  <br>
+  <sub><i>BLE view (press <code>n</code> to toggle)</i></sub>
 </p>
 
 ## Why
@@ -48,6 +56,10 @@ black box into a TUI:
 - a bottom panel that **logs roam events as they happen**, tagged
   `[band switch on <AP>]` for same-AP radio changes vs
   `[inter-AP roam]` for genuine moves between physical APs
+- a **Nearby BLE devices** view (press `n` to toggle in place of the
+  scan list) showing AirPods, Apple Watches, BLE keyboards, smart-home
+  gadgets, Find My beacons, and iBeacons — every electronic device
+  around you that the Wi-Fi scan cannot see
 
 Stuck on a weak AP? Hit `c` and `wifiscope` cycles the WiFi radio so
 macOS re-runs auto-join and reassociates with the strongest BSSID.
@@ -97,6 +109,7 @@ With no override, `wifiscope` autodetects the system locale —
 | `p` | pause / resume polling |
 | `r` | force a rescan now (CoreWLAN ~5 s throttle still applies) |
 | `s` | cycle scan sort: by AP ↔ by signal |
+| `n` | toggle Nearby view: Wi-Fi BSSIDs ↔ BLE devices |
 | `c` | force re-roam — cycle Wi-Fi off/on so macOS re-picks the strongest BSSID |
 | `h` | open / close the in-app help screen |
 | `b` | open / close Wi-Fi Basics: SSID, BSSID, channel, band, security, roam score |
@@ -199,6 +212,26 @@ shows `(redacted)` and every BSSID `(redacted)`. The Connection
 panel itself is unaffected — `wifiscope` reads SSID and BSSID for
 the *current* AP through a separate SCDynamicStore tunnel that
 macOS forgot to redact.
+
+**BLE devices rotate their identifier for privacy.** The same
+physical device (an AirTag, a phone, an Apple Watch) appears under
+multiple CoreBluetooth UUIDs over time. wifiscope's fuzzy merger
+collapses obvious duplicates into one row by matching `(vendor_id,
+name)` plus an RSSI window, and shows a `(merged N)` badge on the
+combined entry, but the heuristic is conservative — anonymous
+beacons (no vendor, no name) are never merged because conflating
+them would silently remove signal. Expect to see one or two extra
+rows per rotating device when names disagree.
+
+**BLE range is short** (~10 m vs Wi-Fi's ~30 m), so the BLE list
+will feel "smaller" than the Wi-Fi scan even on a busy floor.
+
+**macOS hides the underlying BLE MAC**. CoreBluetooth gives only
+a per-host UUID; vendor identification goes through the
+manufacturer-data company ID field exclusively. Apple Continuity
+payloads use Apple's company ID with an opaque format we do not
+attempt to decode — the row reads as "Apple, Inc." with a
+generic name.
 
 **`disassociate()` is unreliable for forcing a roam.** Earlier
 versions of `wifiscope` used `iface.disassociate()` for the `c`

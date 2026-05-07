@@ -1,7 +1,7 @@
 [project]
 name = "wifiscope"
-version = "0.4.0"
-description = "macOS terminal WiFi monitor with roaming visibility"
+version = "0.5.0"
+description = "macOS terminal Wi-Fi monitor with roaming visibility, plus a nearby BLE devices view"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

@@ -9,10 +9,16 @@ from datetime import datetime
 
 import pytest
 
+from wifiscope.ble import BLEDevice
 from wifiscope.models import Connection, ScanResult
 from wifiscope.network import APEntry, NetworkInventory
 from wifiscope.tui import (
     _best_same_ssid_candidate,
+    _ble_categories_line,
+    _ble_closest_line,
+    _ble_diagnostic_lines,
+    _ble_vendors_line,
+    _ble_visible_line,
     _channel_hint,
     _environment_line,
     _group_by_ap,
@@ -305,3 +311,112 @@ def test_score_line_reports_better_same_ssid_candidate():
     assert "current" in text
     assert "better candidate" in text
     assert "press c to re-roam" in text
+
+
+# --- BLE diagnostics ---------------------------------------------------
+
+def _ble_dev(identifier="00000000-0000-0000-0000-000000000001",
+             name="dev", vendor="Apple, Inc.", vendor_id=76,
+             services=(), rssi=-50, is_connectable=True,
+             merged_count=1):
+    """Lightweight BLEDevice factory; the timestamps are placeholders
+    since the diagnostic helpers do not read first_seen / last_seen."""
+    t = datetime(2026, 5, 7, 9, 30, 0)
+    return BLEDevice(
+        identifier=identifier,
+        name=name,
+        vendor=vendor,
+        vendor_id=vendor_id,
+        services=services,
+        rssi_dbm=rssi,
+        is_connectable=is_connectable,
+        first_seen=t,
+        last_seen=t,
+        ad_count=1,
+        merged_count=merged_count,
+    )
+
+
+def test_ble_visible_line_counts_total_connectable_anonymous():
+    devices = [
+        _ble_dev(identifier="01", name="AirPods", vendor="Apple, Inc.",
+                 is_connectable=True),
+        _ble_dev(identifier="02", name=None, vendor=None,
+                 vendor_id=None, is_connectable=False),
+        _ble_dev(identifier="03", name=None, vendor=None,
+                 vendor_id=None, is_connectable=True),
+    ]
+    text = _ble_visible_line(devices).plain
+    # Three devices total, two connectable, two anonymous (no vendor
+    # AND no name). Anonymous count appears even when it equals the
+    # connectable count because the categories are independent.
+    assert "3 total" in text
+    assert "2 connectable" in text
+    assert "2 anonymous" in text
+
+
+def test_ble_vendors_line_top_four_plus_unknown():
+    devices = (
+        [_ble_dev(identifier=f"a{i}", vendor="Apple, Inc.",
+                  vendor_id=76) for i in range(4)]
+        + [_ble_dev(identifier=f"x{i}", vendor="Xiaomi Inc.",
+                    vendor_id=637) for i in range(2)]
+        + [_ble_dev(identifier=f"u{i}", vendor=None, vendor_id=None,
+                    name=None) for i in range(3)]
+    )
+    text = _ble_vendors_line(devices).plain
+    assert "Apple, Inc. 4" in text
+    assert "Xiaomi Inc. 2" in text
+    # Unknown (no vendor) gets a separate "? N" tag rather than being
+    # silently dropped, so the user sees the full picture.
+    assert "? 3" in text
+
+
+def test_ble_categories_line_groups_by_service_category():
+    # Apple Watch advertises both HID (1812) and Heart Rate (180D),
+    # which should each contribute one to its bucket — never two.
+    apple_watch = _ble_dev(identifier="aw1", services=("180D", "1812"))
+    airpods = _ble_dev(identifier="ap1", services=("110A",))  # Audio
+    nameless = _ble_dev(identifier="nx", services=())  # no category
+    text = _ble_categories_line(
+        [apple_watch, airpods, nameless]
+    ).plain
+    assert "Heart Rate 1" in text
+    assert "HID 1" in text
+    assert "Audio 1" in text
+    # Devices without any categorised service show up as "N other".
+    assert "1 other" in text
+
+
+def test_ble_closest_line_picks_strongest_rssi():
+    devices = [
+        _ble_dev(identifier="far", name="A", vendor="Apple, Inc.",
+                 rssi=-80),
+        _ble_dev(identifier="near", name="Magic Keyboard",
+                 vendor="Apple, Inc.", rssi=-32),
+        _ble_dev(identifier="mid", name="B", vendor="Apple, Inc.",
+                 rssi=-60),
+    ]
+    text = _ble_closest_line(devices).plain
+    assert "-32 dBm" in text
+    assert "Magic Keyboard (Apple, Inc.)" in text
+
+
+def test_ble_closest_line_falls_back_to_anonymous_label():
+    """When the strongest device has neither name nor vendor we still
+    show its RSSI rather than dropping the row, with a generic
+    placeholder so the user knows we have not lost the device."""
+    devices = [_ble_dev(identifier="xxx", name=None, vendor=None,
+                        vendor_id=None, rssi=-44)]
+    text = _ble_closest_line(devices).plain
+    assert "-44 dBm" in text
+    assert "(anonymous)" in text
+
+
+def test_ble_diagnostic_lines_returns_four_rows():
+    """Sanity: the dispatcher returns the four rows the panel renders.
+    Pinning the count keeps an accidental fifth row from breaking the
+    panel min-height expected layout."""
+    devices = [_ble_dev()]
+    rows = _ble_diagnostic_lines(devices)
+    assert len(rows) == 4

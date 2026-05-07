@@ -41,8 +41,8 @@
 
 | 层 | 位置 | 证明的事 |
 |---|---|---|
-| 单元 | `tests/test_network.py`、`test_helper.py`、`test_tui_helpers.py`、`test_i18n.py` | 每个纯函数在其全部输入空间内表现符合规约，包括来自真实 bug 的回归用例。 |
-| 冒烟 | `tests/test_tui_smoke.py` | Textual App 能被 compose、mount、走完每个绑定、unmount，全程不抛异常。使用一个返回确定数据的 `_FakeBackend`。 |
+| 单元 | `tests/test_network.py`、`test_helper.py`、`test_tui_helpers.py`、`test_ble.py`、`test_i18n.py` | 每个纯函数在其全部输入空间内表现符合规约，包括来自真实 bug 的回归用例。 |
+| 冒烟 | `tests/test_tui_smoke.py` | Textual App 能被 compose、mount、走完每个绑定（含新增的 `n` 视图切换）、unmount，全程不抛异常。使用一个返回确定数据的 `_FakeBackend`。 |
 
 ---
 
@@ -167,6 +167,63 @@
 
 ---
 
+## 5b. 模块：`wifiscope.ble`
+
+异步 BLE 扫描层。承担 JSONL 行解析、滚动设备表 TTL、轮换 UUID 模糊
+合并、厂商查找、服务类别推断。Swift 辅助子进程通过 `BLEPoller(_spawn=...)`
+测试钩子在 spawn 边界被 mock，套件在没有蓝牙硬件的 Linux CI runner
+（以及没授权 helper 的 macOS runner）上都能跑。
+
+**覆盖目标：**
+
+- [x] JSONL 行解析 —— 每个广告字段都能正确填充 BLEDevice；后续广告
+      会保留 `first_seen` 并自增 `ad_count`。
+- [x] 厂商查找 —— Apple 公司 ID 能解析；未知 / None 输入友好处理。
+- [x] 打包好的厂商 JSON 至少包含 Apple 一条 —— 防止 `make update-vendors`
+      把文件写崩。
+- [x] 服务类别推断 —— 已知 16-bit UUID 映射到可读名字；长格式
+      （128-bit）能归一化；未知 UUID 原样透传。
+- [x] 衰减 / TTL —— 超过 ttl_s 没看到的设备从快照里掉出去；ttl_s
+      之内的保留。
+- [x] 模糊合并 —— `(vendor_id, name)` 一致且 RSSI 在 ±10 dB 内折叠
+      成一行，`ad_count` 求和、`merged_count` 记录数量；窗外条目
+      保持独立；完全匿名（厂商和名字都为空）的设备永不合并。
+- [x] 快照按 RSSI 降序排序。
+- [x] 权限被拒绝 —— 既支持 JSON 错误行，也支持子进程退出码 3 ——
+      都能干净地把 `permission_state` 翻成 `"denied"`。
+- [x] 子进程崩溃 —— 不抛异常；后续快照保持稳定。
+- [x] helper 二进制不存在 —— 状态翻成 `"unavailable"`，快照继续发出。
+- [x] JSON 行损坏 —— 静默跳过；后续合法行正常解析。
+
+### 测试用例 — `tests/test_ble.py`
+
+| 测试 | 场景 | 为什么重要 |
+|---|---|---|
+| `test_parse_advertisement_populates_all_fields` | 一条合法 JSONL 事件能产出 BLEDevice，每字段填充正确，identifier 转小写。 | 主解析器证明 —— helper 输出的 wire format。 |
+| `test_parse_subsequent_advertisement_carries_history` | 同一 identifier 的后续广告保留 `first_seen` 并自增 `ad_count`，`last_seen` 推进。 | 广告速率 / 持续时间驱动面板的「X 秒前」列与合并启发式稳定性。 |
+| `test_lookup_vendor_known_company_id` | Apple 公司 ID 解析为 "Apple, Inc."。 | 最常见 BLE 厂商的 sanity 检查。 |
+| `test_lookup_vendor_unknown_returns_none` | 未分配的公司 ID 返回 None。 | 让 renderer 回落到原始 ID 让用户自查。 |
+| `test_lookup_vendor_none_input_returns_none` | 「无 manufacturer data」（最常见 BLE 状态）静默处理。 | 防御性 —— 函数永不抛异常。 |
+| `test_load_vendors_ships_apple_id` | 打包的 JSON 包含 76 → "Apple, Inc."。 | 防止 `make update-vendors` 写出空 / 错误文件。 |
+| `test_service_category_heart_rate` | `180D` → `"Heart Rate"`。 | 规范要求的类别映射。 |
+| `test_service_category_hid` | `1812` → `"HID"`。 | 规范要求的类别映射。 |
+| `test_service_category_unknown_passthrough` | 未知 UUID 原样返回。 | 对不知道的事情如实告知。 |
+| `test_service_category_long_form_normalised` | `180D` 的 128-bit Bluetooth SIG 基础格式也能解析为 `"Heart Rate"`。 | macOS 两种格式都可能给，查找必须都命中。 |
+| `test_expire_drops_unseen_devices` | `last_seen` 早于 `ttl_s` 的设备从快照里删除。 | 让面板不再囤积已经走掉的旧行。 |
+| `test_expire_keeps_recent_devices` | `ttl_s` 之内看到的设备保留。 | 边界 sanity —— 只在过期时丢弃。 |
+| `test_merge_folds_same_vendor_and_name_within_rssi_window` | 两条 `(vendor_id, name)` 一致、RSSI 在 ±10 dB 内的条目合并成一行；`ad_count` 求和，`merged_count = 2`。 | 模糊合并的主证明 —— 驱动 (合并 N) 徽章。 |
+| `test_merge_keeps_distant_rssi_separate` | 标识相同但 RSSI 相差 > 10 dB 的两条保持独立。 | 极可能是不同房间的不同物理设备；合并就成了说谎。 |
+| `test_merge_does_not_combine_anonymous_devices` | 厂商和名字都为空的设备永不合并。 | 否则会把附近所有匿名信标全部合到一起 —— 规范要求「绝不静默回退」。 |
+| `test_merge_sorts_by_rssi_descending` | 合并后的列表按信号强度排序。 | 最近的设备永远在面板顶部。 |
+| `test_permission_denied_line_surfaces_state` | 含 "unauthorized" 的 JSON 错误行让 `update_from_line` 返回 `"permission_denied"`。 | 驱动 BLE 面板「(需要蓝牙权限)」占位。 |
+| `test_permission_denied_via_subprocess_exit_code` | helper 以退出码 3 结束 —— poller 把 `permission_state` 翻成 `"denied"`。 | 不论 helper 走哪条信号通道都得到一致结果。 |
+| `test_subprocess_crash_does_not_raise` | helper 中途被 SIGKILL（137）后 poller 安静下来 —— 后续快照空，不抛异常。 | 系统蓝牙重启时的 SIGKILL 不能拖垮 TUI。 |
+| `test_helper_binary_missing_marks_unavailable` | spawn 时抛 OSError 让状态翻成 `"unavailable"`；快照继续发。 | 首次启动、helper 还没构建 / 授权时的情形。 |
+| `test_malformed_line_skipped_subsequent_parsed` | 垃圾行被跳过；下一条合法行能正常解析。 | helper 行损坏（编码异常、半截写入）不能卡死解析器。 |
+| `test_line_without_id_field_skipped` | 缺 `id` 的 JSON 对象被跳过，不会抛异常。 | 防御 helper schema 漂移。 |
+
+---
+
 ## 6. TUI 冒烟
 
 通过 Textual 的 `run_test` pilot 做端到端。fake backend 保证测试在
@@ -175,10 +232,12 @@
 **覆盖目标：**
 
 - [x] App 能干净地 compose / unmount
-- [x] 每个绑定（`q` / `p` / `r` / `s` / `c` / `h`）都不会抛异常
+- [x] 每个绑定（`q` / `p` / `r` / `s` / `c` / `h` / `n`）都不会抛异常
 - [x] Help 模态能通过 Esc 与再次按 `h` 关闭
 - [x] Help 模态确实进入了 screen stack
 - [x] `scan_interval` 构造参数能贯穿到 poller
+- [x] `n` 在 Wi-Fi 扫描与 BLE 视图之间切换第三块面板；两个 widget
+      始终 mount，只翻 `display`
 
 ### 测试用例 — `tests/test_tui_smoke.py`
 
@@ -192,6 +251,7 @@
 | `test_help_modal_h_to_close` | 按 `h` 打开，再按 `h` 关闭。 | 模态内的便利绑定。 |
 | `test_help_modal_renders_through_pilot_query` | 打开模态后通过 `app.screen_stack` 断言恰好一个 HelpScreen 在栈上；关闭后断言为 0。 | 防止「绑定回调跑了但 widget 没真正 mount」的回归。 |
 | `test_custom_scan_interval_threads_through` | 构造 `WifiScopeApp(..., scan_interval=4.5)` 后检查 `app._poller._scan_interval`。 | `WIFISCOPE_SCAN_INTERVAL` 环境变量最终落到这里；如果 kwarg 路径静默丢值，没人会发现。 |
+| `test_toggle_view_swaps_third_panel` | 按 `n` 从 Wi-Fi 扫描视图切到 BLE 视图，再按一次切回。同时断言两个面板的 `display` 标志与 `app._view_mode`。 | 锁定规范的「原地切换」行为 —— 任一面板都不 unmount，两侧消费者状态都能在切换中保留。 |
 
 ---
 

@@ -153,3 +153,34 @@ def test_custom_scan_interval_threads_through():
     """The scan_interval kwarg lands on the underlying poller."""
     app = WifiScopeApp(_FakeBackend(), _INVENTORY, scan_interval=4.5)
     assert app._poller._scan_interval == 4.5
+
+
+def test_toggle_view_swaps_third_panel():
+    """Press `n` to toggle from the Wi-Fi scan view to the BLE view,
+    then `n` again to return. Both panels stay mounted; only display
+    flips, so the swap is instant and consumer state is preserved."""
+    import asyncio
+    from wifiscope.tui import BLEPanel
+
+    async def go():
+        app = WifiScopeApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.5)
+            scan = app.query_one("#scan")
+            ble = app.query_one("#ble", BLEPanel)
+            assert scan.display is True
+            assert ble.display is False
+            assert app._view_mode == "wifi"
+            await pilot.press("n")
+            await pilot.pause(0.2)
+            assert app._view_mode == "ble"
+            assert scan.display is False
+            assert ble.display is True
+            await pilot.press("n")
+            await pilot.pause(0.2)
+            assert app._view_mode == "wifi"
+            assert scan.display is True
+            assert ble.display is False
+            await pilot.press("q")
+
+    asyncio.run(go())
