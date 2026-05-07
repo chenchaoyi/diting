@@ -81,6 +81,15 @@ func runScanAndDumpJSON() -> Never {
             row["channel_band_raw"] = ch.channelBand.rawValue
         }
         row["security_raw"] = sampleSecurity(net)
+        // Schema-3 (v0.7.0+) IE parsing. CoreWLAN exposes the raw
+        // beacon information-element data via informationElementData;
+        // we walk the Element ID / length tuples to surface the few
+        // bits diagnostics actually want. Each field is emitted only
+        // when the corresponding IE is present, so v2 consumers (or
+        // a partial scan with no IEs) keep the existing keyset.
+        if let ieData = net.informationElementData {
+            decodeBeaconIEs(ieData, into: &row)
+        }
         out.append(row)
     }
 
@@ -90,11 +99,12 @@ func runScanAndDumpJSON() -> Never {
 
     let payload: [String: Any] = [
         // schema 3 = v0.6.0+: BLE deep-ID fields (type / device_class)
-        // and connected-peripheral lines. The Wi-Fi scan output itself
-        // is unchanged from schema 2 — we bump the version so the
-        // Python side can tell at a glance whether the helper bundle
-        // it found is BLE-capable, even before it spawns the BLE
-        // subprocess.
+        // and connected-peripheral lines, plus v0.7.0+ Wi-Fi beacon-IE
+        // fields (bss_load_pct / bss_station_count / supports_802_11r
+        // / supports_802_11k / supports_802_11v). The schema number
+        // does not change between v0.6.0 and v0.7.0; the IE fields
+        // are additive and consumers tolerate their absence (older
+        // helpers that ship schema=3 without IE keys remain valid).
         "schema": 3,
         "interface": ifaceMeta,
         "timestamp": timestamp,
@@ -107,6 +117,67 @@ func runScanAndDumpJSON() -> Never {
         exit(0)
     } catch {
         emitError("json encode failed: \(error.localizedDescription)")
+    }
+}
+
+// Decode the few beacon information elements diagnostics-grade
+// callers care about: BSS Load (utilisation / station count), 802.11k
+// (Radio Measurement Enabled Capabilities), 802.11r (Mobility Domain),
+// and 802.11v (Extended Capabilities bit 19, BSS Transition). We walk
+// the IE buffer as raw <id, length, payload> tuples; defensive against
+// truncated payloads, since CoreWLAN occasionally hands back a buffer
+// whose advertised length runs past the data end on certain APs.
+func decodeBeaconIEs(_ data: Data, into row: inout [String: Any]) {
+    var i = 0
+    let bytes = [UInt8](data)
+    while i + 2 <= bytes.count {
+        let id = bytes[i]
+        let length = Int(bytes[i + 1])
+        let start = i + 2
+        let end = start + length
+        if end > bytes.count { break }
+        let payload = Array(bytes[start..<end])
+        switch id {
+        case 11:
+            // BSS Load — five bytes in the standard form.
+            //   bytes 0-1: station_count (uint16, little-endian)
+            //   byte    2: channel_utilisation (0..255 → 0..100%)
+            //   bytes 3-4: available_admission_capacity (we ignore)
+            if payload.count >= 3 {
+                let stationCount = Int(payload[0]) | (Int(payload[1]) << 8)
+                let utilByte = Int(payload[2])
+                // Channel utilisation is reported as a value in
+                // 0..255 representing the fraction of time the AP
+                // observed the medium busy. Convert to a 0..100%
+                // integer: percent = round(byte * 100 / 255).
+                let pct = (utilByte * 100 + 127) / 255
+                row["bss_load_pct"] = pct
+                row["bss_station_count"] = stationCount
+            }
+        case 54:
+            // Mobility Domain IE — presence alone signals 802.11r.
+            row["supports_802_11r"] = true
+        case 70:
+            // RM Enabled Capabilities IE — its presence signals
+            // 802.11k support (any of the radio-measurement bits).
+            row["supports_802_11k"] = true
+        case 127:
+            // Extended Capabilities IE — bit 19 (3rd byte, bit 3
+            // counting from LSB of byte 2 in 0-indexed terms) is
+            // BSS Transition Management, the 802.11v feature most
+            // commonly meant by "supports v".
+            // Bits are indexed from LSB of byte 0.
+            //   bit 19 → byte index 2 (19 / 8), bit position 3.
+            if payload.count >= 3 {
+                let byte2 = payload[2]
+                if (byte2 & (1 << 3)) != 0 {
+                    row["supports_802_11v"] = true
+                }
+            }
+        default:
+            break
+        }
+        i = end
     }
 }
 

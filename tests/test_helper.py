@@ -354,3 +354,103 @@ def test_find_helper_returns_none_when_nothing_present(tmp_path, monkeypatch):
     # bundle exists at the override path.
     monkeypatch.setenv("WIFISCOPE_HELPER", str(tmp_path / "missing.app"))
     assert _helper.find_helper() is None
+
+
+# --- schema-3 IE fields (v0.7.0) ------------------------------------
+
+def test_scan_v3_parses_bss_load_and_station_count():
+    """Schema-3 helpers populate bss_load_pct and bss_station_count
+    when the AP advertises a BSS Load IE; the Python parser surfaces
+    them as ints on the ScanResult dataclass."""
+    payload = {
+        "schema": 3,
+        "interface": {"name": "en0"},
+        "networks": [
+            {
+                "ssid": "office",
+                "bssid": "aa:bb:cc:00:11:22",
+                "rssi_dbm": -55,
+                "channel": 36,
+                "bss_load_pct": 78,
+                "bss_station_count": 12,
+            }
+        ],
+    }
+    raw = json.dumps(payload)
+    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+        results, _ = _helper.scan("/fake/binary")
+    assert results[0].bss_load_pct == 78
+    assert results[0].bss_station_count == 12
+
+
+def test_scan_v3_parses_802_11r_capability_flag():
+    """Mobility Domain IE → supports_802_11r=True. Other capability
+    flags stay None when their IE was absent (defensive: the helper
+    only emits keys it positively detected)."""
+    payload = {
+        "schema": 3,
+        "interface": {"name": "en0"},
+        "networks": [
+            {
+                "ssid": "office",
+                "bssid": "aa:bb:cc:00:11:22",
+                "rssi_dbm": -55,
+                "supports_802_11r": True,
+            }
+        ],
+    }
+    raw = json.dumps(payload)
+    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+        results, _ = _helper.scan("/fake/binary")
+    assert results[0].supports_802_11r is True
+    assert results[0].supports_802_11k is None
+    assert results[0].supports_802_11v is None
+
+
+def test_scan_v2_keeps_ie_fields_none():
+    """A v2 helper output (no IE keys at all) still parses cleanly;
+    every IE-derived field arrives as None so the new dataclass slots
+    are forward-compatible."""
+    raw = json.dumps(SCHEMA_V2)
+    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+        results, _ = _helper.scan("/fake/binary")
+    r = results[0]
+    assert r.bss_load_pct is None
+    assert r.bss_station_count is None
+    assert r.supports_802_11r is None
+    assert r.supports_802_11k is None
+    assert r.supports_802_11v is None
+
+
+def test_scan_v3_rejects_malformed_ie_values():
+    """Defensive: a helper that emits the wrong type for an IE field
+    (string instead of int, 0/1 instead of bool) must not corrupt the
+    dataclass — the Python side coerces unsafe values to None and
+    keeps the row otherwise valid."""
+    payload = {
+        "schema": 3,
+        "interface": {"name": "en0"},
+        "networks": [
+            {
+                "ssid": "office",
+                "bssid": "aa:bb:cc:00:11:22",
+                "rssi_dbm": -55,
+                "bss_load_pct": "high",   # nonsense
+                "bss_station_count": 1.5,   # nonsense
+                "supports_802_11r": 1,    # 1 is not a bool — coerce to None
+                "supports_802_11k": True,
+            }
+        ],
+    }
+    raw = json.dumps(payload)
+    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+        results, _ = _helper.scan("/fake/binary")
+    r = results[0]
+    assert r.bss_load_pct is None
+    assert r.bss_station_count is None
+    assert r.supports_802_11r is None
+    assert r.supports_802_11k is True
+    # Sanity: row itself is still populated; just the unsafe fields
+    # were dropped.
+    assert r.bssid == "aa:bb:cc:00:11:22"
+    assert r.rssi_dbm == -55
