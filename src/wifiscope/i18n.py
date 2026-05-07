@@ -163,7 +163,9 @@ _ZH: dict[str, str] = {
     "Rescan": "重扫",
     "Sort": "排序",
     "Re-roam": "断开重连",
-    "View": "视图",
+    "View": "视图",  # legacy; kept for command-palette / Ctrl+P
+    "Toggle Wi-Fi / BLE view": "切换 Wi-Fi / BLE 视图",
+    "→ {view}": "→ {view}",
     "Help": "帮助",
     "Basics": "基础知识",
     "Close": "关闭",

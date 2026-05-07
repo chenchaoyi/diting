@@ -1382,20 +1382,86 @@ def _ble_age_text(d: BLEDevice, now: datetime) -> str:
 
 # ---------- app ----------
 
+class GroupedFooter(Static):
+    """Custom footer that splits the main app's eight bindings into three
+    semantic groups separated by ``│`` dividers. Replaces Textual's
+    default flat ``Footer`` at the App level so the user can find the
+    right key faster — "is this an app control, a scan action, or an
+    info modal?" — without scanning a long undifferentiated row.
+
+    Group layout, left to right:
+
+    1. **App control**: ``q`` quit · ``p`` pause
+    2. **Scan / view**: ``r`` rescan · ``s`` sort · ``n`` view-toggle ·
+       ``c`` re-roam
+    3. **Info**: ``h`` help · ``b`` basics
+
+    The ``n`` binding's description is **dynamic** — it shows the OTHER
+    view as the literal target ("→ BLE" while in Wi-Fi view, "→ Wi-Fi"
+    while in BLE view). This is more discoverable than a static word
+    like "View" / "视图" which gives the user no idea what pressing it
+    will switch to.
+
+    Modal screens (Help, Basics) keep their own inline close hint and
+    are not affected by this widget.
+    """
+
+    DEFAULT_CSS = """
+    GroupedFooter {
+        dock: bottom;
+        height: 1;
+        background: $primary;
+        color: $text;
+        padding: 0 1;
+    }
+    """
+
+    def on_mount(self) -> None:
+        self.refresh_layout()
+
+    def refresh_layout(self) -> None:
+        view_mode = getattr(self.app, "_view_mode", "wifi")
+        next_view = "BLE" if view_mode == "wifi" else "Wi-Fi"
+
+        groups: list[list[tuple[str, str]]] = [
+            [("q", t("Quit")), ("p", t("Pause"))],
+            [
+                ("r", t("Rescan")),
+                ("s", t("Sort")),
+                ("n", t("→ {view}", view=next_view)),
+                ("c", t("Re-roam")),
+            ],
+            [("h", t("Help")), ("b", t("Basics"))],
+        ]
+
+        out = Text()
+        for group_idx, group in enumerate(groups):
+            if group_idx > 0:
+                out.append("  │  ", style="dim")
+            for binding_idx, (key, desc) in enumerate(group):
+                if binding_idx > 0:
+                    out.append("  ")
+                out.append(f" {key} ", style="reverse bold")
+                out.append(f" {desc}")
+        self.update(out)
+
+
 class WifiScopeApp(App):
     CSS = """
     Screen { layout: vertical; }
     """
-    # Footer labels go through ``t()`` at class-define time, which
-    # means the language must be set before WifiScopeApp is imported.
-    # cli.main() calls i18n.set_lang() before lazy-importing tui, so by
-    # the time this BINDINGS list is built the catalog is final.
+    # Binding descriptions go through ``t()`` at class-define time so
+    # the command palette (Ctrl+P) and any other Textual-driven UI sees
+    # localised strings. The visible footer is rendered separately by
+    # GroupedFooter, which overrides the layout entirely. cli.main()
+    # calls i18n.set_lang() before lazy-importing tui, so by the time
+    # this BINDINGS list is built the catalog is final.
     BINDINGS = [
         Binding("q", "quit", t("Quit")),
         Binding("p", "toggle_pause", t("Pause")),
         Binding("r", "rescan", t("Rescan")),
         Binding("s", "cycle_sort", t("Sort")),
-        Binding("n", "toggle_view", t("View")),
+        Binding("n", "toggle_view", t("Toggle Wi-Fi / BLE view")),
         Binding("c", "reroam", t("Re-roam")),
         Binding("h", "show_help", t("Help")),
         Binding("b", "show_basics", t("Basics")),
@@ -1461,7 +1527,7 @@ class WifiScopeApp(App):
         yield ScanPanel(id="scan")
         yield BLEPanel(id="ble")
         yield RoamLogPanel(id="roam")
-        yield Footer()
+        yield GroupedFooter(id="footer")
 
     async def on_mount(self) -> None:
         # The BLE panel sits in the same vertical slot as the Wi-Fi
@@ -1576,6 +1642,11 @@ class WifiScopeApp(App):
             scan.display = True
             self._refresh_scan_panel()
         self.sub_title = self._build_subtitle()
+        # Refresh the footer so n's "→ BLE" / "→ Wi-Fi" label flips to
+        # match the new view. Done after sub_title so any work that
+        # the toggle triggers is visible before the user's eye drops
+        # to confirm where they are.
+        self.query_one("#footer", GroupedFooter).refresh_layout()
 
     def action_show_help(self) -> None:
         self.push_screen(HelpScreen())
