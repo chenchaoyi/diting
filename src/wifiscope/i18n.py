@@ -291,6 +291,31 @@ _ZH: dict[str, str] = {
     "HID Mouse": "鼠标",
     "Heart Rate": "心率",
     "Find My": "查找网络",
+    # Common 16-bit GATT services pulled from the SIG list. Anything
+    # the user has any chance of recognising gets a Chinese gloss;
+    # niche profiles (Glucose, Cycling Speed and Cadence, etc.) pass
+    # through with their English SIG name as a service-column hint.
+    "Battery": "电池",
+    "Device Information": "设备信息",
+    "Generic Access": "通用接入",
+    "Generic Attribute": "通用属性",
+    "Human Interface Device": "HID",
+    "Environmental Sensing": "环境感知",
+    "Health Thermometer": "体温计",
+    "Blood Pressure": "血压",
+    "Glucose": "血糖",
+    "Cycling Speed and Cadence": "踏频/速度",
+    "Running Speed and Cadence": "跑步速度",
+    "Weight Scale": "体重计",
+    "Pulse Oximeter": "血氧",
+    "Body Composition": "体脂",
+    "Continuous Glucose Monitoring": "动态血糖",
+    "Current Time": "时间同步",
+    "User Data": "用户数据",
+    "Battery Service": "电池服务",
+    "Immediate Alert": "即时告警",
+    "Link Loss": "链路丢失",
+    "Tx Power": "发射功率",
 
     # ---- BLE deep-identification (v0.6.0) ----
     # Section headers in the two-section BLE panel layout. Brand-name
@@ -303,6 +328,19 @@ _ZH: dict[str, str] = {
     "Connected  ": "已连接  ",
     "{n} peripherals": "{n} 个外设",
     "Find My target": "Find My 目标",
+    # Apple Continuity protocol type-byte labels. iBeacon / AirTag stay
+    # as proper nouns; the others get a brief Chinese gloss describing
+    # the broadcast intent so a user can tell at a glance whether the
+    # nearby Apple device is offering AirDrop, ringing AirPods, etc.
+    "AirDrop": "AirDrop",
+    "AirPods": "AirPods",
+    "AirPlay target": "AirPlay 接收",
+    "AirPlay source": "AirPlay 源",
+    "Watch pairing": "Watch 配对",
+    "Handoff": "接力 Handoff",
+    "Tethering target": "热点共享端",
+    "Tethering source": "热点客户端",
+    "Nearby Action": "附近动作",
 
     # ---- CLI --help ----
     "usage: wifiscope [--lang en|zh] [SUBCOMMAND]\n"

@@ -261,7 +261,9 @@ enum BLEAdParser {
                         deviceClass: nil,
                     )
                 default:
-                    break
+                    if let label = appleContinuityType(typeByte) {
+                        return BLEDetection(type: label, deviceClass: nil)
+                    }
                 }
             }
             if cid == companyMicrosoftID, bytes.count >= 3 {
@@ -327,6 +329,27 @@ enum BLEAdParser {
         case 0x6: return "Apple TV"
         case 0x7: return "HomePod"
         case 0x9: return "Apple Watch"
+        default: return nil
+        }
+    }
+
+    /// Apple Continuity protocol type-byte → human label. Mirrors the
+    /// Python-side ``_APPLE_CONTINUITY_TYPE`` map (ble.py) byte-for-byte;
+    /// updates must land in both. Reverse-engineered from the public
+    /// ``furiousMAC/continuity`` reference. Type bytes 0x02 / 0x10 / 0x12
+    /// are handled inline above because they emit deviceClass payloads
+    /// or have length-dependent sub-labels.
+    private static func appleContinuityType(_ typeByte: UInt8) -> String? {
+        switch typeByte {
+        case 0x05: return "AirDrop"
+        case 0x07: return "AirPods"
+        case 0x09: return "AirPlay target"
+        case 0x0A: return "AirPlay source"
+        case 0x0B: return "Watch pairing"
+        case 0x0C: return "Handoff"
+        case 0x0D: return "Tethering target"
+        case 0x0E: return "Tethering source"
+        case 0x0F: return "Nearby Action"
         default: return nil
         }
     }
