@@ -245,7 +245,15 @@ _ZH: dict[str, str] = {
     # ---- BLE panel ----
     "(no BLE devices yet — scanning...)": "(暂无 BLE 设备，扫描中…)",
     "(BLE permission required)": "(需要蓝牙权限)",
-    "(BLE merged {n})": "(合并 {n})",
+    "(BLE helper unavailable — run `make helper` then re-open it)":
+        "(辅助进程不可用 —— 跑 `make helper` 后重新 open 它)",
+    "(installed helper is too old; rebuild with `make helper`)":
+        "(已安装的辅助进程太旧；用 `make helper` 重新构建)",
+    "(BLE error — Bluetooth may be off in Control Center)":
+        "(BLE 出错 —— 系统蓝牙可能在控制中心被关掉了)",
+    "(BLE state unknown — waiting for helper)":
+        "(BLE 状态未知 —— 等待辅助进程)",
+    "(merged {n})": "(合并 {n})",
     "  · {n}s ago": "  · {n}s 前",
     "{n}s": "{n}s",
     "now": "刚刚",
@@ -331,6 +339,25 @@ _ZH: dict[str, str] = {
         " 授权后重新运行 wifiscope 即可看到未隐藏的扫描数据。)",
     "Skipped; starting TUI with redacted scan.":
         "已跳过，TUI 将以隐藏的扫描数据启动。",
+
+    # ---- Stale-helper detection (0.4.0 → 0.5.0 upgrade path) ----
+    "note: installed helper at {bundle} predates 0.5.0 (no\n"
+    "      ble-scan subcommand). The BLE view would wedge\n"
+    "      forever. Rebuilding the in-repo helper to use\n"
+    "      instead — replace the installed copy at your\n"
+    "      convenience.":
+        "提示：{bundle} 处的辅助进程比 0.5.0 旧（没有 ble-scan\n"
+        "      子命令）。BLE 视图会卡死。临时构建仓库内的辅助\n"
+        "      进程顶上 —— 等你方便的时候替换掉那个旧的。",
+    "Using freshly-built helper at {path}.":
+        "改用新构建的辅助进程：{path}。",
+    "warning: could not build a 0.5.0-capable helper. The\n"
+    "         BLE view will show an 'incompatible helper'\n"
+    "         placeholder; remove the old bundle from\n"
+    "         /Applications and run `make helper` to fix.":
+        "警告：未能构建 0.5.0 兼容的辅助进程。BLE 视图会显示\n"
+        "      「辅助进程不兼容」占位；删掉 /Applications 下\n"
+        "      的旧 bundle 后跑 `make helper` 修复。",
 
     # ---- Diagnostics: visible networks line ----
     "Visible BSSIDs  ": "可见 BSSID  ",

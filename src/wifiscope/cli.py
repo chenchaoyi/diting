@@ -277,15 +277,14 @@ def _run_tui() -> None:
     # pull in textual / rich on every invocation.
     from .tui import WifiScopeApp
 
-    _ensure_helper_ready()
+    # _ensure_helper_ready resolves the binary path AND, when it
+    # detects an installed helper that lacks `ble-scan`, falls back
+    # to a freshly-built in-repo bundle. We use whatever path it
+    # ends up with so the BLE poller does not re-pick the stale
+    # /Applications bundle that find_helper() would otherwise prefer.
+    ble_binary = _ensure_helper_ready()
     backend = MacOSWiFiBackend()
     inv = load_inventory()
-    # Resolve the helper bundle's binary so the BLE poller can spawn
-    # `wifiscope-helper ble-scan` directly. find_helper() returns the
-    # same path the Wi-Fi scan path uses, so a single TCC grant covers
-    # both.
-    from . import _helper
-    ble_binary = _helper.find_helper()
     WifiScopeApp(
         backend, inv,
         scan_interval=_scan_interval(),
@@ -312,20 +311,26 @@ def _scan_interval() -> float:
         return 7.0
 
 
-def _ensure_helper_ready() -> None:
-    """Ensure the Swift helper exists and has Location Services permission
-    before the TUI launches.
+def _ensure_helper_ready() -> str | None:
+    """Ensure the Swift helper exists, supports the BLE subcommand, and
+    has Location Services permission before the TUI launches.
 
     Steps, each silent unless something needs the user's attention:
+
     1. Locate the helper. Build it from `helper/build.sh` if not found
        and the Swift toolchain is available (works for the editable /
        cloned install, where the source ships next to the package).
-    2. Probe permission with a one-shot helper scan.
-    3. If permission is missing, `open` the .app so macOS shows its
-       Location Services prompt, then poll every 2 s until permission
-       lands. The helper's window auto-closes on grant. Ctrl+C skips
-       the wait and the TUI launches with redacted scan rows — useful
-       when the user wants to inspect cached state without granting.
+    2. Detect a stale 0.4.0-era bundle (no `ble-scan` subcommand) and
+       prefer a freshly-built in-repo helper instead, so the BLE
+       poller does not silently die against an old binary that only
+       answers ``scan``.
+    3. Probe Location Services with a one-shot ``scan`` call. If
+       missing, ``open`` the .app so macOS shows the prompt, then
+       poll every 2 s until permission lands.
+
+    Returns the binary path that the caller should use for both Wi-Fi
+    and BLE pollers, or ``None`` when no helper could be resolved
+    (the TUI then runs with redacted scan rows / disabled BLE view).
     """
     import json as _json  # avoid import-cycle hint at module top
     from . import _helper
@@ -341,10 +346,40 @@ def _ensure_helper_ready() -> None:
             "      manually. See README's helper section."
         ))
         print()
-        return
+        return None
+
+    # If the user installed wifiscope-helper.app at /Applications/ on
+    # 0.4.0 (the README's recommended location), find_helper() will
+    # surface that bundle even after the user has rebuilt the in-repo
+    # one for 0.5.0. The 0.4.0 bundle answers `scan` correctly but has
+    # no `ble-scan` subcommand, so spawning it for the BLE poller dies
+    # with rc=64 and the panel wedges. Detect the staleness up front
+    # and prefer a freshly-built repo bundle when available.
+    if not _helper.has_ble_scan_subcommand(binary):
+        bundle = _helper.bundle_path(binary)
+        print(t(
+            "note: installed helper at {bundle} predates 0.5.0 (no\n"
+            "      ble-scan subcommand). The BLE view would wedge\n"
+            "      forever. Rebuilding the in-repo helper to use\n"
+            "      instead — replace the installed copy at your\n"
+            "      convenience.",
+            bundle=bundle or binary,
+        ))
+        rebuilt = _helper.try_build()
+        if rebuilt is not None and _helper.has_ble_scan_subcommand(rebuilt):
+            binary = rebuilt
+            print(t("Using freshly-built helper at {path}.", path=binary))
+        else:
+            print(t(
+                "warning: could not build a 0.5.0-capable helper. The\n"
+                "         BLE view will show an 'incompatible helper'\n"
+                "         placeholder; remove the old bundle from\n"
+                "         /Applications and run `make helper` to fix."
+            ))
+        print()
 
     if _helper.has_permission(binary):
-        return
+        return binary
 
     bundle = _helper.bundle_path(binary)
     if bundle is None:
@@ -354,7 +389,7 @@ def _ensure_helper_ready() -> None:
             "      Location Services prompt. Scan list will be redacted."
         ))
         print()
-        return
+        return binary
 
     print(t("Launching helper {bundle}", bundle=bundle))
     print(t("to grant Location Services. Click Allow when macOS asks."))
@@ -381,7 +416,7 @@ def _ensure_helper_ready() -> None:
                 # Brief pause lets the helper window show its
                 # confirmation message before auto-quitting.
                 time.sleep(0.5)
-                return
+                return binary
             sys.stdout.write(".")
             sys.stdout.flush()
         print()
@@ -393,6 +428,7 @@ def _ensure_helper_ready() -> None:
     except KeyboardInterrupt:
         print()
         print(t("Skipped; starting TUI with redacted scan."))
+    return binary
 
 
 def main() -> None:

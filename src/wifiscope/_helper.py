@@ -159,6 +159,29 @@ def has_permission(binary: str) -> bool:
     return any(net.get("bssid") for net in (data.get("networks") or []))
 
 
+def has_ble_scan_subcommand(binary: str) -> bool:
+    """Probe whether ``binary`` understands ``ble-scan``.
+
+    A 0.4.0-era helper bundle that the user installed via the README's
+    recommended ``mv wifiscope-helper.app /Applications/`` step will
+    still be found by :func:`find_helper` after upgrading to 0.5.0 and
+    happily answers the ``scan`` subcommand — but it has no
+    ``ble-scan``, so spawning it for the BLE poller produces a silent
+    rc=64 and the BLE panel wedges on "scanning…" forever. We probe by
+    running ``--help`` (cheap, no permissions needed) and looking for
+    the subcommand in the output. The 0.5.0+ helper lists ``ble-scan``
+    in its --help text; older builds do not.
+    """
+    try:
+        proc = subprocess.run(
+            [binary, "--help"], capture_output=True, timeout=5, check=False
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    blob = (proc.stdout or b"") + (proc.stderr or b"")
+    return b"ble-scan" in blob
+
+
 def bundle_path(binary: str) -> str | None:
     """Resolve the .app directory enclosing a helper binary, or None."""
     p = Path(binary).resolve()

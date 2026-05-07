@@ -203,6 +203,70 @@ def test_has_permission_false_on_subprocess_error():
         assert _helper.has_permission("/fake/binary") is False
 
 
+# --- has_ble_scan_subcommand ----------------------------------------
+
+# A representative --help string from the 0.5.0 helper. Anything
+# containing "ble-scan" should pass the probe; anything that does not
+# (notably the 0.4.0 release's two-line --help) must fail it so the
+# stale-bundle detection in _ensure_helper_ready can fall back to a
+# rebuild.
+_HELP_05 = b"""\
+wifiscope-helper
+
+  (no args)   Launch the bundle UI ...
+  scan        Perform a CoreWLAN scan ...
+  ble-scan    Scan nearby BLE advertisements ...
+"""
+
+_HELP_04 = b"""\
+wifiscope-helper
+
+  (no args)   Launch the bundle UI ...
+  scan        Perform a CoreWLAN scan ...
+"""
+
+
+def test_has_ble_scan_subcommand_true_when_help_lists_it():
+    """0.5.0+ helper bundle: --help mentions ble-scan, probe returns True."""
+    with patch("wifiscope._helper.subprocess.run",
+               return_value=_mock_run(_HELP_05)):
+        assert _helper.has_ble_scan_subcommand("/fake/binary") is True
+
+
+def test_has_ble_scan_subcommand_false_for_pre_0_5_helper():
+    """A 0.4.0-era bundle in /Applications/ would still answer scan but
+    has no ble-scan; the probe must spot that and return False so the
+    upgrade path can rebuild a 0.5.0-capable bundle in-repo."""
+    with patch("wifiscope._helper.subprocess.run",
+               return_value=_mock_run(_HELP_04)):
+        assert _helper.has_ble_scan_subcommand("/fake/binary") is False
+
+
+def test_has_ble_scan_subcommand_false_on_timeout():
+    """Hung --help (binary corrupt, signing problem, etc.) is treated
+    as 'cannot determine' which we conservatively flag as not capable
+    so the user sees an explicit incompatible-helper hint instead of a
+    silent BLE wedge."""
+    import subprocess
+    with patch("wifiscope._helper.subprocess.run",
+               side_effect=subprocess.TimeoutExpired(cmd="x", timeout=5)):
+        assert _helper.has_ble_scan_subcommand("/fake/binary") is False
+
+
+def test_has_ble_scan_subcommand_reads_stderr_too():
+    """Some Swift command-line tools route --help to stderr instead of
+    stdout. The probe concatenates both streams so the detection is
+    independent of where the message lands."""
+    class _Proc:
+        pass
+    p = _Proc()
+    p.stdout = b""
+    p.stderr = _HELP_05
+    p.returncode = 0
+    with patch("wifiscope._helper.subprocess.run", return_value=p):
+        assert _helper.has_ble_scan_subcommand("/fake/binary") is True
+
+
 # --- bundle_path -----------------------------------------------------
 
 def test_bundle_path_extracts_app_dir(tmp_path):

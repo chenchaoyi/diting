@@ -540,23 +540,54 @@ class BLEPanel(VerticalScroll):
         devices: list[BLEDevice],
         permission_state: str,
     ) -> None:
-        title = t("Nearby BLE devices") + f" ({len(devices)})"
-        self.border_title = title
+        # Only show a "(N)" device-count suffix when scanning is actually
+        # working. In every other state the count would be 0 and the
+        # body explains why — putting (0) in the title alongside a
+        # "permission required" / "Bluetooth off" message reads as a
+        # contradiction (did the scan run and find nothing? did it
+        # never start?). The Swift helper distinguishes 'denied' /
+        # 'unavailable' / 'error' / 'unknown' on purpose; surface each
+        # with its own actionable placeholder rather than collapsing
+        # everything except 'denied' into "scanning...".
+        base_title = t("Nearby BLE devices")
         body = self.query_one("#ble-body", Static)
+
+        if permission_state == "granted":
+            self.border_title = base_title + f" ({len(devices)})"
+            if not devices:
+                body.update(Text(t("(no BLE devices yet — scanning...)"),
+                                 style="dim italic"))
+                return
+            lines: list[Text] = [_ble_header_line()]
+            now = datetime.now(devices[0].last_seen.tzinfo)
+            for d in devices:
+                lines.append(_ble_row_line(d, now))
+            body.update(Group(*lines))
+            return
+
+        # Non-granted: drop the count, show a state-specific message.
+        self.border_title = base_title
         if permission_state == "denied":
             body.update(Text(t("(BLE permission required)"),
                              style="dim italic"))
-            return
-        if not devices:
-            body.update(Text(t("(no BLE devices yet — scanning...)"),
+        elif permission_state == "unavailable":
+            body.update(Text(
+                t("(BLE helper unavailable — run `make helper` then re-open it)"),
+                style="dim italic",
+            ))
+        elif permission_state == "incompatible":
+            body.update(Text(
+                t("(installed helper is too old; rebuild with `make helper`)"),
+                style="dim italic",
+            ))
+        elif permission_state == "error":
+            body.update(Text(
+                t("(BLE error — Bluetooth may be off in Control Center)"),
+                style="dim italic",
+            ))
+        else:  # 'unknown' or any future state
+            body.update(Text(t("(BLE state unknown — waiting for helper)"),
                              style="dim italic"))
-            return
-
-        lines: list[Text] = [_ble_header_line()]
-        now = datetime.now(devices[0].last_seen.tzinfo)
-        for d in devices:
-            lines.append(_ble_row_line(d, now))
-        body.update(Group(*lines))
 
 
 class RoamLogPanel(RichLog):
@@ -1348,11 +1379,15 @@ def _ble_row_line(d: BLEDevice, now: datetime) -> Text:
                 style="cyan" if d.vendor else "dim")
     line.append(fit_cells(name_text, _COL_BLE_NAME) + "  ", style=name_style)
     line.append(fit_cells(services_text, _COL_BLE_SERVICES) + "  ", style="dim")
-    line.append(f"{age_text:<{_COL_BLE_AGO}}  ", style="dim")
+    # Use fit_cells (not raw f-string ljust) because t("now") resolves
+    # to "刚刚" in zh — 2 code points but 4 terminal cells. str.ljust
+    # would pad to 6 spaces (= 8 code points / 10 cells), shoving the
+    # id column 2 cells right of where the header expects.
+    line.append(fit_cells(age_text, _COL_BLE_AGO) + "  ", style="dim")
     line.append(f"{id_short:<{_COL_BLE_ID}}", style="dim")
     if d.merged_count > 1:
         line.append("  ")
-        line.append(t("(BLE merged {n})", n=d.merged_count), style="cyan")
+        line.append(t("(merged {n})", n=d.merged_count), style="cyan")
     return line
 
 

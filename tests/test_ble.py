@@ -91,6 +91,35 @@ def test_parse_subsequent_advertisement_carries_history():
     assert d.last_seen == t1
 
 
+def test_vendor_id_carries_forward_when_scan_response_omits_manufacturer_data():
+    """Scan-response packets and probe-response packets routinely arrive
+    without the manufacturer-data IE that the preceding primary
+    advertisement carried. Without a carry-forward the vendor_id flips
+    to None, the vendor column flickers Apple↔(unknown), and — worse —
+    merge_for_display's (vendor_id, name) bucketing fragments rotated-
+    UUID instances of the same physical device into separate rows. The
+    fix mirrors the existing name / services carry-forward in
+    _build_device.
+    """
+    primary_ad = SAMPLE_AIRPODS
+    scan_response_no_mfg = json.dumps({
+        "ts": "2026-05-06T12:34:57.123Z",
+        "id": "550E8400-E29B-41D4-A716-446655440000",
+        "name": "AirPods Pro",
+        "rssi_dbm": -54,
+        "is_connectable": True,
+        "service_uuids": ["180A", "FE9F"],
+        # No manufacturer_id, no manufacturer_hex — the field set a
+        # CoreBluetooth scan-response routinely produces.
+    })
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(devices, primary_ad, vendors=VENDORS)
+    update_from_line(devices, scan_response_no_mfg, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    assert d.vendor_id == 76
+    assert d.vendor == "Apple, Inc."
+
+
 # ------------------------------------------------------------------
 # 2. Vendor lookup
 # ------------------------------------------------------------------
@@ -255,6 +284,39 @@ def test_permission_denied_via_subprocess_exit_code():
         lines=[],
         return_code=3,
         assert_state="denied",
+    ))
+
+
+def test_incompatible_helper_via_subprocess_exit_code_64():
+    """A 0.4.0-era helper bundle answers 'unknown subcommand ble-scan'
+    and exits 64. The poller surfaces this as 'incompatible' so the
+    panel can render a 'rebuild' hint instead of stranding the user
+    on a silent 'scanning…' placeholder forever."""
+    asyncio.run(_run_poller_with_stream(
+        lines=[],
+        return_code=64,
+        assert_state="incompatible",
+    ))
+
+
+def test_bluetooth_off_via_subprocess_exit_code_4():
+    """Bluetooth toggled off in Control Center makes the helper exit
+    4 ('bluetooth powered off'). The poller surfaces 'error' so the
+    panel can hint at the actual cause."""
+    asyncio.run(_run_poller_with_stream(
+        lines=[],
+        return_code=4,
+        assert_state="error",
+    ))
+
+
+def test_unsupported_hardware_via_subprocess_exit_code_5():
+    """Hardware without BLE — exit 5 maps to 'error' for the same
+    reason: better an explicit message than a silent 'scanning'."""
+    asyncio.run(_run_poller_with_stream(
+        lines=[],
+        return_code=5,
+        assert_state="error",
     ))
 
 

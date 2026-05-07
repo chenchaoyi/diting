@@ -220,6 +220,16 @@ def _build_device(
         vendor_id = int(vendor_id_raw)
     else:
         vendor_id = None
+    # macOS / CoreBluetooth interleaves primary advertisements (which
+    # carry manufacturer-specific data) with scan-response packets that
+    # commonly omit it. Without this carry-forward the vendor_id flickers
+    # between e.g. 76 (Apple) and None across consecutive callbacks for
+    # the same device, which makes the vendor column flap and — more
+    # importantly — fragments merge_for_display's (vendor_id, name)
+    # bucketing across UUID rotations, breaking the (merged N) feature
+    # in the exact case it is meant to address.
+    if vendor_id is None and prior is not None:
+        vendor_id = prior.vendor_id
     vendor = lookup_vendor(vendor_id, vendors)
 
     if now is None:
@@ -412,7 +422,6 @@ class BLEPoller:
         self._devices: dict[str, BLEDevice] = {}
         self._queue: asyncio.Queue[BLEScanUpdate] = asyncio.Queue()
         self._proc: Any = None
-        self._proc_ended = False
         self._permission_state: str = "unknown"
         self._tasks: list[asyncio.Task[Any]] = []
         self._stopped = False
@@ -454,12 +463,10 @@ class BLEPoller:
                 )
         except (OSError, FileNotFoundError):
             self._permission_state = "unavailable"
-            self._proc_ended = True
             return
 
         stdout = getattr(self._proc, "stdout", None)
         if stdout is None:
-            self._proc_ended = True
             return
 
         try:
@@ -495,9 +502,30 @@ class BLEPoller:
             raise
         except Exception:
             rc = None
+        # The Swift helper exits with documented codes that each carry
+        # different meaning, so map every non-success rc to the most
+        # specific permission_state the panel can render. Without this
+        # the user sees "scanning…" indefinitely whenever the helper
+        # actually died — silently masking Bluetooth-off, unsupported
+        # hardware, and stale-installed-bundle scenarios.
         if rc == 3:
             self._permission_state = "denied"
-        self._proc_ended = True
+        elif rc == 64:
+            # 0.4.0-era helper bundles still in /Applications/ from
+            # before this release reach the Swift `default:` case for
+            # the unknown `ble-scan` subcommand and exit 64. Surface a
+            # distinct "incompatible" state so the panel can suggest a
+            # rebuild.
+            self._permission_state = "incompatible"
+        elif rc in (4, 5):
+            # 4 = Bluetooth powered off, 5 = unsupported hardware.
+            self._permission_state = "error"
+        elif rc not in (None, 0):
+            # Any other non-zero exit: assume something went wrong and
+            # tell the user, rather than letting "granted" or "unknown"
+            # linger while the panel is in fact stale.
+            if self._permission_state in ("granted", "unknown"):
+                self._permission_state = "error"
 
     async def _snapshot_loop(self) -> None:
         # Always emit at least one snapshot promptly so consumers see

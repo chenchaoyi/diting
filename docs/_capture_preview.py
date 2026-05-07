@@ -200,7 +200,15 @@ def _preview_view() -> str:
 
 async def main() -> None:
     view = _preview_view()
-    app = WifiScopeApp(_FakeBackend(), _INVENTORY)
+    # ble_helper_path="" disables the live BLE poller; the preview
+    # path injects synthetic BLEDevice state directly into _latest_ble
+    # / _ble_permission_state, and a real poller racing in the
+    # background would clobber those exact fields with empty snapshots
+    # at the 1 s cadence — sometimes winning the race against the
+    # screenshot capture and producing a blank BLE panel. (The fake
+    # backend's _helper_path attribute would otherwise be picked up
+    # by WifiScopeApp.__init__'s fallback.)
+    app = WifiScopeApp(_FakeBackend(), _INVENTORY, ble_helper_path="")
     async with app.run_test(size=(160, 56)) as pilot:
         # let one connection update + one scan land
         await pilot.pause(2.0)
