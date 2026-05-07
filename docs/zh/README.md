@@ -276,11 +276,42 @@ GitHub Actions 在每次 push 与 PR 上对 `main` 跑 macOS-latest × Python
 
 ## 路线图
 
-- **CSV / JSONL 会话日志** —— `wifiscope log` 模式，把每次连接 / 扫描 /
-  漫游事件追加到文件，便于后续分析。
-- **TUI 内的趋势图** —— RSSI 随时间变化、每个 BSSID 的关联时长。
+按粗略优先级排列。分割线以下的是 nice-to-have，不在近期发版计划上。
+
+### 近期版本规划
+
+- **延迟 / 丢包 / 抖动连续探测** —— 后台 1 Hz ping 网关与公共 DNS，
+  在诊断面板里呈现。补上"RSSI 看着不错但 Zoom 还是糊"这个纯无线
+  指标回答不了的缺口；信号强是链路工作良好的必要条件，但不充分。
+- **mDNS / Bonjour LAN 设备发现** —— 新增 `m` 键切换的视图，与
+  Wi-Fi / BLE 平级，列出本地网络上每台 Sonos、Apple TV、HomePod、
+  NAS、打印机、可 AirDrop 的 Mac、HomeKit 网关、Time Capsule 等
+  在做服务广播的设备。比单纯 ARP 扫描信息丰富得多，对 Apple
+  生态密集的环境尤其有价值。
+- **Beacon Information Element 解析** —— 读出每个 BSSID 的 BSS Load
+  （当前信道利用率 %）、802.11k 邻居报告、802.11r 快速漫游能力、
+  802.11v BSS Transition 支持。这些字节其实已经在 CoreWLAN scan
+  输出里，只是 helper 还没解码。让诊断能讲出"你当前 AP 的信道
+  利用率 78%"或"3 台候选 AP 不支持快速漫游"这种结论，而不是从
+  BSSID 密度去猜。
+- **RSSI 历史 sparkline** —— 在附近 BSSID 每行右侧加一条 8 字符的
+  `▁▂▃▄▅▆▇█` 火花线，显示该 BSSID 最近 N 次扫描的 RSSI 趋势。
+  让"在跌"、"稳定"、"在涨"一眼可见，不用盯着面板看。
+- **JSONL 会话日志 + 重放模式** —— `wifiscope log session.jsonl`
+  持续追加连接 / 扫描 / 漫游 / 延迟事件；`wifiscope replay <file>`
+  把日志重新喂进 TUI，事后回放调试昨天某段时间的网络故障。
+- **TUI 内的趋势图** —— RSSI / 延迟 / 信道利用率随时间变化、每个
+  BSSID 的关联时长。基于 JSONL 日志构建。
+
+### 远期 / 待定
+
 - **Linux backend** —— 通过 `pyroute2` 调 `nl80211`，或 fork `iw scan`。
+  架构上 `WiFiBackend` 抽象层已经为它留好位置。
+- **自动漫游模式** —— 门控、保守。当同名 SSID 候选明显更优持续
+  ≥ N 秒后自动循环关再开 Wi-Fi。无人值守解决卡死弱 AP 的原始痛点。
 - **可选的菜单栏 App** —— 即便不开终端也能 ambient 感知。
+- **Continuity / 个人热点 / iCloud Private Relay 状态** ——
+  Mac 专属整合，呈现在诊断面板里。
 
 ## License
 

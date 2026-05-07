@@ -324,14 +324,51 @@ See [`CHANGELOG.md`](CHANGELOG.md) for the version-by-version log.
 
 ## Roadmap
 
-- **CSV / JSONL session logging** — a `wifiscope log` mode that
-  appends every connection / scan / roam event to a file for later
-  analysis.
-- **Trend graphs in the TUI** — RSSI over time, time-on-AP per BSSID.
+Planned, in rough priority order. Things below the divider are
+nice-to-have but not on a near-term release schedule.
+
+### Tracked for upcoming releases
+
+- **Latency / packet-loss / jitter probe** — continuous 1 Hz ping
+  to gateway and a public DNS, surfaced in Diagnostics. Closes the
+  "RSSI looks fine but Zoom is bad" gap that pure radio metrics
+  cannot answer; signal strength is necessary but not sufficient
+  for "is the link actually working".
+- **mDNS / Bonjour LAN device discovery** — new `m`-toggleable view
+  alongside Wi-Fi / BLE listing every Sonos, AppleTV, HomePod, NAS,
+  printer, AirDrop-capable Mac, HomeKit hub, Time Capsule, and
+  other service-advertising peer on the local network. Answers
+  "what is on my network and is it alive" with a much richer answer
+  than ARP alone, especially in Apple-heavy environments.
+- **Beacon Information Element parsing** — surface BSS Load
+  (current channel utilization %), 802.11k neighbour reports,
+  802.11r fast-roaming capability, and 802.11v BSS Transition
+  support per BSSID. The bytes are already in CoreWLAN scan output;
+  the helper just doesn't decode them yet. Lets diagnostics say
+  "your AP is at 78% utilization" or "3 candidate APs do not
+  support fast roaming" instead of guessing from BSSID density.
+- **RSSI history sparklines** — a small `▁▂▃▄▅▆▇█` strip in each
+  Nearby BSSID row showing the last N scans for that BSSID, so
+  trends ("dropping", "stable", "improving") are visible at a
+  glance without staring at the panel.
+- **JSONL session logging + replay** — `wifiscope log session.jsonl`
+  appends every connection / scan / roam / latency event; a
+  `wifiscope replay <file>` mode feeds them back through the TUI
+  for after-the-fact analysis of an incident.
+- **Trend graphs in the TUI** — RSSI / latency / channel utilization
+  over time, time-on-AP per BSSID. Builds on JSONL logging.
+
+### Further out
+
 - **Linux backend** — `nl80211` via `pyroute2` or shelling out to
-  `iw scan`.
+  `iw scan`. Architecturally already abstracted behind `WiFiBackend`.
+- **Auto-roam mode** — gated, conservative. When a clearly-better
+  same-SSID candidate persists for ≥ N seconds, automatically
+  cycle the radio. Solves the original sticky-AP pain hands-free.
 - **Optional menu-bar app** for ambient awareness without keeping a
   terminal open.
+- **Continuity / Personal Hotspot / iCloud Private Relay state** —
+  Mac-specific integrations exposed in Diagnostics.
 
 ## License
 
