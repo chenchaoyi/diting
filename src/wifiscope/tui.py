@@ -451,6 +451,7 @@ def _help_content() -> tuple[Text, Text]:
     line("watch",    t("stream events as plain text until Ctrl+C"))
     line("monitor",  t("headless JSONL events for long-runs / Home Assistant"))
     line("calibrate", t("record an empty-room σ baseline (default 300 s)"))
+    line("analyze",  t("read a JSONL log and print rule-based insights"))
 
     section(t("Event log (--log) — TUI + monitor share the schema"))
     body.append(

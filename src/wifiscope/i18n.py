@@ -620,6 +620,8 @@ _ZH: dict[str, str] = {
         "无界面 JSONL 事件流，适合长时运行 / Home Assistant",
     "record an empty-room σ baseline (default 300 s)":
         "采集空房间的 σ 基线（默认 300 秒）",
+    "read a JSONL log and print rule-based insights":
+        "读取 JSONL 日志，输出基于规则的洞察",
     "monitor (headless event stream)": "monitor（无界面事件流）",
     "Event log (--log) — TUI + monitor share the schema":
         "事件日志（--log） —— TUI 和 monitor 共用同一份 schema",
@@ -1037,4 +1039,158 @@ _ZH: dict[str, str] = {
     "Calibration cancelled.": "已取消采集。",
     "No samples captured — leave the radio on a single network and retry.":
         "未采集到样本 —— 保持连在同一个网络后重试。",
+
+    # ---- analyze CLI ----
+    "wifiscope analyse {path}": "wifiscope 分析 {path}",
+    "Time range: {start} → {end}  ({mins} min)":
+        "时间范围：{start} → {end}  （{mins} 分钟）",
+    "Total events: {n}": "事件总数：{n}",
+    "Latest association: {ssid} @ {bssid}":
+        "最近一次关联：{ssid} @ {bssid}",
+    "Roam events: {n}  (band switch {b} / inter-AP {i})":
+        "漫游事件：{n}  （频段切换 {b} / 跨 AP {i}）",
+    "Disassociates: {n}": "断开次数：{n}",
+    "RF stir events: {n}": "RF 扰动事件：{n}",
+    "  σ range:     {lo} – {hi} dB  (median {p50})":
+        "  σ 范围：    {lo} – {hi} dB  （中位 {p50}）",
+    "Latency spikes: {n}  ({by})  peak {peak} ms":
+        "延迟尖峰：{n}  （{by}）  峰值 {peak} ms",
+    "Loss bursts: {n}  peak {pct}%":
+        "丢包风暴：{n}  峰值 {pct}%",
+    "Insights": "洞察",
+    "TODO: ": "待办：",
+
+    "Empty log": "空日志",
+    "No JSONL events parsed. Is wifiscope still writing? "
+    "Check the path and that the producer is running.":
+        "未解析到 JSONL 事件。wifiscope 还在写吗？"
+        "检查路径以及生产端是否还在运行。",
+    "Re-run with --log on a session that produces events.":
+        "用 --log 重启一次能产生事件的会话再分析。",
+
+    "Timezone mismatch in log": "日志时区错位",
+    "Adjacent events span an exact-hour gap, which usually "
+    "means producer wrote some timestamps as local time "
+    "labelled UTC. Versions before the timestamp fix had "
+    "this bug.":
+        "相邻事件之间隔了整数小时，通常是生产端把本地时间"
+        "标成了 UTC。时间戳 bug 修复之前的版本会出现这个问题。",
+    "Update wifiscope and re-record. Existing data is still "
+    "usable but cross-timezone analysis may misorder events.":
+        "升级 wifiscope 后重新记录。已有数据仍然可读，"
+        "但跨时区分析时事件顺序可能会乱。",
+
+    "All stir events medium-confidence": "全部扰动事件均为中等置信",
+    "Every RF stir landed at medium confidence and on one "
+    "AP location ({n} events). With only one co-located AP "
+    "wifiscope cannot upgrade events to high confidence — "
+    "redundancy fusion needs ≥2 APs in the same room.":
+        "全部 {n} 条 RF 扰动均为中等置信，且都来自同一台 AP。"
+        "只有一台同位 AP 时，wifiscope 没法升级到高置信 —— "
+        "冗余融合需要同房间至少 2 台 AP。",
+    "If you want richer presence detection, add a second "
+    "AP in the same area on a different channel. Keep your "
+    "existing per-floor layout for coverage; add a near "
+    "duplicate only where you want the disambiguation.":
+        "想要更强的扰动识别，可以在同区域加一台不同信道的 AP。"
+        "现有每层一台的部署保留以保覆盖；只在想要更精确判断的"
+        "区域增加一台近重叠 AP。",
+
+    "Sustained RF activity": "持续性 RF 活动",
+    "{n} stir events with median σ {sigma} dB (range "
+    "{lo}–{hi}). Long runs at a similar σ suggest "
+    "ongoing motion rather than isolated spikes.":
+        "{n} 条扰动事件，σ 中位 {sigma} dB（范围 {lo}–{hi}）。"
+        "σ 长时间维持在相近水平，更像是持续活动而非孤立尖峰。",
+
+    "Latency spikes without loss": "延迟尖峰但无丢包",
+    "{n} latency spikes fired with zero loss bursts. "
+    "Single RTT spikes (router/CPU busy, transient queue, "
+    "scan overlap) are different from sustained packet "
+    "loss; this set looks like jitter, not link failure.":
+        "{n} 次延迟尖峰，丢包风暴为 0。单次 RTT 尖峰"
+        "（路由器 CPU 忙、瞬时队列、扫描叠加）与持续性"
+        "丢包不是一回事；这批数据看起来是抖动，不是链路故障。",
+    "If spikes correlate with stir bursts, the AP may be "
+    "doing background scans during high airtime. Disable "
+    "auto-channel or lower BLE scan rate on the AP if "
+    "available.":
+        "如果尖峰与扰动事件在时间上吻合，AP 可能在高空中负载"
+        "时跑后台扫描。可以在路由器上关掉自动选信道或降低 BLE "
+        "扫描频率（如果支持）。",
+
+    "Real packet loss observed": "出现真正的丢包",
+    "{n} loss-burst events (peak {pct}%). This is sustained "
+    "loss, not single-packet jitter — investigate before "
+    "assuming a transient.":
+        "{n} 次丢包风暴（峰值 {pct}%）。这是持续性丢包，"
+        "不是单包抖动 —— 别简单当作瞬时问题。",
+    "Check the gateway probe target separately from WAN. "
+    "Gateway loss → LAN issue (cable, AP overload). WAN "
+    "loss only → ISP / upstream issue.":
+        "把网关探测和 WAN 探测分开看：网关有丢包 → 内网问题"
+        "（线缆、AP 过载）；只有 WAN 丢包 → ISP / 上行问题。",
+
+    "Repeated disassociations": "频繁断开重连",
+    "{n} disassociate events. Repeated reconnects within "
+    "one session usually mean weak signal at the edge of "
+    "an AP's range, mixed PHY/MCS issues, or driver hand-"
+    "off problems.":
+        "{n} 次断开事件。一个会话里反复重连，通常是处在 AP "
+        "覆盖边缘信号弱、PHY/MCS 不一致，或驱动切换有问题。",
+    "Look at your roam events to see if the Mac is failing "
+    "to find a target, then either move the second AP "
+    "closer or enable 802.11k/v on the existing one.":
+        "看看漫游事件，确认 Mac 是不是找不到漫游目标。如果是，"
+        "要么把第二台 AP 挪近一点，要么在现有 AP 上启用 "
+        "802.11k/v。",
+
+    "Mostly band-switch roams": "主要是频段切换式漫游",
+    "{n} roams of which {pct}% were band switches "
+    "(2.4 ↔ 5 GHz on the same AP). Common sign of an "
+    "AP doing aggressive band-steering; no action "
+    "needed unless the Mac picks 2.4 too often.":
+        "{n} 次漫游里 {pct}% 是频段切换（同一台 AP 的 2.4 ↔ 5 GHz）。"
+        "通常是 AP 启用了 band-steering，不需要处理 —— 除非 Mac "
+        "经常落到 2.4 GHz。",
+
+    "Frequent inter-AP roams": "频繁跨 AP 漫游",
+    "{n} roams, mostly across different APs. Either you "
+    "are walking around the building, or APs nearby "
+    "have similar enough RSSI that the Mac keeps "
+    "switching between them.":
+        "{n} 次漫游，主要是跨 AP 切换。要么你在楼里走动，"
+        "要么相邻 AP 的 RSSI 太接近导致 Mac 反复切换。",
+    "If you weren't moving, check whether two APs "
+    "advertise the same SSID with overlapping coverage "
+    "and similar TX power. Consider lowering one or "
+    "splitting SSIDs.":
+        "如果你没走动，看看是不是两台 AP 同 SSID 覆盖重叠"
+        "且发射功率相近。可以调低其中一台的功率，或者拆 SSID。",
+
+    "Short observation window": "观测窗口太短",
+    "Log spans under 10 minutes. Heuristics that need "
+    "trends (RSSI baselines, traffic patterns) will be "
+    "noisy on this little data.":
+        "日志覆盖不足 10 分钟。需要趋势的判定（RSSI 基线、"
+        "流量模式）在这么少的数据上会很不稳。",
+    "Re-run with --log over a longer session "
+    "(an evening, a workday) for richer signal.":
+        "用 --log 跑一个更长的会话（一晚上、一个工作日）以获得"
+        "更丰富的数据。",
+
+    "No specific insights — the session looks routine. "
+    "Re-run with a longer log or a noisier environment for "
+    "richer signal.":
+        "没有特别的洞察 —— 会话看起来一切如常。"
+        "可以用更长的日志或更嘈杂的环境再跑一次。",
+
+    "wifiscope analyze: no log file given and no "
+    "wifiscope-*.jsonl found in the current directory.\n"
+    "Pass a path: wifiscope analyze ~/wifi-20260507.jsonl":
+        "wifiscope analyze：没指定日志文件，当前目录也没有 "
+        "wifiscope-*.jsonl。\n"
+        "请提供路径：wifiscope analyze ~/wifi-20260507.jsonl",
+    "wifiscope analyze: file not found: {path}":
+        "wifiscope analyze：找不到文件：{path}",
 }

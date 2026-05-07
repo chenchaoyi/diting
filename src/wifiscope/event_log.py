@@ -48,14 +48,28 @@ from .models import Connection
 
 
 def _iso(now: datetime) -> str:
-    """Compact ISO-8601 with explicit UTC. The monitor file is
-    machine-fed; the timezone marker keeps downstream parsers
-    deterministic across DST / time-zone changes."""
+    """Compact ISO-8601 with explicit UTC.
+
+    Naive datetimes (no tzinfo) follow Python's convention of
+    "local clock time" — that's what ``datetime.now()`` returns
+    and what most TUI producers hand us. We must NOT label local
+    time as ``+00:00`` UTC: that would silently shift every event
+    by the local offset and break any cross-timezone log analysis
+    or AI consumer.
+
+    ``datetime.astimezone()`` with no argument is the documented
+    way to convert a naive datetime to its local-aware equivalent
+    (Python ≥ 3.6); chaining ``.astimezone(timezone.utc)`` then
+    yields the canonical UTC form. Aware inputs are normalised
+    the same way so all output is stable +00:00.
+    """
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    else:
-        now = now.astimezone(timezone.utc)
-    return now.isoformat()
+        # Promote naive → local-aware → UTC. This single line is
+        # what was missing in the previous implementation, which
+        # used .replace(tzinfo=utc) and silently labelled local
+        # time as UTC.
+        now = now.astimezone()
+    return now.astimezone(timezone.utc).isoformat()
 
 
 class EventLogger:

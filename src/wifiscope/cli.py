@@ -496,6 +496,45 @@ async def _run_calibrate(args: list[str]) -> None:
     print(t("Baseline saved to {path}", path=path))
 
 
+# ---------- analyze (rule-based JSONL log reader) ----------
+
+def _run_analyze(args: list[str]) -> None:
+    """Read a JSONL log and print rule-based insights.
+
+    With no arg, picks the newest ``wifiscope-*.jsonl`` in the
+    current directory — convenient for "I just ran wifiscope here,
+    tell me what happened" without having to remember the
+    timestamped filename. Explicit path always wins.
+    """
+    from . import analyze
+
+    if args:
+        path = Path(args[0]).expanduser()
+    else:
+        candidates = sorted(
+            Path(".").glob("wifiscope-*.jsonl"),
+            key=lambda p: p.stat().st_mtime if p.exists() else 0,
+            reverse=True,
+        )
+        if not candidates:
+            print(t(
+                "wifiscope analyze: no log file given and no "
+                "wifiscope-*.jsonl found in the current directory.\n"
+                "Pass a path: wifiscope analyze ~/wifi-20260507.jsonl",
+            ), file=sys.stderr)
+            sys.exit(2)
+        path = candidates[0]
+
+    if not path.is_file():
+        print(t("wifiscope analyze: file not found: {path}",
+                path=str(path)), file=sys.stderr)
+        sys.exit(2)
+
+    events = analyze.parse_jsonl(path)
+    report = analyze.analyze(events, source_path=str(path))
+    print(analyze.render(report), end="")
+
+
 # ---------- entry ----------
 
 def _usage() -> str:
@@ -512,6 +551,8 @@ def _usage() -> str:
         "              flags: --out FILE  --notify  --gateway IP  --wan IP\n"
         "  calibrate   record an empty-room RSSI baseline (default 300 s)\n"
         "              flags: --duration SECONDS\n"
+        "  analyze     read a JSONL log and print rule-based insights.\n"
+        "              With no PATH, uses the newest wifiscope-*.jsonl in cwd.\n"
         "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
         "              then to the system locale (zh_* → zh, anything else → en).\n"
         "  --log[PATH] also write JSONL events while the TUI runs. With no\n"
@@ -557,7 +598,9 @@ def _validate_lang(value: str) -> str:
 # (flag absent) and from a regular path string.
 _LOG_DEFAULT = object()
 
-_KNOWN_SUBCOMMANDS = {"once", "watch", "monitor", "calibrate"}
+_KNOWN_SUBCOMMANDS = {
+    "once", "watch", "monitor", "calibrate", "analyze", "analyse",
+}
 
 
 def _extract_log_arg(argv: list[str]) -> str | object | None:
@@ -874,6 +917,9 @@ def main() -> None:
             asyncio.run(_run_calibrate(args[1:]))
         except KeyboardInterrupt:
             print(t("Calibration cancelled."))
+        return
+    if cmd == "analyze" or cmd == "analyse":
+        _run_analyze(args[1:])
         return
     if cmd in ("-h", "--help"):
         print(_usage(), end="")

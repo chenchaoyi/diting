@@ -421,3 +421,48 @@ def test_timestamps_are_iso_utc(tmp_path):
     # Either a +00:00 offset or a 'Z' suffix; both are ISO-8601 UTC.
     assert ts.endswith("+00:00") or ts.endswith("Z")
     assert "T" in ts  # date-time separator
+
+
+def test_naive_datetime_treated_as_local_not_utc(tmp_path):
+    """Regression for the 'log shows two events 8 hours apart that
+    actually fired one second apart' bug. Producers (the TUI's
+    EnvironmentMonitor, RFStirEvent.timestamp setters) hand us
+    naive ``datetime.now()`` values which are by Python convention
+    LOCAL time, not UTC. The previous _iso implementation labelled
+    them as UTC, silently shifting every event by the local offset
+    and corrupting cross-timezone analysis.
+
+    Verify: an aware UTC timestamp and a naive local timestamp
+    that represent the *same wall-clock moment* should produce
+    identical 'ts' fields. We can't assert the exact wall-clock
+    equality without knowing the runner's local offset, so we
+    check the round-trip property via parsing instead.
+    """
+    from datetime import datetime as _dt
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    # Pick a fixed local moment, then derive the UTC-aware
+    # equivalent of that same moment.
+    naive_local = _dt(2026, 5, 7, 22, 44, 6)
+    aware_utc = naive_local.astimezone().astimezone(timezone.utc)
+    # Hand both forms to the same emit path via LinkStateEvent
+    # (which lets us control the timestamp directly).
+    logger.emit_link_state(LinkStateEvent(
+        timestamp=naive_local, state="associated",
+        bssid="aa:bb:cc:11:22:33", ssid="X",
+    ))
+    logger.emit_link_state(LinkStateEvent(
+        timestamp=aware_utc, state="associated",
+        bssid="aa:bb:cc:11:22:34", ssid="X",
+    ))
+    logger.close()
+
+    rows = _read_jsonl(path)
+    # Both rows should describe the same moment in time. Parse
+    # back to datetime and compare to within a microsecond.
+    ts0 = _dt.fromisoformat(rows[0]["ts"])
+    ts1 = _dt.fromisoformat(rows[1]["ts"])
+    assert abs((ts0 - ts1).total_seconds()) < 1e-6
+    # Both must be UTC.
+    assert ts0.utcoffset().total_seconds() == 0
+    assert ts1.utcoffset().total_seconds() == 0
