@@ -5,7 +5,7 @@ smoke test (test_tui_smoke) covers actually mounting the App.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -661,15 +661,50 @@ def test_event_format_line_roam_uses_inventory():
 
 def test_sigma_sparkline_renders_bars():
     """A non-empty σ history renders as a row of block characters with
-    the max σ surfaced. Empty history yields the placeholder."""
+    the max σ surfaced. Bucketing is anchored to ``now`` so the test
+    must pass an explicit reference time matching the fake history,
+    otherwise the bucket window slides past the synthetic samples."""
+    base = datetime(2026, 5, 7, 9, 0, 0)
+    # 10 samples spaced 2 min apart; "now" is right after the last one
+    # so all samples fall inside the 1 h window.
     points = [
-        (datetime(2026, 5, 7, 9, j, 0), float(j))
+        (base + timedelta(minutes=2 * j), float(j))
         for j in range(10)
     ]
-    text = _sigma_sparkline(points).plain
+    now = base + timedelta(minutes=20)
+    text = _sigma_sparkline(points, now=now).plain
     # Must contain at least one block character and the max σ label.
     assert any(c in text for c in "▁▂▃▄▅▆▇█")
     assert "max σ 9.0" in text
+
+
+def test_sigma_sparkline_drops_samples_older_than_one_hour():
+    """The sparkline window is the trailing 1 h ending at ``now``.
+    Samples older than that fall off the left edge instead of being
+    stretched across the bar — guards the bug where 90 s of data
+    was rendered as if it spanned the full hour."""
+    base = datetime(2026, 5, 7, 9, 0, 0)
+    points = [
+        (base, 8.0),                 # 90 min ago — out of window
+        (base + timedelta(minutes=70), 1.5),   # 20 min ago — in
+        (base + timedelta(minutes=85), 2.0),   # 5 min ago — in
+    ]
+    now = base + timedelta(minutes=90)
+    text = _sigma_sparkline(points, now=now).plain
+    # The 8.0 sample is excluded so max σ should be 2.0, not 8.0.
+    assert "max σ 2.0" in text
+
+
+def test_sigma_sparkline_reports_data_span():
+    """The legend includes a 'data ~Nm' span so a fresh session that
+    only has 3 minutes of σ history is honestly labelled instead of
+    pretending to cover a full hour."""
+    base = datetime(2026, 5, 7, 9, 0, 0)
+    points = [(base + timedelta(minutes=j), 1.0) for j in range(4)]
+    now = base + timedelta(minutes=3)
+    text = _sigma_sparkline(points, now=now).plain
+    # English: "data ~3m" — Chinese translation reuses the same token.
+    assert "~3m" in text
 
 
 def _baseline(bssid, location, mode="co_located", samples=40,

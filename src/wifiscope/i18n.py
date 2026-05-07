@@ -717,6 +717,9 @@ _ZH: dict[str, str] = {
     "({n} APs still collecting samples)":
         "({n} 个 AP 仍在采集样本)",
     "Last hour σ sparkline": "最近一小时 σ 走势",
+    "data ~{n}m": "数据 ~{n}m",
+    "(σ history outside the last hour)":
+        "(无最近一小时内的 σ 历史)",
     "Press 1/2/3/4/0 to filter; m or Esc to close":
         "按 1/2/3/4/0 切换过滤；m 或 Esc 关闭",
 

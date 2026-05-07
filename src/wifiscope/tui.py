@@ -20,7 +20,7 @@ import os
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from rich.console import Group
 from rich.text import Text
@@ -705,37 +705,76 @@ def _baseline_table(rows: list[APBaseline]) -> Text:
     return text
 
 
-def _sigma_sparkline(history: list[tuple[datetime, float]]) -> Text:
+def _sigma_sparkline(
+    history: list[tuple[datetime, float]],
+    *,
+    now: datetime | None = None,
+) -> Text:
     """Render σ over the last hour as a Unicode block sparkline.
 
     ``history`` is ``[(timestamp, max σ across non-ignored APs)]``
-    from the EnvironmentMonitor's stir-event log; we bin into 30
-    buckets (~2 min each) and pick the max σ in each bucket so a
-    transient spike still shows up after the bucket aggregates.
+    appended at most once per minute by the TUI's environment-event
+    consumer. We bin by absolute time into 30 buckets, each spanning
+    2 minutes and ending at ``now`` — so the rightmost block is "the
+    last 2 minutes" and the leftmost is "55–60 min ago". Buckets
+    that have no samples render as a space; this lets the user see
+    at a glance how much actual history backs the chart instead of
+    the previous behaviour where 90 s of data was stretched over
+    the full bar.
+
+    A trailing legend reports the maximum σ seen in the window plus
+    the actual span of data we have, so a freshly-launched session
+    correctly says "数据 ~2m" instead of pretending to be a full
+    hour.
     """
     if not history:
         return Text(t("(no events yet)"), style="dim italic")
     blocks = " ▁▂▃▄▅▆▇█"
-    max_sigma = max((s for _, s in history), default=0.0) or 1.0
     n_buckets = 30
-    buckets: list[float] = [0.0] * n_buckets
-    if len(history) == 1:
-        buckets[-1] = history[0][1]
-    else:
-        first = history[0][0]
-        last = history[-1][0]
-        span = (last - first).total_seconds() or 1.0
-        for ts, sigma in history:
-            idx = int((ts - first).total_seconds() / span * (n_buckets - 1))
-            idx = max(0, min(n_buckets - 1, idx))
-            if sigma > buckets[idx]:
-                buckets[idx] = sigma
+    bucket_seconds = 120.0  # 2 minutes per bucket → 1 h window
+    if now is None:
+        now = datetime.now()
+    # Reference frame: bucket 29 ends at ``now``; bucket 0 starts an
+    # hour earlier. Anything older falls off the left.
+    cutoff = now - timedelta(seconds=bucket_seconds * n_buckets)
+    buckets: list[float | None] = [None] * n_buckets
+    for ts, sigma in history:
+        if ts < cutoff or ts > now:
+            continue
+        offset = (now - ts).total_seconds()
+        # offset 0 → bucket n-1; offset 60min → bucket 0.
+        idx = n_buckets - 1 - int(offset // bucket_seconds)
+        idx = max(0, min(n_buckets - 1, idx))
+        prior = buckets[idx]
+        if prior is None or sigma > prior:
+            buckets[idx] = sigma
+    in_window = [v for v in buckets if v is not None]
+    if not in_window:
+        return Text(
+            t("(σ history outside the last hour)"),
+            style="dim italic",
+        )
+    max_sigma = max(in_window) or 1.0
     line = Text()
     for v in buckets:
+        if v is None:
+            line.append(" ")
+            continue
         level = int(round(v / max_sigma * 8))
         level = max(0, min(8, level))
         line.append(blocks[level])
-    line.append(f"  max σ {max_sigma:.1f} dB", style="dim")
+    # Span: oldest in-window sample → now. Round down to whole minutes
+    # for a calmer label; "数据 ~3m" is more honest than "0.1h".
+    earliest = min(
+        (ts for ts, _ in history if ts >= cutoff and ts <= now),
+        default=now,
+    )
+    span_min = max(1, int((now - earliest).total_seconds() // 60))
+    line.append(
+        f"  max σ {max_sigma:.1f} dB  ·  "
+        + t("data ~{n}m", n=span_min),
+        style="dim",
+    )
     return line
 
 
@@ -2431,7 +2470,20 @@ class WifiScopeApp(App):
         # Unified events ring buffer + sparkline history (for the
         # modal's last-hour σ chart).
         self._events_ring: EventRing = EventRing()
-        self._sigma_history: deque[tuple[datetime, float]] = deque(maxlen=120)
+        # σ history feeding the m-modal's last-hour sparkline. Stored
+        # as (timestamp, σ) and pruned by absolute age — entries older
+        # than the sparkline window (1 h) are dropped on every append.
+        # We deliberately do NOT use a fixed maxlen because the call
+        # cadence varies with how many APs the scan turns up; a maxlen
+        # of N would silently shrink the visible window when the
+        # cadence rises.
+        self._sigma_history: list[tuple[datetime, float]] = []
+        # Last time we appended a sparkline sample, used to throttle
+        # appends to at most one per ~minute. Without this, the 1 Hz
+        # connection poll would fill the deque inside ~2 min and the
+        # "Last hour σ" chart would only ever show the most recent
+        # ~2 min of data.
+        self._sigma_last_at: datetime | None = None
         # The BLE poller spawns wifiscope-helper ble-scan as a long-
         # running subprocess. If no helper path is supplied, the poller
         # surfaces a permission_state of "unavailable" and yields
@@ -2584,12 +2636,31 @@ class WifiScopeApp(App):
         for ev in events:
             self._events_ring.push(ev)
             panel.append_event(ev, self._inv)
+            # Stir events bypass the throttle — they are by definition
+            # the data points users care most about preserving on the
+            # sparkline. Burst events still respect the 1-h prune below.
             self._sigma_history.append((now, ev.magnitude_db))
+            self._sigma_last_at = now
         # Even when nothing fires, snapshot the aggregate σ for the
-        # sparkline so the chart looks alive.
+        # sparkline so the chart looks alive — but at most once per
+        # minute. The sparkline shows a 1 h window in 30 buckets, so
+        # any cadence faster than 1/min just wastes memory and shrinks
+        # the visible time range when paired with a fixed-length deque.
         label, sigma, _ = self._environment_monitor.aggregate_sigma(now)
-        if sigma is not None:
+        if sigma is not None and (
+            self._sigma_last_at is None
+            or (now - self._sigma_last_at) >= timedelta(seconds=58)
+        ):
             self._sigma_history.append((now, sigma))
+            self._sigma_last_at = now
+        # Time-based prune: drop anything older than the sparkline
+        # window so the list stays small even after long sessions
+        # (60 entries max at 1/min).
+        cutoff = now - timedelta(hours=1)
+        if self._sigma_history and self._sigma_history[0][0] < cutoff:
+            self._sigma_history = [
+                e for e in self._sigma_history if e[0] >= cutoff
+            ]
         self._refresh_environment_panel()
 
     async def _consume_latency_events(self) -> None:
