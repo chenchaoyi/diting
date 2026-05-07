@@ -25,6 +25,7 @@ from wifiscope.ble import (
     BLEDevice,
     BLEPoller,
     BLEScanUpdate,
+    detect_advertisement,
     expire_devices,
     load_vendors,
     lookup_vendor,
@@ -382,6 +383,328 @@ def test_line_without_id_field_skipped():
     line = json.dumps({"rssi_dbm": -60, "name": "no-id-here"})
     update_from_line(devices, line, vendors=VENDORS)
     assert devices == {}
+
+
+# ------------------------------------------------------------------
+# 9. Schema-3 deep identification (v0.6.0+)
+# ------------------------------------------------------------------
+
+def test_detect_ibeacon_from_apple_manufacturer_payload():
+    """Apple manufacturer-data starting with 4c00 (company ID) and the
+    iBeacon signature byte 0x02 → type 'iBeacon'. The remaining bytes
+    are the proximity UUID, major, minor, and tx power; we only need
+    to recognise the signature."""
+    obj = {
+        "manufacturer_id": 76,
+        "manufacturer_hex": (
+            "4c0002151234567890abcdef1234567890abcdef0001000200c5"
+        ),
+    }
+    type_, dc = detect_advertisement(obj)
+    assert type_ == "iBeacon"
+    assert dc is None
+
+
+def test_detect_airtag_apple_type_0x12_with_find_my_service():
+    """Apple type 0x12 with an owner-paired length payload (>= 25 bytes
+    of mfg data) is an AirTag. Find My target without that length
+    degrades to the more general 'Find My target' label."""
+    # 25 bytes (50 hex chars) — owner-paired AirTag payload size.
+    payload = "4c0012191000" + "00" * 22
+    obj = {
+        "manufacturer_id": 76,
+        "manufacturer_hex": payload,
+        "service_uuids": ["FD5A"],
+    }
+    type_, dc = detect_advertisement(obj)
+    assert type_ == "AirTag"
+    assert dc is None
+
+
+def test_detect_find_my_target_short_payload():
+    """A short Find My broadcast (lost-mode beacon) without the AirTag
+    length signature is still recognisable, just less specific."""
+    obj = {
+        "manufacturer_id": 76,
+        "manufacturer_hex": "4c001202aabb",  # short 0x12 payload
+    }
+    type_, _ = detect_advertisement(obj)
+    assert type_ == "Find My target"
+
+
+def test_detect_eddystone_url_from_helper_supplied_type():
+    """Eddystone-URL detection requires the service-data frame byte,
+    which CoreBluetooth surfaces in CBAdvertisementDataServiceDataKey
+    on the helper side — the JSON line carries the helper's resolved
+    'type' string. Verify the schema-3 propagation: a JSON object
+    with type='Eddystone-URL' parses cleanly and ends up on the
+    BLEDevice."""
+    line = json.dumps({
+        "id": "AA000000-0000-0000-0000-000000000001",
+        "rssi_dbm": -60,
+        "service_uuids": ["FEAA"],
+        "type": "Eddystone-URL",
+    })
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(devices, line, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    assert d.type == "Eddystone-URL"
+
+
+def test_detect_eddystone_generic_from_service_uuid_only():
+    """Without a frame byte (service_data not in the line) the Python
+    fallback collapses every Eddystone variant to the generic label.
+    This is the back-compat path; helpers post-0.6.0 specialise."""
+    obj = {"service_uuids": ["FEAA"]}
+    type_, _ = detect_advertisement(obj)
+    assert type_ == "Eddystone"
+
+
+def test_detect_tile_from_feed_service_uuid():
+    """Tile beacons advertise FEED (and some FEEC for legacy hardware).
+    Either signals 'Tile'."""
+    obj = {"service_uuids": ["FEED"]}
+    type_, _ = detect_advertisement(obj)
+    assert type_ == "Tile"
+
+    obj2 = {"service_uuids": ["FEEC"]}
+    type2, _ = detect_advertisement(obj2)
+    assert type2 == "Tile"
+
+
+def test_detect_smarttag_samsung_company_id_disambiguates_fd5a():
+    """FD5A is shared by Apple Find My and Samsung SmartTag. The Samsung
+    company ID (0x0075 = 117) flips the label so a SmartTag is not
+    miscategorised as a Find My target."""
+    obj = {
+        "manufacturer_id": 117,
+        "manufacturer_hex": "75000000",
+        "service_uuids": ["FD5A"],
+    }
+    type_, _ = detect_advertisement(obj)
+    assert type_ == "SmartTag"
+
+
+def test_detect_swift_pair_microsoft_company_id_plus_leading_byte():
+    """Microsoft Swift Pair beacons start with company ID 0x0006 and a
+    leading 0x03 byte. Anything else from Microsoft is left unlabelled."""
+    obj = {
+        "manufacturer_id": 6,
+        "manufacturer_hex": "06000380aabbccdd",
+    }
+    type_, _ = detect_advertisement(obj)
+    assert type_ == "Swift Pair"
+
+
+@pytest.mark.parametrize("action_byte_hex,expected_class", [
+    ("10", "iPhone"),
+    ("20", "iPad"),
+    ("40", "Mac"),
+    ("60", "Apple TV"),
+    ("70", "HomePod"),
+    ("90", "Apple Watch"),
+])
+def test_apple_nearby_info_device_class(action_byte_hex, expected_class):
+    """Apple type 0x10 (Nearby Info) carries an unencrypted device-class
+    nibble in the high half of byte 5 (after company ID, type, length,
+    status flags). Each nibble maps to one of six recognised devices.
+    Reverse-engineered from furiousMAC/continuity; the rest of the
+    payload is encrypted and ignored."""
+    # Layout: 4c00 (Apple) 10 (Nearby Info) 05 (length) 00 (status flags)
+    # [actionByte] then 3 encrypted bytes.
+    obj = {
+        "manufacturer_id": 76,
+        "manufacturer_hex": f"4c001005 00 {action_byte_hex} 000000".replace(" ", ""),
+    }
+    type_, dc = detect_advertisement(obj)
+    assert type_ is None
+    assert dc == expected_class
+
+
+def test_connected_line_routes_to_connected_dict_only():
+    """A '{\"connected\": true, ...}' line goes to the connected dict
+    and never to the advertising one. The two stores have distinct
+    lifecycles; cross-talk would corrupt the panel's two-section
+    layout."""
+    devices: dict[str, BLEDevice] = {}
+    connected: dict[str, BLEDevice] = {}
+    line = json.dumps({
+        "connected": True,
+        "id": "11111111-2222-3333-4444-555555555555",
+        "name": "Magic Keyboard",
+        "service_uuids": ["1812", "180F"],
+    })
+    update_from_line(devices, line, vendors=VENDORS, connected=connected)
+    assert devices == {}
+    assert len(connected) == 1
+    d = next(iter(connected.values()))
+    assert d.is_connected is True
+    assert d.name == "Magic Keyboard"
+    assert d.rssi_dbm is None
+    assert d.services == ("1812", "180F")
+
+
+def test_connected_entries_skip_advertising_ttl():
+    """expire_devices applies to the advertising dict only — connected
+    entries are pruned by the helper's connected_snapshot sentinel,
+    not by time-since-last-seen. Calling expire_devices on the
+    advertising dict must not even see the connected dict."""
+    t0 = datetime(2026, 5, 6, 12, 0, 0, tzinfo=timezone.utc)
+    devices: dict[str, BLEDevice] = {}
+    connected: dict[str, BLEDevice] = {}
+    update_from_line(
+        devices,
+        json.dumps({
+            "connected": True,
+            "id": "aa000000-0000-0000-0000-000000000001",
+            "name": "AirPods Pro",
+        }),
+        vendors=VENDORS, now=t0, connected=connected,
+    )
+    # An hour passes — well beyond ttl_s. The advertising-side expiry
+    # leaves connected untouched.
+    pruned = expire_devices(devices, now=t0 + timedelta(hours=1), ttl_s=30.0)
+    assert pruned == {}
+    assert len(connected) == 1
+
+
+def test_connected_snapshot_sentinel_prunes_disappeared_entries():
+    """The 'connected_snapshot' line carries the full set of currently-
+    connected IDs. Entries not in that set were disconnected since the
+    last snapshot and must be pruned. Otherwise a Magic Keyboard the
+    user just turned off would linger forever."""
+    connected: dict[str, BLEDevice] = {}
+    devices: dict[str, BLEDevice] = {}
+    keep_id = "11111111-2222-3333-4444-555555555555"
+    drop_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    for ident, name in [(keep_id, "Magic Keyboard"), (drop_id, "Old AirPods")]:
+        update_from_line(
+            devices,
+            json.dumps({"connected": True, "id": ident, "name": name}),
+            vendors=VENDORS, connected=connected,
+        )
+    assert len(connected) == 2
+
+    snapshot = json.dumps({
+        "connected_snapshot": True,
+        "count": 1,
+        "ids": [keep_id],
+    })
+    update_from_line(devices, snapshot, vendors=VENDORS, connected=connected)
+    assert set(connected.keys()) == {keep_id.lower()}
+
+
+def test_schema_2_json_back_compat_type_and_device_class_default_none():
+    """A schema-2 helper bundle (pre-0.6.0) emits advertisements without
+    type / device_class fields. Those should parse cleanly with both
+    fields defaulting to None — back-compat keeps a freshly-upgraded
+    Python TUI happy when the user has not yet rebuilt the helper."""
+    devices: dict[str, BLEDevice] = {}
+    schema_2_line = json.dumps({
+        "ts": "2026-05-06T12:34:56.789Z",
+        "id": "00000000-0000-0000-0000-000000000001",
+        "name": "GenericThing",
+        "rssi_dbm": -70,
+        "is_connectable": True,
+        # No service_uuids, no manufacturer data, no type, no device_class.
+    })
+    update_from_line(devices, schema_2_line, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    assert d.type is None
+    assert d.device_class is None
+    assert d.is_connected is False
+
+
+def test_mixed_stream_routes_each_line_to_correct_bucket():
+    """An interleaved stream of advertising and connected lines must
+    route each one independently — advertising never leaks into the
+    connected dict, and vice versa, regardless of arrival order."""
+    devices: dict[str, BLEDevice] = {}
+    connected: dict[str, BLEDevice] = {}
+    lines = [
+        SAMPLE_AIRPODS,  # advertising AirPods
+        json.dumps({
+            "connected": True,
+            "id": "cc000000-0000-0000-0000-000000000001",
+            "name": "Magic Keyboard",
+            "service_uuids": ["1812"],
+        }),
+        json.dumps({
+            "id": "ad000000-0000-0000-0000-000000000002",
+            "name": "Some iBeacon",
+            "rssi_dbm": -65,
+            "manufacturer_id": 76,
+            "manufacturer_hex": "4c0002150000000000000000000000000000000000010002c5",
+        }),
+        json.dumps({
+            "connected": True,
+            "id": "cc000000-0000-0000-0000-000000000002",
+            "name": "AirPods Pro",
+        }),
+    ]
+    for line in lines:
+        update_from_line(devices, line, vendors=VENDORS, connected=connected)
+    assert len(devices) == 2
+    assert len(connected) == 2
+    assert all(not d.is_connected for d in devices.values())
+    assert all(d.is_connected for d in connected.values())
+    # The iBeacon detection ran on the second advertising line too.
+    ibeacon = next(d for d in devices.values() if d.name == "Some iBeacon")
+    assert ibeacon.type == "iBeacon"
+
+
+def test_ble_scan_update_propagates_connected_through_poller():
+    """The poller's snapshot loop emits BLEScanUpdate objects whose
+    `connected` list reflects the running connected dict — same channel
+    as `devices`, just a different lifecycle. This is the field the
+    BLEPanel reads to render its 'Connected' section."""
+
+    async def go() -> None:
+        connected_line = json.dumps({
+            "connected": True,
+            "id": "cc000000-0000-0000-0000-000000000001",
+            "name": "Magic Keyboard",
+            "service_uuids": ["1812"],
+        })
+        snapshot = json.dumps({
+            "connected_snapshot": True,
+            "count": 1,
+            "ids": ["cc000000-0000-0000-0000-000000000001"],
+        })
+        encoded = [
+            (connected_line + "\n").encode("utf-8"),
+            (snapshot + "\n").encode("utf-8"),
+        ]
+
+        async def fake_spawn() -> Any:
+            return _FakeProc(encoded, 0)
+
+        poller = BLEPoller(
+            "/fake/helper", _spawn=fake_spawn,
+            snapshot_interval_s=0.02, ttl_s=30.0,
+        )
+        snapshots: list[BLEScanUpdate] = []
+        gen = poller.events()
+        try:
+            async for snap in gen:
+                snapshots.append(snap)
+                if any(s.connected for s in snapshots):
+                    break
+                if len(snapshots) >= 30:
+                    break
+        finally:
+            await gen.aclose()
+        assert any(s.connected for s in snapshots), (
+            "BLEScanUpdate.connected never populated"
+        )
+        last = next(s for s in snapshots if s.connected)
+        assert last.connected[0].name == "Magic Keyboard"
+        assert last.connected[0].is_connected is True
+        # Advertising list stays empty — the connected line never
+        # crossed over.
+        assert last.devices == []
+
+    asyncio.run(go())
 
 
 # ------------------------------------------------------------------

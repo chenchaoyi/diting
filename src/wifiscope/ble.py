@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -53,6 +53,22 @@ class BLEDevice:
     matching on ``(vendor_id, name)`` plus an RSSI tolerance window;
     when entries fold, ``merged_count`` exceeds 1 and the renderer
     shows a ``(merged N)`` badge.
+
+    Schema-3 (v0.6.0+) optional fields:
+
+    - ``type`` is the helper's public-format detection result —
+      ``"iBeacon"``, ``"AirTag"``, ``"Eddystone-URL"``, ``"Tile"``,
+      ``"SmartTag"``, ``"Swift Pair"``, etc. None when the device's
+      advertisement is not in any well-documented format.
+    - ``device_class`` is the Apple Nearby Info device-class nibble
+      decoded into ``"iPhone"`` / ``"iPad"`` / ``"Mac"`` / ``"Apple
+      TV"`` / ``"HomePod"`` / ``"Apple Watch"``. None for non-Apple
+      devices and for Apple devices not advertising Nearby Info.
+    - ``is_connected`` is True for entries that came from the helper's
+      ``retrieveConnectedPeripherals`` snapshot (your AirPods, Magic
+      Keyboard, etc., which are not advertising and so otherwise
+      invisible to the BLE panel). Connected entries have no RSSI
+      reading and are sorted alphabetically by name in the panel.
     """
 
     identifier: str
@@ -66,6 +82,9 @@ class BLEDevice:
     last_seen: datetime
     ad_count: int
     merged_count: int = 1
+    type: str | None = None
+    device_class: str | None = None
+    is_connected: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,10 +98,17 @@ class BLEScanUpdate:
       exited with code 3
     - ``"unavailable"`` — the helper binary could not be spawned
     - ``"unknown"``  — initial state before the first event
+
+    ``devices`` is the advertising list, post-merge, sorted by RSSI
+    desc. ``connected`` is a parallel list of currently-connected
+    peripherals (AirPods you're listening to, Magic Keyboard you're
+    typing on) that the OS knows about but that are not advertising.
+    Connected entries skip the fuzzy-merger (no RSSI, no UUID rotation).
     """
 
     devices: list[BLEDevice]
     permission_state: str
+    connected: list[BLEDevice] = field(default_factory=list)
 
 
 # ---------- vendor lookup ----------
@@ -166,6 +192,106 @@ def service_category(uuid: str) -> str:
     return _SERVICE_CATEGORY.get(short, short)
 
 
+# ---------- public-format detection ----------
+
+# Bluetooth SIG company IDs we branch on for deep identification.
+_COMPANY_APPLE = 0x004C
+_COMPANY_MICROSOFT = 0x0006
+_COMPANY_SAMSUNG = 0x0075
+
+
+def _normalize_service_uuids(obj: dict[str, Any]) -> set[str]:
+    raw = obj.get("service_uuids") or []
+    if not isinstance(raw, list):
+        return set()
+    out: set[str] = set()
+    for s in raw:
+        if isinstance(s, str):
+            out.add(_normalize_uuid(s))
+    return out
+
+
+def _apple_nearby_info_device_class(action_byte: int) -> str | None:
+    """Map the high nibble of the Apple Nearby Info action byte to a
+    device class name. Lower-nibble bits are activity / status flags
+    we ignore. Mapping comes from the public ``furiousMAC/continuity``
+    reference; per-model precision is impossible from this byte alone.
+    """
+    nibble = (action_byte >> 4) & 0x0F
+    return {
+        0x1: "iPhone",
+        0x2: "iPad",
+        0x4: "Mac",
+        0x6: "Apple TV",
+        0x7: "HomePod",
+        0x9: "Apple Watch",
+    }.get(nibble)
+
+
+def detect_advertisement(obj: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Classify an advertisement payload into (type, device_class).
+
+    Mirrors ``helper/Sources/wifiscope-helper/main.swift:BLEAdParser.detect``.
+    Used by :func:`update_from_line` as a fallback when the helper does
+    not emit ``type`` / ``device_class`` (older schema-2 bundles), and
+    as the deterministic, hermetic algorithm surface that the Python
+    test suite exercises directly without needing a Swift toolchain.
+
+    The detector is deliberately conservative — it only labels devices
+    whose formats are publicly documented (Tier 1 in the spec). Anything
+    outside those returns ``(None, None)``; the panel falls back to
+    vendor + service-category for those rows.
+    """
+    services = _normalize_service_uuids(obj)
+    company_id = obj.get("manufacturer_id")
+    if isinstance(company_id, bool) or not isinstance(company_id, int):
+        company_id = None
+
+    mfg_hex = obj.get("manufacturer_hex")
+    mfg_bytes: bytes | None = None
+    if isinstance(mfg_hex, str):
+        try:
+            mfg_bytes = bytes.fromhex(mfg_hex)
+        except ValueError:
+            mfg_bytes = None
+
+    # 1. Manufacturer-data branches first — disambiguates FD5A (Apple
+    #    Find My vs Samsung SmartTag) before service-UUID rules fire.
+    if mfg_bytes is not None and company_id is not None:
+        if company_id == _COMPANY_APPLE and len(mfg_bytes) >= 3:
+            type_byte = mfg_bytes[2]
+            if type_byte == 0x02:
+                return "iBeacon", None
+            if type_byte == 0x10:
+                dc = None
+                if len(mfg_bytes) >= 6:
+                    dc = _apple_nearby_info_device_class(mfg_bytes[5])
+                return None, dc
+            if type_byte == 0x12:
+                # Owner-paired AirTag payloads are ~25 bytes; lost-mode
+                # Find My broadcasts are shorter. Use the length as a
+                # cheap discriminator — false negatives just degrade to
+                # "Find My target", which is still actionable.
+                is_airtag = len(mfg_bytes) >= 25
+                return ("AirTag" if is_airtag else "Find My target"), None
+        if company_id == _COMPANY_MICROSOFT and len(mfg_bytes) >= 3:
+            if mfg_bytes[2] == 0x03:
+                return "Swift Pair", None
+        if company_id == _COMPANY_SAMSUNG and "FD5A" in services:
+            return "SmartTag", None
+
+    # 2. Service-UUID-based detections (after manufacturer rules so a
+    #    Samsung SmartTag advertising FD5A is labelled correctly).
+    if "FEAA" in services:
+        return "Eddystone", None
+    if "FEED" in services or "FEEC" in services:
+        return "Tile", None
+    if "FD5A" in services:
+        return "Find My target", None
+
+    return None, None
+
+
 # ---------- line parsing ----------
 
 def _build_device(
@@ -237,6 +363,22 @@ def _build_device(
     first_seen = prior.first_seen if prior is not None else now
     ad_count = prior.ad_count + 1 if prior is not None else 1
 
+    # Schema-3 fields (helper-supplied) win over Python-side detection;
+    # the latter exists for back-compat with schema-2 bundles and as a
+    # testable mirror of the Swift parser. Carry forward from prior so
+    # that a scan-response line that omits these fields does not blank
+    # out a label we already established.
+    raw_type = obj.get("type")
+    raw_dc = obj.get("device_class")
+    detect_type: str | None = raw_type if isinstance(raw_type, str) else None
+    detect_dc: str | None = raw_dc if isinstance(raw_dc, str) else None
+    if detect_type is None and detect_dc is None:
+        detect_type, detect_dc = detect_advertisement(obj)
+    if detect_type is None and prior is not None:
+        detect_type = prior.type
+    if detect_dc is None and prior is not None:
+        detect_dc = prior.device_class
+
     return BLEDevice(
         identifier=identifier,
         name=name,
@@ -248,6 +390,58 @@ def _build_device(
         first_seen=first_seen,
         last_seen=now,
         ad_count=ad_count,
+        type=detect_type,
+        device_class=detect_dc,
+    )
+
+
+def _build_connected_device(
+    obj: dict[str, Any],
+    *,
+    prior: BLEDevice | None,
+    now: datetime | None = None,
+) -> BLEDevice | None:
+    """Promote a `{"connected": true, ...}` line into a BLEDevice.
+
+    Vendor / vendor_id / type / device_class are intentionally left
+    blank — ``retrieveConnectedPeripherals`` returns much less metadata
+    than a fresh advertisement (no manufacturer data, no flags), so any
+    inferred value would be guesswork. The panel renders the missing
+    columns honestly rather than fabricating them.
+    """
+    identifier = obj.get("id")
+    if not isinstance(identifier, str):
+        return None
+    identifier = identifier.lower()
+
+    name = obj.get("name") if isinstance(obj.get("name"), str) else None
+    if name is None and prior is not None:
+        name = prior.name
+
+    services_raw = obj.get("service_uuids") or []
+    if isinstance(services_raw, list):
+        services = tuple(s for s in services_raw if isinstance(s, str))
+    else:
+        services = ()
+    if not services and prior is not None:
+        services = prior.services
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+    first_seen = prior.first_seen if prior is not None else now
+
+    return BLEDevice(
+        identifier=identifier,
+        name=name,
+        vendor=None,
+        vendor_id=None,
+        services=services,
+        rssi_dbm=None,
+        is_connectable=True,
+        first_seen=first_seen,
+        last_seen=now,
+        ad_count=0,
+        is_connected=True,
     )
 
 
@@ -257,15 +451,24 @@ def update_from_line(
     *,
     vendors: dict[int, str],
     now: datetime | None = None,
+    connected: dict[str, BLEDevice] | None = None,
 ) -> str | None:
     """Apply one JSONL line to the device map, in place.
+
+    The optional ``connected`` dict, when supplied, is a parallel store
+    for ``retrieveConnectedPeripherals`` snapshots. Connected entries
+    skip ``devices`` entirely — they have no RSSI, no UUID rotation, no
+    fuzzy-merge involvement, and a different lifecycle (pruned by the
+    helper's ``connected_snapshot`` sentinel rather than by TTL). When
+    ``connected`` is None, ``connected:true`` and ``connected_snapshot``
+    lines are silently dropped — preserves the schema-2 caller surface.
 
     Returns:
         - ``"permission_denied"`` if the line was a permission error
           from the helper.
         - ``"error"`` if the line was a non-permission error.
-        - ``None`` for either a valid advertisement (devices mutated)
-          or a malformed line (silently skipped).
+        - ``None`` for any other case (valid advertisement, valid
+          connected line, valid snapshot sentinel, or malformed line).
     """
     try:
         obj = json.loads(line)
@@ -278,6 +481,38 @@ def update_from_line(
         if "unauthor" in err:
             return "permission_denied"
         return "error"
+
+    # Connected-snapshot sentinel: the helper just finished one round
+    # of retrieveConnectedPeripherals; prune entries whose IDs are not
+    # in the supplied id list. An empty list means "no connected
+    # peripherals right now" — clear the dict entirely.
+    if obj.get("connected_snapshot") is True:
+        if connected is None:
+            return None
+        ids_raw = obj.get("ids") or []
+        if not isinstance(ids_raw, list):
+            return None
+        keep = {str(i).lower() for i in ids_raw if isinstance(i, str)}
+        for key in list(connected.keys()):
+            if key not in keep:
+                del connected[key]
+        return None
+
+    # Connected-peripheral row: route to the parallel dict and never
+    # the advertising one.
+    if obj.get("connected") is True:
+        if connected is None:
+            return None
+        identifier = obj.get("id")
+        if not isinstance(identifier, str):
+            return None
+        key = identifier.lower()
+        prior = connected.get(key)
+        device = _build_connected_device(obj, prior=prior, now=now)
+        if device is not None:
+            connected[key] = device
+        return None
+
     identifier = obj.get("id")
     if not isinstance(identifier, str):
         return None
@@ -420,6 +655,13 @@ class BLEPoller:
         self._snapshot_interval_s = snapshot_interval_s
         self._vendors = vendors if vendors is not None else load_vendors()
         self._devices: dict[str, BLEDevice] = {}
+        # Currently-connected peripherals from the helper's
+        # retrieveConnectedPeripherals snapshot. Lives in a parallel
+        # dict because (a) entries have no RSSI / UUID-rotation, (b)
+        # they are pruned by the helper's "connected_snapshot" sentinel
+        # rather than the advertising-side TTL, and (c) merge_for_display
+        # never sees them — they have stable identities.
+        self._connected: dict[str, BLEDevice] = {}
         self._queue: asyncio.Queue[BLEScanUpdate] = asyncio.Queue()
         self._proc: Any = None
         self._permission_state: str = "unknown"
@@ -478,6 +720,7 @@ class BLEPoller:
                     continue
                 state = update_from_line(
                     self._devices, line, vendors=self._vendors,
+                    connected=self._connected,
                 )
                 if state == "permission_denied":
                     self._permission_state = "denied"
@@ -486,7 +729,10 @@ class BLEPoller:
                 elif state is None and self._permission_state in ("unknown", "error"):
                     # A successful parse implies we are getting real
                     # advertisements — flip to granted exactly once.
-                    if any(self._devices):
+                    # Connected entries also count: a Mac with all BLE
+                    # devices already paired (no fresh ads) would
+                    # otherwise stay "unknown" forever.
+                    if any(self._devices) or any(self._connected):
                         self._permission_state = "granted"
         except (asyncio.CancelledError, GeneratorExit):
             raise
@@ -538,9 +784,17 @@ class BLEPoller:
                     self._devices, now=now, ttl_s=self._ttl_s,
                 )
                 merged = merge_for_display(list(self._devices.values()))
+                # Connected entries sort alphabetically by name (per spec
+                # layout B); RSSI sort would be meaningless given they
+                # have no signal reading. Stable, predictable order.
+                connected = sorted(
+                    self._connected.values(),
+                    key=lambda d: ((d.name or "").lower(), d.identifier),
+                )
                 await self._queue.put(BLEScanUpdate(
                     devices=merged,
                     permission_state=self._permission_state,
+                    connected=connected,
                 ))
                 await asyncio.sleep(self._snapshot_interval_s)
         except asyncio.CancelledError:
