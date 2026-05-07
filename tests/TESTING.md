@@ -175,6 +175,23 @@ itself is covered by the smoke tests in section 6.
 | `test_group_by_ap_unaliased_uses_cluster_label` | Two BSSIDs sharing octets 3..5 (e.g. neighbour with two BSSIDs) collapse under one `?XX:YY:ZZ` cluster — and that key starts with `?` so the renderer can style it dimly. | Inventory-free grouping, plus the renderer-style contract. |
 | `test_group_by_ap_empty_input` | Empty input → empty groups list. | Defensive. |
 
+#### BLE diagnostics helpers
+
+| Test | Scenario | Why it matters |
+|---|---|---|
+| `test_ble_visible_line_counts_total_connectable_anonymous` | The Visible BLE row reports total devices, connectable count, and anonymous count (no vendor + no name). | Drives the BLE diagnostics panel's first row. |
+| `test_ble_vendors_line_top_four_plus_unknown` | The Vendors row shows the top four vendor names by headcount plus a `? N` tail for devices with no vendor. | Compresses a long tail without dropping unknown devices. |
+| `test_ble_categories_line_groups_by_service_category` | Multi-service devices (e.g. Apple Watch on both HID and Heart Rate) count once per bucket; uncategorised devices roll into "N other". | Categories row must reflect the population without double-counting. |
+| `test_ble_categories_line_includes_deep_id_types` | The Categories row counts schema-3 `type` (iBeacon, AirTag, …) and `device_class` (iPhone, …) alongside service-UUID categories. | iBeacon advertises no service UUIDs; without this the row would never reflect them. |
+| `test_ble_closest_line_picks_strongest_rssi` | The Closest row labels the strongest-RSSI device with name + vendor. | Quickest answer to "what's right next to me". |
+| `test_ble_closest_line_falls_back_to_anonymous_label` | When the strongest device has neither name nor vendor, the row still shows its RSSI with an `(anonymous)` label. | Honest about what we don't know, without dropping the row. |
+| `test_ble_diagnostic_lines_returns_four_rows` | With no connected list the dispatcher returns 4 rows. | Layout invariant — panel min-height accounts for 4 rows; an accidental fifth pushes other content. |
+| `test_ble_diagnostic_lines_adds_connected_row_when_present` | Supplying a non-empty `connected` arg appends a fifth row summarising connected peripherals. | The v0.6.0 spec's "fifth line appears only when connected peripherals exist" rule. |
+| `test_ble_label_summary_prefers_type_over_service_category` | A device with `type="AirTag"` and service `FD5A` renders as `AirTag · Find My`. | The "what is this" label leads; the category gives extra context. |
+| `test_ble_label_summary_falls_back_to_service_category_when_no_type` | No type / device_class → label is just the service-UUID category. | v0.5.0 behaviour preserved for non-Tier-1 devices. |
+| `test_ble_label_summary_uses_device_class_when_no_type` | Apple Nearby Info gives `device_class` only; the summary surfaces `iPhone` / `Mac` / `Apple Watch`. | Replaces the v0.5.0 "Apple, Inc. (anonymous)" experience. |
+| `test_ble_connected_line_counts_peripherals_and_categories` | The Connected diagnostics row counts total peripherals plus a per-category breakdown. | Drives the "Connected  3 peripherals · 2 Audio · 1 HID" rendering. |
+
 ---
 
 ## 5b. Module: `wifiscope.ble`
@@ -240,6 +257,21 @@ hardware (and macOS runners that have no granted helper).
 | `test_helper_binary_missing_marks_unavailable` | OSError at spawn flips state to `"unavailable"`; snapshots keep coming. | First-launch case before the helper is built / granted. |
 | `test_malformed_line_skipped_subsequent_parsed` | Garbage line is skipped; the next valid line parses. | Helper line corruption (encoding glitch, partial write) cannot wedge the parser. |
 | `test_line_without_id_field_skipped` | A JSON object lacking `id` is skipped, not raised. | Defensive against schema drift from the helper. |
+| `test_detect_ibeacon_from_apple_manufacturer_payload` | An Apple manufacturer payload starting with `4c0002...` resolves to `type="iBeacon"` via `detect_advertisement`. | Tier-1 deep-ID for the most common BLE format. |
+| `test_detect_airtag_apple_type_0x12_with_find_my_service` | Apple type `0x12` with an owner-paired length payload is labelled `AirTag`; Find My service confirms the category. | Replaces the v0.5.0 "Apple, Inc. (anonymous) Find My" wall with an actionable label. |
+| `test_detect_find_my_target_short_payload` | A short Find My broadcast (lost-mode beacon) without the AirTag length signature degrades to `Find My target`. | Recognises the format but stays honest about subtype precision. |
+| `test_detect_eddystone_url_from_helper_supplied_type` | A schema-3 JSON line with `type="Eddystone-URL"` propagates through `update_from_line` to `BLEDevice.type`. | Helper-side detection via service-data byte; Python side just propagates. |
+| `test_detect_eddystone_generic_from_service_uuid_only` | Without a frame byte, `service_uuids=["FEAA"]` falls back to the generic `Eddystone` label. | Back-compat path; helpers post-0.6.0 specialise. |
+| `test_detect_tile_from_feed_service_uuid` | Tile beacons advertising `FEED` or `FEEC` resolve to `type="Tile"`. | Tier-1 spec category. |
+| `test_detect_smarttag_samsung_company_id_disambiguates_fd5a` | `FD5A` alone is ambiguous (Apple Find My vs Samsung SmartTag); the Samsung company ID `0x0075` flips the label. | Disambiguation rule the spec calls out specifically. |
+| `test_detect_swift_pair_microsoft_company_id_plus_leading_byte` | Microsoft company ID `0x0006` + leading `0x03` → `Swift Pair`. | Tier-1 spec category. |
+| `test_apple_nearby_info_device_class[iPhone,iPad,Mac,Apple TV,HomePod,Apple Watch]` (6 parametric rows) | Apple type `0x10` (Nearby Info) action-byte high-nibble maps to each of the six recognised device classes. | Reverse-engineered from `furiousMAC/continuity`; the deeper "what is this Apple device" answer. |
+| `test_connected_line_routes_to_connected_dict_only` | A `{"connected": true, ...}` line goes to the connected dict and never to the advertising one. | Two-section panel cleanliness — cross-talk would corrupt the layout. |
+| `test_connected_entries_skip_advertising_ttl` | `expire_devices` only sees the advertising dict; connected entries persist regardless of time. | Different lifecycles for different sources. |
+| `test_connected_snapshot_sentinel_prunes_disappeared_entries` | `connected_snapshot` with a fresh `ids` list prunes entries no longer connected. | A peripheral the user just powered off must not linger in the panel. |
+| `test_schema_2_json_back_compat_type_and_device_class_default_none` | A schema-2 JSON line (no `type` / `device_class`) parses cleanly with both fields defaulting to `None`. | Freshly-upgraded TUI keeps working until the user rebuilds the helper bundle. |
+| `test_mixed_stream_routes_each_line_to_correct_bucket` | Interleaved advertising and connected lines route independently regardless of arrival order. | Routing correctness under realistic helper output cadence. |
+| `test_ble_scan_update_propagates_connected_through_poller` | The poller's snapshot loop emits `BLEScanUpdate` whose `.connected` reflects the running connected dict. | Field the BLEPanel reads to render the Connected section. |
 
 ---
 
@@ -273,6 +305,7 @@ real Mac.
 | `test_help_modal_renders_through_pilot_query` | Open the modal and assert via `app.screen_stack` that exactly one HelpScreen is on the stack; close and assert zero. | Catches regressions where the binding handler runs but the widget never actually mounts. |
 | `test_custom_scan_interval_threads_through` | Construct `WifiScopeApp(..., scan_interval=4.5)` and inspect `app._poller._scan_interval`. | The `WIFISCOPE_SCAN_INTERVAL` env var lands here; if the kwarg path silently lost it, we'd never know. |
 | `test_toggle_view_swaps_third_panel` | Press `n` to toggle from the Wi-Fi scan view to the BLE view; press again to return. Asserts on the `display` flag of both panels and on `app._view_mode`. | Locks the spec's "toggle in place" behaviour — neither panel ever unmounts, so consumer state on either side survives the swap. |
+| `test_ble_panel_renders_both_connected_and_advertising_sections` | Seed both `_latest_ble` (advertising) and `_latest_ble_connected` (connected), press `n`, and assert the BLEPanel body contains both `Connected (1)` and `Advertising (1)` section headers plus a row from each. | End-to-end proof of the v0.6.0 two-section render through the Textual pilot — rendering bug here breaks the spec's question-2 ("what's actually connected to my Mac?") answer. |
 
 ---
 

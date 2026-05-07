@@ -165,6 +165,23 @@
 | `test_group_by_ap_unaliased_uses_cluster_label` | 共享 octets 3..5 的两个 BSSID（如带两个 BSSID 的邻居）折叠到同一 `?XX:YY:ZZ` 聚簇 —— 该 key 以 `?` 开头，渲染时会用 dim 样式。 | 无清单分组 + 渲染样式契约。 |
 | `test_group_by_ap_empty_input` | 空输入 → 空组列表。 | 防御性。 |
 
+#### BLE 诊断辅助函数
+
+| 测试 | 场景 | 为什么重要 |
+|---|---|---|
+| `test_ble_visible_line_counts_total_connectable_anonymous` | Visible BLE 行报告设备总数、可连接数、匿名数（无厂商 + 无名字）。 | 驱动 BLE 诊断面板的第一行。 |
+| `test_ble_vendors_line_top_four_plus_unknown` | Vendors 行显示头四个厂商（按头数）外加 `? N` 尾巴标无厂商设备。 | 压缩长尾的同时不丢未知设备。 |
+| `test_ble_categories_line_groups_by_service_category` | 多服务设备（Apple Watch 同时跑 HID 和心率）每个桶只计一次；无类别设备汇入「N 其他」。 | Categories 行必须如实反映人口分布。 |
+| `test_ble_categories_line_includes_deep_id_types` | Categories 行把 schema-3 的 `type`（iBeacon、AirTag …）和 `device_class`（iPhone …）和 service-UUID 类别一起统计。 | iBeacon 不广告 service UUID；不算它就永远体现不出来。 |
+| `test_ble_closest_line_picks_strongest_rssi` | Closest 行用名字 + 厂商标出 RSSI 最强的设备。 | 最快回答「我旁边有什么」。 |
+| `test_ble_closest_line_falls_back_to_anonymous_label` | 最强设备没名字也没厂商时，行仍显示 RSSI，并贴 `(anonymous)` 标签。 | 对不知道的事情诚实，但不丢这一行。 |
+| `test_ble_diagnostic_lines_returns_four_rows` | 不带 connected 时分发器返回 4 行。 | 布局不变量 —— 面板 min-height 按 4 行算；多一行就挤掉别的。 |
+| `test_ble_diagnostic_lines_adds_connected_row_when_present` | 给 `connected` 非空时追加第五行总结已连接外设。 | v0.6.0 规范的「仅当有已连接外设时显示第五行」规则。 |
+| `test_ble_label_summary_prefers_type_over_service_category` | 带 `type="AirTag"` 与 service `FD5A` 的设备显示为 `AirTag · Find My`。 | 「这是什么」标签领头；类别给上下文。 |
+| `test_ble_label_summary_falls_back_to_service_category_when_no_type` | 无 type / device_class → 标签就是 service-UUID 类别。 | 非 Tier-1 设备的 v0.5.0 行为保持。 |
+| `test_ble_label_summary_uses_device_class_when_no_type` | Apple Nearby Info 只给 `device_class`；摘要拿出 `iPhone` / `Mac` / `Apple Watch`。 | 替换 v0.5.0「Apple, Inc.（匿名）」体验。 |
+| `test_ble_connected_line_counts_peripherals_and_categories` | Connected 诊断行报外设总数 + 每类别细分。 | 驱动「已连接  3 个外设 · 2 音频 · 1 HID」渲染。 |
+
 ---
 
 ## 5b. 模块：`wifiscope.ble`
@@ -221,6 +238,21 @@
 | `test_helper_binary_missing_marks_unavailable` | spawn 时抛 OSError 让状态翻成 `"unavailable"`；快照继续发。 | 首次启动、helper 还没构建 / 授权时的情形。 |
 | `test_malformed_line_skipped_subsequent_parsed` | 垃圾行被跳过；下一条合法行能正常解析。 | helper 行损坏（编码异常、半截写入）不能卡死解析器。 |
 | `test_line_without_id_field_skipped` | 缺 `id` 的 JSON 对象被跳过，不会抛异常。 | 防御 helper schema 漂移。 |
+| `test_detect_ibeacon_from_apple_manufacturer_payload` | 以 `4c0002...` 起头的 Apple 厂商载荷通过 `detect_advertisement` 解析为 `type="iBeacon"`。 | 最常见 BLE 格式的 Tier-1 deep-ID。 |
+| `test_detect_airtag_apple_type_0x12_with_find_my_service` | Apple 类型 `0x12` 带 owner-paired 长度的载荷被标为 `AirTag`；Find My service 进一步确认。 | 替换 v0.5.0 「Apple, Inc.（匿名）Find My」墙为可操作标签。 |
+| `test_detect_find_my_target_short_payload` | 没有 AirTag 长度签名的短 Find My 广播（lost-mode 信标）退化为 `Find My target`。 | 识别格式但对子类型保持诚实。 |
+| `test_detect_eddystone_url_from_helper_supplied_type` | 一行 schema-3 JSON 带 `type="Eddystone-URL"` 通过 `update_from_line` 传到 `BLEDevice.type`。 | helper 端通过 service-data 字节做检测；Python 端只负责传播。 |
+| `test_detect_eddystone_generic_from_service_uuid_only` | 没有帧字节时，`service_uuids=["FEAA"]` 回落到通用 `Eddystone` 标签。 | 兼容路径；0.6.0 之后的 helper 会更细化。 |
+| `test_detect_tile_from_feed_service_uuid` | Tile 信标广播 `FEED` 或 `FEEC` 解析为 `type="Tile"`。 | Tier-1 规范类别。 |
+| `test_detect_smarttag_samsung_company_id_disambiguates_fd5a` | 仅 `FD5A` 有歧义（Apple Find My vs Samsung SmartTag）；Samsung 公司 ID `0x0075` 翻转为 SmartTag。 | 规范明确要求的去歧规则。 |
+| `test_detect_swift_pair_microsoft_company_id_plus_leading_byte` | Microsoft 公司 ID `0x0006` + 首字节 `0x03` → `Swift Pair`。 | Tier-1 规范类别。 |
+| `test_apple_nearby_info_device_class[iPhone,iPad,Mac,Apple TV,HomePod,Apple Watch]`（6 行参数化） | Apple 类型 `0x10`（Nearby Info）action 字节高 4 位映射到六种设备类别。 | 来自 `furiousMAC/continuity` 的逆向；回答「这台 Apple 设备是什么」。 |
+| `test_connected_line_routes_to_connected_dict_only` | `{"connected": true, ...}` 行进入 connected dict，绝不进 advertising dict。 | 两段面板布局的洁净；混流会破坏布局。 |
+| `test_connected_entries_skip_advertising_ttl` | `expire_devices` 只看 advertising dict；connected 条目不受时间影响。 | 不同来源不同生命周期。 |
+| `test_connected_snapshot_sentinel_prunes_disappeared_entries` | 带新 `ids` 列表的 `connected_snapshot` 剪掉已不再连接的条目。 | 用户刚关掉的外设不能在面板里残留。 |
+| `test_schema_2_json_back_compat_type_and_device_class_default_none` | schema-2 的 JSON 行（无 `type` / `device_class`）正常解析，两个字段默认 `None`。 | 刚升级 TUI 但还没重建 helper bundle 的状态保持可用。 |
+| `test_mixed_stream_routes_each_line_to_correct_bucket` | advertising 与 connected 混流时，每行按到达顺序独立路由。 | helper 真实输出节奏下的路由正确性。 |
+| `test_ble_scan_update_propagates_connected_through_poller` | poller 的快照循环输出的 `BLEScanUpdate.connected` 反映运行中的 connected dict。 | BLEPanel 读取此字段渲染 Connected 段。 |
 
 ---
 
@@ -252,6 +284,7 @@
 | `test_help_modal_renders_through_pilot_query` | 打开模态后通过 `app.screen_stack` 断言恰好一个 HelpScreen 在栈上；关闭后断言为 0。 | 防止「绑定回调跑了但 widget 没真正 mount」的回归。 |
 | `test_custom_scan_interval_threads_through` | 构造 `WifiScopeApp(..., scan_interval=4.5)` 后检查 `app._poller._scan_interval`。 | `WIFISCOPE_SCAN_INTERVAL` 环境变量最终落到这里；如果 kwarg 路径静默丢值，没人会发现。 |
 | `test_toggle_view_swaps_third_panel` | 按 `n` 从 Wi-Fi 扫描视图切到 BLE 视图，再按一次切回。同时断言两个面板的 `display` 标志与 `app._view_mode`。 | 锁定规范的「原地切换」行为 —— 任一面板都不 unmount，两侧消费者状态都能在切换中保留。 |
+| `test_ble_panel_renders_both_connected_and_advertising_sections` | 灌入 `_latest_ble`（advertising）与 `_latest_ble_connected`（connected），按 `n`，断言 BLEPanel 主体里同时出现 `Connected (1)` 与 `Advertising (1)` 两段标题以及各一行设备。 | v0.6.0 两段渲染的端到端证明 —— 这里坏掉就破坏了规范的第二个问题（「现在到底连着什么」）的答案。 |
 
 ---
 
