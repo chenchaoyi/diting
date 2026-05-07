@@ -522,12 +522,36 @@ _ZH: dict[str, str] = {
     # ---- Help modal ----
     "  ·  terminal WiFi monitor for macOS, focused on roaming visibility.\n":
         "  ·  macOS 终端 Wi-Fi 监控工具，专注于漫游可见性。\n",
+    "  ·  terminal Wi-Fi monitor for macOS with link health,\n"
+    "     RF environment, and BLE devices.\n":
+        "  ·  macOS 终端 Wi-Fi 监控工具：链路健康、RF 环境、BLE 设备。\n",
     "What": "概览",
+    "What you get": "能看到什么",
     "  See which AP you are on, when your Mac switches, and how strong\n"
     "  the signal is — the things macOS hides from its own WiFi panel.\n":
         "  看清你的 Mac 连在哪个 AP、什么时候切换、信号到底有多强 ——\n"
         "  这些都是 macOS 自带 Wi-Fi 面板不会告诉你的信息。\n",
+    "  Live view of which AP / BSSID you're on, the BSSIDs around\n"
+    "  you, connection latency / loss / jitter to the gateway and\n"
+    "  WAN, an RSSI-variance environment monitor, and a deep BLE\n"
+    "  device list — everything macOS hides from its own Wi-Fi\n"
+    "  menu plus the diagnostic surfaces it never exposed.\n":
+        "  实时看清你连在哪个 AP / BSSID、附近还有哪些 BSSID、到网关 /\n"
+        "  WAN 的延迟 / 丢包 / 抖动、基于 RSSI 抖动的环境监测，以及完整\n"
+        "  的 BLE 设备列表 —— 把 macOS 隐藏掉的 Wi-Fi 信息和它从来没\n"
+        "  暴露过的诊断维度都摆出来。\n",
     "Panels": "面板",
+    "Diag.": "诊断",
+    "Nearby": "附近",
+    "Events": "事件",
+    "Link (gateway / WAN latency, loss, jitter) and":
+        "链路（网关 / WAN 延迟、丢包、抖动）与",
+    "Environment (RSSI σ across nearby APs)\n":
+        "环境（附近各 AP 的 RSSI σ）\n",
+    "BSSIDs near you, or the BLE device list (toggle: n)":
+        "附近的 BSSID，或 BLE 设备列表（按 n 切换）",
+    "strip at the bottom; full browser via m":
+        "底部窗格；按 m 打开完整浏览器",
     "current AP, signal bar, link / IP / radio details":
         "当前 AP、信号条、链路 / IP / 无线参数",
     "every BSSID in range, grouped by physical AP":
@@ -550,6 +574,12 @@ _ZH: dict[str, str] = {
         "切换附近视图：Wi-Fi BSSID ↔ BLE 设备",
     "open Wi-Fi basics for SSID, BSSID, channel, band, security":
         "打开 Wi-Fi 基础知识：SSID / BSSID / 信道 / 频段 / 加密",
+    "open Wi-Fi / BLE basics glossary":
+        "打开 Wi-Fi / BLE 术语表",
+    "open the Events browser (filterable list, per-AP σ":
+        "打开事件浏览器（可过滤列表、各 AP σ",
+    "baseline, last-hour σ sparkline)\n":
+        "基线、最近一小时 σ 走势）\n",
     "AP aliases (optional)": "AP 别名（可选）",
     "  Drop ./aps.yaml (next to aps.example.yaml in the cloned repo)\n"
     "  listing your APs by management MAC; wifiscope renders friendly\n"
@@ -563,6 +593,68 @@ _ZH: dict[str, str] = {
         "  这份文件也能用 —— 每个 BSSID 会自动获得形如 '?AB:CD:EF' 的\n"
         "  聚簇标签，同一台物理 AP 的所有无线电仍然会被分到同一组。\n",
     "Helper": "辅助进程",
+    "Helper bundle": "辅助进程包",
+    "Events modal (m)": "事件浏览器（m）",
+    "BLE view": "BLE 视图",
+    "Subcommands": "子命令",
+    "(none)": "（无参数）",
+    "launch the TUI dashboard (this view)":
+        "启动 TUI 仪表盘（即当前视图）",
+    "print current connection details and exit":
+        "打印当前连接信息并退出",
+    "stream events as plain text until Ctrl+C":
+        "纯文本输出事件流，Ctrl+C 退出",
+    "headless JSONL events for long-runs / Home Assistant":
+        "无界面 JSONL 事件流，适合长时运行 / Home Assistant",
+    "record an empty-room σ baseline (default 300 s)":
+        "采集空房间的 σ 基线（默认 300 秒）",
+    "  Filterable scroll of every event the dashboard has detected:\n"
+    "  ROAM (AP switches), STIR (RF disturbance from σ baseline),\n"
+    "  LATENCY / LOSS (link probe spikes), LINK (associate /\n"
+    "  disassociate). Use 1/2/3/4/0 to filter by category. Below\n"
+    "  the list: a per-AP σ table summarising which APs are stable\n"
+    "  vs stirring, plus a σ sparkline covering the trailing hour.\n":
+        "  仪表盘检测到的所有事件可过滤滚动列表：\n"
+        "  ROAM（AP 切换）、STIR（基于 σ 基线的 RF 扰动）、\n"
+        "  LATENCY / LOSS（链路探测尖峰）、LINK（关联 / 断开）。\n"
+        "  按 1/2/3/4/0 切换过滤。列表下方：各 AP σ 表，标出哪些 AP\n"
+        "  稳定 / 哪些抖动，以及最近一小时 σ 走势图。\n",
+    "  Toggle with n. Two sections: Connected (system-paired\n"
+    "  peripherals you're actively using — keyboards, AirPods, Magic\n"
+    "  Trackpad) and Advertising (everything broadcasting nearby).\n"
+    "  Vendor / device-class identification uses public Bluetooth SIG\n"
+    "  data (manufacturer-IDs, GATT services, member UUIDs) plus\n"
+    "  Apple Continuity protocol parsing for AirDrop / AirPods /\n"
+    "  Watch pairing / Hotspot etc. RSSI is EMA-smoothed for the\n"
+    "  sort key so the row order stops jiggling on packet jitter.\n":
+        "  按 n 切换。两个分区：已连接（系统配对、正在使用的外设 ——\n"
+        "  键盘、AirPods、Magic Trackpad），正在广播（附近所有发广播\n"
+        "  的设备）。厂商 / 设备类识别基于公开的 Bluetooth SIG 数据\n"
+        "  （manufacturer-ID、GATT 服务、member UUID），以及苹果\n"
+        "  Continuity 协议解析（AirDrop / AirPods / Watch 配对 / 热点 等）。\n"
+        "  RSSI 用 EMA 平滑后作为排序键，列表行序不再因单包抖动而跳动。\n",
+    "  macOS 14.4+ redacts SSID / BSSID in scan results unless the\n"
+    "  caller has Location Services granted; CoreBluetooth refuses\n"
+    "  to enter poweredOn for processes without Bluetooth grant. A\n"
+    "  Terminal-launched Python CLI cannot earn either. The helper\n"
+    "  is a tiny Swift .app bundle that can — wifiscope auto-builds\n"
+    "  it on first launch, opens it once so macOS shows the prompts,\n"
+    "  and from then on shells out to the bundle for unredacted\n"
+    "  scan data plus the BLE feed.\n\n"
+    "  Build / grant: ./helper/build.sh, then\n"
+    "    open helper/wifiscope-helper.app  (one-time, click Allow).\n"
+    "  Leave the bundle in place; do NOT move it to /Applications/\n"
+    "  (TCC keys grants by cdhash so a copy forces a re-grant).\n":
+        "  macOS 14.4+ 扫描结果里的 SSID / BSSID 会被遮蔽，除非调用者\n"
+        "  已获得「定位服务」授权；没有「蓝牙」授权的进程，CoreBluetooth\n"
+        "  也不会进入 poweredOn。从终端启动的 Python CLI 拿不到任何一项。\n"
+        "  辅助进程是一个小巧的 Swift .app 包 —— 它能 —— wifiscope 首\n"
+        "  次启动时自动编译并 open 一次，让 macOS 弹出授权提示，之后所有\n"
+        "  扫描和 BLE 数据都通过它拿到完整结果。\n\n"
+        "  构建 / 授权：./helper/build.sh，然后\n"
+        "    open helper/wifiscope-helper.app  （一次性，点 Allow 即可）。\n"
+        "  让包留在原地；**不要**移动到 /Applications/\n"
+        "  （TCC 按 cdhash 记授权，复制 / 移动会强制让你重新授权）。\n",
     "  macOS 14.4+ redacts the SSID and BSSID of every AP in the scan\n"
     "  list to None unless the calling process has Location Services\n"
     "  permission, and a Python CLI launched from Terminal cannot get\n"
@@ -596,13 +688,40 @@ _ZH: dict[str, str] = {
         "  WIFISCOPE_INVENTORY=path     覆盖 aps.yaml 路径。\n"
         "  WIFISCOPE_HELPER=path        覆盖 helper.app 路径。\n"
         "  WIFISCOPE_LANG=en|zh         覆盖界面语言。\n",
+    "  WIFISCOPE_SCAN_INTERVAL=N    seconds between Wi-Fi scans,\n"
+    "                                default 7. CoreWLAN throttles\n"
+    "                                around 5 s; values below ~6\n"
+    "                                yield empty scans. Min 3.\n"
+    "  WIFISCOPE_INVENTORY=path     override aps.yaml location.\n"
+    "  WIFISCOPE_HELPER=path        override helper.app path.\n"
+    "  WIFISCOPE_LANG=en|zh         override interface language.\n"
+    "  WIFISCOPE_GATEWAY=ip         override gateway probe target.\n"
+    "  WIFISCOPE_WAN=ip             override WAN probe target\n"
+    "                                (default: auto-detected DNS).\n":
+        "  WIFISCOPE_SCAN_INTERVAL=N    Wi-Fi 扫描间隔（秒），默认 7。\n"
+        "                                CoreWLAN 大约 5 秒限流一次，\n"
+        "                                低于 ~6 秒时每隔一次返回空。\n"
+        "                                最小 3 秒。\n"
+        "  WIFISCOPE_INVENTORY=path     覆盖 aps.yaml 路径。\n"
+        "  WIFISCOPE_HELPER=path        覆盖 helper.app 路径。\n"
+        "  WIFISCOPE_LANG=en|zh         覆盖界面语言。\n"
+        "  WIFISCOPE_GATEWAY=ip         覆盖网关探测目标。\n"
+        "  WIFISCOPE_WAN=ip             覆盖 WAN 探测目标\n"
+        "                                （默认：自动检测的 DNS）。\n",
     "made by ": "作者：",
     "Esc or h to close": "Esc 或 h 关闭",
 
     # ---- Basics modal ----
     "Wi-Fi Basics": "Wi-Fi 基础知识",
+    "Glossary": "术语表",
     "  ·  the words wifiscope uses in the dashboard\n":
         "  ·  仪表盘里这些术语都是什么意思\n",
+    "  ·  every term wifiscope shows in the dashboard, plain-spoken\n":
+        "  ·  仪表盘里出现的每个术语，用人话讲清楚\n",
+    "Wi-Fi": "Wi-Fi",
+    "Link health": "链路健康",
+    "RF environment": "RF 环境",
+    "BLE": "BLE",
     "RSSI / Signal": "RSSI / 信号",
     "Noise / SNR": "Noise / SNR",
     "Band": "频段",
@@ -664,6 +783,99 @@ _ZH: dict[str, str] = {
         "频段干净、信道空闲会加分；信号弱、信道拥挤、开放网络、"
         "加密类型不一致会扣分。只有同名 SSID 候选明显更高时才会显示。",
     "Esc or b to close": "Esc 或 b 关闭",
+    "↑/↓/PgUp/PgDn to scroll  ·  Esc or b to close":
+        "↑/↓/PgUp/PgDn 翻屏  ·  Esc 或 b 关闭",
+    "↑/↓/PgUp/PgDn to scroll  ·  Esc or h to close":
+        "↑/↓/PgUp/PgDn 翻屏  ·  Esc 或 h 关闭",
+
+    # ---- Basics modal: link health ----
+    "Latency / RTT": "延迟 / RTT",
+    "Loss": "丢包",
+    "Jitter": "抖动",
+    "WAN reachability": "WAN 可达性",
+    "Round-trip time of a probe packet to the gateway (ICMP ping) and "
+    "to a public DNS server (TCP/53 connect). Under 50 ms feels snappy, "
+    "100–200 ms is OK for most things, > 300 ms hurts video calls.":
+        "探测包到网关（ICMP ping）和到公共 DNS（TCP/53 连接）的往返时间。"
+        "50 ms 以下很顺滑；100–200 ms 大多数场景能用；超过 300 ms "
+        "视频通话会明显卡。",
+    "Percentage of probes that did not come back inside the window. "
+    "0 % is the only good number; even 1–2 % loss to the gateway is "
+    "abnormal on a healthy LAN. WAN loss is more variable.":
+        "在采样窗口内没回来的探测包比例。0% 是唯一让人放心的数字 —— "
+        "健康内网即便 1–2% 也算异常。WAN 侧丢包波动更大。",
+    "Variation in latency between consecutive probes. Calls and games "
+    "feel choppy when jitter is high even if average latency is low.":
+        "相邻探测之间的延迟变化幅度。即便平均延迟不高，抖动大时通话和"
+        "游戏体验仍会卡顿。",
+    "wifiscope probes a public DNS server via TCP port 53 (not ICMP) "
+    "because many resolvers block ping. A successful TCP handshake "
+    "means the WAN path works even when ping is silent.":
+        "wifiscope 用 TCP 53 端口探测公共 DNS（不用 ICMP），因为很多 "
+        "DNS 服务商会屏蔽 ping。TCP 握手成功就说明 WAN 通了，即便 "
+        "ping 不响应。",
+
+    # ---- Basics modal: RF environment ----
+    "σ (sigma)": "σ（标准差）",
+    "Stir / 扰动": "Stir / 扰动",
+    "Co-located vs spatial channel": "同位 AP 与邻信道 AP",
+    "Standard deviation of RSSI over a short window. A still room has "
+    "low σ (signal barely changes); people walking around or doors "
+    "opening push σ up. wifiscope uses σ as the substrate for the "
+    "Stir / Environment monitor.":
+        "短窗口内 RSSI 的标准差。安静的房间 σ 很低（信号几乎不变）；"
+        "人走动、开关门会把 σ 推高。wifiscope 用它作为环境扰动监测的基础。",
+    "An event fired when current σ exceeds the AP's running baseline "
+    "by ≥3× and clears 5 dB on its own. 'High confidence' if two or "
+    "more nearby APs see the spike at the same time; 'medium' alone.":
+        "当前 σ 超过该 AP 滚动基线的 ≥3 倍且自身 ≥5 dB 时触发的事件。"
+        "如果同一时刻两台及以上邻近 AP 都看到尖峰，标记为「高置信」；"
+        "单 AP 单独触发时是「中等」。",
+    "Same-room APs (RSSI ≥ −60) form a redundancy group: a stir on "
+    "two of them at once gets upgraded to high confidence. Far APs "
+    "(RSSI −60 to −85) each act as an independent spatial 'lane'. "
+    "Below −85 dBm an AP is too noisy to draw conclusions from.":
+        "同房间 AP（RSSI ≥ −60）组成冗余组：两台同时报扰动时会被升级"
+        "为「高置信」。较远 AP（−60 到 −85 dBm）各自作为独立的空间「通道」。"
+        "弱于 −85 dBm 的 AP 太嘈杂，从中得不出可靠结论。",
+
+    # ---- Basics modal: BLE ----
+    "BSSID rotation / merged N": "BSSID 轮换 / 合并 N",
+    "Connected vs Advertising": "已连接 与 正在广播",
+    "iBeacon / Eddystone / Tile": "iBeacon / Eddystone / Tile",
+    "Find My target / AirTag": "Find My 目标 / AirTag",
+    "AirDrop / Hotspot / Watch pairing": "AirDrop / 热点 / Watch 配对",
+    "Privacy-preserving devices (most modern phones, AirPods) rotate "
+    "their BLE identifier every ~15 min. wifiscope's fuzzy merger "
+    "groups rotations of the same vendor + name + signal range as "
+    "one row tagged '(merged N)' so the list does not balloon.":
+        "保护隐私的设备（多数现代手机、AirPods）每 ~15 分钟轮换一次 "
+        "BLE 标识。wifiscope 的模糊合并器把同厂商 + 同名称 + 同信号区间的"
+        "轮换实例归为一行，标记为「合并 N」，避免列表爆炸。",
+    "Connected: peripherals you're actively using (keyboard, AirPods). "
+    "These come from the system Bluetooth stack and rarely change. "
+    "Advertising: every device broadcasting nearby; updates every 2 s.":
+        "已连接：正在使用的外设（键盘、AirPods 等），来自系统蓝牙栈，"
+        "变化很少。正在广播：附近所有发广播包的设备，每 2 秒刷新。",
+    "Standardised public-format BLE broadcasts. iBeacon and Eddystone "
+    "are commercial location beacons; Tile is a tracker. wifiscope "
+    "labels them by parsing the public protocol fields, not by guess.":
+        "标准化的公开格式 BLE 广播。iBeacon 和 Eddystone 是商用位置信标，"
+        "Tile 是物品追踪器。wifiscope 通过解析公开协议字段识别，不是猜测。",
+    "Apple Find My broadcasts. AirTag-class hardware never carries a "
+    "name (privacy by design). AirPods and Apple Watch broadcast the "
+    "same Find My beacon when away from their owner but DO carry a "
+    "name — wifiscope uses the name as the AirTag-vs-rest tiebreaker.":
+        "苹果 Find My 广播。AirTag 类硬件按设计绝不带名称（隐私需求）。"
+        "AirPods 和 Apple Watch 远离主人时会发送同样的 Find My 信标，"
+        "但会携带设备名 —— wifiscope 用 name 是否存在区分二者。",
+    "Apple Continuity protocol broadcasts. wifiscope parses the "
+    "manufacturer-data type byte to label what intent the device is "
+    "broadcasting (AirDrop transfer, Personal Hotspot, Watch unlock "
+    "pairing, etc.) — answers 'why is this Apple device chirping?'.":
+        "苹果 Continuity 协议广播。wifiscope 解析 manufacturer-data 的 "
+        "type 字节，标出设备在广播什么动作（AirDrop 传输、个人热点、"
+        "Watch 解锁配对 等）——回答「这台苹果设备到底在嚷什么？」。",
 
     # ---- v0.7.0 Diagnostics rows: Link / Environment ----
     "Link  ": "链路  ",

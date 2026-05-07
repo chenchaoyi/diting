@@ -306,29 +306,42 @@ class HelpScreen(ModalScreen):
         align: center middle;
     }
     HelpScreen > #help-box {
-        width: 78;
-        height: auto;
-        max-height: 90%;
+        width: 84;
+        height: 90%;
         border: heavy $accent;
         padding: 1 2;
         background: $surface;
     }
-    HelpScreen #help-box Static {
+    HelpScreen #help-scroll {
+        height: 1fr;
+    }
+    HelpScreen #help-content {
+        height: auto;
+    }
+    HelpScreen #help-footer {
         height: auto;
     }
     """
 
     def compose(self) -> ComposeResult:
+        body, footer = _help_content()
         yield Vertical(
-            Static(_help_content(), id="help-content"),
+            VerticalScroll(
+                Static(body, id="help-content"),
+                id="help-scroll",
+            ),
+            Static(footer, id="help-footer"),
             id="help-box",
         )
 
 
-def _help_content() -> Text:
-    """Build the help dialog body as a Rich Text. OSC 8 link on the
-    GitHub URL renders clickable in modern terminals; falls back to
-    plain text where unsupported.
+def _help_content() -> tuple[Text, Text]:
+    """Build the help dialog as ``(scrollable body, pinned footer)``.
+
+    Returning the two parts separately lets the modal scroll the
+    long body while keeping the close-hint visible on every screen
+    size. OSC 8 link on the GitHub URL renders clickable in modern
+    terminals; falls back to plain text where unsupported.
 
     Each section header and paragraph is fed through ``t()`` so the
     Chinese reader sees a complete translation rather than a mix of
@@ -348,31 +361,62 @@ def _help_content() -> Text:
 
     body.append("wifiscope", style="bold cyan")
     body.append(
-        t("  ·  terminal WiFi monitor for macOS, focused on roaming visibility.\n"),
+        t("  ·  terminal Wi-Fi monitor for macOS with link health,\n"
+          "     RF environment, and BLE devices.\n"),
         style="dim",
     )
 
-    section(t("What"))
+    section(t("What you get"))
     body.append(t(
-        "  See which AP you are on, when your Mac switches, and how strong\n"
-        "  the signal is — the things macOS hides from its own WiFi panel.\n"
+        "  Live view of which AP / BSSID you're on, the BSSIDs around\n"
+        "  you, connection latency / loss / jitter to the gateway and\n"
+        "  WAN, an RSSI-variance environment monitor, and a deep BLE\n"
+        "  device list — everything macOS hides from its own Wi-Fi\n"
+        "  menu plus the diagnostic surfaces it never exposed.\n"
     ))
 
     section(t("Panels"))
     line("Conn.", t("current AP, signal bar, link / IP / radio details"))
     line("Scan",  t("every BSSID in range, grouped by physical AP"))
-    line("Roam",  t("band-switch and inter-AP roam events as they happen"))
+    line("Diag.", t("Link (gateway / WAN latency, loss, jitter) and"))
+    body.append(" " * 8 + t("Environment (RSSI σ across nearby APs)\n"))
+    line(t("Nearby"), t("BSSIDs near you, or the BLE device list (toggle: n)"))
+    line("Events", t("strip at the bottom; full browser via m"))
 
     section(t("Bindings"))
     line("q", t("quit"))
     line("p", t("pause / resume polling"))
-    line("r", t("force a rescan now (CoreWLAN ~5s throttle still applies)"))
+    line("r", t("force a rescan now (CoreWLAN ~5 s throttle still applies)"))
     line("s", t("cycle scan sort:  by AP  ↔  by signal"))
-    line("c", t("force re-roam (cycle WiFi off/on so the OS re-picks the"))
+    line("c", t("force re-roam (cycle Wi-Fi off/on so the OS re-picks the"))
     body.append(" " * 8 + t("strongest BSSID — fixes sticky associations)\n"))
     line("n", t("toggle Nearby view: Wi-Fi BSSIDs ↔ BLE devices"))
+    line("m", t("open the Events browser (filterable list, per-AP σ"))
+    body.append(" " * 8 + t("baseline, last-hour σ sparkline)\n"))
     line("h", t("toggle this help"))
-    line("b", t("open Wi-Fi basics for SSID, BSSID, channel, band, security"))
+    line("b", t("open Wi-Fi / BLE basics glossary"))
+
+    section(t("Events modal (m)"))
+    body.append(t(
+        "  Filterable scroll of every event the dashboard has detected:\n"
+        "  ROAM (AP switches), STIR (RF disturbance from σ baseline),\n"
+        "  LATENCY / LOSS (link probe spikes), LINK (associate /\n"
+        "  disassociate). Use 1/2/3/4/0 to filter by category. Below\n"
+        "  the list: a per-AP σ table summarising which APs are stable\n"
+        "  vs stirring, plus a σ sparkline covering the trailing hour.\n"
+    ))
+
+    section(t("BLE view"))
+    body.append(t(
+        "  Toggle with n. Two sections: Connected (system-paired\n"
+        "  peripherals you're actively using — keyboards, AirPods, Magic\n"
+        "  Trackpad) and Advertising (everything broadcasting nearby).\n"
+        "  Vendor / device-class identification uses public Bluetooth SIG\n"
+        "  data (manufacturer-IDs, GATT services, member UUIDs) plus\n"
+        "  Apple Continuity protocol parsing for AirDrop / AirPods /\n"
+        "  Watch pairing / Hotspot etc. RSSI is EMA-smoothed for the\n"
+        "  sort key so the row order stops jiggling on packet jitter.\n"
+    ))
 
     section(t("AP aliases (optional)"))
     body.append(t(
@@ -384,43 +428,58 @@ def _help_content() -> Text:
         "  physical AP still group together.\n"
     ))
 
-    section(t("Helper"))
+    section(t("Helper bundle"))
     body.append(t(
-        "  macOS 14.4+ redacts the SSID and BSSID of every AP in the scan\n"
-        "  list to None unless the calling process has Location Services\n"
-        "  permission, and a Python CLI launched from Terminal cannot get\n"
-        "  on that list. The helper is a tiny Swift `.app` bundle that\n"
-        "  can — wifiscope auto-builds and `open`s it once on first launch,\n"
-        "  the user clicks Allow in the macOS prompt, and from then on\n"
-        "  wifiscope shells out to the bundle's binary for unredacted scan\n"
-        "  data. The TCC grant is persistent; the helper window auto-\n"
-        "  closes on grant. Without it the Nearby APs panel works but\n"
-        "  every row shows '(redacted)' for SSID and BSSID.\n"
+        "  macOS 14.4+ redacts SSID / BSSID in scan results unless the\n"
+        "  caller has Location Services granted; CoreBluetooth refuses\n"
+        "  to enter poweredOn for processes without Bluetooth grant. A\n"
+        "  Terminal-launched Python CLI cannot earn either. The helper\n"
+        "  is a tiny Swift .app bundle that can — wifiscope auto-builds\n"
+        "  it on first launch, opens it once so macOS shows the prompts,\n"
+        "  and from then on shells out to the bundle for unredacted\n"
+        "  scan data plus the BLE feed.\n\n"
+        "  Build / grant: ./helper/build.sh, then\n"
+        "    open helper/wifiscope-helper.app  (one-time, click Allow).\n"
+        "  Leave the bundle in place; do NOT move it to /Applications/\n"
+        "  (TCC keys grants by cdhash so a copy forces a re-grant).\n"
     ))
+
+    section(t("Subcommands"))
+    line(t("(none)"), t("launch the TUI dashboard (this view)"))
+    line("once",     t("print current connection details and exit"))
+    line("watch",    t("stream events as plain text until Ctrl+C"))
+    line("monitor",  t("headless JSONL events for long-runs / Home Assistant"))
+    line("calibrate", t("record an empty-room σ baseline (default 300 s)"))
 
     section(t("Tunables"))
     body.append(t(
-        "  WIFISCOPE_SCAN_INTERVAL=N    seconds between scans, default 7.\n"
-        "                                CoreWLAN throttles around 5 s,\n"
-        "                                so values below ~6 yield empty\n"
-        "                                scans every other call. Min 3.\n"
+        "  WIFISCOPE_SCAN_INTERVAL=N    seconds between Wi-Fi scans,\n"
+        "                                default 7. CoreWLAN throttles\n"
+        "                                around 5 s; values below ~6\n"
+        "                                yield empty scans. Min 3.\n"
         "  WIFISCOPE_INVENTORY=path     override aps.yaml location.\n"
         "  WIFISCOPE_HELPER=path        override helper.app path.\n"
         "  WIFISCOPE_LANG=en|zh         override interface language.\n"
+        "  WIFISCOPE_GATEWAY=ip         override gateway probe target.\n"
+        "  WIFISCOPE_WAN=ip             override WAN probe target\n"
+        "                                (default: auto-detected DNS).\n"
     ))
 
-    body.append("\n")
-    body.append("─" * 70 + "\n", style="dim")
-    body.append(t("made by "), style="dim")
-    body.append("ccy", style="bold dim")
-    body.append("  ·  ", style="dim")
-    body.append(
+    footer = Text(no_wrap=False)
+    footer.append("─" * 76 + "\n", style="dim")
+    footer.append(t("made by "), style="dim")
+    footer.append("ccy", style="bold dim")
+    footer.append("  ·  ", style="dim")
+    footer.append(
         "github.com/chenchaoyi/wifiscope",
         style="dim underline link https://github.com/chenchaoyi/wifiscope",
     )
-    body.append("\n")
-    body.append(t("Esc or h to close"), style="dim italic")
-    return body
+    footer.append("\n")
+    footer.append(
+        t("↑/↓/PgUp/PgDn to scroll  ·  Esc or h to close"),
+        style="dim italic",
+    )
+    return body, footer
 
 
 class EventsScreen(ModalScreen):
@@ -790,34 +849,60 @@ class BasicsScreen(ModalScreen):
         align: center middle;
     }
     BasicsScreen > #basics-box {
-        width: 84;
-        height: auto;
-        max-height: 90%;
+        width: 90;
+        height: 90%;
         border: heavy $accent;
         padding: 1 2;
         background: $surface;
     }
-    BasicsScreen #basics-box Static {
+    BasicsScreen #basics-scroll {
+        height: 1fr;
+    }
+    BasicsScreen #basics-content {
+        height: auto;
+    }
+    BasicsScreen #basics-footer {
         height: auto;
     }
     """
 
     def compose(self) -> ComposeResult:
+        body, footer = _basics_content()
         yield Vertical(
-            Static(_basics_content(), id="basics-content"),
+            VerticalScroll(
+                Static(body, id="basics-content"),
+                id="basics-scroll",
+            ),
+            Static(footer, id="basics-footer"),
             id="basics-box",
         )
 
 
-def _basics_content() -> Text:
+def _basics_content() -> tuple[Text, Text]:
+    """Glossary as ``(scrollable body, pinned footer)`` so the close
+    hint stays visible even when the term list overflows the modal.
+
+    Grouped into Wi-Fi, link health, RF environment, and BLE sections.
+    Each entry is a one-paragraph explanation aimed at users who can
+    use a Wi-Fi network but have never looked under the hood — not
+    at protocol engineers.
+    """
     body = Text(no_wrap=False)
+
+    def section(title: str) -> None:
+        body.append("\n" + title + "\n", style="bold cyan")
 
     def term(name: str, desc: str) -> None:
         body.append(f"\n{name}\n", style="bold yellow")
         body.append("  " + desc + "\n")
 
-    body.append(t("Wi-Fi Basics"), style="bold cyan")
-    body.append(t("  ·  the words wifiscope uses in the dashboard\n"), style="dim")
+    body.append(t("Glossary"), style="bold cyan")
+    body.append(
+        t("  ·  every term wifiscope shows in the dashboard, plain-spoken\n"),
+        style="dim",
+    )
+
+    section(t("Wi-Fi"))
 
     # Term names that are themselves industry acronyms (SSID, BSSID,
     # RSSI) keep their English form in the heading; the explanation
@@ -906,9 +991,119 @@ def _basics_content() -> Text:
         ),
     )
 
-    body.append("\n")
-    body.append(t("Esc or b to close"), style="dim italic")
-    return body
+    section(t("Link health"))
+    term(
+        t("Latency / RTT"),
+        t(
+            "Round-trip time of a probe packet to the gateway (ICMP ping) and "
+            "to a public DNS server (TCP/53 connect). Under 50 ms feels snappy, "
+            "100–200 ms is OK for most things, > 300 ms hurts video calls."
+        ),
+    )
+    term(
+        t("Loss"),
+        t(
+            "Percentage of probes that did not come back inside the window. "
+            "0 % is the only good number; even 1–2 % loss to the gateway is "
+            "abnormal on a healthy LAN. WAN loss is more variable."
+        ),
+    )
+    term(
+        t("Jitter"),
+        t(
+            "Variation in latency between consecutive probes. Calls and games "
+            "feel choppy when jitter is high even if average latency is low."
+        ),
+    )
+    term(
+        t("WAN reachability"),
+        t(
+            "wifiscope probes a public DNS server via TCP port 53 (not ICMP) "
+            "because many resolvers block ping. A successful TCP handshake "
+            "means the WAN path works even when ping is silent."
+        ),
+    )
+
+    section(t("RF environment"))
+    term(
+        t("σ (sigma)"),
+        t(
+            "Standard deviation of RSSI over a short window. A still room has "
+            "low σ (signal barely changes); people walking around or doors "
+            "opening push σ up. wifiscope uses σ as the substrate for the "
+            "Stir / Environment monitor."
+        ),
+    )
+    term(
+        t("Stir / 扰动"),
+        t(
+            "An event fired when current σ exceeds the AP's running baseline "
+            "by ≥3× and clears 5 dB on its own. 'High confidence' if two or "
+            "more nearby APs see the spike at the same time; 'medium' alone."
+        ),
+    )
+    term(
+        t("Co-located vs spatial channel"),
+        t(
+            "Same-room APs (RSSI ≥ −60) form a redundancy group: a stir on "
+            "two of them at once gets upgraded to high confidence. Far APs "
+            "(RSSI −60 to −85) each act as an independent spatial 'lane'. "
+            "Below −85 dBm an AP is too noisy to draw conclusions from."
+        ),
+    )
+
+    section(t("BLE"))
+    term(
+        t("BSSID rotation / merged N"),
+        t(
+            "Privacy-preserving devices (most modern phones, AirPods) rotate "
+            "their BLE identifier every ~15 min. wifiscope's fuzzy merger "
+            "groups rotations of the same vendor + name + signal range as "
+            "one row tagged '(merged N)' so the list does not balloon."
+        ),
+    )
+    term(
+        t("Connected vs Advertising"),
+        t(
+            "Connected: peripherals you're actively using (keyboard, AirPods). "
+            "These come from the system Bluetooth stack and rarely change. "
+            "Advertising: every device broadcasting nearby; updates every 2 s."
+        ),
+    )
+    term(
+        t("iBeacon / Eddystone / Tile"),
+        t(
+            "Standardised public-format BLE broadcasts. iBeacon and Eddystone "
+            "are commercial location beacons; Tile is a tracker. wifiscope "
+            "labels them by parsing the public protocol fields, not by guess."
+        ),
+    )
+    term(
+        t("Find My target / AirTag"),
+        t(
+            "Apple Find My broadcasts. AirTag-class hardware never carries a "
+            "name (privacy by design). AirPods and Apple Watch broadcast the "
+            "same Find My beacon when away from their owner but DO carry a "
+            "name — wifiscope uses the name as the AirTag-vs-rest tiebreaker."
+        ),
+    )
+    term(
+        t("AirDrop / Hotspot / Watch pairing"),
+        t(
+            "Apple Continuity protocol broadcasts. wifiscope parses the "
+            "manufacturer-data type byte to label what intent the device is "
+            "broadcasting (AirDrop transfer, Personal Hotspot, Watch unlock "
+            "pairing, etc.) — answers 'why is this Apple device chirping?'."
+        ),
+    )
+
+    footer = Text(no_wrap=False)
+    footer.append("─" * 82 + "\n", style="dim")
+    footer.append(
+        t("↑/↓/PgUp/PgDn to scroll  ·  Esc or b to close"),
+        style="dim italic",
+    )
+    return body, footer
 
 
 class BLEPanel(VerticalScroll):
