@@ -77,25 +77,39 @@ is one extended example. The underlying *science* is real (CMU's
 WiFi-DensePose paper, MIT's vital-radio work) — but turning that
 into a `pip install` is a research-grade project, not a weekend.
 
-## What wifiscope might add at tier 0
+## What wifiscope adds at tier 0 (v0.7.0)
 
-Without overclaiming, the RSSI / Tx-rate data we already poll can
-support:
+Without overclaiming, the RSSI / Tx-rate data we already poll
+supports — and as of **v0.7.0 actually drives** — three concrete
+surfaces:
 
-- An **environment-stability indicator** — RSSI variance over a
-  rolling window, surfaced in the Diagnostics panel. "Stable" vs
-  "stirring" labels, never "N people".
-- **Motion event logging** — large RSSI swings (≥ 8 dB in < 5 s)
-  get a timestamped line in a small "events" panel, like the roam
-  log. Useful for "did anything happen at 14:32?".
-- **Occupancy yes/no** — with an offline calibration baseline (a
-  "the room is empty" capture), we can classify "currently quiet"
-  vs "currently busy" with reasonable accuracy. People-counting
-  beyond yes/no is unreliable on RSSI.
+- An **environment-stability indicator**, the new `Environment`
+  line in the Diagnostics panel. Format: `Environment  stable σ
+  1.2 dB / 5s`. The label is one of `stable` / `active` / `quiet`
+  (the last only when an opt-in calibration baseline from
+  `wifiscope calibrate` is loaded). NEVER "N people" or "motion
+  direction" — the wording rule is non-negotiable.
+- **Motion event logging** — when current 5 s σ exceeds 2.5 ×
+  trailing 5-min median σ AND the absolute σ exceeds 3 dB, an
+  `rf_stir` event is appended to the unified events ring. Confidence
+  is `high` when the spike shows up on >= 2 co-located APs at once
+  (RSSI >= -65 dBm), `medium` otherwise. Open the events modal with
+  `m` to browse the last 100; consume them as JSONL via `wifiscope
+  monitor`.
+- **Occupancy `quiet` vs `active`** — `wifiscope calibrate`
+  records 5 minutes of "the room is empty" baseline RSSI and
+  writes `./wifiscope-baseline.json`. With that file present, the
+  Environment line label becomes `quiet` / `active` instead of
+  `stable` / `active`. Anything beyond binary occupancy is
+  unreliable on RSSI alone and we deliberately do not implement
+  it.
 
-These are noted as candidate features in the README's roadmap.
-None of them are "Wi-Fi sensing" in the academic sense; they are
-honest derivative metrics from the data we already have.
+These are not "Wi-Fi sensing" in the academic sense; they are
+honest derivative metrics from the data we already have. The
+`Environment` line is the live example of what you can
+responsibly derive from RSSI alone — anything richer (presence
+behind walls, body pose, vital signs) needs CSI hardware that
+macOS does not expose.
 
 ## If you want real Wi-Fi sensing
 

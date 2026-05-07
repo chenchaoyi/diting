@@ -30,6 +30,12 @@
   <sub><i>BLE view (press <code>n</code> to toggle) — Connected peripherals on top, Advertising devices below, each labelled with its public-format identification.</i></sub>
 </p>
 
+<p align="center">
+  <img src="docs/preview-events.svg" alt="wifiscope TUI – Events modal" width="100%">
+  <br>
+  <sub><i>Events modal (press <code>m</code> to open) — last 100 roam / RF-stir / latency / loss / link events, per-AP σ baseline, last-hour σ sparkline.</i></sub>
+</p>
+
 ## Why
 
 You set up multiple APs at home or at the office, you walk between
@@ -65,6 +71,16 @@ black box into a TUI:
   is** — `AirTag`, `iBeacon`, `Eddystone-URL`, `Tile`, `SmartTag`,
   `iPhone`, `Mac`, `Apple Watch`, `HomePod` — instead of the
   "Apple, Inc. (anonymous) Find My" wall
+- two new **link-health** rows: a `Link` line that pings the gateway
+  and your auto-detected DNS server every second so a -55 dBm AP
+  reads as bad when the upstream is broken, and an `Environment`
+  line that surfaces rolling RSSI variance with a `stable` /
+  `active` qualifier (calibrate with `wifiscope calibrate` for a
+  `quiet` baseline). Press `m` to open a full-screen Events
+  browser of the last 100 roam / RF-stir / latency / loss / link
+  events. **NOT** Wi-Fi sensing — see
+  [`docs/explainers/wifi-sensing.md`](docs/explainers/wifi-sensing.md)
+  for what we deliberately do not claim
 
 Stuck on a weak AP? Hit `c` and `wifiscope` cycles the WiFi radio so
 macOS re-runs auto-join and reassociates with the strongest BSSID.
@@ -116,16 +132,27 @@ With no override, `wifiscope` autodetects the system locale —
 | `s` | cycle scan sort: by AP ↔ by signal |
 | `n` | toggle Nearby view: Wi-Fi BSSIDs ↔ BLE devices |
 | `c` | force re-roam — cycle Wi-Fi off/on so macOS re-picks the strongest BSSID |
+| `m` | open / close the Events modal — last 100 roam / stir / latency / loss / link events |
 | `h` | open / close the in-app help screen |
 | `b` | open / close Wi-Fi Basics: SSID, BSSID, channel, band, security, roam score |
 
-`watch` and `once` subcommands run wifiscope in plain-text modes —
-useful for piping into a logger or for a one-shot diagnostic:
+`watch`, `once`, `monitor`, and `calibrate` subcommands run
+wifiscope without the TUI:
 
 ```bash
-uv run wifiscope once     # snapshot of current connection, exit
-uv run wifiscope watch    # streaming events until Ctrl+C
+uv run wifiscope once                       # snapshot of current connection, exit
+uv run wifiscope watch                      # streaming text events until Ctrl+C
+uv run wifiscope monitor                    # headless JSONL events to stdout
+uv run wifiscope monitor --out events.jsonl # append JSONL to a file
+uv run wifiscope monitor --notify           # macOS Notification Centre alerts on high-confidence events
+uv run wifiscope calibrate                  # 5 min "empty room" RSSI baseline → ./wifiscope-baseline.json
 ```
+
+The `monitor` subcommand is the long-run / Home Assistant
+integration target — every roam, RF stir, latency spike, loss
+burst, and link-state change emits one well-formed JSON line. The
+schema lives in
+[`docs/specs/v0.7.0-network-ground-truth-and-environment-monitor.md`](docs/specs/v0.7.0-network-ground-truth-and-environment-monitor.md#single-eventsjsonl-schema-for-all-three-layers).
 
 ## Configuration
 
@@ -184,6 +211,7 @@ somewhere other than the current working directory.
 | `WIFISCOPE_INVENTORY` | `./aps.yaml` (CWD-relative) | Path to the AP-aliases YAML. The file is optional; if absent, wifiscope uses auto-cluster labels. |
 | `WIFISCOPE_HELPER` | searched in `/Applications`, `~/Applications`, repo `helper/` | Path to the `wifiscope-helper.app` bundle or its binary. |
 | `WIFISCOPE_SCAN_INTERVAL` | `7` | Seconds between scans. CoreWLAN throttles around 5 s, so values below ~6 yield empty scans every other call. Floor 3. |
+| `WIFISCOPE_LATENCY_WAN_TARGET` | autodetected from `scutil --dns` | IP for the WAN latency anchor. Default picks the first non-gateway nameserver from `SCDynamicStoreCopyValue("State:/Network/Global/DNS")`; if the only configured DNS *is* the gateway, the WAN probe is skipped and the diagnostic line reads `WAN n/a (DNS == gateway)`. Override to pin an explicit IP (e.g. `1.1.1.1` for networks that allow it). |
 
 ## macOS caveats
 
@@ -242,6 +270,19 @@ Handoff session info) stay opaque. Per-model identification
 (iPhone 14 vs 15) is *not* in any public ad packet — anyone
 claiming to do that is reading proprietary GATT services after
 connecting, which we will not do.
+
+**The Environment line is *not* Wi-Fi sensing.** wifiscope sits in
+Tier 0 of the Wi-Fi-sensing capability ladder: rolling RSSI variance
+on the data CoreWLAN already exposes. We surface a binary
+`stable` / `active` (or `quiet` after `wifiscope calibrate`)
+qualifier — never people-counting, never motion-with-pose, never
+breathing rate. Channel State Information (the data the academic
+sensing literature actually uses) is not exposed by macOS, and even
+where it is exposed (ESP32, Intel 5300 under Linux) the Tier-3+
+demos require a research stack, not a `pip install`. See
+[`docs/explainers/wifi-sensing.md`](docs/explainers/wifi-sensing.md)
+for the full story; the `Environment` line is the live example of
+what we honestly do with RSSI.
 
 **Connected peripherals have no RSSI.** `retrieveConnectedPeripherals`
 gives us the list of devices currently associated with the Mac

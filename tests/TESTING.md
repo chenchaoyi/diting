@@ -275,6 +275,79 @@ hardware (and macOS runners that have no granted helper).
 
 ---
 
+## 5c. Module: `wifiscope.latency`
+
+The latency probe poller. Tests cover ICMP output parsing, the
+spike / loss-burst detectors, the rolling-window aggregate, and
+seven distinct DNS auto-detection shapes captured from real
+networks (home / corporate / Cloudflare DoH / multi-resolver /
+no-DNS / empty list / malformed). All subprocess calls and
+SCDynamicStore reads are mocked at the module seam.
+
+**Coverage targets:**
+
+- [x] `_parse_ping_time_ms` decimal / integer / `time<1.0` /
+      missing
+- [x] `LatencyPoller._ping_once` records rtt on success
+- [x] `_ping_once` lost on non-zero exit / no `time=` / subprocess
+      error
+- [x] `aggregate` median / loss% / MAD jitter
+- [x] `aggregate` empty window returns None fields
+- [x] `detect_latency_spike` requires both thresholds (200 ms AND
+      5× median)
+- [x] `detect_loss_burst` 3-of-5 rule
+- [x] `LatencyPoller.stop`
+- [x] DNS auto-detection: typical home (DNS == gateway → None)
+- [x] DNS auto-detection: corporate internal resolver
+- [x] DNS auto-detection: Cloudflare DoH
+- [x] DNS auto-detection: multi-resolver, gateway listed first
+- [x] DNS auto-detection: SCDynamicStore returns None
+- [x] DNS auto-detection: empty ServerAddresses
+- [x] DNS auto-detection: malformed (None / int / object) entries
+- [x] `WIFISCOPE_LATENCY_WAN_TARGET` env override beats
+      auto-detect
+- [x] DNS refresh cadence (clock-injected, no real time)
+- [x] Explicit `wan_ip=` disables refresh entirely
+- [x] `wan_skipped_reason` distinguishes `no_dns` vs
+      `dns_eq_gateway`
+- [x] `_scutil_dns_fallback` parses resolver-#1 nameservers,
+      stops at #2
+
+### Test cases — `tests/test_latency.py`
+
+27 cases, one per row above. See module docstrings for the live
+text per case.
+
+---
+
+## 5d. Module: `wifiscope.environment`
+
+The RF-stir detector. Tests build deterministic RSSI traces with
+explicit timestamps so the rolling-window math is exact.
+
+**Coverage targets:**
+
+- [x] σ above threshold fires `RFStirEvent`
+- [x] σ below threshold stays quiet
+- [x] Mode auto-classification (co_located / spatial_channel /
+      ignored)
+- [x] Redundancy fusion: 2 co-located APs spike → high
+      confidence
+- [x] Single co-located AP spike → medium confidence
+- [x] Spatial-channel event labelled with the AP's inventory name
+- [x] Calibration baseline overrides adaptive
+- [x] `baseline_summary()` shape
+- [x] APs below -85 dBm excluded from σ calculation
+- [x] `aggregate_sigma` label `active` / `quiet` / `stable`
+- [x] `write_calibration` / `load_calibration` round trip
+- [x] `load_calibration` returns `{}` for missing file
+
+### Test cases — `tests/test_environment.py`
+
+13 cases, one per row above.
+
+---
+
 ## 6. TUI smoke
 
 End-to-end via Textual's `run_test` pilot. The fake backend ensures
@@ -306,6 +379,9 @@ real Mac.
 | `test_custom_scan_interval_threads_through` | Construct `WifiScopeApp(..., scan_interval=4.5)` and inspect `app._poller._scan_interval`. | The `WIFISCOPE_SCAN_INTERVAL` env var lands here; if the kwarg path silently lost it, we'd never know. |
 | `test_toggle_view_swaps_third_panel` | Press `n` to toggle from the Wi-Fi scan view to the BLE view; press again to return. Asserts on the `display` flag of both panels and on `app._view_mode`. | Locks the spec's "toggle in place" behaviour — neither panel ever unmounts, so consumer state on either side survives the swap. |
 | `test_ble_panel_renders_both_connected_and_advertising_sections` | Seed both `_latest_ble` (advertising) and `_latest_ble_connected` (connected), press `n`, and assert the BLEPanel body contains both `Connected (1)` and `Advertising (1)` section headers plus a row from each. | End-to-end proof of the v0.6.0 two-section render through the Textual pilot — rendering bug here breaks the spec's question-2 ("what's actually connected to my Mac?") answer. |
+| `test_events_modal_open_and_close` | Press `m` to open EventsScreen, press Esc to close. | Locks the v0.7.0 modal binding the same way `test_help_modal_open_and_close` locks the help binding. |
+| `test_diagnostics_renders_link_line_when_latency_data_available` | Construct latency aggregates + an environment tuple, call `panel.update_environment(..., link=, env=)`, and confirm the rendered body contains `Link`, `gw 14 ms`, `Environment`, and `stable`. | The Diagnostics panel must accept the new tuples without dropping them on the floor — guards the v0.7.0 contract between the consumer and the renderer. |
+| `test_unified_events_panel_renders_roam_and_stir_interleaved` | Push a `RoamEvent` and an `RFStirEvent` into the unified panel; assert both `[ROAM]` and `[STIR]` prefixes plus the location label appear in the rendered output. | The Roam log → Events panel rename is allowed only because both event types render correctly through the same widget. |
 
 ---
 

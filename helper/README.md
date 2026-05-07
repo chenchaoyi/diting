@@ -171,3 +171,37 @@ from "no devices yet" or "subprocess crashed".
 The Wi-Fi `scan` payload's `schema` field is bumped from `2` to `3`
 in v0.6.0 so the Python side can detect a BLE-capable bundle at a
 glance, even before it spawns the BLE subprocess.
+
+## Wi-Fi scan IE fields (v0.7.0+)
+
+The schema-3 `scan` payload's per-network rows can now include up to
+five additional fields parsed out of the AP's beacon information
+elements. Each is emitted only when the IE is present, so v2-shape
+consumers and partial-IE rows (the AP did not advertise this
+particular IE) keep parsing.
+
+```json
+{
+  "ssid": "Office-WiFi",
+  "bssid": "aa:bb:cc:11:22:53",
+  ...
+  "bss_load_pct": 78,
+  "bss_station_count": 12,
+  "supports_802_11r": true,
+  "supports_802_11k": true,
+  "supports_802_11v": true
+}
+```
+
+| Field | IE | Meaning |
+|---|---|---|
+| `bss_load_pct` | Element ID 11 (BSS Load) | Channel utilisation as a percentage. The spec example diagnostic — "your AP is at 78% utilisation" — comes from this byte (the 0..255 value is normalised to 0..100). |
+| `bss_station_count` | Element ID 11 (BSS Load) | Associated-station count (uint16, little-endian). |
+| `supports_802_11r` | Element ID 54 (Mobility Domain) | Presence alone signals 802.11r (Fast BSS Transition) support. |
+| `supports_802_11k` | Element ID 70 (RM Enabled Capabilities) | Presence alone signals 802.11k (Radio Measurement) support. |
+| `supports_802_11v` | Element ID 127 (Extended Capabilities) bit 19 | BSS Transition Management — the 802.11v feature most commonly meant by "supports v". |
+
+The Python side's `ScanResult` dataclass adds these as
+`int | None` / `bool | None` slots. Defaults are `None`, so an
+older helper that ships schema=3 *without* the IE fields remains
+forward-compatible with the v0.7.0 Python TUI.

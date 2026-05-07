@@ -44,6 +44,9 @@ from rich.cells import cell_len
 from wifiscope import i18n
 from wifiscope.backend import WiFiBackend
 from wifiscope.ble import BLEDevice
+from wifiscope.environment import APBaseline, RFStirEvent
+from wifiscope.events import LatencySpikeEvent, LossBurstEvent
+from wifiscope.latency import LatencyAggregate
 from wifiscope.models import Connection, ScanResult
 from wifiscope.network import APEntry, NetworkInventory
 from wifiscope.poller import RoamEvent
@@ -86,29 +89,36 @@ class _FakeBackend(WiFiBackend):
 
     def scan(self) -> list[ScanResult]:
         ts = datetime.now()
-        rows: list[tuple[str, str, int, int, int, str]] = [
-            # ssid, bssid, rssi, channel, width, security
-            # 1F-bedroom — current AP, stuck here on 5 GHz at fair signal
-            ("Office-WiFi",   "aa:bb:cc:11:22:53", -68, 48, 80, "WPA2 Enterprise"),
-            ("Office-Guest",  "aa:bb:cc:11:22:54", -68, 48, 80, "Open"),
-            ("Office-IoT",    "aa:bb:cc:11:22:50", -65,  6, 40, "WPA2 Personal"),
-            ("Office-Guest",  "aa:bb:cc:11:22:51", -66,  6, 40, "Open"),
+        # ssid, bssid, rssi, channel, width, security, bss_load_pct,
+        # supports_802_11r — the last two are v0.7.0 schema-3 IE
+        # fields. Only a few rows populate them so the preview
+        # demonstrates "diagnostics knows when the AP is loaded".
+        rows = [
+            # 1F-bedroom — current AP, stuck here on 5 GHz at fair signal.
+            # Heavy load (78%) is the spec's example for the "AP at
+            # 78% utilisation" diagnostic.
+            ("Office-WiFi",   "aa:bb:cc:11:22:53", -68, 48, 80, "WPA2 Enterprise", 78, True),
+            ("Office-Guest",  "aa:bb:cc:11:22:54", -68, 48, 80, "Open",            None, None),
+            ("Office-IoT",    "aa:bb:cc:11:22:50", -65,  6, 40, "WPA2 Personal",   None, None),
+            ("Office-Guest",  "aa:bb:cc:11:22:51", -66,  6, 40, "Open",            None, None),
             # 2F-living
-            ("Office-WiFi",   "aa:bb:cc:33:44:13", -60, 36, 80, "WPA2 Enterprise"),
-            ("Office-Guest",  "aa:bb:cc:33:44:14", -61, 36, 80, "Open"),
-            ("Office-IoT",    "aa:bb:cc:33:44:10", -68, 11, 40, "WPA2 Personal"),
-            ("Office-Guest",  "aa:bb:cc:33:44:11", -68, 11, 40, "Open"),
+            ("Office-WiFi",   "aa:bb:cc:33:44:13", -60, 36, 80, "WPA2 Enterprise", 22, True),
+            ("Office-Guest",  "aa:bb:cc:33:44:14", -61, 36, 80, "Open",            None, None),
+            ("Office-IoT",    "aa:bb:cc:33:44:10", -68, 11, 40, "WPA2 Personal",   None, None),
+            ("Office-Guest",  "aa:bb:cc:33:44:11", -68, 11, 40, "Open",            None, None),
             # 3F-attic — same SSID, much stronger; should trigger the
-            # "stronger same-name AP nearby" diagnostic + roam hint
-            ("Office-WiFi",   "aa:bb:cc:55:66:0b", -52, 48, 80, "WPA2 Enterprise"),
-            ("Office-Guest",  "aa:bb:cc:55:66:0c", -53, 48, 80, "Open"),
-            ("Office-IoT",    "aa:bb:cc:55:66:08", -56,  1, 40, "WPA2 Personal"),
+            # "stronger same-name AP nearby" diagnostic + roam hint.
+            # Doesn't advertise 11r — the spec example for the "3 of 5
+            # candidates do not advertise 802.11r" diagnostic.
+            ("Office-WiFi",   "aa:bb:cc:55:66:0b", -52, 48, 80, "WPA2 Enterprise", 12, False),
+            ("Office-Guest",  "aa:bb:cc:55:66:0c", -53, 48, 80, "Open",            None, None),
+            ("Office-IoT",    "aa:bb:cc:55:66:08", -56,  1, 40, "WPA2 Personal",   None, None),
             # Cafe across the corridor — open guest portal on the same
             # 5 GHz channel as the user; feeds the channel-load warning.
-            ("guest-cafe",    "96:de:ad:be:ef:01", -75, 48, 20, "Open"),
+            ("guest-cafe",    "96:de:ad:be:ef:01", -75, 48, 20, "Open",            None, None),
             # Unrelated neighbours
-            ("neighbour-2g",  "f2:11:22:33:44:55", -78,  6, 20, "WPA2 Personal"),
-            ("",              "f2:11:22:33:44:56", -82,  6, 20, "WPA2 Personal"),
+            ("neighbour-2g",  "f2:11:22:33:44:55", -78,  6, 20, "WPA2 Personal",   None, None),
+            ("",              "f2:11:22:33:44:56", -82,  6, 20, "WPA2 Personal",   None, None),
         ]
         return [
             ScanResult(
@@ -123,8 +133,10 @@ class _FakeBackend(WiFiBackend):
                 security=security,
                 timestamp=ts,
                 country_code="CN",
+                bss_load_pct=load,
+                supports_802_11r=ft,
             )
-            for ssid, bssid, rssi, ch, width, security in rows
+            for ssid, bssid, rssi, ch, width, security, load, ft in rows
         ]
 
     def permission_state(self) -> str:
@@ -272,29 +284,86 @@ def _preview_view() -> str:
 
 async def main() -> None:
     view = _preview_view()
-    # ble_helper_path="" disables the live BLE poller; the preview
-    # path injects synthetic BLEDevice state directly into _latest_ble
-    # / _ble_permission_state, and a real poller racing in the
-    # background would clobber those exact fields with empty snapshots
-    # at the 1 s cadence — sometimes winning the race against the
-    # screenshot capture and producing a blank BLE panel. (The fake
-    # backend's _helper_path attribute would otherwise be picked up
-    # by WifiScopeApp.__init__'s fallback.)
-    app = WifiScopeApp(_FakeBackend(), _INVENTORY, ble_helper_path="")
+    # Disable the live latency / environment pollers in the wifi /
+    # ble previews so the seeded synthetic state survives screenshot
+    # time without a 1 Hz background loop racing it. The events
+    # preview re-enables nothing; we inject pre-built ring contents
+    # directly into the modal.
+    app = WifiScopeApp(
+        _FakeBackend(), _INVENTORY,
+        ble_helper_path="",
+        enable_latency=False,
+        enable_environment=False,
+    )
     async with app.run_test(size=(160, 56)) as pilot:
         # let one connection update + one scan land
         await pilot.pause(2.0)
-        # seed a roam event so the bottom panel has content
-        roam_panel = pilot.app.query_one("#roam")
-        roam_panel.append_roam(
+        # Seed the unified events panel with one of every event type
+        # so the README hero shows the full variety.
+        events_panel = pilot.app.query_one("#roam")
+        events_panel.clear()
+        now = datetime.now()
+        events_panel.append_event(
             RoamEvent(
-                timestamp=datetime.now(),
+                timestamp=now,
                 previous_bssid="aa:bb:cc:33:44:13",
                 previous_channel=36,
                 new_bssid="aa:bb:cc:11:22:53",
                 new_channel=48,
             ),
             _INVENTORY,
+        )
+        events_panel.append_event(
+            RFStirEvent(
+                timestamp=now,
+                bssid="aa:bb:cc:11:22:53",
+                location="1F-bedroom",
+                magnitude_db=8.3,
+                duration_s=12.0,
+                confidence="high",
+                mode="co_located",
+            ),
+            _INVENTORY,
+        )
+        events_panel.append_event(
+            LatencySpikeEvent(
+                timestamp=now,
+                target="router",
+                target_ip="192.168.1.1",
+                rtt_ms=412.0,
+                loss_pct=25.0,
+            ),
+            _INVENTORY,
+        )
+        events_panel.append_event(
+            LossBurstEvent(
+                timestamp=now,
+                target="wan",
+                target_ip="1.1.1.1",
+                loss_pct=80.0,
+                lost_in_window=4,
+            ),
+            _INVENTORY,
+        )
+        # Seed the Diagnostics panel's Link / Environment lines with
+        # well-formed aggregates and a stable σ.
+        from wifiscope.tui import EnvironmentPanel
+        env_panel = pilot.app.query_one("#env", EnvironmentPanel)
+        link = (
+            LatencyAggregate(
+                target="router", target_ip="192.168.1.1",
+                rtt_ms=14.0, loss_pct=0.0, jitter_ms=2.0, sample_count=30,
+            ),
+            LatencyAggregate(
+                target="wan", target_ip="1.1.1.1",
+                rtt_ms=22.0, loss_pct=0.0, jitter_ms=3.0, sample_count=30,
+            ),
+            None,
+        )
+        env = ("stable", 1.4, None)
+        env_panel.update_environment(
+            pilot.app._cached_scan, pilot.app._latest_connection,
+            link=link, env=env,
         )
         if view == "ble":
             # Inject synthetic BLE devices and switch the panel to BLE
@@ -309,10 +378,66 @@ async def main() -> None:
             pilot.app._ble_permission_state = "granted"
             await pilot.press("n")
             await pilot.pause(0.3)
+        if view == "events":
+            # Push synthetic events into the ring and open the modal.
+            from wifiscope.environment import APBaseline
+            from wifiscope.tui import EventsScreen
+
+            now = datetime.now()
+            ring_events = [
+                RoamEvent(
+                    timestamp=now, previous_bssid="aa:bb:cc:33:44:13",
+                    previous_channel=36, new_bssid="aa:bb:cc:11:22:53",
+                    new_channel=48,
+                ),
+                RFStirEvent(
+                    timestamp=now, bssid="aa:bb:cc:11:22:53",
+                    location="1F-bedroom", magnitude_db=8.3,
+                    duration_s=12.0, confidence="high", mode="co_located",
+                ),
+                LatencySpikeEvent(
+                    timestamp=now, target="router",
+                    target_ip="192.168.1.1", rtt_ms=412.0, loss_pct=25.0,
+                ),
+                LossBurstEvent(
+                    timestamp=now, target="wan",
+                    target_ip="1.1.1.1", loss_pct=80.0, lost_in_window=4,
+                ),
+            ]
+            baselines = [
+                APBaseline(
+                    bssid="aa:bb:cc:11:22:53", location="1F-bedroom",
+                    mode="co_located", samples=240,
+                    baseline_sigma=1.4, current_sigma=8.3, last_rssi=-52,
+                ),
+                APBaseline(
+                    bssid="aa:bb:cc:33:44:13", location="2F-living",
+                    mode="co_located", samples=180,
+                    baseline_sigma=1.1, current_sigma=1.5, last_rssi=-60,
+                ),
+                APBaseline(
+                    bssid="aa:bb:cc:55:66:0b", location="3F-attic",
+                    mode="spatial_channel", samples=90,
+                    baseline_sigma=2.2, current_sigma=2.0, last_rssi=-78,
+                ),
+            ]
+            sigma_history = [
+                (now - timedelta(minutes=60 - i * 2), max(1.0, abs(i - 30) / 4.0))
+                for i in range(30)
+            ]
+            sigma_history.append((now, 8.3))
+            screen = EventsScreen(
+                ring_snapshot=list(reversed(ring_events)),
+                baselines=baselines,
+                sigma_history=sigma_history,
+            )
+            pilot.app.push_screen(screen)
+            await pilot.pause(0.4)
         await pilot.pause(0.3)
         out = pilot.app.export_screenshot(title="wifiscope")
     out = _fix_cjk_textlength(out)
-    base = "preview-ble" if view == "ble" else "preview"
+    base_map = {"ble": "preview-ble", "events": "preview-events", "wifi": "preview"}
+    base = base_map.get(view, "preview")
     suffix = ".zh.svg" if i18n.get_lang() == i18n.ZH else ".svg"
     target = Path(__file__).parent / f"{base}{suffix}"
     target.write_text(out)
