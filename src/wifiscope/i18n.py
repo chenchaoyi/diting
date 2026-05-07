@@ -289,6 +289,18 @@ _ZH: dict[str, str] = {
     "Heart Rate": "心率",
     "Find My": "查找网络",
 
+    # ---- BLE deep-identification (v0.6.0) ----
+    # Section headers in the two-section BLE panel layout. Brand-name
+    # types stay English (iBeacon, AirTag, Tile, SmartTag, Swift Pair,
+    # Eddystone-{UID,URL,TLM,EID}) — they are proper nouns. Apple's
+    # Nearby Info device classes (iPhone / iPad / Mac / Apple TV /
+    # HomePod / Apple Watch) likewise stay English.
+    "Connected": "已连接",
+    "Advertising": "正在广播",
+    "Connected  ": "已连接  ",
+    "{n} peripherals": "{n} 个外设",
+    "Find My target": "Find My 目标",
+
     # ---- CLI --help ----
     "usage: wifiscope [--lang en|zh] [SUBCOMMAND]\n"
     "\n"

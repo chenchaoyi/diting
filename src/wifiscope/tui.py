@@ -239,11 +239,17 @@ class EnvironmentPanel(Static):
         self,
         devices: list[BLEDevice],
         permission_state: str,
+        connected: list[BLEDevice] | None = None,
     ) -> None:
         """Render BLE-side diagnostics. Used while the user is on the
         BLE view, so the panel describes the pool of personal / IoT
         devices around them rather than continuing to show Wi-Fi RF
         info that is irrelevant in this context.
+
+        ``connected`` (schema-3) is optional for back-compat with
+        callers that have not yet plumbed the connected list through;
+        when supplied and non-empty, the diagnostics gain a fifth row
+        summarising currently-connected peripherals.
         """
         self.border_title = t("Diagnostics")
         if permission_state != "granted":
@@ -252,13 +258,13 @@ class EnvironmentPanel(Static):
                 style="dim italic",
             ))
             return
-        if not devices:
+        if not devices and not connected:
             self.update(Text(
                 t("(no BLE devices yet — scanning...)"),
                 style="dim italic",
             ))
             return
-        self.update(Group(*_ble_diagnostic_lines(devices)))
+        self.update(Group(*_ble_diagnostic_lines(devices, connected)))
 
 
 class HelpScreen(ModalScreen):
@@ -565,6 +571,7 @@ class BLEPanel(VerticalScroll):
     def update_devices(
         self,
         devices: list[BLEDevice],
+        connected: list[BLEDevice],
         permission_state: str,
     ) -> None:
         # Only show a "(N)" device-count suffix when scanning is actually
@@ -580,15 +587,31 @@ class BLEPanel(VerticalScroll):
         body = self.query_one("#ble-body", Static)
 
         if permission_state == "granted":
-            self.border_title = base_title + f" ({len(devices)})"
-            if not devices:
+            total = len(devices) + len(connected)
+            self.border_title = base_title + f" ({total})"
+            if not devices and not connected:
                 body.update(Text(t("(no BLE devices yet — scanning...)"),
                                  style="dim italic"))
                 return
-            lines: list[Text] = [_ble_header_line()]
-            now = datetime.now(devices[0].last_seen.tzinfo)
-            for d in devices:
-                lines.append(_ble_row_line(d, now))
+            lines: list[Text] = []
+            # Connected section first (per spec layout B): "what's
+            # actually connected to my Mac right now?" answers a more
+            # immediate question than "what's broadcasting nearby?".
+            # Section is omitted entirely when empty so a Mac with no
+            # paired peripherals does not get an empty header.
+            if connected:
+                lines.append(_ble_section_header("Connected", len(connected)))
+                lines.append(_ble_header_line())
+                for d in connected:
+                    lines.append(_ble_connected_row_line(d))
+                # Spacer between sections so they read as distinct.
+                lines.append(Text(""))
+            if devices:
+                lines.append(_ble_section_header("Advertising", len(devices)))
+                lines.append(_ble_header_line())
+                now = datetime.now(devices[0].last_seen.tzinfo)
+                for d in devices:
+                    lines.append(_ble_row_line(d, now))
             body.update(Group(*lines))
             return
 
@@ -811,13 +834,26 @@ def _environment_lines(
 # (4–5 short labelled lines).
 # ---------------------------------------------------------------------
 
-def _ble_diagnostic_lines(devices: list[BLEDevice]) -> list[Text]:
-    return [
+def _ble_diagnostic_lines(
+    devices: list[BLEDevice],
+    connected: list[BLEDevice] | None = None,
+) -> list[Text]:
+    """The four-or-five rows above the BLE list.
+
+    A fifth row appears only when the helper has reported at least one
+    connected peripheral; otherwise the panel keeps the v0.5.0 layout
+    so users with nothing paired (e.g. a fresh Mac on a clean account)
+    do not see a row that is always 0.
+    """
+    rows = [
         _ble_visible_line(devices),
         _ble_vendors_line(devices),
         _ble_categories_line(devices),
         _ble_closest_line(devices),
     ]
+    if connected:
+        rows.append(_ble_connected_line(connected))
+    return rows
 
 
 def _ble_visible_line(devices: list[BLEDevice]) -> Text:
@@ -879,6 +915,15 @@ def _ble_categories_line(devices: list[BLEDevice]) -> Text:
             cat = service_category(s)
             if cat and cat != s.upper().replace("-", ""):
                 cats.add(cat)
+        # Schema-3 deep-ID labels (iBeacon, AirTag, Eddystone-URL, …)
+        # contribute to the same bucket alongside service categories
+        # so the user sees a single "what's around me" breakdown.
+        # device_class is also surfaced — an iPhone among the rotating
+        # privacy beacons is informative.
+        if d.type:
+            cats.add(d.type)
+        if d.device_class:
+            cats.add(d.device_class)
         if cats:
             for c in cats:
                 counts[c] += 1
@@ -886,7 +931,7 @@ def _ble_categories_line(devices: list[BLEDevice]) -> Text:
             no_category += 1
     line = Text()
     line.append(t("Categories  "), style="bold dim")
-    common = counts.most_common(4)
+    common = counts.most_common(5)
     # Pass each category through t() so 'Audio' becomes '音频' in zh
     # while 'iBeacon' stays English — matches the established service
     # category translation policy.
@@ -894,6 +939,34 @@ def _ble_categories_line(devices: list[BLEDevice]) -> Text:
     if no_category:
         parts.append(t("{n} other", n=no_category))
     line.append("  ·  ".join(parts) if parts else t("(none)"), style="white")
+    return line
+
+
+def _ble_connected_line(connected: list[BLEDevice]) -> Text:
+    """One-line summary of currently-connected peripherals.
+
+    Counts connected devices by service category so the user sees the
+    shape of their active Bluetooth links at a glance: "3 peripherals
+    · 2 Audio · 1 HID" reads as "AirPods + Magic Keyboard". The line
+    is only added to the diagnostics block when at least one peripheral
+    is connected — see `_ble_diagnostic_lines`.
+    """
+    from collections import Counter
+
+    cats: Counter[str] = Counter()
+    for d in connected:
+        seen: set[str] = set()
+        for s in d.services:
+            cat = service_category(s)
+            if cat and cat != s.upper().replace("-", ""):
+                seen.add(cat)
+        for c in seen:
+            cats[c] += 1
+    line = Text()
+    line.append(t("Connected  "), style="bold dim")
+    parts: list[str] = [t("{n} peripherals", n=len(connected))]
+    parts.extend(f"{t(c)} {n}" for c, n in cats.most_common(4))
+    line.append("  ·  ".join(parts), style="white")
     return line
 
 
@@ -1513,9 +1586,13 @@ def _ble_row_line(d: BLEDevice, now: datetime) -> Text:
     vendor_text = d.vendor or t("(unknown)")
     name_text = d.name or t("(unknown)")
     name_style = "white" if d.name else "dim italic"
-    services_text = _ble_services_summary(d.services)
+    label_text = _ble_label_summary(d)
     age_text = _ble_age_text(d, now)
     id_short = d.identifier[:8]
+    # Type / device_class get a brighter colour than the dim service
+    # categories — they are usually the answer to "what kind of device
+    # is this", which the user reads first.
+    label_style = "white" if (d.type or d.device_class) else "dim"
 
     line = Text()
     # Selection star reserved for future use; no devices are "current"
@@ -1527,7 +1604,8 @@ def _ble_row_line(d: BLEDevice, now: datetime) -> Text:
     line.append(fit_cells(vendor_text, _COL_BLE_VENDOR) + "  ",
                 style="cyan" if d.vendor else "dim")
     line.append(fit_cells(name_text, _COL_BLE_NAME) + "  ", style=name_style)
-    line.append(fit_cells(services_text, _COL_BLE_SERVICES) + "  ", style="dim")
+    line.append(fit_cells(label_text, _COL_BLE_SERVICES) + "  ",
+                style=label_style)
     # Use fit_cells (not raw f-string ljust) because t("now") resolves
     # to "刚刚" in zh — 2 code points but 4 terminal cells. str.ljust
     # would pad to 6 spaces (= 8 code points / 10 cells), shoving the
@@ -1537,6 +1615,57 @@ def _ble_row_line(d: BLEDevice, now: datetime) -> Text:
     if d.merged_count > 1:
         line.append("  ")
         line.append(t("(merged {n})", n=d.merged_count), style="cyan")
+    return line
+
+
+def _ble_connected_row_line(d: BLEDevice) -> Text:
+    """One row in the Connected section.
+
+    No RSSI / signal column (retrieveConnectedPeripherals returns no
+    signal reading and we deliberately do not call readRSSI()), and no
+    "last seen" age (connected devices' identity is stable until the
+    helper's next snapshot prunes them). The remaining columns mirror
+    the advertising row layout so both sections align visually.
+    """
+    name_text = d.name or t("(unknown)")
+    name_style = "white" if d.name else "dim italic"
+    label_text = _ble_label_summary(d)
+    id_short = d.identifier[:8]
+    dash = "—"
+
+    line = Text()
+    line.append(f" {' ':<2}")
+    line.append(f"{dash:>{_COL_BLE_RSSI}}  ", style="dim")
+    line.append(" " * _COL_BLE_SIGNAL)
+    line.append("  ")
+    # No vendor metadata from retrieveConnectedPeripherals — the column
+    # rolls into the name field for readability.
+    line.append(fit_cells(t("(unknown)"), _COL_BLE_VENDOR) + "  ", style="dim")
+    line.append(fit_cells(name_text, _COL_BLE_NAME) + "  ", style=name_style)
+    label_style = "white" if (d.type or d.device_class) else "dim"
+    line.append(fit_cells(label_text, _COL_BLE_SERVICES) + "  ",
+                style=label_style)
+    line.append(fit_cells(dash, _COL_BLE_AGO) + "  ", style="dim")
+    line.append(f"{id_short:<{_COL_BLE_ID}}", style="dim")
+    return line
+
+
+def _ble_section_header(label: str, count: int, width: int = 80) -> Text:
+    """A section divider row inside the BLE panel body. Mirrors the
+    look of a markdown ``──── X ────`` rule so the eye finds the
+    boundary even at a glance."""
+    title = t(f"{label} ({{n}})", n=count) if False else (
+        t(label) + f" ({count})"
+    )
+    # Build "── {title} ──...──" filling to width.
+    prefix = "── "
+    suffix_min = 4  # at least " ──" trailing
+    used = len(prefix) + len(title) + 1  # +1 trailing space before fill
+    fill_len = max(width - used - suffix_min, 4)
+    line = Text(style="dim")
+    line.append(prefix)
+    line.append(title, style="bold dim")
+    line.append(" " + "─" * fill_len)
     return line
 
 
@@ -1555,6 +1684,27 @@ def _ble_services_summary(services: tuple[str, ...]) -> str:
         seen.add(translated)
         cats.append(translated)
     return ", ".join(cats[:3])
+
+
+def _ble_label_summary(d: BLEDevice) -> str:
+    """Combined deep-ID + service-category label for the row's
+    rightmost-but-one column. Schema-3 ``type`` (iBeacon, AirTag,
+    Eddystone-URL, …) takes priority — those are the actionable
+    answers to "what kind of device is this" — followed by Apple
+    Nearby Info ``device_class`` for Apple peripherals, followed by
+    the service-UUID category as a fallback. The two halves combine
+    with " · " when both are present and non-overlapping; identical
+    halves collapse so we never render "Heart Rate · Heart Rate".
+    """
+    head: str | None = None
+    if d.type:
+        head = t(d.type)
+    elif d.device_class:
+        head = t(d.device_class)
+    tail = _ble_services_summary(d.services)
+    if head and tail and head != tail:
+        return f"{head} · {tail}"
+    return head or tail
 
 
 def _ble_age_text(d: BLEDevice, now: datetime) -> str:
@@ -1674,8 +1824,11 @@ class WifiScopeApp(App):
         self._ble_poller: BLEPoller | None = None
         self._ble_helper_path = helper_path
         # Latest BLE snapshot — kept fresh in the background regardless
-        # of which view is active so toggling is instant.
+        # of which view is active so toggling is instant. Two parallel
+        # buffers: advertising (RSSI-sorted, post-merge) and connected
+        # (alphabetic, no fuzzy-merge — schema-3 retrieveConnectedPeripherals).
         self._latest_ble: list[BLEDevice] = []
+        self._latest_ble_connected: list[BLEDevice] = []
         self._ble_permission_state: str = "unknown"
         # 'wifi' (default) or 'ble' — toggled by `n`. Both panels are
         # mounted; we flip widget.display rather than mount/unmount so
@@ -1764,6 +1917,7 @@ class WifiScopeApp(App):
                     continue
                 if isinstance(event, BLEScanUpdate):
                     self._latest_ble = event.devices
+                    self._latest_ble_connected = event.connected
                     self._ble_permission_state = event.permission_state
                     self._refresh_ble_panel()
         except Exception:
@@ -1775,7 +1929,11 @@ class WifiScopeApp(App):
             panel = self.query_one("#ble", BLEPanel)
         except Exception:
             return
-        panel.update_devices(self._latest_ble, self._ble_permission_state)
+        panel.update_devices(
+            self._latest_ble,
+            self._latest_ble_connected,
+            self._ble_permission_state,
+        )
         # Refresh diagnostics whenever the BLE data updates AND the user
         # is actually looking at the BLE view; otherwise leave the Wi-Fi
         # diagnostics in place.
@@ -1813,7 +1971,9 @@ class WifiScopeApp(App):
             return
         if self._view_mode == "ble":
             panel.update_environment_ble(
-                self._latest_ble, self._ble_permission_state,
+                self._latest_ble,
+                self._ble_permission_state,
+                self._latest_ble_connected,
             )
         else:
             merged = _merge_current(

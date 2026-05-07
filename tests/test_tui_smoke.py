@@ -184,3 +184,73 @@ def test_toggle_view_swaps_third_panel():
             await pilot.press("q")
 
     asyncio.run(go())
+
+
+def test_ble_panel_renders_both_connected_and_advertising_sections():
+    """Seed both the advertising buffer and the connected buffer, then
+    press `n` to enter the BLE view. The BLEPanel body must contain
+    both section headers ('Connected' / 'Advertising') and a row from
+    each so the spec's two-section layout is preserved end-to-end."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from textual.widgets import Static
+
+    from wifiscope.ble import BLEDevice
+    from wifiscope.tui import BLEPanel
+
+    async def go():
+        app = WifiScopeApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(160, 56)) as pilot:
+            await pilot.pause(0.5)
+            now = datetime.now(timezone.utc)
+            advert = BLEDevice(
+                identifier="ad000000-0000-0000-0000-000000000001",
+                name="AirTag",
+                vendor="Apple, Inc.",
+                vendor_id=76,
+                services=("FD5A",),
+                rssi_dbm=-42,
+                is_connectable=False,
+                first_seen=now - timedelta(seconds=8),
+                last_seen=now,
+                ad_count=4,
+                type="AirTag",
+            )
+            connected = BLEDevice(
+                identifier="cc000000-0000-0000-0000-000000000001",
+                name="Magic Keyboard",
+                vendor=None,
+                vendor_id=None,
+                services=("1812",),
+                rssi_dbm=None,
+                is_connectable=True,
+                first_seen=now,
+                last_seen=now,
+                ad_count=0,
+                is_connected=True,
+            )
+            app._latest_ble = [advert]
+            app._latest_ble_connected = [connected]
+            app._ble_permission_state = "granted"
+            await pilot.press("n")
+            await pilot.pause(0.3)
+            ble = app.query_one("#ble", BLEPanel)
+            body = ble.query_one("#ble-body", Static)
+            # Static stores the most recent argument to .update() in a
+            # private name-mangled attribute; the rich.console.Group we
+            # built is reachable that way. Render via a Console without
+            # ANSI escapes so the assertion is on plain text.
+            renderable = getattr(body, "_Static__content")
+            from io import StringIO
+            from rich.console import Console
+            console = Console(file=StringIO(), width=160, force_terminal=False)
+            console.print(renderable)
+            text = console.file.getvalue()
+            assert "Connected (1)" in text
+            assert "Advertising (1)" in text
+            assert "Magic Keyboard" in text
+            assert "AirTag" in text
+            await pilot.press("q")
+
+    asyncio.run(go())

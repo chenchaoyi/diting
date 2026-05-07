@@ -16,7 +16,9 @@ from wifiscope.tui import (
     _best_same_ssid_candidate,
     _ble_categories_line,
     _ble_closest_line,
+    _ble_connected_line,
     _ble_diagnostic_lines,
+    _ble_label_summary,
     _ble_vendors_line,
     _ble_visible_line,
     _channel_hint,
@@ -318,7 +320,8 @@ def test_score_line_reports_better_same_ssid_candidate():
 def _ble_dev(identifier="00000000-0000-0000-0000-000000000001",
              name="dev", vendor="Apple, Inc.", vendor_id=76,
              services=(), rssi=-50, is_connectable=True,
-             merged_count=1):
+             merged_count=1, type=None, device_class=None,
+             is_connected=False):
     """Lightweight BLEDevice factory; the timestamps are placeholders
     since the diagnostic helpers do not read first_seen / last_seen."""
     t = datetime(2026, 5, 7, 9, 30, 0)
@@ -334,6 +337,9 @@ def _ble_dev(identifier="00000000-0000-0000-0000-000000000001",
         last_seen=t,
         ad_count=1,
         merged_count=merged_count,
+        type=type,
+        device_class=device_class,
+        is_connected=is_connected,
     )
 
 
@@ -414,9 +420,91 @@ def test_ble_closest_line_falls_back_to_anonymous_label():
 
 
 def test_ble_diagnostic_lines_returns_four_rows():
-    """Sanity: the dispatcher returns the four rows the panel renders.
-    Pinning the count keeps an accidental fifth row from breaking the
-    panel min-height expected layout."""
+    """Sanity: with no connected peripherals the dispatcher returns
+    the four rows the panel has had since v0.5.0. Pinning the count
+    keeps an accidental fifth row from breaking the panel min-height
+    expected layout."""
     devices = [_ble_dev()]
     rows = _ble_diagnostic_lines(devices)
     assert len(rows) == 4
+
+
+def test_ble_diagnostic_lines_adds_connected_row_when_present():
+    """When the helper has reported at least one connected peripheral,
+    the diagnostics gain a fifth 'Connected  N peripherals · ...' row.
+    The Mac with AirPods + Magic Keyboard paired should see this."""
+    devices = [_ble_dev()]
+    connected = [
+        _ble_dev(identifier="cc1", name="Magic Keyboard",
+                 services=("1812",), rssi=None, is_connected=True),
+        _ble_dev(identifier="cc2", name="AirPods Pro",
+                 services=("110A",), rssi=None, is_connected=True),
+    ]
+    rows = _ble_diagnostic_lines(devices, connected)
+    assert len(rows) == 5
+    assert "2 peripherals" in rows[4].plain
+    # Service-category breakdown follows the headcount.
+    assert "Audio 1" in rows[4].plain
+    assert "HID 1" in rows[4].plain
+
+
+def test_ble_categories_line_includes_deep_id_types():
+    """Schema-3 type / device_class show up in the categories line so
+    a panel showing 4 iBeacons + 1 AirTag tells the user that even
+    when the underlying service-UUID list is empty (iBeacon advertises
+    no service UUIDs)."""
+    devices = [
+        _ble_dev(identifier="ib1", services=(), type="iBeacon"),
+        _ble_dev(identifier="ib2", services=(), type="iBeacon"),
+        _ble_dev(identifier="at1", services=("FD5A",), type="AirTag"),
+        _ble_dev(identifier="ip1", services=(), device_class="iPhone"),
+    ]
+    text = _ble_categories_line(devices).plain
+    assert "iBeacon 2" in text
+    assert "AirTag 1" in text
+    assert "iPhone 1" in text
+
+
+def test_ble_label_summary_prefers_type_over_service_category():
+    """A device tagged AirTag with FD5A service shows 'AirTag · Find My'
+    rather than just 'Find My' or just 'AirTag' — the type answers
+    'what is this' first, the category gives extra context. Identical
+    halves collapse so we don't render 'Heart Rate · Heart Rate'."""
+    airtag = _ble_dev(services=("FD5A",), type="AirTag")
+    summary = _ble_label_summary(airtag)
+    assert "AirTag" in summary
+    assert "Find My" in summary
+    assert summary == "AirTag · Find My"
+
+
+def test_ble_label_summary_falls_back_to_service_category_when_no_type():
+    """No type / device_class → label is just the service category,
+    matching the v0.5.0 'services' column behaviour exactly. This is
+    the path most non-Apple, non-Find-My devices take."""
+    plain = _ble_dev(services=("180D",))  # Heart Rate only
+    assert _ble_label_summary(plain) == "Heart Rate"
+
+
+def test_ble_label_summary_uses_device_class_when_no_type():
+    """Apple Nearby Info gives device_class but no type. The summary
+    surfaces 'iPhone' / 'Mac' / 'Apple Watch' so the user can tell a
+    laptop from a watch among the rotating Apple beacons."""
+    iphone = _ble_dev(services=(), device_class="iPhone")
+    assert _ble_label_summary(iphone) == "iPhone"
+
+
+def test_ble_connected_line_counts_peripherals_and_categories():
+    """The diagnostics' Connected row reports total peripherals plus
+    a per-category breakdown. AirPods + 2 audio buds + Magic Keyboard
+    counts 'Audio 3 · HID 1'."""
+    connected = [
+        _ble_dev(identifier=f"aud{i}", services=("110A",), rssi=None,
+                 is_connected=True) for i in range(3)
+    ] + [
+        _ble_dev(identifier="kbd", services=("1812",), rssi=None,
+                 is_connected=True),
+    ]
+    text = _ble_connected_line(connected).plain
+    assert "4 peripherals" in text
+    assert "Audio 3" in text
+    assert "HID 1" in text
