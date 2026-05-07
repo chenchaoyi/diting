@@ -33,6 +33,7 @@ from textual.widgets import Footer, Header, RichLog, Static
 from .backend import WiFiBackend
 from .ble import BLEDevice, BLEPoller, BLEScanUpdate, service_category
 from .environment import APBaseline, EnvironmentMonitor, RFStirEvent
+from .event_log import EventLogger
 from .events import (
     Event as MonitorEvent,
     EventRing,
@@ -450,6 +451,26 @@ def _help_content() -> tuple[Text, Text]:
     line("watch",    t("stream events as plain text until Ctrl+C"))
     line("monitor",  t("headless JSONL events for long-runs / Home Assistant"))
     line("calibrate", t("record an empty-room σ baseline (default 300 s)"))
+
+    section(t("Event log (--log) — TUI + monitor share the schema"))
+    body.append(
+        "  uv run wifiscope --log ~/wifi.jsonl   # TUI + log\n"
+        "  WIFISCOPE_LOG=~/wifi.jsonl wifiscope  # same, via env\n",
+        style="dim",
+    )
+    body.append(t(
+        "\n"
+        "  Adds a background JSONL writer to the normal TUI session.\n"
+        "  Same event schema as `wifiscope monitor`, append-mode, line-\n"
+        "  buffered — safe to leave running for days and tail concurrently.\n"
+        "  Disabled by default; set the flag or env var to opt in.\n"
+        "\n"
+        "  The schema is locale-stable (English keys / values regardless\n"
+        "  of WIFISCOPE_LANG) so log analysis scripts and AI consumers\n"
+        "  do not break when you toggle the UI to Chinese. User-supplied\n"
+        "  strings — SSID, AP names from aps.yaml — pass through as UTF-8\n"
+        "  so a Chinese SSID like 咖啡馆 stays grep-able in the file.\n"
+    ))
 
     section(t("monitor (headless event stream)"))
     body.append(
@@ -2684,6 +2705,7 @@ class WifiScopeApp(App):
         enable_latency: bool = True,
         enable_environment: bool = True,
         calibration_path: str | None = None,
+        event_log_path: str | None = None,
     ) -> None:
         super().__init__()
         self._backend = backend
@@ -2692,6 +2714,16 @@ class WifiScopeApp(App):
         self._enable_latency = enable_latency
         self._enable_environment = enable_environment
         self._calibration_path = calibration_path
+        # JSONL event log shared with `wifiscope monitor`. None ⇒
+        # disabled; opt in via --log PATH or WIFISCOPE_LOG=PATH so
+        # users do not get surprised by silent disk writes. The
+        # logger is created here (not in on_mount) so tests that
+        # synthesise events directly into the app still see them
+        # land on disk when a path is configured.
+        self._event_logger = (
+            EventLogger.to_path(event_log_path) if event_log_path
+            else EventLogger.disabled()
+        )
         # LatencyPoller / EnvironmentMonitor lazy-init in on_mount so
         # tests / preview captures that disable them with the kwargs
         # above don't pay the import / state cost.
@@ -2802,6 +2834,13 @@ class WifiScopeApp(App):
                 name="latency",
             )
 
+    def on_unmount(self) -> None:
+        # Flush + close the JSONL log on TUI exit so the file is
+        # complete and other processes can read it cleanly. Safe
+        # when logging is disabled (close() on a no-op logger is
+        # idempotent).
+        self._event_logger.close()
+
     async def _consume_events(self) -> None:
         async for event in self._poller.events():
             if self._paused:
@@ -2814,6 +2853,11 @@ class WifiScopeApp(App):
                 self.query_one("#conn", ConnectionPanel).update_connection(
                     event.connection, self._inv
                 )
+                # Mirror the connection edge into the JSONL log
+                # (no-op when --log is not enabled). Idempotent:
+                # the logger filters internally to only emit on
+                # associate / disassociate transitions.
+                self._event_logger.emit_connection_update(event.connection)
                 # Feed the EnvironmentMonitor with the live connection
                 # RSSI on every tick (1 Hz). This is the highest-rate
                 # samples we get for the AP we are actually using —
@@ -2853,6 +2897,14 @@ class WifiScopeApp(App):
             elif isinstance(event, RoamEvent):
                 self._events_ring.push(event)
                 self.query_one("#roam", EventsPanel).append_event(event, self._inv)
+                kind = (
+                    "band_switch"
+                    if self._inv.is_same_ap(
+                        event.previous_bssid, event.new_bssid
+                    )
+                    else "inter_ap"
+                )
+                self._event_logger.emit_roam(event, kind=kind)
 
     def _collect_environment_events(self, now: datetime) -> None:
         """Fire any pending stir events into the ring buffer + panel.
@@ -2869,6 +2921,7 @@ class WifiScopeApp(App):
         for ev in events:
             self._events_ring.push(ev)
             panel.append_event(ev, self._inv)
+            self._event_logger.emit_rf_stir(ev)
             # Stir events bypass the throttle — they are by definition
             # the data points users care most about preserving on the
             # sparkline. Burst events still respect the 1-h prune below.
@@ -2955,6 +3008,7 @@ class WifiScopeApp(App):
                     )
                     self._events_ring.push(ev)
                     panel.append_event(ev, self._inv)
+                    self._event_logger.emit_latency_spike(ev)
                 if sample.lost and detect_loss_burst(history):
                     agg = (
                         self._latency_gw_agg if sample.target == "router"
@@ -2970,6 +3024,7 @@ class WifiScopeApp(App):
                     )
                     self._events_ring.push(ev)
                     panel.append_event(ev, self._inv)
+                    self._event_logger.emit_loss_burst(ev)
                 self._refresh_environment_panel()
         except Exception:
             # Same pattern as the BLE consumer — a poller hiccup

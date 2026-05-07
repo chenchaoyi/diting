@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import i18n
+from .event_log import EventLogger
 from .environment import (
     EnvironmentMonitor,
     load_calibration,
@@ -269,11 +270,10 @@ async def _run_monitor(args: list[str]) -> None:
         inventory=inv, calibration=load_calibration(),
     )
 
-    sink: object
-    if out_path:
-        sink = open(out_path, "a", buffering=1)  # line-buffered
-    else:
-        sink = sys.stdout
+    logger = (
+        EventLogger.to_path(out_path) if out_path
+        else EventLogger.to_stdout()
+    )
 
     poller = WiFiPoller(backend)
 
@@ -287,13 +287,10 @@ async def _run_monitor(args: list[str]) -> None:
         "gateway_override": gateway_override,
     }
 
-    async def emit(payload: dict) -> None:
-        """Write one JSONL line to the configured sink, plus optional
-        macOS notification."""
-        line = json.dumps(payload, separators=(",", ":"))
-        sink.write(line + "\n")
-        if hasattr(sink, "flush"):
-            sink.flush()
+    async def maybe_notify(payload: dict) -> None:
+        """Raise a macOS Notification Centre alert for high-confidence
+        events. The logger handles the log line itself; this is the
+        side-effect monitor adds on top."""
         if notify and payload.get("confidence") == "high":
             await _macos_notify(
                 title="wifiscope",
@@ -305,15 +302,8 @@ async def _run_monitor(args: list[str]) -> None:
             now = datetime.now(timezone.utc)
             if isinstance(event, ConnectionUpdate):
                 conn = event.connection
+                logger.emit_connection_update(conn, now=now)
                 if conn is None:
-                    payload = {
-                        "ts": _iso(now),
-                        "type": "link_state",
-                        "state": "disassociated",
-                        "bssid": None,
-                        "ssid": None,
-                    }
-                    await emit(payload)
                     continue
                 # Late-bind LatencyPoller once we know the gateway.
                 if latency_state["poller"] is None and (
@@ -331,47 +321,32 @@ async def _run_monitor(args: list[str]) -> None:
                         name="latency-consumer",
                     )
                 if conn.bssid is not None and conn.rssi_dbm is not None:
-                    monitor.ingest(
-                        conn.bssid, conn.rssi_dbm, now,
-                    )
+                    monitor.ingest(conn.bssid, conn.rssi_dbm, now)
                     for stir in monitor.fire_events(now):
-                        await emit({
-                            "ts": _iso(stir.timestamp),
+                        logger.emit_rf_stir(stir)
+                        await maybe_notify({
                             "type": "rf_stir",
-                            "magnitude_db": stir.magnitude_db,
-                            "location": stir.location,
-                            "bssid": stir.bssid,
-                            "duration_s": stir.duration_s,
                             "confidence": stir.confidence,
-                            "mode": stir.mode,
+                            "location": stir.location,
                         })
             elif isinstance(event, ScanUpdate):
                 for r in event.results:
                     if r.bssid is not None and r.rssi_dbm is not None:
                         monitor.ingest(r.bssid, r.rssi_dbm, now)
                 for stir in monitor.fire_events(now):
-                    await emit({
-                        "ts": _iso(stir.timestamp),
+                    logger.emit_rf_stir(stir)
+                    await maybe_notify({
                         "type": "rf_stir",
-                        "magnitude_db": stir.magnitude_db,
-                        "location": stir.location,
-                        "bssid": stir.bssid,
-                        "duration_s": stir.duration_s,
                         "confidence": stir.confidence,
-                        "mode": stir.mode,
+                        "location": stir.location,
                     })
             elif isinstance(event, RoamEvent):
-                await emit({
-                    "ts": _iso(event.timestamp),
-                    "type": "roam",
-                    "previous_bssid": event.previous_bssid,
-                    "new_bssid": event.new_bssid,
-                    "kind": (
-                        "band_switch"
-                        if inv.is_same_ap(event.previous_bssid, event.new_bssid)
-                        else "inter_ap"
-                    ),
-                })
+                kind = (
+                    "band_switch"
+                    if inv.is_same_ap(event.previous_bssid, event.new_bssid)
+                    else "inter_ap"
+                )
+                logger.emit_roam(event, kind=kind)
 
     async def latency_consumer(lp: LatencyPoller) -> None:
         async for sample in lp.events():
@@ -381,30 +356,27 @@ async def _run_monitor(args: list[str]) -> None:
             spike = detect_latency_spike(history)
             if spike is not None and sample is spike:
                 agg = lp.aggregate(sample.target)
-                await emit({
-                    "ts": _iso(sample.ts),
-                    "type": "latency_spike",
-                    "target": sample.target,
-                    "target_ip": sample.target_ip,
-                    "rtt_ms": round(sample.rtt_ms or 0.0, 1),
-                    "loss_pct": round(agg.loss_pct or 0.0, 1),
-                })
+                logger.emit_latency_spike(LatencySpikeEvent(
+                    timestamp=sample.ts,
+                    target=sample.target,
+                    target_ip=sample.target_ip,
+                    rtt_ms=round(sample.rtt_ms or 0.0, 1),
+                    loss_pct=round(agg.loss_pct or 0.0, 1),
+                ))
             if sample.lost and detect_loss_burst(history):
                 agg = lp.aggregate(sample.target)
-                await emit({
-                    "ts": _iso(sample.ts),
-                    "type": "loss_burst",
-                    "target": sample.target,
-                    "target_ip": sample.target_ip,
-                    "loss_pct": round(agg.loss_pct or 0.0, 1),
-                    "lost_in_window": sum(1 for s in history[-5:] if s.lost),
-                })
+                logger.emit_loss_burst(LossBurstEvent(
+                    timestamp=sample.ts,
+                    target=sample.target,
+                    target_ip=sample.target_ip,
+                    loss_pct=round(agg.loss_pct or 0.0, 1),
+                    lost_in_window=sum(1 for s in history[-5:] if s.lost),
+                ))
 
     try:
         await wifi_consumer()
     finally:
-        if hasattr(sink, "close") and sink is not sys.stdout:
-            sink.close()
+        logger.close()
 
 
 def _iso(ts: datetime) -> str:
@@ -531,7 +503,7 @@ def _usage() -> str:
     print time, not at module import, so ``--lang zh --help`` sees the
     Chinese version after :func:`main` has applied the language."""
     return t(
-        "usage: wifiscope [--lang en|zh] [SUBCOMMAND]\n"
+        "usage: wifiscope [--lang en|zh] [--log PATH] [SUBCOMMAND]\n"
         "\n"
         "  (no args)   launch the TUI dashboard (default)\n"
         "  once        print the current connection and exit\n"
@@ -542,6 +514,9 @@ def _usage() -> str:
         "              flags: --duration SECONDS\n"
         "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
         "              then to the system locale (zh_* → zh, anything else → en).\n"
+        "  --log PATH  also write JSONL events to PATH while the TUI runs.\n"
+        "              Same schema as `wifiscope monitor`. Append-mode; safe\n"
+        "              to leave running for days. Env: WIFISCOPE_LOG=PATH.\n"
         "  -h, --help  show this message\n"
     )
 
@@ -575,7 +550,43 @@ def _validate_lang(value: str) -> str:
     return value
 
 
-def _run_tui() -> None:
+def _extract_log_arg(argv: list[str]) -> str | None:
+    """Pop ``--log`` and its value from ``argv`` in place.
+
+    Supports both ``--log path`` and ``--log=path``. Returns the
+    raw path string or ``None`` if the flag is absent. The path
+    is not resolved here — the EventLogger opens it in append
+    mode and surfaces any I/O error at write time.
+    """
+    for i, arg in enumerate(argv):
+        if arg == "--log":
+            if i + 1 >= len(argv):
+                print("--log requires a path", file=sys.stderr)
+                sys.exit(2)
+            value = argv[i + 1]
+            del argv[i:i + 2]
+            return value
+        if arg.startswith("--log="):
+            value = arg.split("=", 1)[1]
+            del argv[i]
+            return value
+    return None
+
+
+def _resolve_log_path(cli_value: str | None) -> str | None:
+    """CLI flag wins over WIFISCOPE_LOG env var; both off → no log.
+
+    A blank env var is treated as unset so users can disable
+    logging in a parent shell with ``WIFISCOPE_LOG= wifiscope``
+    even when their profile sets it globally.
+    """
+    if cli_value:
+        return cli_value
+    env = (os.environ.get("WIFISCOPE_LOG") or "").strip()
+    return env or None
+
+
+def _run_tui(*, log_path: str | None = None) -> None:
     # Imported lazily so `wifiscope once` and `wifiscope watch` do not
     # pull in textual / rich on every invocation.
     from .tui import WifiScopeApp
@@ -592,6 +603,7 @@ def _run_tui() -> None:
         backend, inv,
         scan_interval=_scan_interval(),
         ble_helper_path=ble_binary,
+        event_log_path=log_path,
     ).run()
 
 
@@ -773,9 +785,11 @@ def _ensure_helper_ready() -> str | None:
 def main() -> None:
     args = sys.argv[1:]
     cli_lang = _extract_lang_arg(args)
+    cli_log = _extract_log_arg(args)
     i18n.set_lang(i18n.resolve_lang(cli_lang))
+    log_path = _resolve_log_path(cli_log)
     if not args:
-        _run_tui()
+        _run_tui(log_path=log_path)
         return
     cmd = args[0]
     if cmd == "once":

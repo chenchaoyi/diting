@@ -343,7 +343,7 @@ _ZH: dict[str, str] = {
     "Nearby Action": "附近动作",
 
     # ---- CLI --help ----
-    "usage: wifiscope [--lang en|zh] [SUBCOMMAND]\n"
+    "usage: wifiscope [--lang en|zh] [--log PATH] [SUBCOMMAND]\n"
     "\n"
     "  (no args)   launch the TUI dashboard (default)\n"
     "  once        print the current connection and exit\n"
@@ -354,8 +354,11 @@ _ZH: dict[str, str] = {
     "              flags: --duration SECONDS\n"
     "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
     "              then to the system locale (zh_* → zh, anything else → en).\n"
+    "  --log PATH  also write JSONL events to PATH while the TUI runs.\n"
+    "              Same schema as `wifiscope monitor`. Append-mode; safe\n"
+    "              to leave running for days. Env: WIFISCOPE_LOG=PATH.\n"
     "  -h, --help  show this message\n":
-        "用法：wifiscope [--lang en|zh] [子命令]\n"
+        "用法：wifiscope [--lang en|zh] [--log PATH] [子命令]\n"
         "\n"
         "  (无参数)    启动 TUI 仪表盘（默认）\n"
         "  once        打印当前连接快照后退出\n"
@@ -366,6 +369,9 @@ _ZH: dict[str, str] = {
         "              选项：--duration SECONDS\n"
         "  --lang L    界面语言：en、zh。默认读 WIFISCOPE_LANG，\n"
         "              再退到系统 locale（zh_* → zh，其余 → en）。\n"
+        "  --log PATH  TUI 运行的同时把 JSONL 事件追加写入 PATH。\n"
+        "              schema 与 `wifiscope monitor` 一致，append 模式，\n"
+        "              可长时间运行。环境变量：WIFISCOPE_LOG=PATH。\n"
         "  -h, --help  显示本说明\n",
     "wifiscope: unknown subcommand {cmd!r}":
         "wifiscope：未知子命令 {cmd!r}",
@@ -609,6 +615,29 @@ _ZH: dict[str, str] = {
     "record an empty-room σ baseline (default 300 s)":
         "采集空房间的 σ 基线（默认 300 秒）",
     "monitor (headless event stream)": "monitor（无界面事件流）",
+    "Event log (--log) — TUI + monitor share the schema":
+        "事件日志（--log） —— TUI 和 monitor 共用同一份 schema",
+    "\n"
+    "  Adds a background JSONL writer to the normal TUI session.\n"
+    "  Same event schema as `wifiscope monitor`, append-mode, line-\n"
+    "  buffered — safe to leave running for days and tail concurrently.\n"
+    "  Disabled by default; set the flag or env var to opt in.\n"
+    "\n"
+    "  The schema is locale-stable (English keys / values regardless\n"
+    "  of WIFISCOPE_LANG) so log analysis scripts and AI consumers\n"
+    "  do not break when you toggle the UI to Chinese. User-supplied\n"
+    "  strings — SSID, AP names from aps.yaml — pass through as UTF-8\n"
+    "  so a Chinese SSID like 咖啡馆 stays grep-able in the file.\n":
+        "\n"
+        "  在正常 TUI 会话之上增加一个后台 JSONL 写入器。事件 schema 与\n"
+        "  `wifiscope monitor` 一致，append 模式、行缓冲 —— 长时间跑、\n"
+        "  并发 tail 都安全。默认关闭；设置参数或环境变量即可开启。\n"
+        "\n"
+        "  schema 与界面语言无关（无论 WIFISCOPE_LANG 设置什么，写入文件\n"
+        "  的 keys / values 都保持英文），日志分析脚本和 AI 消费方不会\n"
+        "  因为 UI 切到中文而失效。用户自定义字符串 —— SSID、aps.yaml 里\n"
+        "  的 AP 名字 —— 以 UTF-8 原样写入，中文 SSID 像 咖啡馆 这样的\n"
+        "  在文件里仍可直接 grep。\n",
     "\n"
     "  Long-running JSONL stream — one event per line. No TUI, no\n"
     "  cursor movement, safe to redirect / pipe / tail. Events:\n"
