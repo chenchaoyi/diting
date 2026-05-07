@@ -37,6 +37,17 @@ import CoreBluetooth
 import CoreLocation
 import CoreWLAN
 import Foundation
+// IOBluetooth is needed for the connected-peripherals enumeration.
+// CoreBluetooth's retrieveConnectedPeripherals(withServices:) only
+// returns peripherals connected via a CBCentralManager.connect()
+// call from some user-space app — it does NOT see system-level
+// connections (Magic Keyboard / Mouse via HID, AirPods via A2DP,
+// etc.) which are managed entirely outside CoreBluetooth. Those
+// surface only through IOBluetooth's pairedDevices() roster, the
+// same path System Settings and `system_profiler SPBluetoothDataType`
+// take. IOBluetooth is "soft-deprecated" but fully functional on
+// macOS 26 and remains the only public API for this query.
+import IOBluetooth
 
 // ---------------------------------------------------------------------
 // CLI mode: scan
@@ -348,8 +359,18 @@ final class BLEScanner: NSObject, CBCentralManagerDelegate {
         var row: [String: Any] = [
             "ts": isoFormatter.string(from: Date()),
             "id": peripheral.identifier.uuidString,
-            "rssi_dbm": RSSI.intValue,
         ]
+        // CoreBluetooth uses RSSI = 127 as the documented "no reading
+        // available" sentinel. Any value at or above ~0 dBm is also
+        // implausible for a received-power reading. Either case: omit
+        // the field so the Python side renders "?" / dim, instead of
+        // letting the sentinel ride into the panel as a "very strong"
+        // signal that climbs to the top of the list and corrupts the
+        // diagnostic-panel Closest line.
+        let rssi = RSSI.intValue
+        if rssi < 0 && rssi > -200 {
+            row["rssi_dbm"] = rssi
+        }
 
         // Apple-provided local name (truthier than the cached
         // peripheral.name when the device rotates its identifier).
@@ -403,32 +424,60 @@ final class BLEScanner: NSObject, CBCentralManagerDelegate {
     }
 
     private func emitConnectedSnapshot() {
-        guard let central = central, central.state == .poweredOn else { return }
-        let peripherals = central.retrieveConnectedPeripherals(
-            withServices: kConnectedServiceUUIDs,
-        )
-        // Deduplicate across services — the same CBPeripheral often
-        // reports under several of the requested UUIDs (e.g. AirPods
-        // appear under multiple Audio profiles).
-        var seen: Set<UUID> = []
+        // Source the roster via IOBluetooth, NOT
+        // CBCentralManager.retrieveConnectedPeripherals(...) — see the
+        // import-block comment for why CoreBluetooth misses every
+        // system-paired keyboard / mouse / headphone. IOBluetooth's
+        // pairedDevices() roster is what System Settings sees.
+        guard let paired = IOBluetoothDevice.pairedDevices()
+                as? [IOBluetoothDevice] else {
+            // Even an empty list is a useful signal; surface zero with
+            // a sentinel so the Python panel can clear any stale rows.
+            let sentinel: [String: Any] = [
+                "ts": isoFormatter.string(from: Date()),
+                "connected_snapshot": true,
+                "count": 0,
+                "ids": [String](),
+            ]
+            emitJSONLine(sentinel)
+            return
+        }
+
         var emittedIDs: [String] = []
-        for p in peripherals {
-            if !seen.insert(p.identifier).inserted { continue }
-            emittedIDs.append(p.identifier.uuidString)
+        for device in paired {
+            // isConnected() checks live status — paired-but-disconnected
+            // headphones in the next room would otherwise pollute the
+            // "what am I using right now" list.
+            guard device.isConnected() else { continue }
+            // The device's BT MAC is the most stable identifier we have
+            // (CoreBluetooth's per-host UUIDs do not exist for
+            // IOBluetooth-managed devices). Lower-case to match the
+            // Python side's BSSID convention; treat as opaque string
+            // identifier downstream.
+            guard let addr = device.addressString else { continue }
+            let id = addr.lowercased()
+            emittedIDs.append(id)
             var row: [String: Any] = [
                 "ts": isoFormatter.string(from: Date()),
                 "connected": true,
-                "id": p.identifier.uuidString,
+                "id": id,
             ]
-            if let name = p.name { row["name"] = name }
-            if let services = p.services, !services.isEmpty {
-                row["service_uuids"] = services.map { $0.uuid.uuidString }
+            if let name = device.name, !name.isEmpty {
+                row["name"] = name
+            }
+            // IOBluetoothDevice exposes a "class of device" record, not
+            // an iterable services list like CBPeripheral. Translate
+            // the major class into the primary 16-bit service UUID for
+            // that category, so the Python side's existing
+            // service_category() lookup picks the connected row up
+            // with the same machinery it uses for advertising rows
+            // (no parallel category-hint field needed).
+            if let primaryUUID = bluetoothPrimaryServiceUUID(device) {
+                row["service_uuids"] = [primaryUUID]
             }
             emitJSONLine(row)
         }
-        // Sentinel marker so the Python side can distinguish "this
-        // batch contained zero connected peripherals" (need to clear
-        // stale rows) from "no batch has run yet" (don't clear).
+
         let sentinel: [String: Any] = [
             "ts": isoFormatter.string(from: Date()),
             "connected_snapshot": true,
@@ -436,6 +485,38 @@ final class BLEScanner: NSObject, CBCentralManagerDelegate {
             "ids": emittedIDs,
         ]
         emitJSONLine(sentinel)
+    }
+
+    /// Translate IOBluetooth's major device-class enum into the 16-bit
+    /// Bluetooth SIG service UUID that the Python side's
+    /// `service_category()` already maps to a category label. We pick
+    /// one canonical UUID per category — this is a *display hint* for
+    /// the panel, not an authoritative list of every service the
+    /// peripheral exposes (we cannot enumerate that without an active
+    /// GATT connection). Returns nil when the class does not map.
+    private func bluetoothPrimaryServiceUUID(
+        _ device: IOBluetoothDevice
+    ) -> String? {
+        // Framework constants are declared as Int while
+        // deviceClassMajor is BluetoothDeviceClassMajor (UInt32) —
+        // cast both sides to Int for the switch to accept the patterns.
+        let major = Int(device.deviceClassMajor)
+        switch major {
+        case kBluetoothDeviceClassMajorPeripheral:
+            // Keyboards, mice, joysticks. 1812 = HID Service.
+            return "1812"
+        case kBluetoothDeviceClassMajorAudio:
+            // 110A = Audio Source. Generic enough for the panel to
+            // label as "Audio".
+            return "110A"
+        case kBluetoothDeviceClassMajorHealth:
+            // 180D = Heart Rate Service. Imperfect (Health major class
+            // is broader than HR) but it is the only Health label
+            // mapped in the Python catalog.
+            return "180D"
+        default:
+            return nil
+        }
     }
 
     private func emitJSONLine(_ row: [String: Any]) {
@@ -563,6 +644,56 @@ func runBLEScan() -> Never {
     // Park until the parent closes the pipe (SIGPIPE) or sends SIGTERM.
     // dispatchMain() runs the main run loop forever so CoreBluetooth's
     // delegate callbacks fire.
+    dispatchMain()
+}
+
+/// Lightweight Bluetooth-permission probe used by the Python launcher
+/// to decide whether to prompt the user before starting the TUI. We
+/// initialise CBCentralManager and wait for the first state change,
+/// then exit with a code that maps directly to a permission outcome.
+/// The 2 s timeout exists because TCC silently leaves
+/// `central.state == .unknown` forever when permission was never asked
+/// — a non-event we still need to translate into an exit code.
+final class BluetoothStatusProbe: NSObject, CBCentralManagerDelegate {
+    private var manager: CBCentralManager!
+
+    func start() {
+        manager = CBCentralManager(delegate: self, queue: nil)
+    }
+
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        switch central.state {
+        case .poweredOn:
+            exit(0)
+        case .unauthorized:
+            exit(3)
+        case .poweredOff:
+            exit(4)
+        case .unsupported:
+            exit(5)
+        case .resetting, .unknown:
+            // Wait for the next state update or for the timeout.
+            return
+        @unknown default:
+            exit(2)
+        }
+    }
+}
+
+func runBluetoothStatusProbe() -> Never {
+    // Same disclaim hop as the live ble-scan path so TCC checks against
+    // our own bundle's Info.plist instead of the launching terminal's.
+    if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
+        reExecWithDisclaimedResponsibility()
+    }
+    let probe = BluetoothStatusProbe()
+    probe.start()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        // No state update arrived in time. Could be silent TCC denial
+        // or a transient OS hiccup; both are "not granted" from the
+        // launcher's point of view.
+        exit(2)
+    }
     dispatchMain()
 }
 
@@ -726,20 +857,27 @@ if args.count > 1 {
         runScanAndDumpJSON()
     case "ble-scan":
         runBLEScan()
+    case "bluetooth-status":
+        runBluetoothStatusProbe()
     case "--help", "-h":
         print("""
         wifiscope-helper
 
-          (no args)   Launch the bundle UI; request Location Services and
-                      Bluetooth, keep the window open so the system
-                      prompts can show.
-          scan        Perform a CoreWLAN scan and print one JSON document
-                      to stdout, then exit. Used by the Python backend
-                      as a subprocess.
-          ble-scan    Scan nearby BLE advertisements via CoreBluetooth
-                      and stream JSON Lines (one ad per line) to stdout
-                      until SIGTERM / parent pipe close. Used by the
-                      Python BLEPoller.
+          (no args)         Launch the bundle UI; request Location Services
+                            and Bluetooth, keep the window open so the
+                            system prompts can show.
+          scan              Perform a CoreWLAN scan and print one JSON
+                            document to stdout, then exit. Used by the
+                            Python backend as a subprocess.
+          ble-scan          Scan nearby BLE advertisements via
+                            CoreBluetooth and stream JSON Lines (one ad
+                            per line) to stdout until SIGTERM / parent
+                            pipe close. Used by the Python BLEPoller.
+          bluetooth-status  Probe Bluetooth TCC state and exit non-zero
+                            when not granted. No JSON output. Exit codes:
+                            0 .poweredOn (granted), 2 timeout / unknown,
+                            3 .unauthorized, 4 .poweredOff,
+                            5 .unsupported.
         """)
         exit(0)
     default:

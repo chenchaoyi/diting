@@ -1638,9 +1638,14 @@ def _ble_connected_row_line(d: BLEDevice) -> Text:
     line.append(f"{dash:>{_COL_BLE_RSSI}}  ", style="dim")
     line.append(" " * _COL_BLE_SIGNAL)
     line.append("  ")
-    # No vendor metadata from retrieveConnectedPeripherals — the column
-    # rolls into the name field for readability.
-    line.append(fit_cells(t("(unknown)"), _COL_BLE_VENDOR) + "  ", style="dim")
+    # Vendor for connected peripherals is resolved from the BT MAC's
+    # OUI prefix (see ble.lookup_oui_vendor); when the prefix is in the
+    # bundled subset we render the brand cyan exactly like the
+    # advertising rows, when it is not we fall back to "(unknown)" dim.
+    vendor_text = d.vendor or t("(unknown)")
+    vendor_style = "cyan" if d.vendor else "dim"
+    line.append(fit_cells(vendor_text, _COL_BLE_VENDOR) + "  ",
+                style=vendor_style)
     line.append(fit_cells(name_text, _COL_BLE_NAME) + "  ", style=name_style)
     label_style = "white" if (d.type or d.device_class) else "dim"
     line.append(fit_cells(label_text, _COL_BLE_SERVICES) + "  ",

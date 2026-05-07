@@ -27,7 +27,9 @@ from wifiscope.ble import (
     BLEScanUpdate,
     detect_advertisement,
     expire_devices,
+    load_ouis,
     load_vendors,
+    lookup_oui_vendor,
     lookup_vendor,
     merge_for_display,
     service_category,
@@ -148,6 +150,89 @@ def test_load_vendors_ships_apple_id():
     this fails loudly."""
     vendors = load_vendors()
     assert vendors.get(76) == "Apple, Inc."
+
+
+# --- OUI lookup (connected peripherals) -----------------------------
+
+OUIS = {
+    "38:09:fb": "Apple, Inc.",
+    "8c:85:90": "Apple, Inc.",
+    "00:50:f2": "Microsoft",
+}
+
+
+def test_lookup_oui_vendor_dash_separated_mac():
+    """Helper emits MACs as ``38-09-fb-0b-be-60`` (IOBluetooth's native
+    addressString form). The lookup normalises through to the colon-
+    separated ``aa:bb:cc`` key the bundled OUI JSON uses."""
+    assert lookup_oui_vendor("38-09-fb-0b-be-60", OUIS) == "Apple, Inc."
+
+
+def test_lookup_oui_vendor_colon_separated_mac():
+    """Same MAC in colon-separated form must resolve identically — no
+    helper-format coupling on the lookup side."""
+    assert lookup_oui_vendor("8c:85:90:f1:d0:cd", OUIS) == "Apple, Inc."
+
+
+def test_lookup_oui_vendor_unknown_oui_returns_none():
+    """An OUI not in the bundled subset stays None — the panel renders
+    "(unknown)" rather than fabricating a vendor."""
+    assert lookup_oui_vendor("aa:bb:cc:dd:ee:ff", OUIS) is None
+
+
+def test_lookup_oui_vendor_invalid_input_returns_none():
+    """Defensive: empty / non-hex / too-short inputs must not raise."""
+    assert lookup_oui_vendor(None, OUIS) is None
+    assert lookup_oui_vendor("", OUIS) is None
+    assert lookup_oui_vendor("not-a-mac", OUIS) is None
+    assert lookup_oui_vendor("01:02", OUIS) is None  # too short for an OUI
+
+
+def test_load_ouis_ships_apple_magic_keyboard_oui():
+    """Pin a known-Apple-OUI present in the bundled JSON to catch
+    accidental file truncation. 38:09:fb is one of Apple's many MA-L
+    allocations; their Magic Keyboard ships with it."""
+    ouis = load_ouis()
+    assert ouis.get("38:09:fb") == "Apple, Inc."
+
+
+def test_rssi_unavailable_sentinel_filtered():
+    """CoreBluetooth uses RSSI = 127 as the 'no reading available'
+    sentinel. The helper should filter at the source, but the Python
+    side keeps a defensive guard so older helper bundles cannot leak
+    the sentinel through and corrupt RSSI-sorted lists or the
+    diagnostic-panel Closest line. Any non-negative value is
+    implausible for received-signal-strength dBm and is dropped."""
+    devices: dict[str, BLEDevice] = {}
+    sentinel_line = json.dumps({
+        "ts": "2026-05-07T08:00:00Z",
+        "id": "8000-0000-0000-0000-AAAAAAAAAAAA",
+        "rssi_dbm": 127,                           # the sentinel
+        "manufacturer_id": 76,
+        "is_connectable": True,
+    })
+    update_from_line(devices, sentinel_line, vendors=VENDORS)
+    assert len(devices) == 1
+    d = next(iter(devices.values()))
+    assert d.rssi_dbm is None
+
+
+def test_rssi_zero_or_positive_dbm_treated_as_invalid():
+    """Edge cases: 0 dBm is theoretically possible but physically
+    implausible for BLE receive (means antenna touching transmitter).
+    Treat all non-negative values as the sentinel space rather than
+    inventing a tighter cutoff that might mask real edge cases."""
+    devices: dict[str, BLEDevice] = {}
+    line = json.dumps({
+        "ts": "2026-05-07T08:00:00Z",
+        "id": "AAAA-1111-2222-3333-CCCCCCCCCCCC",
+        "rssi_dbm": 0,
+        "manufacturer_id": 76,
+        "is_connectable": True,
+    })
+    update_from_line(devices, line, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    assert d.rssi_dbm is None
 
 
 # ------------------------------------------------------------------

@@ -230,13 +230,19 @@ def _synthetic_ble_connected(now: datetime) -> list[BLEDevice]:
     `readRSSI()` against an active link), so the rendered column shows
     `—`. Sort is alphabetic by name.
     """
+    # Identifiers use the IOBluetooth-flavour MAC string the helper
+    # actually emits. Both prefixes are real Apple OUIs (38:09:fb /
+    # 8c:85:90), so the OUI lookup populates vendor automatically —
+    # exactly the production code path. We do NOT pre-fill `vendor`
+    # because the synthetic data is supposed to mirror what arrives on
+    # the JSON wire, not what the panel ends up showing.
     return [
         BLEDevice(
-            identifier="cc000001-0000-4000-8000-000000000001",
+            identifier="38-09-fb-0b-be-60",
             name="AirPods Pro",
-            vendor=None,
+            vendor="Apple, Inc.",
             vendor_id=None,
-            services=("110A", "110E"),
+            services=("110A",),
             rssi_dbm=None,
             is_connectable=True,
             first_seen=now,
@@ -245,11 +251,11 @@ def _synthetic_ble_connected(now: datetime) -> list[BLEDevice]:
             is_connected=True,
         ),
         BLEDevice(
-            identifier="cc000002-0000-4000-8000-000000000002",
+            identifier="8c-85-90-f1-d0-cd",
             name="Magic Keyboard",
-            vendor=None,
+            vendor="Apple, Inc.",
             vendor_id=None,
-            services=("1812", "180F"),
+            services=("1812",),
             rssi_dbm=None,
             is_connectable=True,
             first_seen=now,

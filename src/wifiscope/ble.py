@@ -151,6 +151,57 @@ def lookup_vendor(company_id: int | None, vendors: dict[int, str]) -> str | None
     return vendors.get(company_id)
 
 
+# ---------- IEEE OUI lookup (for connected peripherals) ----------
+#
+# Connected peripherals come from IOBluetoothDevice (system BT stack) and
+# do not carry the manufacturer_data field that the advertising path
+# uses for vendor resolution — we only have the device's BT MAC. Match
+# the first 3 octets against a curated subset of the IEEE OUI registry
+# instead. The bundled JSON covers Apple comprehensively (a Mac is most
+# likely to have Apple peripherals connected) plus the major consumer
+# Bluetooth vendors; anything else stays unknown.
+
+_OUIS_PATH = Path(__file__).resolve().parent / "data" / "bluetooth_ouis.json"
+
+
+def load_ouis(path: Path | None = None) -> dict[str, str]:
+    """Load the bundled IEEE OUI prefix → vendor-name map.
+
+    Keys are normalised to ``aa:bb:cc`` (lower-case, colon-separated 3
+    octets). ``_meta`` is filtered out. A missing / unreadable file
+    yields an empty dict; vendor lookup then falls through to None.
+    """
+    if path is None:
+        path = _OUIS_PATH
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {
+        str(k).lower(): str(v)
+        for k, v in data.items()
+        if k != "_meta" and isinstance(v, str)
+    }
+
+
+def lookup_oui_vendor(
+    identifier: str | None, ouis: dict[str, str]
+) -> str | None:
+    """Resolve a BT MAC (any common separator: ``:``, ``-``, none) to
+    a vendor name via its first 3 octets, or None when unknown.
+    Tolerant of the ``38-09-fb-0b-be-60`` form the helper emits.
+    """
+    if not identifier:
+        return None
+    cleaned = identifier.replace("-", "").replace(":", "").lower()
+    if len(cleaned) < 6 or any(c not in "0123456789abcdef" for c in cleaned):
+        return None
+    prefix = f"{cleaned[0:2]}:{cleaned[2:4]}:{cleaned[4:6]}"
+    return ouis.get(prefix)
+
+
 # ---------- service category inference ----------
 
 # 16-bit Bluetooth SIG GATT service UUIDs the user is likely to recognise.
@@ -327,6 +378,14 @@ def _build_device(
         rssi = int(rssi_raw)
     else:
         rssi = None
+    # CoreBluetooth's documented "RSSI unavailable" sentinel is 127, and
+    # any non-negative value is implausible for received signal strength.
+    # The new helper filters this out at the source, but we keep a
+    # defensive check here so older helper bundles or unusual data paths
+    # cannot leak the sentinel through and corrupt RSSI-sorted lists or
+    # the diagnostic-panel Closest line.
+    if rssi is not None and (rssi >= 0 or rssi < -200):
+        rssi = None
 
     is_connectable = bool(obj.get("is_connectable", False))
 
@@ -399,15 +458,20 @@ def _build_connected_device(
     obj: dict[str, Any],
     *,
     prior: BLEDevice | None,
+    ouis: dict[str, str] | None = None,
     now: datetime | None = None,
 ) -> BLEDevice | None:
     """Promote a `{"connected": true, ...}` line into a BLEDevice.
 
-    Vendor / vendor_id / type / device_class are intentionally left
-    blank — ``retrieveConnectedPeripherals`` returns much less metadata
-    than a fresh advertisement (no manufacturer data, no flags), so any
-    inferred value would be guesswork. The panel renders the missing
-    columns honestly rather than fabricating them.
+    The advertisement-side ``manufacturer_id`` is unavailable here (the
+    helper sources connected rows from IOBluetoothDevice, not from a
+    BLE scan), so ``vendor_id`` always stays None. Vendor itself is
+    looked up from the BT MAC's OUI prefix when we can — that's the
+    only public-data path we have, and it cleanly identifies Apple's
+    own peripherals (Magic Keyboard / Trackpad / Mouse / AirPods) plus
+    the major third-party headphone / accessory vendors. ``type`` /
+    ``device_class`` stay blank — those come from advertisement byte
+    parsing which is not run on connected entries.
     """
     identifier = obj.get("id")
     if not isinstance(identifier, str):
@@ -426,6 +490,12 @@ def _build_connected_device(
     if not services and prior is not None:
         services = prior.services
 
+    vendor: str | None = None
+    if ouis:
+        vendor = lookup_oui_vendor(identifier, ouis)
+    if vendor is None and prior is not None:
+        vendor = prior.vendor
+
     if now is None:
         now = datetime.now(timezone.utc)
     first_seen = prior.first_seen if prior is not None else now
@@ -433,7 +503,7 @@ def _build_connected_device(
     return BLEDevice(
         identifier=identifier,
         name=name,
-        vendor=None,
+        vendor=vendor,
         vendor_id=None,
         services=services,
         rssi_dbm=None,
@@ -452,6 +522,7 @@ def update_from_line(
     vendors: dict[int, str],
     now: datetime | None = None,
     connected: dict[str, BLEDevice] | None = None,
+    ouis: dict[str, str] | None = None,
 ) -> str | None:
     """Apply one JSONL line to the device map, in place.
 
@@ -508,7 +579,7 @@ def update_from_line(
             return None
         key = identifier.lower()
         prior = connected.get(key)
-        device = _build_connected_device(obj, prior=prior, now=now)
+        device = _build_connected_device(obj, prior=prior, ouis=ouis, now=now)
         if device is not None:
             connected[key] = device
         return None
@@ -648,12 +719,17 @@ class BLEPoller:
         ttl_s: float = 30.0,
         snapshot_interval_s: float = 1.0,
         vendors: dict[int, str] | None = None,
+        ouis: dict[str, str] | None = None,
         _spawn: Callable[[], Awaitable[Any]] | None = None,
     ) -> None:
         self._helper_path = helper_path
         self._ttl_s = ttl_s
         self._snapshot_interval_s = snapshot_interval_s
         self._vendors = vendors if vendors is not None else load_vendors()
+        # OUI lookup is only consulted for connected peripherals (which
+        # arrive without manufacturer_data). Lazy-load on first use; the
+        # bundled JSON parses in well under a millisecond.
+        self._ouis = ouis if ouis is not None else load_ouis()
         self._devices: dict[str, BLEDevice] = {}
         # Currently-connected peripherals from the helper's
         # retrieveConnectedPeripherals snapshot. Lives in a parallel
@@ -720,7 +796,7 @@ class BLEPoller:
                     continue
                 state = update_from_line(
                     self._devices, line, vendors=self._vendors,
-                    connected=self._connected,
+                    connected=self._connected, ouis=self._ouis,
                 )
                 if state == "permission_denied":
                     self._permission_state = "denied"

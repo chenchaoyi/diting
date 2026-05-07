@@ -159,6 +159,29 @@ def has_permission(binary: str) -> bool:
     return any(net.get("bssid") for net in (data.get("networks") or []))
 
 
+def has_bluetooth_permission(binary: str) -> bool:
+    """Probe whether ``binary`` has Bluetooth TCC granted.
+
+    Runs the helper's ``bluetooth-status`` subcommand, which exits 0
+    only when ``CBCentralManager.state`` resolves to ``.poweredOn``.
+    Every other outcome (``.unauthorized`` / ``.poweredOff`` /
+    ``.unsupported`` / 2 s timeout / SIGABRT-on-TCC-violation) becomes
+    a non-zero exit and we report False — the launcher then prompts
+    the user via the GUI helper bundle.
+
+    The timeout is 8 s here (the helper itself caps at 2 s on the
+    state wait, plus disclaim re-spawn / process boot overhead).
+    """
+    try:
+        proc = subprocess.run(
+            [binary, "bluetooth-status"],
+            capture_output=True, timeout=8, check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return proc.returncode == 0
+
+
 def has_ble_scan_subcommand(binary: str) -> bool:
     """Probe whether ``binary`` understands ``ble-scan``.
 
