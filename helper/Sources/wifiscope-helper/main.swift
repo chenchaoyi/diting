@@ -225,7 +225,108 @@ func emitBLEErrorAndExit(_ message: String, code: Int32) -> Never {
     exit(code)
 }
 
+// macOS attaches every spawned process a "responsible" pid for TCC
+// purposes — typically the GUI ancestor that started the chain (e.g.
+// Warp, iTerm2, Terminal). When wifiscope's Python TUI invokes us as
+// `<bundle>/Contents/MacOS/wifiscope-helper ble-scan` from inside such
+// a terminal, the responsible process is the terminal app, *not* this
+// helper. CoreBluetooth's TCC check then looks up
+// NSBluetoothAlwaysUsageDescription in the responsible app's
+// Info.plist — which never declares it — and SIGABRTs us with a
+// privacy-violation crash.
+//
+// The fix is to disclaim our inherited responsibility before doing
+// any TCC-protected work, so the kernel records *us* as our own
+// responsible process. This is done by posix_spawn'ing ourselves once
+// with a private spawn-attribute (`responsibility_spawnattrs_setdisclaim`)
+// and exiting in the original process. The re-spawned child sees its
+// own bundle Info.plist (now embedded into __TEXT,__info_plist as well
+// as Contents/Info.plist), TCC accepts the usage description, and the
+// scan proceeds normally. The disclaim env-var stops infinite recursion.
+//
+// CoreLocation's TCC check is more lenient than CoreBluetooth's — it
+// resolves usage descriptions via Bundle.main with a fallback path —
+// which is why the existing `scan` (Wi-Fi) subcommand works without
+// disclaim. Only the BLE path needs this hop.
+
+@_silgen_name("responsibility_spawnattrs_setdisclaim")
+private func responsibility_spawnattrs_setdisclaim(
+    _ attrs: UnsafeMutablePointer<posix_spawnattr_t?>, _ disclaim: Int32
+) -> Int32
+
+private let kDisclaimEnv = "WIFISCOPE_HELPER_DISCLAIMED"
+
+private func reExecWithDisclaimedResponsibility() -> Never {
+    var attrs: posix_spawnattr_t? = nil
+    posix_spawnattr_init(&attrs)
+    defer { posix_spawnattr_destroy(&attrs) }
+    _ = responsibility_spawnattrs_setdisclaim(&attrs, 1)
+
+    // Inherit the original argv exactly. Our binary path is argv[0].
+    let exePath = strdup(CommandLine.arguments[0])!
+    defer { free(exePath) }
+
+    let argvCopies: [UnsafeMutablePointer<CChar>] = CommandLine.arguments.map { strdup($0)! }
+    defer { argvCopies.forEach { free($0) } }
+    var argv: [UnsafeMutablePointer<CChar>?] = argvCopies.map { Optional($0) }
+    argv.append(nil)
+
+    // Add the disclaim marker to the environment so the child knows
+    // it has already been re-spawned and proceeds straight to the
+    // scanner instead of looping back here.
+    var env = ProcessInfo.processInfo.environment
+    env[kDisclaimEnv] = "1"
+    let envCopies: [UnsafeMutablePointer<CChar>] = env.map { strdup("\($0.key)=\($0.value)")! }
+    defer { envCopies.forEach { free($0) } }
+    var envp: [UnsafeMutablePointer<CChar>?] = envCopies.map { Optional($0) }
+    envp.append(nil)
+
+    var pid: pid_t = 0
+    let rc = argv.withUnsafeMutableBufferPointer { argvBuf in
+        envp.withUnsafeMutableBufferPointer { envBuf in
+            posix_spawn(&pid, exePath, nil, &attrs,
+                        argvBuf.baseAddress, envBuf.baseAddress)
+        }
+    }
+    if rc != 0 {
+        let payload: [String: Any] = ["error": "disclaim spawn failed: errno \(rc)"]
+        if let data = try? JSONSerialization.data(withJSONObject: payload) {
+            FileHandle.standardError.write(data)
+            FileHandle.standardError.write("\n".data(using: .utf8)!)
+        }
+        exit(1)
+    }
+
+    // Forward signals to the child so Ctrl+C / SIGTERM kills both.
+    let forwarded: [Int32] = [SIGTERM, SIGINT, SIGHUP]
+    for sig in forwarded {
+        signal(sig) { s in
+            // Best-effort: forward to whatever child we last spawned.
+            // The child PID is captured via a global below.
+            if g_disclaimChildPid > 0 {
+                kill(g_disclaimChildPid, s)
+            }
+        }
+    }
+    g_disclaimChildPid = pid
+
+    var status: Int32 = 0
+    waitpid(pid, &status, 0)
+    let exitCode: Int32
+    if (status & 0x7f) == 0 {
+        exitCode = (status >> 8) & 0xff
+    } else {
+        exitCode = 128 + (status & 0x7f)  // signaled
+    }
+    exit(exitCode)
+}
+
+private var g_disclaimChildPid: pid_t = 0
+
 func runBLEScan() -> Never {
+    if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
+        reExecWithDisclaimedResponsibility()
+    }
     let scanner = BLEScanner()
     scanner.start()
     // Park until the parent closes the pipe (SIGPIPE) or sends SIGTERM.
