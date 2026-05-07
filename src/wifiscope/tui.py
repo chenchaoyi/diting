@@ -458,7 +458,13 @@ class EventsScreen(ModalScreen):
         padding: 1 2;
         background: $surface;
     }
-    EventsScreen #events-box Static {
+    EventsScreen #events-scroll {
+        height: 1fr;
+    }
+    EventsScreen #events-content {
+        height: auto;
+    }
+    EventsScreen #events-footer {
         height: auto;
     }
     """
@@ -485,7 +491,16 @@ class EventsScreen(ModalScreen):
         footer = Static(self._render_footer(), id="events-footer")
         self._body = body
         self._footer_static = footer
-        yield Vertical(body, footer, id="events-box")
+        # The body lives inside a VerticalScroll so a long ring buffer
+        # (events, baseline rows, sparkline) gets a scrollbar instead
+        # of being clipped at the modal's lower edge. The footer
+        # stays pinned outside the scroller so the keymap hint is
+        # always visible.
+        yield Vertical(
+            VerticalScroll(body, id="events-scroll"),
+            footer,
+            id="events-box",
+        )
 
     def action_set_filter(self, mode: str) -> None:
         self._filter = mode if mode in {"all", "roam", "stir", "latency", "loss", "link"} else "all"
