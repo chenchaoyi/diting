@@ -1175,7 +1175,11 @@ def _link_diagnostic_line(
     )
     if bad:
         line.append("⚠ ", style="bold red")
-    line.append(_link_target_text("gw", gateway))
+    # Use the same word the Connection panel uses for the gateway
+    # field ("Router" / "网关") rather than the abbreviated "gw" the
+    # spec drafted — the abbreviation is unfamiliar to non-network
+    # readers and inconsistent with the rest of the UI.
+    line.append(_link_target_text(t("Router"), gateway))
     if wan is not None and wan.sample_count > 0:
         line.append("  ·  ", style="dim")
         line.append(_link_target_text("WAN", wan))

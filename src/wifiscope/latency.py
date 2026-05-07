@@ -449,17 +449,36 @@ class LatencyPoller:
                 # value on the next pass.
                 await asyncio.sleep(self._interval_s)
                 continue
-            sample = await loop.run_in_executor(None, self._ping_once, target, ip)
+            if target == "wan":
+                # The WAN anchor is a DNS server. DNS servers MUST listen
+                # on TCP 53 to answer queries — but ICMP is an
+                # optional courtesy that many DNS operators (notably
+                # 114.114.114.114, parts of 1.1.1.1 anycast, most
+                # corporate resolvers) deliberately drop. A TCP-connect
+                # probe answers the right question — "can my Mac reach
+                # this DNS" — and produces an honest RTT from the
+                # SYN/ACK handshake. It also avoids the macOS ping
+                # binary's BSD-flavour quirks entirely.
+                sample = await loop.run_in_executor(
+                    None, self._tcp_probe_once, target, ip, 53,
+                )
+            else:
+                # Gateway probe stays on ICMP — home / office routers
+                # almost always respond to ping, and they may or may
+                # not listen on any specific TCP port.
+                sample = await loop.run_in_executor(
+                    None, self._ping_once, target, ip,
+                )
             self._record(sample)
             await self._queue.put(sample)
             await asyncio.sleep(self._interval_s)
 
     def _ping_once(self, target: str, ip: str) -> LatencySample:
-        """Fork-and-wait one ``ping -c 1 -W 1 -t 1 <ip>`` invocation.
+        """Fork-and-wait one ``ping -c 1 -W 1000 -t 64 <ip>`` call.
 
-        macOS' ``-W`` is in milliseconds (1 ms is meaningless); we
-        pass ``1000`` instead so a network outage caps the call at
-        ~1 s. ``-t`` is the IP TTL, not a time bound.
+        macOS' ``-W`` is in milliseconds (1 ms is meaningless); we pass
+        1000 so a network outage caps the call at ~1 s. ``-t`` is the
+        IP TTL, not a time bound.
         """
         ts = datetime.now()
         try:
@@ -486,6 +505,39 @@ class LatencyPoller:
         return LatencySample(
             ts=ts, target=target, target_ip=ip,
             rtt_ms=rtt, lost=False,
+        )
+
+    def _tcp_probe_once(
+        self, target: str, ip: str, port: int,
+    ) -> LatencySample:
+        """TCP-connect probe with millisecond-precision RTT.
+
+        Times the SYN/ACK handshake and records the elapsed time as
+        rtt_ms. Connection failure / refusal / timeout all surface as
+        loss. The 1.0 s timeout matches the ICMP path's per-call cap
+        so the diagnostic-panel cadence stays even.
+        """
+        import socket
+        ts = datetime.now()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        start = time.monotonic()
+        try:
+            sock.connect((ip, port))
+        except (socket.timeout, OSError):
+            return LatencySample(
+                ts=ts, target=target, target_ip=ip,
+                rtt_ms=None, lost=True,
+            )
+        finally:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        rtt_ms = (time.monotonic() - start) * 1000.0
+        return LatencySample(
+            ts=ts, target=target, target_ip=ip,
+            rtt_ms=rtt_ms, lost=False,
         )
 
     def _record(self, sample: LatencySample) -> None:

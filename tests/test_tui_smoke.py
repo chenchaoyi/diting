@@ -253,7 +253,7 @@ def test_diagnostics_renders_link_line_when_latency_data_available():
             console.print(content)
             text = console.file.getvalue()
             assert "Link" in text
-            assert "gw 14 ms" in text
+            assert "Router 14 ms" in text
             assert "Environment" in text
             assert "stable" in text
             await pilot.press("q")

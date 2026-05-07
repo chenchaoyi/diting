@@ -634,7 +634,6 @@ _ZH: dict[str, str] = {
     "active": "活跃",
     "quiet": "安静",
     "σ {db} dB / {n}s": "σ {db} dB / {n}s",
-    "gw {ms} ms": "网关 {ms} ms",
     "{loss}% loss": "丢包 {loss}%",
     "WAN {ms} ms": "WAN {ms} ms",
     "jitter {ms} ms": "抖动 {ms} ms",

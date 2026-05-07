@@ -122,6 +122,63 @@ def test_ping_once_loss_on_subprocess_error():
     assert sample.rtt_ms is None
 
 
+# --- TCP probe (used for the WAN / DNS anchor) -----------------------
+
+def test_tcp_probe_records_rtt_on_successful_connect():
+    """TCP-connect to port 53 succeeds → rtt_ms is the wall-clock
+    elapsed between connect() entry and connect() return. Many DNS
+    operators (notably 114.114.114.114, parts of the Cloudflare /
+    Google anycast set, most corporate resolvers) silently drop ICMP
+    while still answering DNS perfectly — TCP probes are the honest
+    'is the resolver reachable' test."""
+    poller = LatencyPoller(gateway_ip="192.168.1.1", wan_ip="1.1.1.1")
+    fake_sock = type("S", (), {})()
+    fake_sock.settimeout = lambda *a, **k: None
+    fake_sock.connect = lambda addr: None
+    fake_sock.close = lambda: None
+    with patch("socket.socket", return_value=fake_sock):
+        sample = poller._tcp_probe_once("wan", "1.1.1.1", 53)
+    assert sample.lost is False
+    assert sample.rtt_ms is not None
+    assert sample.rtt_ms >= 0
+    assert sample.target == "wan"
+
+
+def test_tcp_probe_loss_on_timeout():
+    """A TCP connect that times out (DNS server filtering port 53,
+    routing black hole, etc.) surfaces as a lost sample without
+    raising into the poller loop."""
+    import socket
+    poller = LatencyPoller(gateway_ip="192.168.1.1", wan_ip="1.1.1.1")
+    fake_sock = type("S", (), {})()
+    fake_sock.settimeout = lambda *a, **k: None
+    fake_sock.connect = lambda addr: (_ for _ in ()).throw(socket.timeout())
+    fake_sock.close = lambda: None
+    with patch("socket.socket", return_value=fake_sock):
+        sample = poller._tcp_probe_once("wan", "1.1.1.1", 53)
+    assert sample.lost is True
+    assert sample.rtt_ms is None
+
+
+def test_tcp_probe_loss_on_connection_refused():
+    """Refused (closed port, host firewall) is structurally the same
+    outcome as timeout — sample marked lost. Important because if our
+    DNS-detection picks up a stale entry pointing at a host that is
+    no longer running a resolver, we want to *say* WAN is unreachable
+    rather than crash."""
+    poller = LatencyPoller(gateway_ip="192.168.1.1", wan_ip="1.1.1.1")
+    fake_sock = type("S", (), {})()
+    fake_sock.settimeout = lambda *a, **k: None
+    fake_sock.connect = lambda addr: (_ for _ in ()).throw(
+        ConnectionRefusedError(),
+    )
+    fake_sock.close = lambda: None
+    with patch("socket.socket", return_value=fake_sock):
+        sample = poller._tcp_probe_once("wan", "1.1.1.1", 53)
+    assert sample.lost is True
+    assert sample.rtt_ms is None
+
+
 # --- aggregate -------------------------------------------------------
 
 def _sample(rtt, *, lost=False, target="router", ip="192.168.1.1"):

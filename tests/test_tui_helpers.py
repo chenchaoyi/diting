@@ -519,7 +519,7 @@ def test_link_diagnostic_line_good_link():
     gw = _agg("router", rtt=12.0, loss=0.0, jitter=2.0)
     wan = _agg("wan", rtt=18.0, loss=0.0, jitter=3.0, ip="1.1.1.1")
     text = _link_diagnostic_line(gw, wan, None).plain
-    assert "gw 12 ms" in text
+    assert "Router 12 ms" in text
     assert "0% loss" in text
     assert "WAN 18 ms" in text
     assert "jitter" in text
