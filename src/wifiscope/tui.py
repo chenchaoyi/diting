@@ -451,6 +451,44 @@ def _help_content() -> tuple[Text, Text]:
     line("monitor",  t("headless JSONL events for long-runs / Home Assistant"))
     line("calibrate", t("record an empty-room σ baseline (default 300 s)"))
 
+    section(t("monitor (headless event stream)"))
+    body.append(
+        "  uv run wifiscope monitor [--out FILE] [--notify]\n"
+        "                           [--gateway IP] [--wan IP]\n",
+        style="dim",
+    )
+    body.append(t(
+        "\n"
+        "  Long-running JSONL stream — one event per line. No TUI, no\n"
+        "  cursor movement, safe to redirect / pipe / tail. Events:\n"
+        "    link_state    — associate / disassociate (BSSID, SSID)\n"
+        "    roam          — band switch or inter-AP roam\n"
+        "    rf_stir       — RSSI variance spike with confidence tag\n"
+        "    latency_spike — gateway or WAN RTT above threshold\n"
+        "    loss_burst    — gateway or WAN probe loss above threshold\n"
+        "\n"
+        "  Flags:\n"
+        "    --out FILE    append JSONL to FILE (line-buffered) instead\n"
+        "                  of stdout. Survives session disconnects.\n"
+        "    --notify      raise a macOS Notification Centre alert for\n"
+        "                  any event with confidence='high' (only stir\n"
+        "                  events carry confidence today).\n"
+        "    --gateway IP  override gateway probe target. Default: the\n"
+        "                  router IP from the active connection.\n"
+        "    --wan IP      override WAN probe target. Default: the\n"
+        "                  first non-gateway DNS server detected via\n"
+        "                  SCDynamicStore. Probe is TCP/53 connect.\n"
+        "\n"
+        "  Examples:\n"
+        "    wifiscope monitor                              # to stdout\n"
+        "    wifiscope monitor --out ~/wifi.jsonl --notify  # daemon-ish\n"
+        "    wifiscope monitor --gateway 192.168.1.1 --wan 1.1.1.1\n"
+        "\n"
+        "  Tail-friendly: each line is a self-contained JSON object\n"
+        "  with a top-level 'ts' (ISO-8601) and 'type'. Pipe through\n"
+        "  jq for filtering: `tail -F wifi.jsonl | jq 'select(.type==\"roam\")'`\n"
+    ))
+
     section(t("Tunables"))
     body.append(t(
         "  WIFISCOPE_SCAN_INTERVAL=N    seconds between Wi-Fi scans,\n"
