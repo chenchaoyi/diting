@@ -310,6 +310,11 @@ def test_unified_events_panel_renders_roam_and_stir_interleaved():
             assert "[ROAM]" in text
             assert "[STIR]" in text
             assert "1F-bedroom" in text
+            # The "(no events yet)" placeholder must be cleared once
+            # the first real event arrives — otherwise it sits above
+            # the live log forever (regression seen on 0.7.0 RC).
+            assert "no events yet" not in text
+            assert "暂无事件" not in text
             await pilot.press("q")
 
     asyncio.run(go())

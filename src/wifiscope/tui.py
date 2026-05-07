@@ -858,12 +858,19 @@ class EventsPanel(RichLog):
 
     def on_mount(self) -> None:
         self.border_title = t("Events")
+        self._has_real_event = False
         self.write(Text(t("(no events yet)"), style="dim italic"))
 
     def append_event(self, event: object, inv: NetworkInventory) -> None:
         line = _event_format_line(event, inv)
-        if line is not None:
-            self.write(line)
+        if line is None:
+            return
+        if not self._has_real_event:
+            # First real event: drop the "(no events yet)" placeholder
+            # so it doesn't sit above the live log forever.
+            self.clear()
+            self._has_real_event = True
+        self.write(line)
 
     # Back-compat shim so callers that still hand us roam events
     # straight from the WiFi poller (the docs/_capture_preview.py
