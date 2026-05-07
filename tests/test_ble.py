@@ -27,8 +27,11 @@ from wifiscope.ble import (
     BLEScanUpdate,
     detect_advertisement,
     expire_devices,
+    load_gatt_services,
+    load_member_uuids,
     load_ouis,
     load_vendors,
+    lookup_member_vendor,
     lookup_oui_vendor,
     lookup_vendor,
     merge_for_display,
@@ -348,6 +351,68 @@ def test_merge_sorts_by_rssi_descending():
     assert merged[1].identifier == "weak"
 
 
+def test_rssi_smooth_seeds_from_first_sample():
+    """The very first observed RSSI must seed rssi_smooth so the
+    device's first appearance lands in its real signal bucket
+    instead of being held back by a non-existent prior value."""
+    line = json.dumps({
+        "id": "AA000000-0000-0000-0000-000000000001",
+        "rssi_dbm": -55,
+    })
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(devices, line, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    assert d.rssi_smooth == -55
+
+
+def test_rssi_smooth_dampens_packet_jitter():
+    """A 5–15 dB single-packet swing (typical BLE radio behaviour) is
+    smoothed so the sort order does not flip on every snapshot. With
+    α=0.4 a 10 dB transient nudges the EMA by 4 dB, not 10. Two
+    successive readings should converge towards the average."""
+    line1 = json.dumps({
+        "id": "BB000000-0000-0000-0000-000000000002",
+        "rssi_dbm": -55,
+    })
+    line2 = json.dumps({
+        "id": "BB000000-0000-0000-0000-000000000002",
+        "rssi_dbm": -65,
+    })
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(devices, line1, vendors=VENDORS)
+    update_from_line(devices, line2, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    # Display still uses the latest packet (-65) so the user sees
+    # live signal; sort uses the EMA which lands at 0.4*(-65) +
+    # 0.6*(-55) = -59.
+    assert d.rssi_dbm == -65
+    assert d.rssi_smooth == -59
+
+
+def test_merge_sort_key_uses_smoothed_rssi():
+    """When two devices have similar EMA-smoothed RSSI but big single-
+    packet jitter, the row order follows the smoothed values, not the
+    snapshot RSSI. Guards against the row-swap-every-second flapping
+    the user reported with bare-RSSI sorting."""
+    now = datetime(2026, 5, 6, 12, 0, 0, tzinfo=timezone.utc)
+    # Device A: live RSSI dropped to -65 this packet but its EMA is
+    # holding at -52. Device B: live RSSI is -50 (stronger) but its
+    # EMA is at -58 because it just walked into range. Sort by EMA
+    # → A above B; sort by raw RSSI → B above A.
+    a = BLEDevice(
+        identifier="aaa", name="X", vendor=None, vendor_id=1,
+        services=(), rssi_dbm=-65, rssi_smooth=-52,
+        is_connectable=False, first_seen=now, last_seen=now, ad_count=4,
+    )
+    b = BLEDevice(
+        identifier="bbb", name="Y", vendor=None, vendor_id=2,
+        services=(), rssi_dbm=-50, rssi_smooth=-58,
+        is_connectable=False, first_seen=now, last_seen=now, ad_count=4,
+    )
+    merged = merge_for_display([a, b])
+    assert [d.identifier for d in merged] == ["aaa", "bbb"]
+
+
 # ------------------------------------------------------------------
 # 6. Permission denied
 # ------------------------------------------------------------------
@@ -604,6 +669,182 @@ def test_apple_nearby_info_device_class(action_byte_hex, expected_class):
     type_, dc = detect_advertisement(obj)
     assert type_ is None
     assert dc == expected_class
+
+
+@pytest.mark.parametrize("type_hex,expected_label", [
+    ("05", "AirDrop"),
+    ("07", "AirPods"),
+    ("09", "AirPlay target"),
+    ("0a", "AirPlay source"),
+    ("0b", "Watch pairing"),
+    ("0c", "Handoff"),
+    ("0d", "Tethering target"),
+    ("0e", "Tethering source"),
+    ("0f", "Nearby Action"),
+])
+def test_apple_continuity_extended_type_bytes(type_hex, expected_label):
+    """Apple Continuity type bytes beyond iBeacon / Nearby Info / Find
+    My each carry a stable broadcast-intent label. Resolves the bulk of
+    the "Apple, Inc. (unknown)" rows the BLE panel used to show — Apple
+    devices broadcasting Continuity packets never populate the local-
+    name field, so without these rules the row had nothing to say."""
+    # Layout: 4c00 (Apple) <type> <length=04> <four payload bytes>.
+    # The payload after type is opaque; we just need >= 3 bytes total
+    # for the parser to read the type byte.
+    obj = {
+        "manufacturer_id": 76,
+        "manufacturer_hex": f"4c00{type_hex}04aabbccdd",
+    }
+    type_, dc = detect_advertisement(obj)
+    assert type_ == expected_label
+    assert dc is None
+
+
+def test_apple_type_0x12_with_localname_is_find_my_not_airtag():
+    """AirPods Pro / Apple Watch / etc. broadcast Find My beacons
+    with the same length signature as an owner-paired AirTag, so the
+    length-only heuristic mislabelled them as 'AirTag' (the user
+    saw 'AirTag' next to 'Chaoyi's AirPods Pro' on real hardware).
+    A real AirTag never broadcasts a localName by design — so the
+    presence of a name is the deciding signal. Devices with a name
+    drop to 'Find My target' instead of guessing AirTag."""
+    obj_with_name = {
+        "name": "Chaoyi's AirPods Pro",
+        "manufacturer_id": 76,
+        # 25 bytes of payload — same length signature as AirTag.
+        "manufacturer_hex": "4c0012191000" + "00" * 22,
+    }
+    type_, _ = detect_advertisement(obj_with_name)
+    assert type_ == "Find My target"
+
+    # Anonymous owner-paired payload (real AirTag) still gets the
+    # AirTag label so the existing tag-finder UX continues to work.
+    obj_anonymous = {
+        "manufacturer_id": 76,
+        "manufacturer_hex": "4c0012191000" + "00" * 22,
+    }
+    type_, _ = detect_advertisement(obj_anonymous)
+    assert type_ == "AirTag"
+
+
+def test_apple_continuity_unknown_type_byte_passes_through():
+    """Type bytes outside the documented set return (None, None) so
+    the row falls back to vendor + service-category like before. This
+    is the non-regression guard against expanding the table to too
+    many guesses."""
+    obj = {
+        "manufacturer_id": 76,
+        "manufacturer_hex": "4c00ff04aabbccdd",  # type 0xFF is unassigned
+    }
+    type_, dc = detect_advertisement(obj)
+    assert type_ is None
+    assert dc is None
+
+
+# ------------------------------------------------------------------
+# 8. SIG GATT + member-UUID resolution
+# ------------------------------------------------------------------
+
+def test_load_gatt_services_ships_battery_and_device_info():
+    """Sanity check that the bundled GATT services file made it into
+    the wheel and contains the well-known 16-bit assignments the BLE
+    panel calls out by name."""
+    gatt = load_gatt_services()
+    assert gatt.get("180A") == "Device Information"
+    assert gatt.get("180F") == "Battery"
+
+
+def test_load_member_uuids_ships_xiaomi_and_sony():
+    """Sanity check for the bundled SIG member-UUIDs map. Used both
+    for the service column and as the vendor fallback when the
+    advertisement omits manufacturer_data."""
+    members = load_member_uuids()
+    assert members.get("FDAA") == "Xiaomi Inc."
+    assert "Sony" in (members.get("FD2A") or "")
+
+
+def test_service_category_falls_through_to_gatt_services():
+    """Battery (0x180F) is not in the hand-curated friendly-names map
+    but IS in the bundled SIG GATT-services file. Resolution must
+    fall through cleanly so the service column reads "Battery"
+    instead of "180F"."""
+    assert service_category("180F") == "Battery"
+    assert service_category("180A") == "Device Information"
+
+
+def test_service_category_falls_through_to_member_uuids():
+    """16-bit member-assigned UUIDs (FDAA → Xiaomi, FD2A → Sony) are
+    the last fallback before passing through the raw UUID. Resolves
+    the user-facing case where the service column showed "FDAA"."""
+    assert service_category("FDAA") == "Xiaomi Inc."
+    assert "Sony" in service_category("FD2A")
+
+
+def test_service_category_unknown_uuid_still_passes_through():
+    """A UUID that is in none of the three layers must surface raw —
+    the user can still copy-paste it into a search engine."""
+    raw = "1234"
+    assert service_category(raw) == raw
+
+
+def test_lookup_member_vendor_returns_none_for_no_match():
+    """When the advertisement carries only random / private UUIDs,
+    the member-UUID fallback must abstain rather than guess."""
+    members = {"FDAA": "Xiaomi Inc."}
+    assert lookup_member_vendor(("0000", "1234"), members) is None
+
+
+def test_lookup_member_vendor_picks_first_matching_uuid():
+    """Multiple UUIDs in the advertisement: take the first that
+    resolves to a member-UUID company name. Order in the
+    advertisement is preserved by the helper; first-wins keeps the
+    label stable across consecutive packets."""
+    members = {"FDAA": "Xiaomi Inc.", "FD2A": "Sony Corporation"}
+    assert lookup_member_vendor(("FDAA", "FD2A"), members) == "Xiaomi Inc."
+    assert lookup_member_vendor(("FD2A", "FDAA"), members) == "Sony Corporation"
+
+
+def test_vendor_fallback_via_member_uuid_when_manufacturer_id_absent():
+    """The screenshot case: a Sony / Xiaomi / SIANA accessory broadcasts
+    a SIG-assigned member-UUID service but no manufacturer_data. The
+    vendor column should still surface the company name instead of
+    sitting at "(unknown)"."""
+    line = json.dumps({
+        "id": "AA000000-0000-0000-0000-000000000099",
+        "rssi_dbm": -62,
+        "service_uuids": ["FDAA"],
+    })
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(
+        devices, line,
+        vendors={},  # no manufacturer ID resolution available
+        member_uuids={"FDAA": "Xiaomi Inc."},
+    )
+    d = next(iter(devices.values()))
+    assert d.vendor == "Xiaomi Inc."
+    assert d.vendor_id is None  # genuinely no company ID was carried
+
+
+def test_manufacturer_id_takes_priority_over_member_uuid_vendor():
+    """If both a manufacturer_id AND a member-UUID service are present,
+    manufacturer_id wins. The two can disagree in the wild (a Sony
+    accessory built on a Nordic SoC) and the manufacturer_id is the
+    authoritative signal."""
+    line = json.dumps({
+        "id": "AA000000-0000-0000-0000-0000000000aa",
+        "rssi_dbm": -55,
+        "service_uuids": ["FDAA"],  # would resolve to Xiaomi alone
+        "manufacturer_id": 89,       # 89 is Nordic Semiconductor
+        "manufacturer_hex": "5900",
+    })
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(
+        devices, line,
+        vendors={89: "Nordic Semiconductor ASA"},
+        member_uuids={"FDAA": "Xiaomi Inc."},
+    )
+    d = next(iter(devices.values()))
+    assert d.vendor == "Nordic Semiconductor ASA"
 
 
 def test_connected_line_routes_to_connected_dict_only():

@@ -34,18 +34,27 @@ Produces `helper/wifiscope-helper.app`.
 
 ## Install
 
+Just leave `wifiscope-helper.app` where `build.sh` produced it
+(`helper/wifiscope-helper.app`) and grant once:
+
 ```bash
-mv wifiscope-helper.app /Applications/   # or ~/Applications/
-open /Applications/wifiscope-helper.app
+open helper/wifiscope-helper.app
 ```
 
-The bundle window appears, requests Location Services, and tells you
-when the grant has landed. Close the window; you do not need it open
-during normal wifiscope use.
+The bundle window appears and requests Location Services + Bluetooth.
+Click Allow on each prompt, close the window. `wifiscope` auto-detects
+the in-place bundle on the next launch — no further setup.
 
-You can also leave the `.app` in this repo — `wifiscope` searches
-common locations *and* the developer build at `helper/wifiscope-helper.app`.
-Set `WIFISCOPE_HELPER=/full/path/to/wifiscope-helper.app` to override.
+> Earlier versions of this README suggested moving the bundle into
+> `/Applications/`. **That is no longer recommended.** TCC keys
+> permission grants by the bundle's cdhash, and copying / moving the
+> bundle changes neither the cdhash nor the grant *if* you re-run
+> `build.sh` over the same path — but a copy creates a second TCC
+> subject and forces you to re-grant. Easiest path: build in place,
+> grant in place, run in place.
+
+Override the location with `WIFISCOPE_HELPER=/full/path/to/wifiscope-helper.app`
+if you really do want to install it elsewhere.
 
 ## How wifiscope finds it
 
@@ -53,9 +62,11 @@ Set `WIFISCOPE_HELPER=/full/path/to/wifiscope-helper.app` to override.
 `src/wifiscope/_helper.py:find_helper`, in this order:
 
 1. `WIFISCOPE_HELPER` env var (path to bundle or binary)
-2. `/Applications/wifiscope-helper.app`
-3. `~/Applications/wifiscope-helper.app`
-4. The `helper/wifiscope-helper.app` next to this README (developer use)
+2. `helper/wifiscope-helper.app` next to this README (the recommended
+   location — `build.sh` produces it here, grant once with `open`)
+3. `/Applications/wifiscope-helper.app` (back-compat for users who
+   moved it there before this guidance changed)
+4. `~/Applications/wifiscope-helper.app` (same)
 
 If found, `scan()` shells out to `<binary> scan` and parses one JSON
 document of unredacted networks. If absent or the subprocess fails,
@@ -171,3 +182,37 @@ from "no devices yet" or "subprocess crashed".
 The Wi-Fi `scan` payload's `schema` field is bumped from `2` to `3`
 in v0.6.0 so the Python side can detect a BLE-capable bundle at a
 glance, even before it spawns the BLE subprocess.
+
+## Wi-Fi scan IE fields (v0.7.0+)
+
+The schema-3 `scan` payload's per-network rows can now include up to
+five additional fields parsed out of the AP's beacon information
+elements. Each is emitted only when the IE is present, so v2-shape
+consumers and partial-IE rows (the AP did not advertise this
+particular IE) keep parsing.
+
+```json
+{
+  "ssid": "Office-WiFi",
+  "bssid": "aa:bb:cc:11:22:53",
+  ...
+  "bss_load_pct": 78,
+  "bss_station_count": 12,
+  "supports_802_11r": true,
+  "supports_802_11k": true,
+  "supports_802_11v": true
+}
+```
+
+| Field | IE | Meaning |
+|---|---|---|
+| `bss_load_pct` | Element ID 11 (BSS Load) | Channel utilisation as a percentage. The spec example diagnostic — "your AP is at 78% utilisation" — comes from this byte (the 0..255 value is normalised to 0..100). |
+| `bss_station_count` | Element ID 11 (BSS Load) | Associated-station count (uint16, little-endian). |
+| `supports_802_11r` | Element ID 54 (Mobility Domain) | Presence alone signals 802.11r (Fast BSS Transition) support. |
+| `supports_802_11k` | Element ID 70 (RM Enabled Capabilities) | Presence alone signals 802.11k (Radio Measurement) support. |
+| `supports_802_11v` | Element ID 127 (Extended Capabilities) bit 19 | BSS Transition Management — the 802.11v feature most commonly meant by "supports v". |
+
+The Python side's `ScanResult` dataclass adds these as
+`int | None` / `bool | None` slots. Defaults are `None`, so an
+older helper that ships schema=3 *without* the IE fields remains
+forward-compatible with the v0.7.0 Python TUI.

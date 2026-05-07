@@ -61,3 +61,12 @@ class ScanResult:
     # Country code from the AP's beacon information element, when the
     # data path can read it (helper or granted CoreWLAN).
     country_code: str | None = None
+    # Beacon-IE-derived diagnostics fields (helper schema=3 + v0.7.0+).
+    # Each is None when the IE was absent from the beacon, when the
+    # data path cannot read IE bytes (CoreWLAN without permission), or
+    # when an older helper schema does not surface them.
+    bss_load_pct: int | None = None
+    bss_station_count: int | None = None
+    supports_802_11r: bool | None = None
+    supports_802_11k: bool | None = None
+    supports_802_11v: bool | None = None

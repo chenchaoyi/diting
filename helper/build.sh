@@ -41,7 +41,10 @@ echo
 echo "Built $(pwd)/$BUNDLE"
 echo
 echo "Next steps:"
-echo "  1. mv $BUNDLE /Applications/   (or ~/Applications, or leave it here)"
-echo "  2. open $BUNDLE                 # triggers Location Services prompt"
-echo "  3. Grant the prompt, close the window"
-echo "  4. Run wifiscope normally — its scan path will pick the helper up"
+echo "  1. open $BUNDLE                 # triggers Location + Bluetooth prompts"
+echo "  2. Click Allow on each prompt, close the window"
+echo "  3. Run \`uv run wifiscope\` — the in-place bundle is auto-detected"
+echo
+echo "(Leave the bundle here. Moving it into /Applications is no longer"
+echo " recommended — TCC keys grants by cdhash, and a copy / move would"
+echo " force you to re-grant the prompts.)"

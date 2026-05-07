@@ -12,6 +12,110 @@ behaviours between releases.
 
 _No unreleased changes._
 
+## [0.7.0] — 2026-05-07
+
+The "is the link actually working + what's stirring around me"
+release. RSSI alone never tells you whether your gateway is queueing
+packets or whether someone just walked past the laptop; v0.7.0 adds
+two continuous probes that do.
+
+### Added
+- **Continuous latency / loss probe** (1 Hz ICMP via `/sbin/ping`)
+  against the user's gateway and an auto-detected WAN anchor — the
+  system's currently-configured DNS server, read straight from
+  `SCDynamicStoreCopyValue("State:/Network/Global/DNS")` (with a
+  `scutil --dns` subprocess fallback). Resolution order: the
+  `WIFISCOPE_LATENCY_WAN_TARGET` env var beats auto-detect; when
+  the only configured DNS is the gateway itself, the WAN probe is
+  skipped and the diagnostic line reads `WAN n/a (DNS == gateway)`
+  so the user knows why. DNS detection re-runs every 60 s so a
+  network switch updates the anchor without restarting wifiscope.
+  Pure ICMP — no raw socket, no sudo. The Diagnostics panel gains a
+  `Link  gw 12 ms · 0% loss · WAN 18 ms · 0% loss · jitter 3 ms`
+  row; loss / very-high-rtt / unreachable states render with a ⚠
+  glyph and red styling.
+- **Beacon IE depth in the helper.** `runScanAndDumpJSON` now walks
+  CoreWLAN's `informationElementData` for each `CWNetwork` and
+  decodes BSS Load (Element ID 11 → `bss_load_pct` +
+  `bss_station_count`), Mobility Domain (54 → `supports_802_11r`),
+  RM Enabled Capabilities (70 → `supports_802_11k`), and Extended
+  Capabilities bit 19 (127 → `supports_802_11v`). Each field is
+  emitted only when the IE is present, so v2 / partial-IE consumers
+  remain forward-compatible. Schema number stays 3; the new fields
+  are additive.
+- **Environment monitor.** A new module computes per-BSSID rolling
+  RSSI σ, fires `RFStirEvent` when both spec thresholds are met
+  (current 5 s σ > 2.5 × trailing 5-min median σ AND > 3 dB
+  absolute floor), and surfaces a `stable` / `active` / `quiet`
+  qualifier on a new `Environment  σ 1.4 dB / 5s` Diagnostics row.
+  Per-AP fusion modes auto-classify by median RSSI: `co_located`
+  (>= -65 dBm) does redundancy fusion (a spike on >= 2 co-located
+  APs counts as high-confidence); `spatial_channel` (-65 .. -85)
+  fires events labelled with the AP's inventory name; `ignored`
+  (< -85) is dropped as too noisy. NEVER claimed as people-counting
+  or motion detection — the wording on every surface is "something
+  changed".
+- **Unified Events panel + modal `m` browser.** The v0.6.0 Roam
+  log panel becomes the Events panel: same widget slot, same
+  height, but accepts roam / rf_stir / latency_spike / loss_burst /
+  link_state events through one `append_event` entry point. Each
+  row carries a typed prefix (`[ROAM]` / `[STIR]` / `[LATENCY]` /
+  `[LOSS]` / `[LINK]`). The new `m` binding opens an
+  `EventsScreen` modal — full-screen browser of the last 100
+  events, filterable via 1/2/3/4/0 subkeys, with a per-AP σ
+  baseline mini-table and a sparkline of σ over the last hour at
+  the bottom.
+- **`wifiscope monitor` and `wifiscope calibrate` subcommands.**
+  `monitor` is a headless long-run that streams JSONL events to
+  stdout (or `--out path.jsonl`), with `--notify` raising macOS
+  Notification Centre alerts on high-confidence events. Designed
+  for Home Assistant / log-pipeline integration. `calibrate`
+  records a configurable duration (default 5 min) of "empty room"
+  RSSI samples per visible BSSID and writes
+  `./wifiscope-baseline.json`; the Environment monitor reads that
+  file at startup and switches the diagnostic line label to
+  `quiet` / `active` from the default `stable` / `active`.
+- **`WIFISCOPE_LATENCY_WAN_TARGET` env var** to pin the WAN probe
+  IP for one-off invocations or networks where DNS auto-detection
+  picks the wrong anchor.
+- **`make monitor` Makefile target** (alias for `uv run wifiscope
+  monitor`) for discoverability.
+- **EventsScreen preview SVGs** (English + Chinese) so the README
+  shows the modal browser. The existing 4 SVGs (Wi-Fi + BLE × EN +
+  ZH) remain; `make preview` is now 6.
+- **40+ new tests across 4 modules** covering ping output parsing,
+  spike / loss-burst detectors, all 7 DNS auto-detection shapes
+  the spec calls out, refresh cadence, env-var override, the
+  scutil fallback parser, σ → event firing, mode classification,
+  redundancy fusion, calibration round-trip, every event-format
+  line, the Diagnostics body containing both new rows, and the
+  modal open / close flow.
+
+### Changed
+- Diagnostics panel now has 7 lines (was 5): adds `Link` and
+  `Environment` after the existing visible-networks / warnings /
+  recommendations / health / score block.
+- The "Roam log" panel is now "Events" — same slot, same height,
+  same time-ordered ring, but it accepts every v0.7.0 event type.
+- ScanResult dataclass gains `bss_load_pct`, `bss_station_count`,
+  `supports_802_11r`, `supports_802_11k`, `supports_802_11v`. Each
+  defaults to None so v2 helpers / pre-v0.7.0 cached scans remain
+  parseable.
+
+### Known limitations
+- The adaptive baseline drifts overnight — leaving the office at
+  6 PM and returning at 8 AM will briefly fire false-positive
+  events the next morning. `wifiscope calibrate` corrects this for
+  users who care.
+- `/sbin/ping` reports millisecond precision only; sub-millisecond
+  wired LAN reads as 0 or 1 ms.
+- Loss-burst detection lags up to 5 s (3-of-5 rule).
+- Environment events are correlation, not causation — a neighbour's
+  AP rebooting can fire a stir event you did not cause.
+- DNS auto-detection ignores DoH / DoT (Firefox encrypted DNS,
+  Tailscale MagicDNS); we ping whatever the OS resolver believes
+  its upstream is.
+
 ## [0.6.0] — 2026-05-07
 
 The "what kind of device + what's actually connected" release. Two

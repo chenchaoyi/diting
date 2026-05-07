@@ -186,6 +186,140 @@ def test_toggle_view_swaps_third_panel():
     asyncio.run(go())
 
 
+def test_events_modal_open_and_close():
+    """Press `m` to open EventsScreen; press `m` again to close.
+    Mirrors the help-modal smoke test pattern for the v0.7.0 binding."""
+    import asyncio
+    from wifiscope.tui import EventsScreen
+
+    async def go():
+        app = WifiScopeApp(_FakeBackend(), _INVENTORY,
+                           enable_latency=False, enable_environment=False)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            await pilot.press("m")
+            await pilot.pause(0.3)
+            modals = [s for s in app.screen_stack if isinstance(s, EventsScreen)]
+            assert len(modals) == 1
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+            modals = [s for s in app.screen_stack if isinstance(s, EventsScreen)]
+            assert len(modals) == 0
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_diagnostics_renders_link_line_when_latency_data_available():
+    """Inject latency aggregates and an environment monitor, then
+    confirm the Diagnostics body contains the new ``Link`` and
+    ``Environment`` rows. Done through update_environment so we
+    exercise the same code path the live consumer uses."""
+    import asyncio
+    from datetime import datetime
+
+    from wifiscope.environment import EnvironmentMonitor
+    from wifiscope.latency import LatencyAggregate
+    from wifiscope.tui import EnvironmentPanel
+
+    async def go():
+        app = WifiScopeApp(_FakeBackend(), _INVENTORY,
+                           enable_latency=False, enable_environment=False)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            panel = app.query_one("#env", EnvironmentPanel)
+            results = app._cached_scan or _FakeBackend().scan()
+            link = (
+                LatencyAggregate(
+                    target="router", target_ip="10.0.0.1",
+                    rtt_ms=14.0, loss_pct=0.0, jitter_ms=2.0,
+                    sample_count=30,
+                ),
+                LatencyAggregate(
+                    target="wan", target_ip="8.8.8.8",
+                    rtt_ms=22.0, loss_pct=0.0, jitter_ms=3.0,
+                    sample_count=30,
+                ),
+                None,
+            )
+            env = ("stable", 1.4, None)
+            panel.update_environment(results, app._latest_connection,
+                                     link=link, env=env)
+            from io import StringIO
+
+            from rich.console import Console
+            content = getattr(panel, "_Static__content")
+            console = Console(file=StringIO(), width=140, force_terminal=False)
+            console.print(content)
+            text = console.file.getvalue()
+            assert "Link" in text
+            assert "Router 14 ms" in text
+            assert "Environment" in text
+            assert "stable" in text
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_unified_events_panel_renders_roam_and_stir_interleaved():
+    """The events panel accepts both roam events (from the WiFi
+    poller) and rf_stir events (from the EnvironmentMonitor) into
+    one ring buffer. Pump one of each in and verify both surface."""
+    import asyncio
+    from datetime import datetime
+
+    from textual.widgets import RichLog
+
+    from wifiscope.environment import RFStirEvent
+    from wifiscope.poller import RoamEvent
+    from wifiscope.tui import EventsPanel
+
+    async def go():
+        app = WifiScopeApp(_FakeBackend(), _INVENTORY,
+                           enable_latency=False, enable_environment=False)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            panel = app.query_one("#roam", EventsPanel)
+            panel.append_event(
+                RoamEvent(
+                    timestamp=datetime.now(),
+                    previous_bssid="aa:bb:cc:11:22:50",
+                    previous_channel=36,
+                    new_bssid="aa:bb:cc:33:44:10",
+                    new_channel=48,
+                ),
+                _INVENTORY,
+            )
+            panel.append_event(
+                RFStirEvent(
+                    timestamp=datetime.now(),
+                    bssid="aa:bb:cc:11:22:53",
+                    location="1F-bedroom",
+                    magnitude_db=8.3, duration_s=12.0,
+                    confidence="high", mode="co_located",
+                ),
+                _INVENTORY,
+            )
+            from io import StringIO
+
+            from rich.console import Console
+            console = Console(file=StringIO(), width=140, force_terminal=False)
+            for line in panel.lines:
+                console.print(line)
+            text = console.file.getvalue()
+            assert "[ROAM]" in text
+            assert "[STIR]" in text
+            assert "1F-bedroom" in text
+            # The "(no events yet)" placeholder must be cleared once
+            # the first real event arrives — otherwise it sits above
+            # the live log forever (regression seen on 0.7.0 RC).
+            assert "no events yet" not in text
+            assert "暂无事件" not in text
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
 def test_ble_panel_renders_both_connected_and_advertising_sections():
     """Seed both the advertising buffer and the connected buffer, then
     press `n` to enter the BLE view. The BLEPanel body must contain

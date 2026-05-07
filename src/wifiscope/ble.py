@@ -85,6 +85,14 @@ class BLEDevice:
     type: str | None = None
     device_class: str | None = None
     is_connected: bool = False
+    # Exponential-moving-average RSSI used as the *sort* key in the
+    # panel so a 5–15 dB single-packet jitter (normal for BLE) does
+    # not cause neighbouring rows to swap on every snapshot. Display
+    # still uses ``rssi_dbm`` because the user wants to see the live
+    # value, not a smoothed one. ``None`` until at least one valid
+    # RSSI sample arrives; matches ``rssi_dbm`` for the very first
+    # sample so the first render is not artificially weighted.
+    rssi_smooth: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,8 +213,11 @@ def lookup_oui_vendor(
 # ---------- service category inference ----------
 
 # 16-bit Bluetooth SIG GATT service UUIDs the user is likely to recognise.
-# Anything not in this map passes through as the raw UUID, which is
-# rarely useful but at least visible. The category names route through
+# These hand-curated names take priority over the upstream SIG names —
+# the SIG label for 0x1812 is "Human Interface Device" but every keyboard
+# user we have ever met calls it "HID". Anything missed here falls
+# through to the bundled SIG GATT-services map, then to the bundled
+# member-UUID map, then to the raw UUID. The names route through
 # i18n.t() at the call site so the Chinese UI translates them.
 _SERVICE_CATEGORY: dict[str, str] = {
     "180D": "Heart Rate",
@@ -237,10 +248,112 @@ def _normalize_uuid(uuid: str) -> str:
     return u
 
 
-def service_category(uuid: str) -> str:
-    """Map a service UUID to a user-readable category, or pass through."""
+# ---------- bundled SIG UUID tables (GATT services + member UUIDs) ----------
+
+_GATT_SERVICES_PATH = (
+    Path(__file__).resolve().parent / "data" / "bluetooth_gatt_services.json"
+)
+_MEMBER_UUIDS_PATH = (
+    Path(__file__).resolve().parent / "data" / "bluetooth_member_uuids.json"
+)
+
+
+def _load_uuid_table(path: Path) -> dict[str, str]:
+    """Load a 4-char hex-keyed JSON table; ``_meta`` filtered out."""
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {
+        str(k).upper(): str(v)
+        for k, v in data.items()
+        if k != "_meta" and isinstance(v, str)
+    }
+
+
+def load_gatt_services(path: Path | None = None) -> dict[str, str]:
+    """Load the bundled SIG 16-bit GATT service UUID → name map.
+
+    Source: ``assigned_numbers/uuids/service_uuids.yaml``. Regenerate
+    with ``make update-vendors``. A missing file is tolerated and
+    yields an empty dict; UUIDs then fall through to the raw value.
+    """
+    return _load_uuid_table(path or _GATT_SERVICES_PATH)
+
+
+def load_member_uuids(path: Path | None = None) -> dict[str, str]:
+    """Load the bundled SIG 16-bit member-assigned UUID → company map.
+
+    Source: ``assigned_numbers/uuids/member_uuids.yaml``. Each entry
+    is a UUID the SIG handed out to one company (e.g. FDAA → Xiaomi).
+    Used both for the service column ("Xiaomi service") and as a
+    vendor fallback when the device's advertisement omits the
+    manufacturer-data company-ID.
+    """
+    return _load_uuid_table(path or _MEMBER_UUIDS_PATH)
+
+
+def lookup_member_vendor(
+    services: tuple[str, ...] | list[str],
+    member_uuids: dict[str, str],
+) -> str | None:
+    """Resolve a vendor name from the first member UUID in ``services``.
+
+    Used as a fallback when ``manufacturer_id`` is absent. Returns the
+    SIG-listed company name verbatim ("Xiaomi Inc.", "Sony Mobile
+    Communications") so it sits next to manufacturer-derived vendors
+    in the UI without flicker.
+    """
+    if not member_uuids:
+        return None
+    for s in services:
+        if not isinstance(s, str):
+            continue
+        short = _normalize_uuid(s)
+        name = member_uuids.get(short)
+        if name:
+            return name
+    return None
+
+
+def service_category(
+    uuid: str,
+    *,
+    gatt: dict[str, str] | None = None,
+    member: dict[str, str] | None = None,
+) -> str:
+    """Map a service UUID to a user-readable category, or pass through.
+
+    Resolution order:
+      1. Hand-curated ``_SERVICE_CATEGORY`` (project-specific friendly
+         names like "HID" instead of "Human Interface Device").
+      2. ``gatt`` (full SIG 16-bit GATT services list — Battery,
+         Device Information, Environmental Sensing, etc.).
+      3. ``member`` (SIG-assigned member UUIDs — FDAA → Xiaomi,
+         FD2A → Sony Corporation, etc.).
+      4. Raw UUID as last resort.
+
+    ``gatt`` and ``member`` default to the bundled tables when
+    omitted; tests can pass empty dicts to verify the hand-curated
+    layer in isolation.
+    """
     short = _normalize_uuid(uuid)
-    return _SERVICE_CATEGORY.get(short, short)
+    hit = _SERVICE_CATEGORY.get(short)
+    if hit is not None:
+        return hit
+    if gatt is None:
+        gatt = load_gatt_services()
+    hit = gatt.get(short)
+    if hit is not None:
+        return hit
+    if member is None:
+        member = load_member_uuids()
+    hit = member.get(short)
+    if hit is not None:
+        return hit
+    return short
 
 
 # ---------- public-format detection ----------
@@ -277,6 +390,27 @@ def _apple_nearby_info_device_class(action_byte: int) -> str | None:
         0x7: "HomePod",
         0x9: "Apple Watch",
     }.get(nibble)
+
+
+# Apple Continuity protocol type-byte → human-readable label, sourced
+# from the public ``furiousMAC/continuity`` reverse-engineering. We
+# only label types whose meaning is stable across iOS versions; the
+# encrypted payload tail is ignored. Resolves the bulk of the
+# "Apple, Inc. (unknown)" rows users see in the BLE panel — Apple
+# devices broadcast Continuity packets without ever populating the
+# advertisement's local-name field, so without this map the row has
+# no name to show.
+_APPLE_CONTINUITY_TYPE: dict[int, str] = {
+    0x05: "AirDrop",
+    0x07: "AirPods",
+    0x09: "AirPlay target",
+    0x0A: "AirPlay source",
+    0x0B: "Watch pairing",
+    0x0C: "Handoff",
+    0x0D: "Tethering target",
+    0x0E: "Tethering source",
+    0x0F: "Nearby Action",
+}
 
 
 def detect_advertisement(obj: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -319,12 +453,23 @@ def detect_advertisement(obj: dict[str, Any]) -> tuple[str | None, str | None]:
                     dc = _apple_nearby_info_device_class(mfg_bytes[5])
                 return None, dc
             if type_byte == 0x12:
-                # Owner-paired AirTag payloads are ~25 bytes; lost-mode
-                # Find My broadcasts are shorter. Use the length as a
-                # cheap discriminator — false negatives just degrade to
-                # "Find My target", which is still actionable.
-                is_airtag = len(mfg_bytes) >= 25
+                # Owner-paired AirTag payloads are ~25 bytes, but
+                # AirPods Pro and other Find My-capable peripherals
+                # broadcast similar-length packets when away from
+                # their owner. The cheap discriminator that holds:
+                # AirTags never broadcast a localName (privacy-by-
+                # design), while AirPods / Watches do. So if the
+                # advertisement carries a name we drop to the more
+                # general "Find My target" label rather than guessing
+                # "AirTag" and getting it wrong on AirPods Pro.
+                has_name = isinstance(obj.get("name"), str) and bool(
+                    obj.get("name")
+                )
+                is_airtag = len(mfg_bytes) >= 25 and not has_name
                 return ("AirTag" if is_airtag else "Find My target"), None
+            label = _APPLE_CONTINUITY_TYPE.get(type_byte)
+            if label is not None:
+                return label, None
         if company_id == _COMPANY_MICROSOFT and len(mfg_bytes) >= 3:
             if mfg_bytes[2] == 0x03:
                 return "Swift Pair", None
@@ -351,6 +496,7 @@ def _build_device(
     vendors: dict[int, str],
     prior: BLEDevice | None,
     now: datetime | None = None,
+    member_uuids: dict[str, str] | None = None,
 ) -> BLEDevice | None:
     """Promote one decoded advertisement object into a BLEDevice.
 
@@ -387,6 +533,19 @@ def _build_device(
     if rssi is not None and (rssi >= 0 or rssi < -200):
         rssi = None
 
+    # Exponential moving average for the sort key. α = 0.4 weights the
+    # latest packet enough to react to genuine movement (the user
+    # walking with their phone) within ~3 advertisements, while
+    # damping the 5–15 dB single-packet jitter that BLE radios produce
+    # at rest. The first observed RSSI seeds the smoothed value so a
+    # device's first appearance sorts in its real bucket immediately.
+    if rssi is None:
+        rssi_smooth = prior.rssi_smooth if prior is not None else None
+    elif prior is not None and prior.rssi_smooth is not None:
+        rssi_smooth = int(round(0.4 * rssi + 0.6 * prior.rssi_smooth))
+    else:
+        rssi_smooth = rssi
+
     is_connectable = bool(obj.get("is_connectable", False))
 
     services_raw = obj.get("service_uuids") or []
@@ -416,6 +575,19 @@ def _build_device(
     if vendor_id is None and prior is not None:
         vendor_id = prior.vendor_id
     vendor = lookup_vendor(vendor_id, vendors)
+    # Fallback: if the advertisement has no manufacturer ID but does
+    # carry a SIG-assigned member UUID, use the company that owns
+    # that UUID. Resolves rows that would otherwise show "(unknown)"
+    # for known vendors like SIANA Systems / Audiodo / etc.
+    if vendor is None and services:
+        if member_uuids is None:
+            member_uuids = load_member_uuids()
+        vendor = lookup_member_vendor(services, member_uuids)
+    if vendor is None and prior is not None:
+        # Same flicker-protection as vendor_id: a scan-response packet
+        # without manufacturer data should not blank out a name we
+        # already established for this device on a prior advertisement.
+        vendor = prior.vendor
 
     if now is None:
         now = datetime.now(timezone.utc)
@@ -445,6 +617,7 @@ def _build_device(
         vendor_id=vendor_id,
         services=services,
         rssi_dbm=rssi,
+        rssi_smooth=rssi_smooth,
         is_connectable=is_connectable,
         first_seen=first_seen,
         last_seen=now,
@@ -523,6 +696,7 @@ def update_from_line(
     now: datetime | None = None,
     connected: dict[str, BLEDevice] | None = None,
     ouis: dict[str, str] | None = None,
+    member_uuids: dict[str, str] | None = None,
 ) -> str | None:
     """Apply one JSONL line to the device map, in place.
 
@@ -589,7 +763,10 @@ def update_from_line(
         return None
     key = identifier.lower()
     prior = devices.get(key)
-    device = _build_device(obj, vendors=vendors, prior=prior, now=now)
+    device = _build_device(
+        obj, vendors=vendors, prior=prior, now=now,
+        member_uuids=member_uuids,
+    )
     if device is not None:
         devices[key] = device
     return None
@@ -637,20 +814,26 @@ def merge_for_display(
             continue
         bucket_groups.setdefault((d.vendor_id, d.name), []).append(d)
 
+    # Use the smoothed RSSI for both clustering and final sort so the
+    # row order is stable across snapshots. Falling back to rssi_dbm
+    # keeps tests written against a single-packet device working,
+    # since they never observe the EMA seed-and-update cycle.
+    def _key(d: BLEDevice) -> int:
+        if d.rssi_smooth is not None:
+            return d.rssi_smooth
+        if d.rssi_dbm is not None:
+            return d.rssi_dbm
+        return -200
+
     for group in bucket_groups.values():
-        remaining = sorted(
-            group,
-            key=lambda d: d.rssi_dbm if d.rssi_dbm is not None else -200,
-            reverse=True,
-        )
+        remaining = sorted(group, key=_key, reverse=True)
         while remaining:
             anchor = remaining[0]
-            anchor_rssi = anchor.rssi_dbm if anchor.rssi_dbm is not None else -200
+            anchor_rssi = _key(anchor)
             cluster = [anchor]
             kept: list[BLEDevice] = []
             for d in remaining[1:]:
-                rssi = d.rssi_dbm if d.rssi_dbm is not None else -200
-                if abs(rssi - anchor_rssi) <= rssi_window_db:
+                if abs(_key(d) - anchor_rssi) <= rssi_window_db:
                     cluster.append(d)
                 else:
                     kept.append(d)
@@ -658,10 +841,7 @@ def merge_for_display(
             remaining = kept
 
     out.extend(unmergeable)
-    out.sort(
-        key=lambda d: d.rssi_dbm if d.rssi_dbm is not None else -200,
-        reverse=True,
-    )
+    out.sort(key=_key, reverse=True)
     return out
 
 
@@ -676,7 +856,10 @@ def _fold_cluster(cluster: list[BLEDevice]) -> BLEDevice:
     """
     primary = max(
         cluster,
-        key=lambda d: d.rssi_dbm if d.rssi_dbm is not None else -200,
+        key=lambda d: (
+            d.rssi_smooth if d.rssi_smooth is not None
+            else (d.rssi_dbm if d.rssi_dbm is not None else -200)
+        ),
     )
     seen: set[str] = set()
     services: list[str] = []
@@ -717,9 +900,15 @@ class BLEPoller:
         helper_path: str,
         *,
         ttl_s: float = 30.0,
-        snapshot_interval_s: float = 1.0,
+        # 2 s strikes a balance: long enough that BLE's per-packet 5–
+        # 15 dB RSSI jitter can be smoothed away by the EMA in
+        # _build_device, short enough that a new device shows up
+        # within "feels live". 1 s caused neighbouring rows to swap
+        # on every render even when nothing real had changed.
+        snapshot_interval_s: float = 2.0,
         vendors: dict[int, str] | None = None,
         ouis: dict[str, str] | None = None,
+        member_uuids: dict[str, str] | None = None,
         _spawn: Callable[[], Awaitable[Any]] | None = None,
     ) -> None:
         self._helper_path = helper_path
@@ -730,6 +919,12 @@ class BLEPoller:
         # arrive without manufacturer_data). Lazy-load on first use; the
         # bundled JSON parses in well under a millisecond.
         self._ouis = ouis if ouis is not None else load_ouis()
+        # SIG-assigned member service UUIDs. Used as a vendor fallback
+        # when the advertisement omits manufacturer_data, plus for
+        # service-column labelling.
+        self._member_uuids = (
+            member_uuids if member_uuids is not None else load_member_uuids()
+        )
         self._devices: dict[str, BLEDevice] = {}
         # Currently-connected peripherals from the helper's
         # retrieveConnectedPeripherals snapshot. Lives in a parallel
@@ -797,6 +992,7 @@ class BLEPoller:
                 state = update_from_line(
                     self._devices, line, vendors=self._vendors,
                     connected=self._connected, ouis=self._ouis,
+                    member_uuids=self._member_uuids,
                 )
                 if state == "permission_denied":
                     self._permission_state = "denied"

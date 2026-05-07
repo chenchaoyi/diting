@@ -256,6 +256,71 @@
 
 ---
 
+## 5c. 模块：`wifiscope.latency`
+
+延迟探针轮询器。覆盖 ICMP 输出解析、尖峰 / 丢包风暴检测、滚动窗口
+聚合，以及来自真实网络（家用 / 企业 / Cloudflare DoH /
+多解析器 / 无 DNS / 空列表 / 数据畸形）的七种 DNS 自动检测形态。
+所有 subprocess 调用与 SCDynamicStore 读取都在模块缝处 mock。
+
+**覆盖目标：**
+
+- [x] `_parse_ping_time_ms` 小数 / 整数 / `time<1.0` / 缺失
+- [x] `LatencyPoller._ping_once` 成功记录 rtt
+- [x] `_ping_once` 非零退出 / 没有 `time=` / subprocess 错误均记为
+      丢失
+- [x] `aggregate` 中位数 / 丢包% / MAD 抖动
+- [x] `aggregate` 空窗口返回 None
+- [x] `detect_latency_spike` 同时满足两阈值（200 ms 且超过中位数 5
+      倍）
+- [x] `detect_loss_burst` 5 中 3 规则
+- [x] `LatencyPoller.stop`
+- [x] DNS 自动检测：典型家用（DNS == 网关 → None）
+- [x] DNS 自动检测：企业内网解析器
+- [x] DNS 自动检测：Cloudflare DoH
+- [x] DNS 自动检测：多解析器 + 网关排首位
+- [x] DNS 自动检测：SCDynamicStore 返回 None
+- [x] DNS 自动检测：ServerAddresses 为空
+- [x] DNS 自动检测：数据畸形（None / int / object 条目）
+- [x] `WIFISCOPE_LATENCY_WAN_TARGET` 环境变量优先于自动检测
+- [x] DNS 刷新节奏（注入时钟，不睡真表）
+- [x] 显式 `wan_ip=` 完全禁用刷新
+- [x] `wan_skipped_reason` 区分 `no_dns` 与 `dns_eq_gateway`
+- [x] `_scutil_dns_fallback` 解析 resolver-#1 nameserver，遇到 #2
+      停止
+
+### 测试用例 — `tests/test_latency.py`
+
+按上面每行一项，共 27 项。
+
+---
+
+## 5d. 模块：`wifiscope.environment`
+
+RF 扰动检测器。所有测试用确定时间戳的 RSSI 序列，让滚动窗口数学
+完全可重现。
+
+**覆盖目标：**
+
+- [x] σ 越界触发 `RFStirEvent`
+- [x] σ 没越界保持安静
+- [x] 模式自动分类（co_located / spatial_channel / ignored）
+- [x] 冗余融合：两个 co_located AP 同时跳变 → high
+- [x] 单 AP 的 co_located 跳变 → medium
+- [x] spatial-channel 事件标签为 AP 在 inventory 里的名字
+- [x] 校准基线覆盖自适应
+- [x] `baseline_summary()` 形态
+- [x] -85 dBm 以下的 AP 不参与 σ 计算
+- [x] `aggregate_sigma` 标签 `active` / `quiet` / `stable`
+- [x] `write_calibration` / `load_calibration` 往返
+- [x] `load_calibration` 找不到文件返回 `{}`
+
+### 测试用例 — `tests/test_environment.py`
+
+按上面每行一项，共 13 项。
+
+---
+
 ## 6. TUI 冒烟
 
 通过 Textual 的 `run_test` pilot 做端到端。fake backend 保证测试在
@@ -285,6 +350,9 @@
 | `test_custom_scan_interval_threads_through` | 构造 `WifiScopeApp(..., scan_interval=4.5)` 后检查 `app._poller._scan_interval`。 | `WIFISCOPE_SCAN_INTERVAL` 环境变量最终落到这里；如果 kwarg 路径静默丢值，没人会发现。 |
 | `test_toggle_view_swaps_third_panel` | 按 `n` 从 Wi-Fi 扫描视图切到 BLE 视图，再按一次切回。同时断言两个面板的 `display` 标志与 `app._view_mode`。 | 锁定规范的「原地切换」行为 —— 任一面板都不 unmount，两侧消费者状态都能在切换中保留。 |
 | `test_ble_panel_renders_both_connected_and_advertising_sections` | 灌入 `_latest_ble`（advertising）与 `_latest_ble_connected`（connected），按 `n`，断言 BLEPanel 主体里同时出现 `Connected (1)` 与 `Advertising (1)` 两段标题以及各一行设备。 | v0.6.0 两段渲染的端到端证明 —— 这里坏掉就破坏了规范的第二个问题（「现在到底连着什么」）的答案。 |
+| `test_events_modal_open_and_close` | 按 `m` 打开 EventsScreen，按 Esc 关闭。 | 锁定 v0.7.0 的模态绑定，方式与 `test_help_modal_open_and_close` 锁定 `h` 帮助绑定一致。 |
+| `test_diagnostics_renders_link_line_when_latency_data_available` | 构造延迟聚合 + 一个环境元组，调用 `panel.update_environment(..., link=, env=)`，确认渲染主体里出现 `Link`、`gw 14 ms`、`Environment`、`stable`。 | 诊断面板必须能接住新元组而不是默默丢弃 —— 这是消费者与渲染器之间的 v0.7.0 契约守门员。 |
+| `test_unified_events_panel_renders_roam_and_stir_interleaved` | 把一个 `RoamEvent` 与一个 `RFStirEvent` 推进统一面板；断言渲染输出里同时出现 `[ROAM]` 和 `[STIR]` 前缀加上 location 标签。 | 「漫游日志」改名为「事件」之所以可以，是因为两种事件类型都能透过同一个 widget 正确渲染。 |
 
 ---
 

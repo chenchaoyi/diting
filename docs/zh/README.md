@@ -30,6 +30,12 @@
   <sub><i>BLE 视图（按 <code>n</code> 切换）—— 上方是「已连接」外设，下方是「正在广播」设备，每行都给出公开格式识别出的标签。</i></sub>
 </p>
 
+<p align="center">
+  <img src="../preview-events.zh.svg" alt="wifiscope TUI – 事件浏览器" width="100%">
+  <br>
+  <sub><i>事件浏览器（按 <code>m</code> 打开）—— 最近 100 条 漫游 / 扰动 / 延迟 / 丢包 / 链路 事件，附各 AP σ 基线小表 + 最近一小时 σ 走势 sparkline。</i></sub>
+</p>
+
 ## 为什么需要它
 
 你在家里或办公室部署了多台 AP，房间之间走来走去，但 Mac 死死黏在五小时之前
@@ -55,6 +61,13 @@ Zoom 卡顿，你抱怨网络，却又找不到证据。
   `iBeacon`、`Eddystone-URL`、`Tile`、`SmartTag`、`iPhone`、`Mac`、
   `Apple Watch`、`HomePod` —— 不再是「Apple, Inc.（匿名）Find My」
   这种墙
+- 两条新的**链路健康**行：`Link` 行每秒一次 ping 网关 + 自动检测的
+  DNS 服务器，让 -55 dBm 的 AP 在上游故障时也读得出来；`Environment`
+  行用滚动 RSSI 方差给出 `稳定` / `活跃` 标签（跑过
+  `wifiscope calibrate` 之后切到 `安静` 基线）。按 `m` 打开全屏事件
+  浏览器，看最近 100 条 漫游 / RF 扰动 / 延迟 / 丢包 / 链路 事件。
+  **不是** Wi-Fi sensing —— 我们刻意不声称的能力见
+  [`docs/explainers/wifi-sensing.md`](explainers/wifi-sensing.md)
 
 卡在弱 AP 上不动？按 `c`，`wifiscope` 会循环关再开 Wi-Fi，让 macOS 重新
 auto-join，重新关联到信号最强的 BSSID。和「点菜单关 Wi-Fi 再开」是同一条路径，
@@ -101,15 +114,25 @@ WIFISCOPE_LANG=zh uv run wifiscope   # 用环境变量
 | `s` | 扫描排序切换：按 AP ↔ 按信号 |
 | `n` | 切换附近视图：Wi-Fi BSSID ↔ BLE 设备 |
 | `c` | 断开重连 —— 关再开 Wi-Fi，让系统重新挑选最强的 BSSID |
+| `m` | 打开 / 关闭事件浏览器 —— 最近 100 条 漫游 / 扰动 / 延迟 / 丢包 / 链路 |
 | `h` | 打开 / 关闭应用内帮助页 |
 | `b` | 打开 / 关闭 Wi-Fi 基础知识：SSID、BSSID、信道、频段、加密、漫游评分 |
 
-`watch` 与 `once` 子命令以纯文本模式运行 —— 适合管道接日志或一次性诊断：
+`watch`、`once`、`monitor`、`calibrate` 子命令不走 TUI：
 
 ```bash
-uv run wifiscope once     # 输出当前连接快照后退出
-uv run wifiscope watch    # 流式打印事件，Ctrl+C 退出
+uv run wifiscope once                       # 当前连接快照
+uv run wifiscope watch                      # 流式文本事件（Ctrl+C 退出）
+uv run wifiscope monitor                    # 无 TUI，逐行 JSONL 事件
+uv run wifiscope monitor --out events.jsonl # 追加 JSONL 到文件
+uv run wifiscope monitor --notify           # 高置信度事件触发 macOS 通知
+uv run wifiscope calibrate                  # 5 分钟「房间没人」基线 → ./wifiscope-baseline.json
 ```
+
+`monitor` 是长时运行 / Home Assistant 集成场景：每一次漫游、RF
+扰动、延迟尖峰、丢包风暴、链路状态变化都会输出一行符合 schema 的
+JSON。schema 定义见
+[`docs/specs/v0.7.0-network-ground-truth-and-environment-monitor.md`](../specs/v0.7.0-network-ground-truth-and-environment-monitor.md#single-eventsjsonl-schema-for-all-three-layers)。
 
 ## 配置
 
@@ -163,6 +186,7 @@ BSSID，漫游事件会显示成 `[同 AP 切频段 2F-客厅: 5G → 2.4G]` 或
 | `WIFISCOPE_INVENTORY` | `./aps.yaml`（相对当前目录） | AP 别名 YAML 路径。文件可选，没有就走自动聚簇标签。 |
 | `WIFISCOPE_HELPER` | 在 `/Applications`、`~/Applications`、仓库 `helper/` 中查找 | 指定 `wifiscope-helper.app` 包或其二进制路径。 |
 | `WIFISCOPE_SCAN_INTERVAL` | `7` | 扫描间隔秒数。CoreWLAN 大约 5 秒限流一次，低于 ~6 秒时每隔一次返回空。最小 3。 |
+| `WIFISCOPE_LATENCY_WAN_TARGET` | 由 `scutil --dns` 自动检测 | WAN 延迟探针的 IP。默认从 `SCDynamicStoreCopyValue("State:/Network/Global/DNS")` 取第一条非网关 DNS；如果配置的 DNS 就是网关，WAN 探测被跳过，诊断行写 `WAN n/a (DNS = 网关)`。可以指定固定 IP（如 `1.1.1.1`，仅在网络允许时使用）。 |
 
 ## macOS 注意事项
 
@@ -207,6 +231,16 @@ Apple Continuity 的*公开*部分（Nearby Info 里未加密的设备类别 nib
 播放音乐、Handoff 会话信息）保持不可见。**单机型识别**（iPhone 14 vs
 15）不在任何公开广告报文里 —— 谁要是声称做到了，那是 connect 之后
 读取专有 GATT 服务，我们不做这件事。
+
+**`Environment` 行不是 Wi-Fi sensing。** wifiscope 处于 Wi-Fi 感知
+能力阶梯的 Tier 0：用 CoreWLAN 已经暴露的数据做滚动 RSSI 方差。
+我们只输出 `稳定` / `活跃`（跑过 `wifiscope calibrate` 之后是
+`安静` / `活跃`）这种二值标签 —— 永远不会做人数统计、姿态识别、
+呼吸频率检测。CSI（学界 sensing 真正用的数据）在 macOS 上不开放，
+即使在 ESP32 / Linux 下的 Intel 5300 上也开放，那些 Tier-3+ demo
+也是研究级工程，不是 `pip install`。完整说明见
+[`docs/explainers/wifi-sensing.md`](explainers/wifi-sensing.md)；
+`Environment` 行就是「我们用 RSSI 老实做了什么」的现场示例。
 
 **已连接外设没有 RSSI。** `retrieveConnectedPeripherals` 给出当前与
 Mac 关联的外设（你正在听的 AirPods、正在敲的 Magic Keyboard），但要

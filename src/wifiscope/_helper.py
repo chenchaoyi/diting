@@ -51,11 +51,18 @@ def find_helper() -> str | None:
     if override:
         return _resolve(Path(override).expanduser())
     candidates = [
+        # In-place developer build inside this repo — the recommended
+        # install location since 0.7.0. ``wifiscope`` is typically
+        # installed editable so __file__ traces back to the source
+        # tree; ``build.sh`` produces the bundle here, the user grants
+        # once with ``open helper/wifiscope-helper.app``, and we pick
+        # it up automatically. Listed first so an old leftover bundle
+        # in /Applications cannot shadow a freshly-rebuilt local one.
+        Path(__file__).resolve().parents[2] / "helper" / "wifiscope-helper.app",
+        # Back-compat for users who moved the bundle into /Applications
+        # before the in-place flow was recommended; still works.
         Path("/Applications/wifiscope-helper.app"),
         Path("~/Applications/wifiscope-helper.app").expanduser(),
-        # Developer build inside this repo. wifiscope is typically
-        # installed editable so __file__ traces back to the source tree.
-        Path(__file__).resolve().parents[2] / "helper" / "wifiscope-helper.app",
     ]
     for c in candidates:
         resolved = _resolve(c)
@@ -123,9 +130,39 @@ def scan(binary: str, timeout: float = 12.0) -> tuple[list[ScanResult], dict]:
                 security=_SECURITY.get(net.get("security_raw", -1)),
                 timestamp=ts,
                 country_code=net.get("country_code") or None,
+                bss_load_pct=_safe_int(net.get("bss_load_pct")),
+                bss_station_count=_safe_int(net.get("bss_station_count")),
+                supports_802_11r=_safe_bool(net.get("supports_802_11r")),
+                supports_802_11k=_safe_bool(net.get("supports_802_11k")),
+                supports_802_11v=_safe_bool(net.get("supports_802_11v")),
             )
         )
     return out, iface_meta
+
+
+def _safe_int(value) -> int | None:
+    """Pass through int values that fit a signed range, otherwise None.
+
+    Defensive against malformed helper output (string instead of int,
+    float, None) — we never want a typed Python field to surface a
+    value the dataclass slot rejects with a downstream TypeError.
+    """
+    if isinstance(value, bool):
+        # bool is a subclass of int; explicit check keeps a stray
+        # `true` from being passed through as 1.
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _safe_bool(value) -> bool | None:
+    """Boolean-or-None coercion. Anything other than a true bool
+    (including 1, 0, "yes", None) becomes None so callers can rely on
+    the field being a clean three-state."""
+    if isinstance(value, bool):
+        return value
+    return None
 
 
 def _or_none_zero(value):

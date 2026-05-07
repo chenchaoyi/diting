@@ -5,14 +5,24 @@ smoke test (test_tui_smoke) covers actually mounting the App.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
 from wifiscope.ble import BLEDevice
+from wifiscope.environment import APBaseline, RFStirEvent
+from wifiscope.events import (
+    LatencySpikeEvent,
+    LinkStateEvent,
+    LossBurstEvent,
+)
+from wifiscope.latency import LatencyAggregate
 from wifiscope.models import Connection, ScanResult
 from wifiscope.network import APEntry, NetworkInventory
+from wifiscope.poller import RoamEvent
 from wifiscope.tui import (
+    _aggregate_baselines,
+    _baseline_table,
     _best_same_ssid_candidate,
     _ble_categories_line,
     _ble_closest_line,
@@ -22,15 +32,19 @@ from wifiscope.tui import (
     _ble_vendors_line,
     _ble_visible_line,
     _channel_hint,
+    _environment_diagnostic_line,
     _environment_line,
+    _event_format_line,
     _group_by_ap,
     _health_line,
+    _link_diagnostic_line,
     _link_score,
     _merge_current,
     _score_line,
     _recommended_channel,
     _scan_line,
     _security_badge,
+    _sigma_sparkline,
 )
 
 
@@ -491,6 +505,300 @@ def test_ble_label_summary_uses_device_class_when_no_type():
     laptop from a watch among the rotating Apple beacons."""
     iphone = _ble_dev(services=(), device_class="iPhone")
     assert _ble_label_summary(iphone) == "iPhone"
+
+
+# --- v0.7.0 Link / Environment / Events ----------------------------
+
+def _agg(target, *, rtt=None, loss=None, jitter=None, samples=10, ip="192.168.1.1"):
+    return LatencyAggregate(
+        target=target, target_ip=ip, rtt_ms=rtt, loss_pct=loss,
+        jitter_ms=jitter, sample_count=samples,
+    )
+
+
+def test_link_diagnostic_line_good_link():
+    """A healthy gateway and WAN render numbers, no warning glyph."""
+    gw = _agg("router", rtt=12.0, loss=0.0, jitter=2.0)
+    wan = _agg("wan", rtt=18.0, loss=0.0, jitter=3.0, ip="1.1.1.1")
+    text = _link_diagnostic_line(gw, wan, None).plain
+    assert "Router 12 ms" in text
+    assert "0% loss" in text
+    assert "WAN 18 ms" in text
+    assert "jitter" in text
+    assert "⚠" not in text
+
+
+def test_link_diagnostic_line_loss_marks_warning():
+    gw = _agg("router", rtt=412.0, loss=25.0, jitter=12.0)
+    text = _link_diagnostic_line(gw, None, None).plain
+    assert "⚠" in text
+    assert "412 ms" in text
+    assert "25% loss" in text
+
+
+def test_link_diagnostic_line_wan_unreachable_when_no_dns():
+    """No SCDynamicStore answer → WAN n/a label."""
+    gw = _agg("router", rtt=12.0, loss=0.0, jitter=2.0)
+    text = _link_diagnostic_line(gw, None, "no_dns").plain
+    assert "WAN n/a" in text
+    assert "DNS == gateway" not in text
+
+
+def test_link_diagnostic_line_wan_dns_eq_gateway_explains():
+    """The home-router case: DNS is the gateway. Render the
+    explanatory ``WAN n/a (DNS == gateway)`` so the user knows why
+    the second column is missing."""
+    gw = _agg("router", rtt=12.0, loss=0.0, jitter=2.0)
+    text = _link_diagnostic_line(gw, None, "dns_eq_gateway").plain
+    assert "WAN n/a" in text
+    assert "DNS == gateway" in text
+
+
+def test_environment_diagnostic_line_stable():
+    text = _environment_diagnostic_line("stable", 1.2, None).plain
+    assert "stable" in text
+    assert "σ" in text
+    assert "1.2" in text
+
+
+def test_environment_diagnostic_line_active_marks_warning():
+    """The 'active' label gets a ⚠ prefix and surfaces last-event-ago."""
+    last = datetime.now()
+    text = _environment_diagnostic_line("active", 7.8, last).plain
+    assert "⚠" in text
+    assert "active" in text
+    assert "7.8" in text
+    assert "last event" in text
+
+
+def test_environment_diagnostic_line_quiet_when_calibrated():
+    text = _environment_diagnostic_line("quiet", 0.7, None).plain
+    assert "quiet" in text
+    assert "0.7" in text
+
+
+def _stir_event():
+    return RFStirEvent(
+        timestamp=datetime(2026, 5, 7, 9, 0, 0),
+        bssid="aa:bb:cc:11:22:53",
+        location="1F-bedroom",
+        magnitude_db=8.3,
+        duration_s=12.0,
+        confidence="high",
+        mode="co_located",
+    )
+
+
+def _spike_event():
+    return LatencySpikeEvent(
+        timestamp=datetime(2026, 5, 7, 9, 0, 5),
+        target="router", target_ip="192.168.1.1",
+        rtt_ms=412.0, loss_pct=25.0,
+    )
+
+
+def _loss_event():
+    return LossBurstEvent(
+        timestamp=datetime(2026, 5, 7, 9, 0, 9),
+        target="wan", target_ip="1.1.1.1",
+        loss_pct=80.0, lost_in_window=4,
+    )
+
+
+def _link_event():
+    return LinkStateEvent(
+        timestamp=datetime(2026, 5, 7, 9, 0, 11),
+        state="associated", bssid="aa:bb:cc:11:22:53", ssid="office",
+    )
+
+
+def _roam_event():
+    return RoamEvent(
+        timestamp=datetime(2026, 5, 7, 9, 0, 13),
+        previous_bssid="aa:bb:cc:11:22:50",
+        previous_channel=36,
+        new_bssid="aa:bb:cc:33:44:10",
+        new_channel=48,
+    )
+
+
+def test_event_format_line_rf_stir():
+    text = _event_format_line(_stir_event(), NetworkInventory()).plain
+    assert "[STIR]" in text
+    assert "1F-bedroom" in text
+    assert "8.3" in text
+    assert "high" in text
+
+
+def test_event_format_line_latency_spike():
+    text = _event_format_line(_spike_event(), NetworkInventory()).plain
+    assert "[LATENCY]" in text
+    assert "router" in text
+    assert "412" in text
+
+
+def test_event_format_line_loss_burst():
+    text = _event_format_line(_loss_event(), NetworkInventory()).plain
+    assert "[LOSS]" in text
+    assert "wan" in text
+    assert "80%" in text
+
+
+def test_event_format_line_link_state():
+    text = _event_format_line(_link_event(), NetworkInventory()).plain
+    assert "[LINK]" in text
+    assert "office" in text
+
+
+def test_event_format_line_roam_uses_inventory():
+    inv = NetworkInventory(aps=(
+        APEntry(name="1F-living", mgmt_mac="aa:bb:cc:11:22:4f"),
+        APEntry(name="2F-study",  mgmt_mac="aa:bb:cc:33:44:0f"),
+    ))
+    text = _event_format_line(_roam_event(), inv).plain
+    assert "[ROAM]" in text
+
+
+def test_sigma_sparkline_renders_bars():
+    """A non-empty σ history renders as a row of block characters with
+    the max σ surfaced. Bucketing is anchored to ``now`` so the test
+    must pass an explicit reference time matching the fake history,
+    otherwise the bucket window slides past the synthetic samples."""
+    base = datetime(2026, 5, 7, 9, 0, 0)
+    # 10 samples spaced 2 min apart; "now" is right after the last one
+    # so all samples fall inside the 1 h window.
+    points = [
+        (base + timedelta(minutes=2 * j), float(j))
+        for j in range(10)
+    ]
+    now = base + timedelta(minutes=20)
+    text = _sigma_sparkline(points, now=now).plain
+    # Must contain at least one block character and the max σ label.
+    assert any(c in text for c in "▁▂▃▄▅▆▇█")
+    assert "max σ 9.0" in text
+
+
+def test_sigma_sparkline_drops_samples_older_than_one_hour():
+    """The sparkline window is the trailing 1 h ending at ``now``.
+    Samples older than that fall off the left edge instead of being
+    stretched across the bar — guards the bug where 90 s of data
+    was rendered as if it spanned the full hour."""
+    base = datetime(2026, 5, 7, 9, 0, 0)
+    points = [
+        (base, 8.0),                 # 90 min ago — out of window
+        (base + timedelta(minutes=70), 1.5),   # 20 min ago — in
+        (base + timedelta(minutes=85), 2.0),   # 5 min ago — in
+    ]
+    now = base + timedelta(minutes=90)
+    text = _sigma_sparkline(points, now=now).plain
+    # The 8.0 sample is excluded so max σ should be 2.0, not 8.0.
+    assert "max σ 2.0" in text
+
+
+def test_sigma_sparkline_reports_data_span():
+    """The legend includes a 'data ~Nm' span so a fresh session that
+    only has 3 minutes of σ history is honestly labelled instead of
+    pretending to cover a full hour."""
+    base = datetime(2026, 5, 7, 9, 0, 0)
+    points = [(base + timedelta(minutes=j), 1.0) for j in range(4)]
+    now = base + timedelta(minutes=3)
+    text = _sigma_sparkline(points, now=now).plain
+    # English: "data ~3m" — Chinese translation reuses the same token.
+    assert "~3m" in text
+
+
+def _baseline(bssid, location, mode="co_located", samples=40,
+              baseline_sigma=None, current_sigma=None, last_rssi=-55):
+    return APBaseline(
+        bssid=bssid, location=location, mode=mode, samples=samples,
+        baseline_sigma=baseline_sigma, current_sigma=current_sigma,
+        last_rssi=last_rssi,
+    )
+
+
+def test_aggregate_baselines_collapses_bssids_to_one_row_per_ap():
+    """The same physical AP broadcasts many BSSIDs (one per SSID×band).
+    The aggregator must fold those back to a single row keyed on the
+    AP-level location label, otherwise the modal shows the AP up to
+    ten times."""
+    rows = [
+        _baseline("a8:5b:f7:e1:a3:e0", "?f7:e1:a3", samples=40, last_rssi=-46),
+        _baseline("a8:5b:f7:e1:a3:f0", "?f7:e1:a3", samples=322,
+                  baseline_sigma=2.8, current_sigma=2.4, last_rssi=-52),
+        _baseline("a8:5b:f7:e1:a3:f4", "?f7:e1:a3", samples=40, last_rssi=-58),
+        _baseline("a8:5b:f7:e1:d5:a0", "?f7:e1:d5", samples=40, last_rssi=-43),
+        _baseline("a8:5b:f7:e1:d5:b4", "?f7:e1:d5", samples=40, last_rssi=-52),
+    ]
+    groups = _aggregate_baselines(rows)
+    assert len(groups) == 2
+    by_loc = {g["location"]: g for g in groups}
+    a3 = by_loc["?f7:e1:a3"]
+    assert a3["bssid_count"] == 3
+    assert a3["samples"] == 40 + 322 + 40
+    # Loudest BSSID's σ wins; closest RSSI wins (max because dBm is
+    # negative).
+    assert a3["baseline_sigma"] == 2.8
+    assert a3["current_sigma"] == 2.4
+    assert a3["last_rssi"] == -46
+    d5 = by_loc["?f7:e1:d5"]
+    assert d5["bssid_count"] == 2
+    assert d5["baseline_sigma"] is None
+    assert d5["current_sigma"] is None
+
+
+def test_aggregate_baselines_picks_strongest_mode_per_ap():
+    """If at least one of an AP's BSSIDs classifies as co_located, the
+    AP row should report co_located — the closer signal wins because
+    that is the band the user is actually associating to."""
+    rows = [
+        _baseline("aa:bb:cc:dd:ee:01", "loc", mode="spatial_channel"),
+        _baseline("aa:bb:cc:dd:ee:02", "loc", mode="co_located"),
+    ]
+    groups = _aggregate_baselines(rows)
+    assert groups[0]["mode"] == "co_located"
+
+
+def test_baseline_table_folds_pending_aps_into_a_single_line():
+    """APs with no baseline σ and no current σ haven't accumulated
+    enough samples to say anything. They should not each get their
+    own row of question marks; the table must fold them into one
+    "(N APs still collecting samples)" footer line."""
+    rows = [
+        _baseline("a8:5b:f7:e1:a3:f0", "?f7:e1:a3", samples=322,
+                  baseline_sigma=2.8, current_sigma=2.4, last_rssi=-52),
+        _baseline("a8:5b:f7:e1:d5:a0", "?f7:e1:d5", samples=40,
+                  last_rssi=-43),
+        _baseline("a8:5b:f7:e0:cd:80", "?f7:e0:cd", samples=40,
+                  last_rssi=-56),
+    ]
+    text = _baseline_table(rows).plain
+    # Exactly one ready row.
+    assert text.count("?f7:e1:a3") == 1
+    # Both pending APs collapsed into the footer.
+    assert "?f7:e1:d5" not in text
+    assert "?f7:e0:cd" not in text
+    assert "2 APs still collecting samples" in text or \
+        "2 个 AP 仍在采集样本" in text
+
+
+def test_baseline_table_marks_stirring_when_current_exceeds_baseline_x3():
+    """The status badge follows the same fire rule as the events log:
+    current σ ≥ 5 dB AND > baseline × 3 → 'stirring'. Anything else →
+    'stable'."""
+    rows_quiet = [
+        _baseline("aa:bb:cc:dd:ee:01", "loc-quiet", samples=200,
+                  baseline_sigma=1.0, current_sigma=1.2, last_rssi=-55),
+    ]
+    rows_loud = [
+        _baseline("aa:bb:cc:dd:ee:02", "loc-loud", samples=200,
+                  baseline_sigma=1.0, current_sigma=8.0, last_rssi=-55),
+    ]
+    quiet_text = _baseline_table(rows_quiet).plain
+    loud_text = _baseline_table(rows_loud).plain
+    # Use either English source or Chinese translation depending on
+    # locale; both should be present in their respective rows.
+    assert ("stable" in quiet_text) or ("稳定" in quiet_text)
+    assert ("stirring" in loud_text) or ("抖动" in loud_text)
 
 
 def test_ble_connected_line_counts_peripherals_and_categories():

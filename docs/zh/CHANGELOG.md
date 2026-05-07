@@ -11,6 +11,86 @@
 
 _暂无未发布的变更。_
 
+## [0.7.0] — 2026-05-07
+
+「链路是不是真的通 + 周围有没有动静」版本。RSSI 单独并不能告诉你
+网关是不是在排队丢包，也不能告诉你刚才有人是不是从笔记本旁边走过；
+v0.7.0 加了两条持续探针来回答这两个问题。
+
+### 新增
+- **持续延迟 / 丢包探针**（每秒一次 ICMP，调用 `/sbin/ping`）针对
+  用户的网关 + 自动检测的 WAN 锚点 —— 系统当前配置的 DNS 服务器，
+  直接读 `SCDynamicStoreCopyValue("State:/Network/Global/DNS")`，
+  退而求其次走 `scutil --dns` 子进程解析。优先级：
+  `WIFISCOPE_LATENCY_WAN_TARGET` 环境变量 > 自动检测；如果配置的
+  DNS 就是网关本身，WAN 探测被跳过，诊断行写
+  `WAN n/a (DNS = 网关)` 让用户知道为什么少一列。DNS 检测每 60 秒
+  刷新一次，切换网络后无需重启 wifiscope。纯 ICMP，不要 root。
+  诊断面板新增一行
+  `Link  gw 12 ms · 丢包 0% · WAN 18 ms · 丢包 0% · 抖动 3 ms`；
+  丢包 / 高延迟 / 不可达状态会带 ⚠ 标志和红色样式。
+- **辅助进程的 beacon IE 解析。** `runScanAndDumpJSON` 现在会遍历
+  CoreWLAN 的 `informationElementData`，解出 BSS Load（Element ID
+  11 → `bss_load_pct` + `bss_station_count`）、Mobility Domain
+  （54 → `supports_802_11r`）、RM Enabled Capabilities（70 →
+  `supports_802_11k`）、Extended Capabilities 第 19 位（127 →
+  `supports_802_11v`）。每个字段只在对应 IE 出现时输出，schema 2 /
+  仅有部分 IE 的旧消费者保持向前兼容。Schema 编号仍是 3；新增字段
+  是叠加的。
+- **环境监测器。** 新模块按 BSSID 计算滚动 RSSI σ，当两个阈值都满足
+  （5 秒窗口 σ > 滚动 5 分钟中位 σ × 2.5 且 σ > 3 dB 绝对地板）就触发
+  `RFStirEvent`，并在新增的 `Environment  σ 1.4 dB / 5s` 诊断行上以
+  `稳定` / `活跃` / `安静` 三选一标签呈现。各 AP 融合模式按中位 RSSI
+  自动分类：`co_located`（>= -65 dBm）做冗余融合（>= 2 个同位 AP
+  同时跳变 = 高置信度）；`spatial_channel`（-65..-85）单 AP 一通道，
+  事件标签上写该 AP 在 `aps.yaml` 里的名字；`ignored`（< -85）噪声
+  太大，丢弃。**永远不会**说成「人数统计」或「移动检测」—— 所有界面
+  上的措辞都是「有变化」。
+- **统一事件面板 + `m` 模态浏览器。** v0.6.0 的「漫游日志」面板变成
+  「事件」面板：同样的位置，同样的高度，但通过一个 `append_event`
+  入口接收 roam / rf_stir / latency_spike / loss_burst / link_state
+  五种事件。每行带类型前缀（`[漫游]` / `[扰动]` / `[延迟]` /
+  `[丢包]` / `[链路]`）。新增 `m` 键打开 `EventsScreen` 模态：
+  全屏浏览最近 100 条事件，可用 1/2/3/4/0 子键过滤，底部带各 AP σ
+  基线小表 + 最近一小时 σ 走势 sparkline。
+- **`wifiscope monitor` 与 `wifiscope calibrate` 子命令。** `monitor`
+  无 TUI 长时运行，向 stdout（或 `--out path.jsonl`）逐行输出 JSONL
+  事件，`--notify` 让高置信度事件触发 macOS 通知中心提醒。面向
+  Home Assistant / 日志管道集成。`calibrate` 采集可配置时长（默认
+  5 分钟）的「房间没人」基线 RSSI 样本，写入
+  `./wifiscope-baseline.json`；环境监测器启动时读这份文件，把诊断
+  行标签从默认的 `稳定 / 活跃` 切换到 `安静 / 活跃`。
+- **`WIFISCOPE_LATENCY_WAN_TARGET` 环境变量** 用于在一次性调用、
+  或 DNS 自动检测选错锚点的网络上手动指定 WAN 探针 IP。
+- **`make monitor` Makefile 目标**（`uv run wifiscope monitor` 的
+  快捷方式），便于发现。
+- **EventsScreen 预览 SVG**（英文 + 中文）让 README 也能展示模态
+  浏览器。原有 4 张 SVG（Wi-Fi + BLE × 英 + 中）保留；`make preview`
+  现在生成 6 张。
+- **40+ 项新测试，跨 4 个模块** 覆盖 ping 输出解析、尖峰 / 丢包风暴
+  探测、规范明确列出的 7 种 DNS 自动检测形态、刷新节奏、环境变量
+  覆盖、scutil 退路解析器、σ → 事件触发、模式分类、冗余融合、采集
+  往返、每种事件格式行，以及诊断面板包含两个新行 + 模态打开 / 关闭
+  流程。
+
+### 变更
+- 诊断面板现在是 7 行（原 5 行）：在原有可见网络 / 提醒 / 推荐信道 /
+  健康 / 评分之后追加 `Link` 与 `Environment`。
+- 「漫游日志」面板更名为「事件」—— 同位置、同高度、同样按时间排序的
+  环形缓冲，但接收所有 v0.7.0 事件类型。
+- ScanResult 数据类新增 `bss_load_pct` / `bss_station_count` /
+  `supports_802_11r` / `supports_802_11k` / `supports_802_11v`，
+  默认 None，所以 v2 helper / 旧版缓存扫描结果仍可解析。
+
+### 已知局限
+- 自适应基线会漂移 —— 6 点下班、第二天 8 点回来，那一阵子会触发
+  误报事件。在意的用户可以跑 `wifiscope calibrate` 校正。
+- `/sbin/ping` 只到毫秒精度；亚毫秒级有线 LAN 会读到 0 或 1 ms。
+- 丢包风暴检测最多滞后 5 秒（3 中 5 规则）。
+- 环境事件只是相关性，不是因果 —— 邻居 AP 重启也会触发一次 stir。
+- DNS 自动检测忽略 DoH / DoT（Firefox 加密 DNS、Tailscale MagicDNS）；
+  我们 ping 的是 OS 解析器认为的上游，不一定是某个 App 实际用的。
+
 ## [0.6.0] — 2026-05-07
 
 「这到底是个什么设备 + 我现在到底连着什么」版本。这是 v0.5.0 BLE
