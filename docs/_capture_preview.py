@@ -143,15 +143,18 @@ _INVENTORY = NetworkInventory(
 def _synthetic_ble_devices(now: datetime) -> list[BLEDevice]:
     """A representative-feeling mix for the BLE preview.
 
-    Mirrors the device population the spec calls out (AirPods, Apple
-    Watch, smart-home gadgets, BLE keyboards, generic iBeacons). The
-    devices already reflect post-merge state: one (merged 3) row
-    demonstrates the rotated-UUID badge.
+    Mirrors the device population the v0.6.0 spec calls out: at least
+    one of each Tier-1 deep-ID category (iBeacon, AirTag, Eddystone,
+    Tile, Apple Nearby Info / iPhone), one Mi Band Heart Rate sensor
+    for service-category coverage, plus a privacy-rotating Apple
+    beacon to demonstrate the (merged N) badge. Connected peripherals
+    are returned separately by `_synthetic_ble_connected`.
     """
     def d(
         ident: str, *, name: str | None, vendor: str | None, vendor_id: int | None,
         services: tuple[str, ...], rssi: int, connectable: bool = True,
         ad_count: int = 4, age_s: int = 1, merged: int = 1,
+        type: str | None = None, device_class: str | None = None,
     ) -> BLEDevice:
         last = now - timedelta(seconds=age_s)
         return BLEDevice(
@@ -166,31 +169,94 @@ def _synthetic_ble_devices(now: datetime) -> list[BLEDevice]:
             last_seen=last,
             ad_count=ad_count,
             merged_count=merged,
+            type=type,
+            device_class=device_class,
         )
     return [
-        d("550e8400-e29b-41d4-a716-446655440000",
-          name="AirPods Pro", vendor="Apple, Inc.", vendor_id=76,
-          services=("180A",), rssi=-42, ad_count=12, age_s=1),
-        d("aabbccdd-1111-4111-8111-111122223333",
+        # Apple iPhone in the wild — Nearby Info advertising; the deep-ID
+        # nibble resolves to "iPhone" so it's no longer just "Apple, Inc.
+        # (anonymous)". The exemplar of v0.6.0's question-1 answer.
+        d("aaaa1234-5678-4abc-9def-000000000001",
           name=None, vendor="Apple, Inc.", vendor_id=76,
-          services=("FE9F",), rssi=-55, ad_count=8, age_s=2, merged=3),
-        d("11223344-5566-4877-8899-aabbccddeeff",
-          name="Magic Keyboard", vendor="Apple, Inc.", vendor_id=76,
-          services=("1812", "1124"), rssi=-58, ad_count=20, age_s=1),
-        d("99887766-aabb-4ccd-8eef-001122334455",
-          name="Galaxy Watch6", vendor="Samsung Electronics Co. Ltd.",
-          vendor_id=117,
-          services=("180D",), rssi=-63, ad_count=6, age_s=3),
-        d("deadbeef-cafe-4001-8002-feedface0000",
-          name="Tile Mate", vendor="Tile, Inc.", vendor_id=323,
-          services=("FEED",), rssi=-71, ad_count=15, age_s=4),
-        d("8b9c4f12-aaaa-4bbb-8ccc-dddddddddddd",
-          name=None, vendor="Microsoft", vendor_id=6,
-          services=(), rssi=-78, ad_count=3, age_s=5, connectable=False),
-        d("0a1b2c3d-4e5f-4111-8222-333444555666",
+          services=(), rssi=-44, ad_count=22, age_s=1,
+          device_class="iPhone"),
+        # AirTag — Apple type 0x12 + FD5A. The exemplar of v0.6.0's
+        # "label, not just vendor" win.
+        d("bbbb1234-5678-4abc-9def-000000000002",
+          name="AirTag", vendor="Apple, Inc.", vendor_id=76,
+          services=("FD5A",), rssi=-46, ad_count=8, age_s=2,
+          type="AirTag"),
+        # Generic iBeacon (Apple type 0x02). One of the most common BLE
+        # devices in any office space.
+        d("cccc1234-5678-4abc-9def-000000000003",
+          name=None, vendor="Apple, Inc.", vendor_id=76,
+          services=(), rssi=-52, ad_count=10, age_s=1,
+          type="iBeacon"),
+        # Eddystone-URL beacon (Google's open format).
+        d("dddd1234-5678-4abc-9def-000000000004",
           name=None, vendor=None, vendor_id=None,
-          services=("FFE0",), rssi=-86, ad_count=2, age_s=6,
+          services=("FEAA",), rssi=-58, ad_count=14, age_s=2,
+          type="Eddystone-URL"),
+        # Privacy-rotating Apple peripheral that the fuzzy merger
+        # collapsed three ways.
+        d("eeee1234-5678-4abc-9def-000000000005",
+          name=None, vendor="Apple, Inc.", vendor_id=76,
+          services=("FE9F",), rssi=-61, ad_count=8, age_s=3, merged=3),
+        # Mi Band 7 — Xiaomi Heart Rate sensor; service-category coverage.
+        d("ffff1234-5678-4abc-9def-000000000006",
+          name="Mi Band 7", vendor="Xiaomi, Inc.", vendor_id=637,
+          services=("180D",), rssi=-67, ad_count=6, age_s=2),
+        # Tile Mate.
+        d("11111234-5678-4abc-9def-000000000007",
+          name="Tile Mate", vendor="Tile, Inc.", vendor_id=323,
+          services=("FEED",), rssi=-72, ad_count=15, age_s=4,
+          type="Tile"),
+        # Anonymous beacon — neither vendor nor name; the merger leaves
+        # it alone per the conservative-merge policy.
+        d("22221234-5678-4abc-9def-000000000008",
+          name=None, vendor=None, vendor_id=None,
+          services=("FFE0",), rssi=-84, ad_count=2, age_s=6,
           connectable=False),
+    ]
+
+
+def _synthetic_ble_connected(now: datetime) -> list[BLEDevice]:
+    """Connected peripherals for the v0.6.0 'Connected' section.
+
+    These are devices the user is actively using right now — AirPods
+    they are listening to, a Magic Keyboard they are typing on. They do
+    not advertise; the helper enumerates them via
+    `retrieveConnectedPeripherals`. RSSI is missing by design (we never
+    `readRSSI()` against an active link), so the rendered column shows
+    `—`. Sort is alphabetic by name.
+    """
+    return [
+        BLEDevice(
+            identifier="cc000001-0000-4000-8000-000000000001",
+            name="AirPods Pro",
+            vendor=None,
+            vendor_id=None,
+            services=("110A", "110E"),
+            rssi_dbm=None,
+            is_connectable=True,
+            first_seen=now,
+            last_seen=now,
+            ad_count=0,
+            is_connected=True,
+        ),
+        BLEDevice(
+            identifier="cc000002-0000-4000-8000-000000000002",
+            name="Magic Keyboard",
+            vendor=None,
+            vendor_id=None,
+            services=("1812", "180F"),
+            rssi_dbm=None,
+            is_connectable=True,
+            first_seen=now,
+            last_seen=now,
+            ad_count=0,
+            is_connected=True,
+        ),
     ]
 
 
@@ -233,6 +299,7 @@ async def main() -> None:
             from wifiscope.tui import BLEPanel
             now_utc = datetime.now(timezone.utc)
             pilot.app._latest_ble = _synthetic_ble_devices(now_utc)
+            pilot.app._latest_ble_connected = _synthetic_ble_connected(now_utc)
             pilot.app._ble_permission_state = "granted"
             await pilot.press("n")
             await pilot.pause(0.3)
