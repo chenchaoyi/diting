@@ -716,8 +716,8 @@ _ZH: dict[str, str] = {
     "Glossary": "术语表",
     "  ·  the words wifiscope uses in the dashboard\n":
         "  ·  仪表盘里这些术语都是什么意思\n",
-    "  ·  every term wifiscope shows in the dashboard, plain-spoken\n":
-        "  ·  仪表盘里出现的每个术语，用人话讲清楚\n",
+    "  ·  every term wifiscope shows in the dashboard\n":
+        "  ·  仪表盘里出现的每个术语\n",
     "Wi-Fi": "Wi-Fi",
     "Link health": "链路健康",
     "RF environment": "RF 环境",

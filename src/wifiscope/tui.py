@@ -898,7 +898,7 @@ def _basics_content() -> tuple[Text, Text]:
 
     body.append(t("Glossary"), style="bold cyan")
     body.append(
-        t("  ·  every term wifiscope shows in the dashboard, plain-spoken\n"),
+        t("  ·  every term wifiscope shows in the dashboard\n"),
         style="dim",
     )
 
