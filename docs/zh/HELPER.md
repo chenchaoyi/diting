@@ -31,17 +31,22 @@ cd helper
 
 ## 安装
 
+把 `build.sh` 产出的 `helper/wifiscope-helper.app` 留在原位，授权一次
+即可：
+
 ```bash
-mv wifiscope-helper.app /Applications/   # 或 ~/Applications/
-open /Applications/wifiscope-helper.app
+open helper/wifiscope-helper.app
 ```
 
-`.app` 窗口出现后会请求「定位服务」，授权完成后会有提示。关闭窗口
-即可，wifiscope 日常使用不需要它一直开着。
+窗口会请求「定位服务」和「蓝牙」两项权限，逐一点 Allow 然后关闭窗口。
+下次运行 `wifiscope`，就地的 helper 包会被自动识别，不需要其它配置。
 
-也可以把 `.app` 留在仓库里 —— `wifiscope` 会搜索常见路径以及位于
-`helper/wifiscope-helper.app` 的开发者构建。设
-`WIFISCOPE_HELPER=/full/path/to/wifiscope-helper.app` 可强制指定路径。
+> 早期文档建议把 `.app` 移到 `/Applications/`，**现在不再推荐**。
+> TCC 按 cdhash 记录授权，移动包到新路径会创建一个新的 TCC 主体
+> 让你重新授权一次。**就地构建、就地授权、就地运行**最省事。
+
+如果确实想装到别处，用环境变量
+`WIFISCOPE_HELPER=/full/path/to/wifiscope-helper.app` 显式指定路径。
 
 ## wifiscope 如何找到它
 
@@ -49,9 +54,11 @@ open /Applications/wifiscope-helper.app
 按以下顺序解析辅助进程位置：
 
 1. `WIFISCOPE_HELPER` 环境变量（指向 `.app` 包或其二进制）
-2. `/Applications/wifiscope-helper.app`
-3. `~/Applications/wifiscope-helper.app`
-4. 与本 README 同级的 `helper/wifiscope-helper.app`（开发用途）
+2. `helper/wifiscope-helper.app`（本仓库内推荐位置 —— `build.sh`
+   就地产出，`open` 一下授权即可）
+3. `/Applications/wifiscope-helper.app`（兼容此指引变更前已经
+   移动过去的用户）
+4. `~/Applications/wifiscope-helper.app`（同上）
 
 找到之后，`scan()` 会执行 `<binary> scan` 并解析一份未隐藏的网络
 JSON 文档。如果找不到或子进程失败，backend 会回落到直接调用

@@ -580,11 +580,11 @@ def _run_tui() -> None:
     # pull in textual / rich on every invocation.
     from .tui import WifiScopeApp
 
-    # _ensure_helper_ready resolves the binary path AND, when it
-    # detects an installed helper that lacks `ble-scan`, falls back
-    # to a freshly-built in-repo bundle. We use whatever path it
-    # ends up with so the BLE poller does not re-pick the stale
-    # /Applications bundle that find_helper() would otherwise prefer.
+    # _ensure_helper_ready resolves the binary path AND, when the
+    # detected helper predates 0.5.0 (no `ble-scan` subcommand),
+    # falls back to a freshly-built in-repo bundle. We pass the
+    # path it returns through so the BLE poller does not re-pick
+    # whichever stale older copy find_helper() may still see.
     ble_binary = _ensure_helper_ready()
     backend = MacOSWiFiBackend()
     inv = load_inventory()
@@ -651,13 +651,12 @@ def _ensure_helper_ready() -> str | None:
         print()
         return None
 
-    # If the user installed wifiscope-helper.app at /Applications/ on
-    # 0.4.0 (the README's recommended location), find_helper() will
-    # surface that bundle even after the user has rebuilt the in-repo
-    # one for 0.5.0. The 0.4.0 bundle answers `scan` correctly but has
-    # no `ble-scan` subcommand, so spawning it for the BLE poller dies
-    # with rc=64 and the panel wedges. Detect the staleness up front
-    # and prefer a freshly-built repo bundle when available.
+    # 0.7.0 prefers the in-repo bundle, but a 0.4.0-era copy left in
+    # /Applications by older docs is still a valid fallback target.
+    # Such a bundle answers `scan` correctly but has no `ble-scan`
+    # subcommand, so spawning it for the BLE poller dies with rc=64
+    # and the panel wedges. Detect the staleness up front and rebuild
+    # the in-repo bundle when available.
     if not _helper.has_ble_scan_subcommand(binary):
         bundle = _helper.bundle_path(binary)
         print(t(

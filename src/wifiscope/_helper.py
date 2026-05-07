@@ -51,11 +51,18 @@ def find_helper() -> str | None:
     if override:
         return _resolve(Path(override).expanduser())
     candidates = [
+        # In-place developer build inside this repo — the recommended
+        # install location since 0.7.0. ``wifiscope`` is typically
+        # installed editable so __file__ traces back to the source
+        # tree; ``build.sh`` produces the bundle here, the user grants
+        # once with ``open helper/wifiscope-helper.app``, and we pick
+        # it up automatically. Listed first so an old leftover bundle
+        # in /Applications cannot shadow a freshly-rebuilt local one.
+        Path(__file__).resolve().parents[2] / "helper" / "wifiscope-helper.app",
+        # Back-compat for users who moved the bundle into /Applications
+        # before the in-place flow was recommended; still works.
         Path("/Applications/wifiscope-helper.app"),
         Path("~/Applications/wifiscope-helper.app").expanduser(),
-        # Developer build inside this repo. wifiscope is typically
-        # installed editable so __file__ traces back to the source tree.
-        Path(__file__).resolve().parents[2] / "helper" / "wifiscope-helper.app",
     ]
     for c in candidates:
         resolved = _resolve(c)

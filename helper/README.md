@@ -34,18 +34,27 @@ Produces `helper/wifiscope-helper.app`.
 
 ## Install
 
+Just leave `wifiscope-helper.app` where `build.sh` produced it
+(`helper/wifiscope-helper.app`) and grant once:
+
 ```bash
-mv wifiscope-helper.app /Applications/   # or ~/Applications/
-open /Applications/wifiscope-helper.app
+open helper/wifiscope-helper.app
 ```
 
-The bundle window appears, requests Location Services, and tells you
-when the grant has landed. Close the window; you do not need it open
-during normal wifiscope use.
+The bundle window appears and requests Location Services + Bluetooth.
+Click Allow on each prompt, close the window. `wifiscope` auto-detects
+the in-place bundle on the next launch — no further setup.
 
-You can also leave the `.app` in this repo — `wifiscope` searches
-common locations *and* the developer build at `helper/wifiscope-helper.app`.
-Set `WIFISCOPE_HELPER=/full/path/to/wifiscope-helper.app` to override.
+> Earlier versions of this README suggested moving the bundle into
+> `/Applications/`. **That is no longer recommended.** TCC keys
+> permission grants by the bundle's cdhash, and copying / moving the
+> bundle changes neither the cdhash nor the grant *if* you re-run
+> `build.sh` over the same path — but a copy creates a second TCC
+> subject and forces you to re-grant. Easiest path: build in place,
+> grant in place, run in place.
+
+Override the location with `WIFISCOPE_HELPER=/full/path/to/wifiscope-helper.app`
+if you really do want to install it elsewhere.
 
 ## How wifiscope finds it
 
@@ -53,9 +62,11 @@ Set `WIFISCOPE_HELPER=/full/path/to/wifiscope-helper.app` to override.
 `src/wifiscope/_helper.py:find_helper`, in this order:
 
 1. `WIFISCOPE_HELPER` env var (path to bundle or binary)
-2. `/Applications/wifiscope-helper.app`
-3. `~/Applications/wifiscope-helper.app`
-4. The `helper/wifiscope-helper.app` next to this README (developer use)
+2. `helper/wifiscope-helper.app` next to this README (the recommended
+   location — `build.sh` produces it here, grant once with `open`)
+3. `/Applications/wifiscope-helper.app` (back-compat for users who
+   moved it there before this guidance changed)
+4. `~/Applications/wifiscope-helper.app` (same)
 
 If found, `scan()` shells out to `<binary> scan` and parses one JSON
 document of unredacted networks. If absent or the subprocess fails,
