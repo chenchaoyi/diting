@@ -4,7 +4,7 @@
 # keep the bilingual UI / docs workflow honest: a UI change always means
 # regenerating BOTH preview SVGs.
 
-.PHONY: help test test-all preview preview-en preview-zh preview-ble preview-ble-en preview-ble-zh preview-events preview-events-en preview-events-zh helper monitor snapshot update-vendors
+.PHONY: help test test-all test-system preview preview-en preview-zh preview-ble preview-ble-en preview-ble-zh preview-events preview-events-en preview-events-zh helper monitor snapshot update-vendors
 
 help:  ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -15,6 +15,9 @@ test:  ## Run the pytest suite
 test-all: test  ## Run pytest under both EN and ZH default-language settings
 	WIFISCOPE_LANG=zh uv run pytest -q
 	LANG=zh_CN.UTF-8 WIFISCOPE_LANG= uv run pytest -q
+
+test-system: test-all  ## Pytest + the TUI scenario regression (`wifiscope snapshot --check`). Non-zero on any assertion fail.
+	uv run wifiscope snapshot --out-dir snapshot-output --check
 
 preview: preview-en preview-zh preview-ble-en preview-ble-zh preview-events-en preview-events-zh  ## Regenerate ALL preview SVGs (Wi-Fi + BLE + Events modal, EN + ZH)
 

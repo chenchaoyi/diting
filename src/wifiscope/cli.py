@@ -526,7 +526,7 @@ async def _run_calibrate(args: list[str]) -> None:
 # ---------- analyze (rule-based JSONL log reader) ----------
 
 def _run_snapshot(args: list[str]) -> None:
-    """TUI self-test runner. Drives the dashboard through a designed
+    """TUI snapshot runner. Drives the dashboard through a designed
     set of scenarios using Textual's pilot, captures one screenshot
     per state, and surfaces both regression assertions and product-
     opportunity findings.
@@ -536,6 +536,8 @@ def _run_snapshot(args: list[str]) -> None:
         wifiscope snapshot --out-dir /tmp/x      # custom directory
         wifiscope snapshot --scenarios id1,id2   # subset
         wifiscope snapshot --json                # JSON to stdout (no console summary)
+        wifiscope snapshot --check               # exit non-zero on any assertion fail
+                                                 # — for CI / system-level regression
     """
     from . import snapshot as _snapshot
 
@@ -547,6 +549,7 @@ def _run_snapshot(args: list[str]) -> None:
         if scenarios_arg else None
     )
     json_only = "--json" in args
+    check_mode = "--check" in args
 
     report = _snapshot.run(out_dir, scenario_ids=scenario_ids)
 
@@ -564,6 +567,14 @@ def _run_snapshot(args: list[str]) -> None:
         print(_snapshot.render_console(report))
         print()
         print(t("note: full report at {path}", path=str(report_path)))
+
+    # --check mode: any assertion fail → exit non-zero so test-all /
+    # CI / make targets can treat the snapshot run as a real
+    # system-level regression check. Inspector findings are
+    # informational only and never gate the exit code; they're
+    # forward-looking suggestions, not regressions.
+    if check_mode and report["summary"]["asserts_failed"] > 0:
+        sys.exit(1)
 
 
 def _run_analyze(args: list[str]) -> None:
@@ -624,6 +635,8 @@ def _usage() -> str:
         "  snapshot    drive the TUI through designed scenarios + capture\n"
         "              screenshots + run inspector heuristics.\n"
         "              flags: --out-dir DIR  --scenarios id1,id2  --json\n"
+        "                     --check  (exit non-zero on assertion fail —\n"
+        "                              for CI / make test-system)\n"
         "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
         "              then to the system locale (zh_* → zh, anything else → en).\n"
         "  --log[PATH] also write JSONL events while the TUI runs. With no\n"
