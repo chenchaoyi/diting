@@ -323,7 +323,8 @@ def service_category(
     *,
     gatt: dict[str, str] | None = None,
     member: dict[str, str] | None = None,
-) -> str:
+    category_only: bool = False,
+) -> str | None:
     """Map a service UUID to a user-readable category, or pass through.
 
     Resolution order:
@@ -332,8 +333,15 @@ def service_category(
       2. ``gatt`` (full SIG 16-bit GATT services list — Battery,
          Device Information, Environmental Sensing, etc.).
       3. ``member`` (SIG-assigned member UUIDs — FDAA → Xiaomi,
-         FD2A → Sony Corporation, etc.).
-      4. Raw UUID as last resort.
+         FD2A → Sony Corporation, etc.). Skipped when
+         ``category_only`` is True; the member layer surfaces a
+         vendor (company) name, not a service-class label, so
+         callers building a "what kind of devices are around" list
+         (the BLE diagnostics Categories row) should not consult
+         it. Callers labelling the per-row services column DO want
+         it as a last-resort vendor hint.
+      4. Raw UUID as last resort, or ``None`` when ``category_only``
+         is True and nothing in layers 1–2 matched.
 
     ``gatt`` and ``member`` default to the bundled tables when
     omitted; tests can pass empty dicts to verify the hand-curated
@@ -348,6 +356,11 @@ def service_category(
     hit = gatt.get(short)
     if hit is not None:
         return hit
+    if category_only:
+        # Strict mode for the Categories breakdown: vendor names
+        # from the member-UUID layer would dilute the count,
+        # which is meant to read as device-class buckets only.
+        return None
     if member is None:
         member = load_member_uuids()
     hit = member.get(short)

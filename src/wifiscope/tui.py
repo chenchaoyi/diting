@@ -80,7 +80,16 @@ class ConnectionPanel(Static):
             self.update(Text(t("not associated"), style="dim italic"))
             return
         assert inv is not None
-        ap_name = inv.resolve(conn.bssid) or t("(unknown)")
+        # Inventory match wins; otherwise fall through to the
+        # auto-derived cluster label so the header reads
+        # consistent with the Nearby table next to it (which
+        # already shows ?XX:YY:ZZ for unmapped BSSIDs). Only when
+        # we have no BSSID at all does the panel show "(unknown)".
+        ap_name = (
+            inv.resolve(conn.bssid)
+            or (cluster_label(conn.bssid) if conn.bssid else None)
+            or t("(unknown)")
+        )
         band = band_label(conn.channel)
         header = Text()
         header.append(ap_name, style="bold cyan")
@@ -1810,15 +1819,17 @@ def _ble_categories_line(devices: list[BLEDevice]) -> Text:
         # categories; collapse to a set so a single Apple Watch
         # appearing under both Heart Rate and HID counts once per
         # bucket, never twice in the same one.
-        # service_category() returns the raw UUID for unmapped codes
-        # (e.g. 180A "Device Information"). Those would otherwise leak
-        # into the categories line as opaque hex, displacing useful
-        # named categories — filter to mapped names only and roll the
-        # rest into the "N other" tail.
+        # ``category_only=True`` keeps vendor names from the SIG
+        # member-UUID layer (FDAA → "Xiaomi Inc.") OUT of this
+        # count — the row is a device-class breakdown, not a
+        # vendor breakdown (the latter is a separate diagnostic
+        # row right above). Without the strict flag, FDxx-bearing
+        # rows would surface as "Xiaomi Inc. 2" alongside real
+        # categories like "Audio" and "iBeacon".
         cats: set[str] = set()
         for s in d.services:
-            cat = service_category(s)
-            if cat and cat != s.upper().replace("-", ""):
+            cat = service_category(s, category_only=True)
+            if cat:
                 cats.add(cat)
         # Schema-3 deep-ID labels (iBeacon, AirTag, Eddystone-URL, …)
         # contribute to the same bucket alongside service categories

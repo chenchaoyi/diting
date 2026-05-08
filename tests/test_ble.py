@@ -787,6 +787,27 @@ def test_service_category_unknown_uuid_still_passes_through():
     assert service_category(raw) == raw
 
 
+def test_service_category_strict_skips_member_uuid_layer():
+    """``category_only=True`` is the mode the BLE Categories
+    diagnostic row uses: it must NOT return vendor names from the
+    member-UUID layer (FDAA → "Xiaomi Inc.") because those would
+    pollute a row meant to read as device-class buckets only.
+    Returns None instead of the vendor name; categories of layers
+    1+2 (HID, Heart Rate, Battery, …) still resolve normally."""
+    # Vendor name from member layer → None in strict mode.
+    assert service_category("FDAA", category_only=True) is None
+    assert service_category("FD2A", category_only=True) is None
+    # Hand-curated and SIG-GATT layers still resolve.
+    assert service_category("180D", category_only=True) == "Heart Rate"
+    assert service_category("1812", category_only=True) == "HID"
+    assert service_category("180F", category_only=True) == "Battery"
+    # Unknown UUID → None (don't leak the raw hex into the categories
+    # breakdown).
+    assert service_category("1234", category_only=True) is None
+    # Default mode unchanged.
+    assert service_category("FDAA") == "Xiaomi Inc."
+
+
 def test_lookup_member_vendor_returns_none_for_no_match():
     """When the advertisement carries only random / private UUIDs,
     the member-UUID fallback must abstain rather than guess."""
