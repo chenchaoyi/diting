@@ -525,58 +525,6 @@ async def _run_calibrate(args: list[str]) -> None:
 
 # ---------- analyze (rule-based JSONL log reader) ----------
 
-def _run_snapshot(args: list[str]) -> None:
-    """TUI snapshot runner. Drives the dashboard through a designed
-    set of scenarios using Textual's pilot, captures one screenshot
-    per state, and surfaces both regression assertions and product-
-    opportunity findings.
-
-    Usage::
-        wifiscope snapshot                       # all scenarios → ./snapshot-output/
-        wifiscope snapshot --out-dir /tmp/x      # custom directory
-        wifiscope snapshot --scenarios id1,id2   # subset
-        wifiscope snapshot --json                # JSON to stdout (no console summary)
-        wifiscope snapshot --check               # exit non-zero on any assertion fail
-                                                 # — for CI / system-level regression
-    """
-    from . import snapshot as _snapshot
-
-    out_dir_str = _arg_value(args, "--out-dir") or "snapshot-output"
-    out_dir = Path(out_dir_str).expanduser().resolve()
-    scenarios_arg = _arg_value(args, "--scenarios")
-    scenario_ids = (
-        [s.strip() for s in scenarios_arg.split(",") if s.strip()]
-        if scenarios_arg else None
-    )
-    json_only = "--json" in args
-    check_mode = "--check" in args
-
-    report = _snapshot.run(out_dir, scenario_ids=scenario_ids)
-
-    # Write the JSON report alongside the screenshots regardless of
-    # the --json flag so users have a structured record to grep
-    # across runs.
-    report_path = out_dir / "snapshot-report.json"
-    report_path.write_text(
-        json.dumps(report, indent=2, ensure_ascii=False) + "\n"
-    )
-
-    if json_only:
-        print(json.dumps(report, indent=2, ensure_ascii=False))
-    else:
-        print(_snapshot.render_console(report))
-        print()
-        print(t("note: full report at {path}", path=str(report_path)))
-
-    # --check mode: any assertion fail → exit non-zero so test-all /
-    # CI / make targets can treat the snapshot run as a real
-    # system-level regression check. Inspector findings are
-    # informational only and never gate the exit code; they're
-    # forward-looking suggestions, not regressions.
-    if check_mode and report["summary"]["asserts_failed"] > 0:
-        sys.exit(1)
-
-
 def _run_analyze(args: list[str]) -> None:
     """Read a JSONL log and print rule-based insights.
 
@@ -632,11 +580,6 @@ def _usage() -> str:
         "              flags: --duration SECONDS\n"
         "  analyze     read a JSONL log and print rule-based insights.\n"
         "              With no PATH, uses the newest wifiscope-*.jsonl in cwd.\n"
-        "  snapshot    drive the TUI through designed scenarios + capture\n"
-        "              screenshots + run inspector heuristics.\n"
-        "              flags: --out-dir DIR  --scenarios id1,id2  --json\n"
-        "                     --check  (exit non-zero on assertion fail —\n"
-        "                              for CI / make test-system)\n"
         "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
         "              then to the system locale (zh_* → zh, anything else → en).\n"
         "  --log[PATH] also write JSONL events while the TUI runs. With no\n"
@@ -684,7 +627,6 @@ _LOG_DEFAULT = object()
 
 _KNOWN_SUBCOMMANDS = {
     "once", "watch", "monitor", "calibrate", "analyze", "analyse",
-    "snapshot",
 }
 
 
@@ -1017,9 +959,6 @@ def main() -> None:
         return
     if cmd == "analyze" or cmd == "analyse":
         _run_analyze(args[1:])
-        return
-    if cmd == "snapshot":
-        _run_snapshot(args[1:])
         return
     if cmd in ("-h", "--help"):
         print(_usage(), end="")

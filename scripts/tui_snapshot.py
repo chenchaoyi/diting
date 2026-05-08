@@ -38,18 +38,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from . import i18n
-from .backend import WiFiBackend
-from .ble import BLEDevice
-from .events import (
+from wifiscope import i18n
+from wifiscope.backend import WiFiBackend
+from wifiscope.ble import BLEDevice
+from wifiscope.events import (
     LatencySpikeEvent,
     LossBurstEvent,
     RFStirEvent,
 )
-from .latency import LatencyAggregate
-from .models import Connection, ScanResult
-from .network import APEntry, NetworkInventory
-from .poller import RoamEvent
+from wifiscope.latency import LatencyAggregate
+from wifiscope.models import Connection, ScanResult
+from wifiscope.network import APEntry, NetworkInventory
+from wifiscope.poller import RoamEvent
 
 
 # ---------- shared synthetic backends + inventory ----------
@@ -361,7 +361,7 @@ def _all_scenarios() -> list[Scenario]:
     each ``setup`` lambda is deferred until snapshot is actually
     invoked.
     """
-    from .tui import WifiScopeApp
+    from wifiscope.tui import WifiScopeApp
 
     def _build_good(*, lang: str = "en") -> "Any":
         i18n.set_lang(lang)
@@ -390,7 +390,7 @@ def _all_scenarios() -> list[Scenario]:
     async def _seed_link_and_events(pilot, ble_devices=None):
         """Common after-mount: inject link aggregates + a sample
         event so the events strip + diagnostics row aren't empty."""
-        from .tui import EnvironmentPanel, EventsPanel
+        from wifiscope.tui import EnvironmentPanel, EventsPanel
         await pilot.pause(2.0)
         env_panel = pilot.app.query_one("#env", EnvironmentPanel)
         link = (
@@ -424,7 +424,7 @@ def _all_scenarios() -> list[Scenario]:
             pilot.app._latest_ble = ble_devices
             pilot.app._latest_ble_connected = _ble_connected(datetime.now())
             pilot.app._ble_permission_state = "granted"
-            from .tui import BLEPanel
+            from wifiscope.tui import BLEPanel
             ble_panel = pilot.app.query_one(BLEPanel)
             ble_panel.update_devices(
                 ble_devices, _ble_connected(datetime.now()), "granted",
@@ -439,7 +439,7 @@ def _all_scenarios() -> list[Scenario]:
     async def _open_events_modal(pilot):
         await _seed_link_and_events(pilot)
         # Inject a richer event mix into the ring before opening.
-        from .tui import EventsPanel
+        from wifiscope.tui import EventsPanel
         events_panel = pilot.app.query_one("#roam", EventsPanel)
         now = datetime.now()
         for ev in (
@@ -790,3 +790,70 @@ def render_console(report: dict) -> str:
             if f["suggestion"]:
                 lines.append(f"        → {f['suggestion']}")
     return "\n".join(lines)
+
+
+# ---------- CLI entry point ----------
+
+def _arg_value(args: list[str], flag: str) -> str | None:
+    """Pop ``--flag VALUE`` (or ``--flag=VALUE``) and return VALUE,
+    or ``None`` if the flag is absent. Same shape as wifiscope's
+    other internal arg helpers — kept duplicated here so this
+    script has zero dependency on wifiscope's CLI internals.
+    """
+    for i, a in enumerate(args):
+        if a == flag:
+            if i + 1 >= len(args):
+                return None
+            return args[i + 1]
+        if a.startswith(flag + "="):
+            return a.split("=", 1)[1]
+    return None
+
+
+def _main(argv: list[str]) -> int:
+    """``python scripts/tui_snapshot.py [...]`` entry point.
+
+    Engineering tool — explicitly NOT a wifiscope subcommand. The
+    user-facing ``wifiscope`` CLI stays focused on real-time
+    dashboard / monitor / analyze functionality; capturing TUI
+    screenshots for regression and audit lives here in scripts/
+    alongside ``update_vendors.py`` and the preview-capture script.
+
+    Flags:
+        --out-dir DIR         output directory (default ./snapshot-output)
+        --scenarios id1,id2   subset of scenario ids (default: all)
+        --json                emit JSON to stdout instead of console summary
+        --check               exit 1 on any assertion failure (CI mode)
+    """
+    out_dir_str = _arg_value(argv, "--out-dir") or "snapshot-output"
+    out_dir = Path(out_dir_str).expanduser().resolve()
+    scenarios_arg = _arg_value(argv, "--scenarios")
+    scenario_ids = (
+        [s.strip() for s in scenarios_arg.split(",") if s.strip()]
+        if scenarios_arg else None
+    )
+    json_only = "--json" in argv
+    check_mode = "--check" in argv
+
+    report = run(out_dir, scenario_ids=scenario_ids)
+
+    report_path = out_dir / "snapshot-report.json"
+    report_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+    )
+
+    if json_only:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        print(render_console(report))
+        print()
+        print(f"note: full report at {report_path}")
+
+    if check_mode and report["summary"]["asserts_failed"] > 0:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(_main(sys.argv[1:]))

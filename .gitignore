@@ -49,9 +49,10 @@ aps.yaml
 # uncovered — that location was their choice.
 wifiscope-*.jsonl
 
-# `wifiscope snapshot` writes its captured screenshots + JSON report
-# under ./snapshot-output/ by default. Treat as ephemeral artefacts —
-# the canonical preview SVGs live under docs/ instead.
+# `scripts/tui_snapshot.py` (and the `/tui-audit` slash command) write
+# captured screenshots + JSON report under ./snapshot-output/ by default.
+# Treat as ephemeral artefacts — the canonical preview SVGs live under
+# docs/ instead.
 snapshot-output/
 
 # NOTE: do NOT ignore uv.lock or .python-version — both are committed for

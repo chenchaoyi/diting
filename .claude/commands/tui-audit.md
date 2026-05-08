@@ -43,8 +43,14 @@ file at once. Format:
 1. Run the prebuilt scenarios:
 
    ```bash
-   uv run wifiscope snapshot --out-dir /tmp/wfs-tui-audit
+   uv run python scripts/tui_snapshot.py --out-dir /tmp/wfs-tui-audit
    ```
+
+   (This is an engineering tool living under `scripts/`, not a
+   user-facing `wifiscope` subcommand. The user-facing CLI stays
+   focused on real-time dashboard / monitor / analyze; capturing
+   TUI screenshots for regression and audit lives separately so
+   the two surfaces don't blur.)
 
 2. `Read /tmp/wfs-tui-audit/snapshot-report.json`. Mechanical
    inspector findings already live there — copy them into your
@@ -79,7 +85,7 @@ Each iteration:
 
 2. **Pick the cheapest way to test it:**
    - **Existing scenario edit**: tweak data inside an existing
-     scenario in `src/wifiscope/snapshot.py` — quick.
+     scenario in `scripts/tui_snapshot.py` — quick.
    - **New scenario**: add a new entry to `_all_scenarios()`
      with the right backend / data / keystrokes. Keep the
      synthetic data minimal and self-explanatory.
@@ -91,7 +97,7 @@ Each iteration:
 3. **Capture**: re-run only the affected scenario:
 
    ```bash
-   uv run wifiscope snapshot --out-dir /tmp/wfs-tui-audit \
+   uv run python scripts/tui_snapshot.py --out-dir /tmp/wfs-tui-audit \
        --scenarios <new_or_modified_id>
    ```
 
@@ -112,7 +118,7 @@ When the loop exits, output to the chat:
 2. **Top 3 actionable items**: the highest-leverage findings
    with concrete file/function references.
 3. **New scenarios contributed**: list of ids the run added to
-   `src/wifiscope/snapshot.py`, so the user can decide whether
+   `scripts/tui_snapshot.py`, so the user can decide whether
    to keep / git-add them.
 4. **Pointer to the full findings file**:
    `/tmp/wfs-tui-audit/findings.md`.
