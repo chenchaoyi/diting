@@ -278,8 +278,14 @@ enum BLEAdParser {
                 }
             }
             if cid == companyMicrosoftID, bytes.count >= 3 {
-                if bytes[2] == 0x03 {
-                    return BLEDetection(type: "Swift Pair", deviceClass: nil)
+                // 0x01 = general device-discovery beacon (Phone Link /
+                // Nearby Sharing), 0x03 = Swift Pair. Both are
+                // documented public formats. Mirror the Python-side
+                // _MS_CDP_TYPE table byte-for-byte.
+                switch bytes[2] {
+                case 0x01: return BLEDetection(type: "MS device beacon", deviceClass: nil)
+                case 0x03: return BLEDetection(type: "Swift Pair", deviceClass: nil)
+                default: break
                 }
             }
             if cid == companySamsungID, services.contains("FD5A") {
@@ -361,6 +367,10 @@ enum BLEAdParser {
         case 0x0D: return "Tethering target"
         case 0x0E: return "Tethering source"
         case 0x0F: return "Nearby Action"
+        // 0x16 — accessory proximity broadcast, observed at high
+        // density in real Mac scans. Generic label; the encrypted
+        // tail is opaque so we don't claim more.
+        case 0x16: return "Apple Proximity"
         default: return nil
         }
     }

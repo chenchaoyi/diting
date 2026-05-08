@@ -727,6 +727,32 @@ def test_apple_type_0x12_with_localname_is_find_my_not_airtag():
     assert type_ == "AirTag"
 
 
+def test_apple_continuity_type_0x16_apple_proximity():
+    """Apple type 0x16 is the dominant Continuity type seen in
+    real-Mac scans (~30% of unlabelled Apple rows). Generic
+    "Apple Proximity" label so the row is no longer just "Apple
+    Inc. (unknown)"."""
+    obj = {
+        "manufacturer_id": 76,
+        "manufacturer_hex": "4c001608abcdef0123456789",
+    }
+    type_, _ = detect_advertisement(obj)
+    assert type_ == "Apple Proximity"
+
+
+def test_microsoft_cdp_type_0x01_device_beacon():
+    """Microsoft CDP type 0x01 is the general device-discovery
+    beacon used by Phone Link / Nearby Sharing — common in any
+    office with Windows laptops nearby. Previously left
+    unlabelled (only 0x03 Swift Pair was decoded)."""
+    obj = {
+        "manufacturer_id": 6,
+        "manufacturer_hex": "060001ab1234cd5678ef",
+    }
+    type_, _ = detect_advertisement(obj)
+    assert type_ == "MS device beacon"
+
+
 def test_apple_continuity_unknown_type_byte_passes_through():
     """Type bytes outside the documented set return (None, None) so
     the row falls back to vendor + service-category like before. This

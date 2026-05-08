@@ -423,6 +423,26 @@ _APPLE_CONTINUITY_TYPE: dict[int, str] = {
     0x0D: "Tethering target",
     0x0E: "Tethering source",
     0x0F: "Nearby Action",
+    # 0x16 — "Proximity Pair Encrypted" / accessory proximity
+    # broadcast, observed at high density in real Mac scans
+    # (~30% of unlabelled Apple rows in the dogfood capture). The
+    # exact semantics are not fully documented but the type byte
+    # itself is stable; surface a generic label rather than
+    # leaving the row blank.
+    0x16: "Apple Proximity",
+}
+
+
+# Microsoft Cross Device Platform (CDP) protocol type byte. Public
+# Microsoft docs and the broadcast-protocol reverse-engineering
+# community describe at least these two types. We previously only
+# decoded 0x03 (Swift Pair); 0x01 is the general device-discovery
+# beacon used by Phone Link / Nearby Sharing — common in any
+# office with Windows laptops nearby and significant in real-Mac
+# captures (every Surface/Windows machine in earshot).
+_MS_CDP_TYPE: dict[int, str] = {
+    0x01: "MS device beacon",
+    0x03: "Swift Pair",
 }
 
 
@@ -484,8 +504,9 @@ def detect_advertisement(obj: dict[str, Any]) -> tuple[str | None, str | None]:
             if label is not None:
                 return label, None
         if company_id == _COMPANY_MICROSOFT and len(mfg_bytes) >= 3:
-            if mfg_bytes[2] == 0x03:
-                return "Swift Pair", None
+            label = _MS_CDP_TYPE.get(mfg_bytes[2])
+            if label is not None:
+                return label, None
         if company_id == _COMPANY_SAMSUNG and "FD5A" in services:
             return "SmartTag", None
 

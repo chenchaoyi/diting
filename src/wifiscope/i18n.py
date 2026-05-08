@@ -341,6 +341,8 @@ _ZH: dict[str, str] = {
     "Tethering target": "热点共享端",
     "Tethering source": "热点客户端",
     "Nearby Action": "附近动作",
+    "Apple Proximity": "Apple 邻近",
+    "MS device beacon": "Microsoft 设备",
 
     # ---- CLI --help ----
     "usage: wifiscope [--lang en|zh] [--log [PATH]] [SUBCOMMAND]\n"
