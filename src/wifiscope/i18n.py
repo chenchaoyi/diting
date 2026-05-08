@@ -352,6 +352,11 @@ _ZH: dict[str, str] = {
     "              flags: --out FILE  --notify  --gateway IP  --wan IP\n"
     "  calibrate   record an empty-room RSSI baseline (default 300 s)\n"
     "              flags: --duration SECONDS\n"
+    "  analyze     read a JSONL log and print rule-based insights.\n"
+    "              With no PATH, uses the newest wifiscope-*.jsonl in cwd.\n"
+    "  selftest    drive the TUI through designed scenarios + capture\n"
+    "              screenshots + run inspector heuristics.\n"
+    "              flags: --out-dir DIR  --scenarios id1,id2  --json\n"
     "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
     "              then to the system locale (zh_* → zh, anything else → en).\n"
     "  --log[PATH] also write JSONL events while the TUI runs. With no\n"
@@ -369,6 +374,10 @@ _ZH: dict[str, str] = {
         "              选项：--out FILE  --notify  --gateway IP  --wan IP\n"
         "  calibrate   采集「房间没人」基线（默认 300 秒）\n"
         "              选项：--duration SECONDS\n"
+        "  analyze     读取 JSONL 日志，输出基于规则的洞察。\n"
+        "              不带 PATH 时使用 cwd 里最新的 wifiscope-*.jsonl。\n"
+        "  selftest    用预设场景驱动 TUI、截图、跑检查器启发式规则。\n"
+        "              选项：--out-dir DIR  --scenarios id1,id2  --json\n"
         "  --lang L    界面语言：en、zh。默认读 WIFISCOPE_LANG，\n"
         "              再退到系统 locale（zh_* → zh，其余 → en）。\n"
         "  --log[PATH] TUI 运行的同时把 JSONL 事件追加写入文件。不带\n"
@@ -1199,6 +1208,7 @@ _ZH: dict[str, str] = {
         "请提供路径：wifiscope analyze ~/wifi-20260507.jsonl",
     "wifiscope analyze: file not found: {path}":
         "wifiscope analyze：找不到文件：{path}",
+    "note: full report at {path}": "提示：完整报告：{path}",
     "Network change(s) detected": "检测到网络切换",
     "{n} gateway-IP transition(s) during this session: "
     "{moves}. Treat per-network statistics separately — "

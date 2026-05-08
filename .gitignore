@@ -49,5 +49,10 @@ aps.yaml
 # uncovered — that location was their choice.
 wifiscope-*.jsonl
 
+# `wifiscope selftest` writes its captured screenshots + JSON report
+# under ./selftest-output/ by default. Treat as ephemeral artefacts —
+# the canonical preview SVGs live under docs/ instead.
+selftest-output/
+
 # NOTE: do NOT ignore uv.lock or .python-version — both are committed for
 # reproducible installs (uv treats this as an application, not a library).

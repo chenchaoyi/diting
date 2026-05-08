@@ -525,6 +525,47 @@ async def _run_calibrate(args: list[str]) -> None:
 
 # ---------- analyze (rule-based JSONL log reader) ----------
 
+def _run_selftest(args: list[str]) -> None:
+    """TUI self-test runner. Drives the dashboard through a designed
+    set of scenarios using Textual's pilot, captures one screenshot
+    per state, and surfaces both regression assertions and product-
+    opportunity findings.
+
+    Usage::
+        wifiscope selftest                       # all scenarios → ./selftest-output/
+        wifiscope selftest --out-dir /tmp/x      # custom directory
+        wifiscope selftest --scenarios id1,id2   # subset
+        wifiscope selftest --json                # JSON to stdout (no console summary)
+    """
+    from . import selftest as _selftest
+
+    out_dir_str = _arg_value(args, "--out-dir") or "selftest-output"
+    out_dir = Path(out_dir_str).expanduser().resolve()
+    scenarios_arg = _arg_value(args, "--scenarios")
+    scenario_ids = (
+        [s.strip() for s in scenarios_arg.split(",") if s.strip()]
+        if scenarios_arg else None
+    )
+    json_only = "--json" in args
+
+    report = _selftest.run(out_dir, scenario_ids=scenario_ids)
+
+    # Write the JSON report alongside the screenshots regardless of
+    # the --json flag so users have a structured record to grep
+    # across runs.
+    report_path = out_dir / "selftest-report.json"
+    report_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+    )
+
+    if json_only:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        print(_selftest.render_console(report))
+        print()
+        print(t("note: full report at {path}", path=str(report_path)))
+
+
 def _run_analyze(args: list[str]) -> None:
     """Read a JSONL log and print rule-based insights.
 
@@ -580,6 +621,9 @@ def _usage() -> str:
         "              flags: --duration SECONDS\n"
         "  analyze     read a JSONL log and print rule-based insights.\n"
         "              With no PATH, uses the newest wifiscope-*.jsonl in cwd.\n"
+        "  selftest    drive the TUI through designed scenarios + capture\n"
+        "              screenshots + run inspector heuristics.\n"
+        "              flags: --out-dir DIR  --scenarios id1,id2  --json\n"
         "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
         "              then to the system locale (zh_* → zh, anything else → en).\n"
         "  --log[PATH] also write JSONL events while the TUI runs. With no\n"
@@ -627,6 +671,7 @@ _LOG_DEFAULT = object()
 
 _KNOWN_SUBCOMMANDS = {
     "once", "watch", "monitor", "calibrate", "analyze", "analyse",
+    "selftest",
 }
 
 
@@ -959,6 +1004,9 @@ def main() -> None:
         return
     if cmd == "analyze" or cmd == "analyse":
         _run_analyze(args[1:])
+        return
+    if cmd == "selftest":
+        _run_selftest(args[1:])
         return
     if cmd in ("-h", "--help"):
         print(_usage(), end="")

@@ -1,0 +1,792 @@
+"""TUI self-test harness — regression + product-opportunity exploration.
+
+Drives the TUI through a designed sequence of states using
+Textual's ``pilot`` API, captures one SVG screenshot per state,
+and runs a small rule-based inspector pass over each captured
+state to flag both regressions (assertions about visible content)
+and product opportunities (e.g. "30% of BLE rows show unknown
+vendor — expand the OUI map?").
+
+Two flavours of output for every run:
+
+  * One ``<scenario_id>.svg`` per scenario in the output dir (also
+    rendered to ``.png`` if the platform has ``qlmanage`` or
+    ``rsvg-convert`` available — purely for human inspection).
+  * One ``selftest-report.json`` with all assertions and findings,
+    plus a console summary.
+
+This module is checked in: it doubles as the regression suite for
+the visual layer (which the unit tests cannot meaningfully cover)
+and as a way for a contributor to systematically poke at edge
+cases, find UX issues, and propose product improvements without
+needing to physically sit in front of a Mac with twelve real APs.
+
+Adding a scenario is a single dict literal at the bottom of
+``SCENARIOS``; the runner takes care of pilot wiring, screenshot
+capture, language switching, and inspector dispatch.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import re
+import shutil
+import subprocess
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Awaitable, Callable
+
+from . import i18n
+from .backend import WiFiBackend
+from .ble import BLEDevice
+from .events import (
+    LatencySpikeEvent,
+    LossBurstEvent,
+    RFStirEvent,
+)
+from .latency import LatencyAggregate
+from .models import Connection, ScanResult
+from .network import APEntry, NetworkInventory
+from .poller import RoamEvent
+
+
+# ---------- shared synthetic backends + inventory ----------
+
+_INVENTORY = NetworkInventory(
+    aps=(
+        APEntry(name="1F-bedroom", mgmt_mac="aa:bb:cc:11:22:4f"),
+        APEntry(name="2F-living",  mgmt_mac="aa:bb:cc:33:44:0f"),
+        APEntry(name="3F-attic",   mgmt_mac="aa:bb:cc:55:66:07"),
+    ),
+)
+
+
+class _GoodBackend(WiFiBackend):
+    """Healthy connected state with a busy-but-OK home network."""
+    name = "macOS CoreWLAN"
+
+    def __init__(self) -> None:
+        self._helper_path = "/Applications/wifiscope-helper.app/Contents/MacOS/wifiscope-helper"
+
+    def get_connection(self) -> Connection:
+        return Connection(
+            ssid="Office-WiFi",
+            bssid="aa:bb:cc:11:22:53",
+            rssi_dbm=-58, noise_dbm=-95, tx_rate_mbps=360.0,
+            channel=48, channel_width_mhz=80, channel_band="5 GHz",
+            phy_mode="802.11ax", security="WPA2 Enterprise",
+            mcs_index=7, nss=2, timestamp=datetime.now(),
+            interface_mac="de:ad:be:ef:00:01", country_code="CN",
+            ip_address="192.168.1.42", router_ip="192.168.1.1",
+            max_link_speed_mbps=867,
+        )
+
+    def scan(self) -> list[ScanResult]:
+        ts = datetime.now()
+        rows = [
+            ("Office-WiFi",  "aa:bb:cc:11:22:53", -58, 48, 80, "WPA2 Enterprise", 78, True),
+            ("Office-Guest", "aa:bb:cc:11:22:54", -60, 48, 80, "Open",            None, None),
+            ("Office-WiFi",  "aa:bb:cc:33:44:13", -65, 36, 80, "WPA2 Enterprise", 22, True),
+            ("Office-WiFi",  "aa:bb:cc:55:66:0b", -70, 48, 80, "WPA2 Enterprise", 12, False),
+            ("guest-cafe",   "96:de:ad:be:ef:01", -75, 48, 20, "Open",            None, None),
+            ("neighbour-2g", "f2:11:22:33:44:55", -78,  6, 20, "WPA2 Personal",   None, None),
+        ]
+        return [
+            ScanResult(
+                ssid=ssid or None, bssid=bssid, rssi_dbm=rssi,
+                noise_dbm=-95, channel=ch, channel_width_mhz=width,
+                channel_band="5 GHz" if ch >= 32 else "2.4 GHz",
+                phy_mode=None, security=security, timestamp=ts,
+                country_code="CN", bss_load_pct=load,
+                supports_802_11r=ft,
+            )
+            for ssid, bssid, rssi, ch, width, security, load, ft in rows
+        ]
+
+    def permission_state(self) -> str:
+        return "granted"
+
+
+class _DisassociatedBackend(_GoodBackend):
+    """User disconnected from any Wi-Fi network."""
+    def get_connection(self) -> Connection:
+        return None  # type: ignore[return-value]
+
+    def scan(self) -> list[ScanResult]:
+        return []
+
+
+class _RedactedBackend(_GoodBackend):
+    """Helper not granted / Location Services denied: scan rows
+    have None SSID / BSSID like macOS 14.4+ produces."""
+    def scan(self) -> list[ScanResult]:
+        ts = datetime.now()
+        return [
+            ScanResult(
+                ssid=None, bssid=None, rssi_dbm=-58 - i,
+                noise_dbm=-95, channel=48, channel_width_mhz=80,
+                channel_band="5 GHz", phy_mode=None,
+                security="WPA2 Enterprise", timestamp=ts,
+                country_code="CN", bss_load_pct=None,
+                supports_802_11r=None,
+            )
+            for i in range(6)
+        ]
+
+    def permission_state(self) -> str:
+        return "denied"
+
+
+def _ble_devices_normal(now: datetime) -> list[BLEDevice]:
+    """Healthy BLE population — most rows have a vendor, some have a
+    device class, a couple have ``(unknown)`` to keep the inspector
+    honest."""
+    def d(ident, *, name, vendor, vendor_id, services, rssi,
+          ad_count=4, age_s=1, merged=1, type=None, device_class=None):
+        last = now - timedelta(seconds=age_s)
+        return BLEDevice(
+            identifier=ident, name=name, vendor=vendor, vendor_id=vendor_id,
+            services=services, rssi_dbm=rssi, is_connectable=True,
+            first_seen=last - timedelta(seconds=ad_count * 3),
+            last_seen=last, ad_count=ad_count, merged_count=merged,
+            type=type, device_class=device_class,
+        )
+    return [
+        d("aaaa1234-...01", name=None, vendor="Apple, Inc.", vendor_id=76,
+          services=(), rssi=-44, ad_count=22, device_class="iPhone"),
+        d("bbbb1234-...02", name="AirTag", vendor="Apple, Inc.", vendor_id=76,
+          services=("FD5A",), rssi=-46, type="AirTag"),
+        d("cccc1234-...03", name=None, vendor="Apple, Inc.", vendor_id=76,
+          services=(), rssi=-52, type="iBeacon"),
+        d("dddd1234-...04", name=None, vendor=None, vendor_id=None,
+          services=("FEAA",), rssi=-58, type="Eddystone-URL"),
+        d("eeee1234-...05", name=None, vendor="Apple, Inc.", vendor_id=76,
+          services=("FE9F",), rssi=-61, merged=3),
+        d("ffff1234-...06", name="Mi Band 7", vendor="Xiaomi, Inc.", vendor_id=637,
+          services=("180D",), rssi=-67),
+        d("11111234-...07", name="Tile Mate", vendor="Tile, Inc.", vendor_id=323,
+          services=("FEED",), rssi=-72, type="Tile"),
+        d("22221234-...08", name=None, vendor=None, vendor_id=None,
+          services=("FFE0",), rssi=-84),
+    ]
+
+
+def _ble_devices_unknown_heavy(now: datetime) -> list[BLEDevice]:
+    """Worst-case BLE population: 10 devices, 7 with ``vendor=None``
+    and ``name=None``. Stress test for the inspector's "could
+    improve vendor coverage" finding."""
+    def d(ident, *, name=None, vendor=None, services=(), rssi=-70):
+        return BLEDevice(
+            identifier=ident, name=name, vendor=vendor, vendor_id=None,
+            services=services, rssi_dbm=rssi, is_connectable=False,
+            first_seen=now - timedelta(seconds=30),
+            last_seen=now - timedelta(seconds=2),
+            ad_count=3, merged_count=1, type=None, device_class=None,
+        )
+    return [
+        d(f"unknown-{i:02d}", rssi=-50 - i * 5)
+        for i in range(7)
+    ] + [
+        d("known-iphone", vendor="Apple, Inc.", rssi=-45),
+        d("known-tile", name="Tile Mate", vendor="Tile, Inc.",
+          services=("FEED",), rssi=-65),
+        d("known-mi", name="Mi Band 7", vendor="Xiaomi, Inc.",
+          services=("180D",), rssi=-72),
+    ]
+
+
+def _ble_connected(now: datetime) -> list[BLEDevice]:
+    return [
+        BLEDevice(
+            identifier="38-09-fb-0b-be-60", name="AirPods Pro",
+            vendor="Apple, Inc.", vendor_id=None, services=("110A",),
+            rssi_dbm=None, is_connectable=True, first_seen=now,
+            last_seen=now, ad_count=0, is_connected=True,
+        ),
+        BLEDevice(
+            identifier="8c-85-90-f1-d0-cd", name="Magic Keyboard",
+            vendor="Apple, Inc.", vendor_id=None, services=("1812",),
+            rssi_dbm=None, is_connectable=True, first_seen=now,
+            last_seen=now, ad_count=0, is_connected=True,
+        ),
+    ]
+
+
+# ---------- scenarios ----------
+
+@dataclass(frozen=True)
+class Scenario:
+    """One TUI state to capture + check.
+
+    ``setup`` builds the WifiScopeApp. ``after_mount`` runs inside
+    the pilot context after the app's first connection / scan have
+    landed; this is where we inject synthetic BLE / events / link
+    aggregates and drive any keystrokes that change the view.
+    ``assertions`` is a list of ``(label, predicate)`` tuples
+    against the captured SVG text; ``inspectors`` is a list of
+    callables that receive the running app + captured text and
+    yield :class:`Finding` items.
+    """
+    id: str
+    description: str
+    lang: str                          # 'en' | 'zh'
+    setup: Callable[[], "Any"]         # returns WifiScopeApp
+    after_mount: Callable[..., Awaitable[None]] | None = None
+    assertions: tuple[tuple[str, Callable[[str], bool]], ...] = ()
+    inspectors: tuple[Callable[..., list["Finding"]], ...] = ()
+
+
+@dataclass(frozen=True)
+class Finding:
+    """One observation from an inspector pass.
+
+    ``severity`` is ``info`` | ``note`` | ``warn``. ``message`` is
+    short; ``suggestion`` is the actionable line shown in the
+    report.
+    """
+    severity: str
+    message: str
+    suggestion: str = ""
+
+
+# ---------- inspectors ----------
+
+def _inspect_ble_unknown_vendors(app: "Any", *_args) -> list[Finding]:
+    """Count BLE rows lacking a resolved vendor. High ratio is the
+    user's specific complaint about real-Mac scans."""
+    devices = list(getattr(app, "_latest_ble", []) or [])
+    if not devices:
+        return []
+    unknown = sum(1 for d in devices if not d.vendor)
+    ratio = unknown / len(devices)
+    if ratio >= 0.30:
+        return [Finding(
+            severity="warn",
+            message=(
+                f"{unknown}/{len(devices)} BLE rows have unknown vendor "
+                f"({ratio:.0%}). Real-Mac scans tend to look like this "
+                f"because the bundled OUI map is curated, not exhaustive."
+            ),
+            suggestion=(
+                "Expand src/wifiscope/data/wifi_ouis.json with more "
+                "common consumer + Bluetooth-accessory OUIs, or fetch "
+                "the full IEEE OUI registry into a parallel data file."
+            ),
+        )]
+    if ratio >= 0.15:
+        return [Finding(
+            severity="note",
+            message=(
+                f"{unknown}/{len(devices)} BLE rows have unknown "
+                f"vendor ({ratio:.0%}). Acceptable but improvable."
+            ),
+        )]
+    return []
+
+
+def _inspect_ble_no_name_no_type(app: "Any", *_args) -> list[Finding]:
+    """A row with neither name nor type / device_class is unhelpful
+    to the user. Could point at a deep-ID gap (Apple Continuity
+    type byte we haven't decoded yet, etc.)."""
+    devices = list(getattr(app, "_latest_ble", []) or [])
+    if not devices:
+        return []
+    blank = [
+        d for d in devices
+        if not d.name and not d.type and not d.device_class
+    ]
+    if len(blank) >= 3:
+        return [Finding(
+            severity="note",
+            message=(
+                f"{len(blank)} BLE rows have neither name nor a "
+                f"deep-ID label. The user is left with just an RSSI "
+                f"and a vendor guess."
+            ),
+            suggestion=(
+                "Consider parsing more Apple Continuity type bytes "
+                "(0x05/0x06/0x10/etc) or Microsoft CDP packets in "
+                "BLEAdParser.detect."
+            ),
+        )]
+    return []
+
+
+def _inspect_redacted_scan(_app: "Any", text: str) -> list[Finding]:
+    """If the captured SVG carries the redacted placeholder, the
+    helper isn't doing its job — flag it loudly."""
+    markers = ["(redacted)", "(已遮蔽)", "(redact"]
+    if any(m in text for m in markers):
+        return [Finding(
+            severity="warn",
+            message=(
+                "Scan list shows redacted SSID / BSSID — the Swift "
+                "helper bundle has not been granted Location Services."
+            ),
+            suggestion=(
+                "Run `open helper/wifiscope-helper.app` once, click "
+                "Allow on the macOS prompt, then relaunch wifiscope."
+            ),
+        )]
+    return []
+
+
+def _inspect_environment_silent(app: "Any", *_args) -> list[Finding]:
+    """The Diagnostics panel renders an Environment row even with
+    no σ data; if we expected stir events but got none, surface."""
+    monitor = getattr(app, "_environment_monitor", None)
+    if monitor is None:
+        return []  # disabled by scenario, not a finding
+    history = sum(
+        len(state.get("history", [])) for state in monitor._state.values()
+    )
+    if history == 0:
+        return [Finding(
+            severity="info",
+            message=(
+                "Environment monitor has no RSSI samples yet; stir "
+                "events cannot fire until the rolling window fills."
+            ),
+        )]
+    return []
+
+
+# ---------- the registry ----------
+
+def _all_scenarios() -> list[Scenario]:
+    """Return the full list. Defined as a function rather than a
+    module-level list so the heavy ``WifiScopeApp`` import inside
+    each ``setup`` lambda is deferred until selftest is actually
+    invoked.
+    """
+    from .tui import WifiScopeApp
+
+    def _build_good(*, lang: str = "en") -> "Any":
+        i18n.set_lang(lang)
+        return WifiScopeApp(
+            _GoodBackend(), _INVENTORY,
+            ble_helper_path="",
+            enable_latency=False, enable_environment=False,
+        )
+
+    def _build_disassociated() -> "Any":
+        i18n.set_lang("en")
+        return WifiScopeApp(
+            _DisassociatedBackend(), _INVENTORY,
+            ble_helper_path="",
+            enable_latency=False, enable_environment=False,
+        )
+
+    def _build_redacted() -> "Any":
+        i18n.set_lang("en")
+        return WifiScopeApp(
+            _RedactedBackend(), _INVENTORY,
+            ble_helper_path="",
+            enable_latency=False, enable_environment=False,
+        )
+
+    async def _seed_link_and_events(pilot, ble_devices=None):
+        """Common after-mount: inject link aggregates + a sample
+        event so the events strip + diagnostics row aren't empty."""
+        from .tui import EnvironmentPanel, EventsPanel
+        await pilot.pause(2.0)
+        env_panel = pilot.app.query_one("#env", EnvironmentPanel)
+        link = (
+            LatencyAggregate(
+                target="router", target_ip="192.168.1.1",
+                rtt_ms=14.0, loss_pct=0.0, jitter_ms=2.0, sample_count=30,
+            ),
+            LatencyAggregate(
+                target="wan", target_ip="1.1.1.1",
+                rtt_ms=22.0, loss_pct=0.0, jitter_ms=3.0, sample_count=30,
+            ),
+            None,
+        )
+        env = ("stable", 1.4, None)
+        env_panel.update_environment(
+            pilot.app._cached_scan, pilot.app._latest_connection,
+            link=link, env=env,
+        )
+        events_panel = pilot.app.query_one("#roam", EventsPanel)
+        events_panel.append_event(
+            RFStirEvent(
+                timestamp=datetime.now(),
+                bssid="aa:bb:cc:11:22:53",
+                location="1F-bedroom",
+                magnitude_db=8.3, duration_s=12.0,
+                confidence="high", mode="co_located",
+            ),
+            _INVENTORY,
+        )
+        if ble_devices is not None:
+            pilot.app._latest_ble = ble_devices
+            pilot.app._latest_ble_connected = _ble_connected(datetime.now())
+            pilot.app._ble_permission_state = "granted"
+            from .tui import BLEPanel
+            ble_panel = pilot.app.query_one(BLEPanel)
+            ble_panel.update_devices(
+                ble_devices, _ble_connected(datetime.now()), "granted",
+            )
+        await pilot.pause(0.3)
+
+    async def _switch_to_ble(pilot, *, ble_devices):
+        await _seed_link_and_events(pilot, ble_devices=ble_devices)
+        await pilot.press("n")
+        await pilot.pause(0.3)
+
+    async def _open_events_modal(pilot):
+        await _seed_link_and_events(pilot)
+        # Inject a richer event mix into the ring before opening.
+        from .tui import EventsPanel
+        events_panel = pilot.app.query_one("#roam", EventsPanel)
+        now = datetime.now()
+        for ev in (
+            RoamEvent(
+                timestamp=now,
+                previous_bssid="aa:bb:cc:33:44:13", previous_channel=36,
+                new_bssid="aa:bb:cc:11:22:53", new_channel=48,
+            ),
+            LatencySpikeEvent(
+                timestamp=now, target="router",
+                target_ip="192.168.1.1", rtt_ms=412.0, loss_pct=25.0,
+            ),
+            LossBurstEvent(
+                timestamp=now, target="wan", target_ip="1.1.1.1",
+                loss_pct=80.0, lost_in_window=4,
+            ),
+        ):
+            events_panel.append_event(ev, _INVENTORY)
+        await pilot.press("m")
+        await pilot.pause(0.3)
+
+    async def _open_help(pilot):
+        await _seed_link_and_events(pilot)
+        await pilot.press("h")
+        await pilot.pause(0.3)
+
+    async def _open_basics(pilot):
+        await _seed_link_and_events(pilot)
+        await pilot.press("b")
+        await pilot.pause(0.3)
+
+    async def _pause_polling(pilot):
+        await _seed_link_and_events(pilot)
+        await pilot.press("p")
+        await pilot.pause(0.3)
+
+    return [
+        Scenario(
+            id="wifi_main_en",
+            description="Connected, scan list populated, English UI.",
+            lang="en",
+            setup=lambda: _build_good(lang="en"),
+            after_mount=_seed_link_and_events,
+            assertions=(
+                ("AP name visible", lambda t: "1F-bedroom" in t),
+                ("Diagnostics row", lambda t: "Link" in t and "Environment" in t),
+                ("Events panel header", lambda t: "Events" in t),
+            ),
+            inspectors=(
+                _inspect_environment_silent,
+            ),
+        ),
+        Scenario(
+            id="wifi_main_zh",
+            description="Connected, scan list populated, Chinese UI.",
+            lang="zh",
+            setup=lambda: _build_good(lang="zh"),
+            after_mount=_seed_link_and_events,
+            assertions=(
+                ("Connection panel CN", lambda t: "连接" in t),
+                ("Link row CN", lambda t: "链路" in t),
+                ("Events panel CN", lambda t: "事件" in t),
+            ),
+            inspectors=(),
+        ),
+        Scenario(
+            id="wifi_disassociated",
+            description="No active Wi-Fi connection.",
+            lang="en",
+            setup=_build_disassociated,
+            after_mount=None,
+            assertions=(
+                ("not associated label", lambda t: "not associated" in t),
+            ),
+            inspectors=(),
+        ),
+        Scenario(
+            id="wifi_redacted",
+            description="Helper not granted; SSID/BSSID redacted.",
+            lang="en",
+            setup=_build_redacted,
+            after_mount=_seed_link_and_events,
+            assertions=(),
+            inspectors=(_inspect_redacted_scan,),
+        ),
+        Scenario(
+            id="ble_normal",
+            description="BLE view with a healthy device population.",
+            lang="en",
+            setup=lambda: _build_good(lang="en"),
+            after_mount=lambda pilot: _switch_to_ble(
+                pilot, ble_devices=_ble_devices_normal(datetime.now()),
+            ),
+            assertions=(
+                ("BLE panel header", lambda t: "Nearby BLE" in t or "BLE" in t),
+                ("AirTag visible", lambda t: "AirTag" in t),
+            ),
+            inspectors=(
+                _inspect_ble_unknown_vendors,
+                _inspect_ble_no_name_no_type,
+            ),
+        ),
+        Scenario(
+            id="ble_unknown_heavy",
+            description="BLE view stress test — most rows lack vendor.",
+            lang="en",
+            setup=lambda: _build_good(lang="en"),
+            after_mount=lambda pilot: _switch_to_ble(
+                pilot, ble_devices=_ble_devices_unknown_heavy(datetime.now()),
+            ),
+            assertions=(),
+            inspectors=(
+                _inspect_ble_unknown_vendors,
+                _inspect_ble_no_name_no_type,
+            ),
+        ),
+        Scenario(
+            id="events_modal",
+            description="Events modal with one of every event type.",
+            lang="en",
+            setup=lambda: _build_good(lang="en"),
+            after_mount=_open_events_modal,
+            assertions=(
+                ("filter hint visible",
+                 lambda t: "filter" in t.lower() or "Esc" in t),
+            ),
+            inspectors=(),
+        ),
+        Scenario(
+            id="help_modal",
+            description="Help modal at the top of its scroll.",
+            lang="en",
+            setup=lambda: _build_good(lang="en"),
+            after_mount=_open_help,
+            assertions=(
+                # Top-of-scroll content. "Subcommands" is several
+                # screens down — only PgDn scenarios should assert on it.
+                ("Panels section heading", lambda t: "Panels" in t),
+                ("Bindings section heading", lambda t: "Bindings" in t),
+            ),
+            inspectors=(),
+        ),
+        Scenario(
+            id="basics_modal",
+            description="Basics / glossary modal.",
+            lang="en",
+            setup=lambda: _build_good(lang="en"),
+            after_mount=_open_basics,
+            assertions=(
+                ("Wi-Fi section", lambda t: "SSID" in t),
+            ),
+            inspectors=(),
+        ),
+        Scenario(
+            id="paused_polling",
+            description="User pressed `p` — polling paused.",
+            lang="en",
+            setup=lambda: _build_good(lang="en"),
+            after_mount=_pause_polling,
+            assertions=(),
+            inspectors=(),
+        ),
+    ]
+
+
+# ---------- runner ----------
+
+async def _capture_one(scenario: Scenario, out_dir: Path) -> dict:
+    """Run one scenario end-to-end, return its report row."""
+    app = scenario.setup()
+    svg_path = out_dir / f"{scenario.id}.svg"
+    text_for_assertions = ""
+    findings: list[Finding] = []
+
+    async with app.run_test(size=(160, 56)) as pilot:
+        if scenario.after_mount is not None:
+            await scenario.after_mount(pilot)
+        else:
+            await pilot.pause(2.0)
+        out = pilot.app.export_screenshot(title=f"wifiscope · {scenario.id}")
+        out = _fix_cjk_textlength(out)
+        svg_path.write_text(out)
+        text_for_assertions = _extract_text(out)
+        # Run inspectors with the live pilot.app and the captured
+        # text so each can choose which surface to look at.
+        for ins in scenario.inspectors:
+            findings.extend(ins(pilot.app, text_for_assertions))
+
+    # Run assertions.
+    assertion_rows: list[dict] = []
+    for label, predicate in scenario.assertions:
+        passed = bool(predicate(text_for_assertions))
+        assertion_rows.append({"label": label, "passed": passed})
+
+    # Best-effort PNG render for human inspection.
+    png_path = _maybe_render_png(svg_path)
+
+    return {
+        "id": scenario.id,
+        "description": scenario.description,
+        "lang": scenario.lang,
+        "svg": str(svg_path),
+        "png": str(png_path) if png_path else None,
+        "assertions": assertion_rows,
+        "findings": [
+            {
+                "severity": f.severity,
+                "message": f.message,
+                "suggestion": f.suggestion,
+            }
+            for f in findings
+        ],
+    }
+
+
+def _maybe_render_png(svg_path: Path) -> Path | None:
+    """Render SVG → PNG using whichever local tool is available.
+    macOS `qlmanage` is preferred; falls back to `rsvg-convert`,
+    then gives up silently."""
+    target_dir = svg_path.parent
+    if shutil.which("qlmanage"):
+        try:
+            subprocess.run(
+                ["qlmanage", "-t", "-s", "1600", "-o", str(target_dir),
+                 str(svg_path)],
+                check=False, capture_output=True, timeout=30,
+            )
+            generated = target_dir / f"{svg_path.name}.png"
+            if generated.is_file():
+                final = svg_path.with_suffix(".png")
+                generated.replace(final)
+                return final
+        except (subprocess.SubprocessError, OSError):
+            pass
+    if shutil.which("rsvg-convert"):
+        try:
+            png_path = svg_path.with_suffix(".png")
+            subprocess.run(
+                ["rsvg-convert", "-w", "1600", str(svg_path),
+                 "-o", str(png_path)],
+                check=False, capture_output=True, timeout=30,
+            )
+            if png_path.is_file():
+                return png_path
+        except (subprocess.SubprocessError, OSError):
+            pass
+    return None
+
+
+# Mirror of docs/_capture_preview.py:_fix_cjk_textlength — Textual
+# writes textLength using len(body) (code-point count), which
+# compresses CJK glyphs to half their natural width. We rewrite
+# textLength to cell_len(body) * cell_width so wide glyphs render
+# correctly. Cell width 12.2 px is Textual's SVG default; verified
+# in the preview captures committed under docs/.
+_SVG_TEXT_RX = re.compile(
+    r'(<text[^>]*\btextLength=")([0-9.]+)("[^>]*>)([^<]*)(</text>)'
+)
+
+
+def _fix_cjk_textlength(svg: str, cell_width_px: float = 12.2) -> str:
+    import html
+    from rich.cells import cell_len
+
+    def _rewrite(match: re.Match) -> str:
+        prefix, _old_len, mid, body, suffix = match.groups()
+        decoded = html.unescape(body)
+        new_len = cell_len(decoded) * cell_width_px
+        return f"{prefix}{new_len:g}{mid}{body}{suffix}"
+
+    return _SVG_TEXT_RX.sub(_rewrite, svg)
+
+
+def _extract_text(svg: str) -> str:
+    """Concatenate every ``<text>...</text>`` body. Used for both
+    assertion predicates and the redacted-scan inspector."""
+    parts = re.findall(r'>([^<>]+)<', svg)
+    return " ".join(p.replace("&#160;", " ") for p in parts)
+
+
+async def run_async(
+    out_dir: Path,
+    *,
+    scenario_ids: list[str] | None = None,
+) -> dict:
+    """Run all scenarios (or a subset by id), return the report
+    dict. Caller decides what to do with it (print, write to JSON,
+    pipe through a CI gate, …).
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    scenarios = _all_scenarios()
+    if scenario_ids:
+        scenarios = [s for s in scenarios if s.id in set(scenario_ids)]
+    rows: list[dict] = []
+    for s in scenarios:
+        rows.append(await _capture_one(s, out_dir))
+    summary = {
+        "total": len(rows),
+        "asserts_passed": sum(
+            1 for r in rows for a in r["assertions"] if a["passed"]
+        ),
+        "asserts_failed": sum(
+            1 for r in rows for a in r["assertions"] if not a["passed"]
+        ),
+        "findings": sum(len(r["findings"]) for r in rows),
+    }
+    return {
+        "ts": datetime.now(timezone.utc).astimezone().isoformat(),
+        "out_dir": str(out_dir),
+        "summary": summary,
+        "scenarios": rows,
+    }
+
+
+def run(
+    out_dir: Path,
+    *,
+    scenario_ids: list[str] | None = None,
+) -> dict:
+    """Sync wrapper around :func:`run_async`."""
+    return asyncio.run(run_async(out_dir, scenario_ids=scenario_ids))
+
+
+def render_console(report: dict) -> str:
+    """Format the report for stdout — short, action-oriented."""
+    lines: list[str] = []
+    lines.append(f"wifiscope selftest — {report['ts']}")
+    lines.append(f"output: {report['out_dir']}")
+    s = report["summary"]
+    lines.append(
+        f"scenarios: {s['total']}  ·  "
+        f"asserts: {s['asserts_passed']} passed / "
+        f"{s['asserts_failed']} failed  ·  "
+        f"findings: {s['findings']}"
+    )
+    lines.append("=" * 60)
+    for row in report["scenarios"]:
+        marker = "✓" if all(a["passed"] for a in row["assertions"]) else "✗"
+        lines.append(f"{marker} {row['id']:<22} {row['description']}")
+        for a in row["assertions"]:
+            tag = "  pass" if a["passed"] else "  FAIL"
+            lines.append(f"    {tag}: {a['label']}")
+        for f in row["findings"]:
+            sev = {"warn": "[!]", "note": "[*]", "info": "[i]"}.get(
+                f["severity"], "[i]",
+            )
+            lines.append(f"    {sev} {f['message']}")
+            if f["suggestion"]:
+                lines.append(f"        → {f['suggestion']}")
+    return "\n".join(lines)
