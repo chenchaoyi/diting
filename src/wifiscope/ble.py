@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -295,6 +296,100 @@ def load_member_uuids(path: Path | None = None) -> dict[str, str]:
     return _load_uuid_table(path or _MEMBER_UUIDS_PATH)
 
 
+# Name-pattern → vendor inference. Last-resort fallback for the
+# real-world cases where a device broadcasts a recognisable brand
+# string in its localName field but either (a) carries no
+# manufacturer-data company-id, (b) uses a private / unassigned
+# cid the SIG hasn't published, or (c) only carries vendor-private
+# 128-bit service UUIDs we cannot map. Examples observed in real
+# Mac scans: a Jabra Elite 8 Active broadcasting cid 14666 (not
+# in SIG's public list); a Mi Smart Band 6 broadcasting only a
+# private 128-bit service UUID; a MOMAX charger broadcasting only
+# its localName. Patterns are anchored at the start of the name
+# (^) for high-precision brand identification — substring match
+# would over-claim ("Apple-Pie-Recipe" should not vendor-resolve
+# to Apple).
+_NAME_PATTERN_VENDORS: tuple[tuple[str, str], ...] = (
+    # Audio
+    (r"^LE-Jabra\b", "Jabra (GN Audio)"),
+    (r"^Jabra\b", "Jabra (GN Audio)"),
+    (r"^Galaxy Buds\b", "Samsung"),
+    (r"^Galaxy Watch\b", "Samsung"),
+    (r"^Galaxy ", "Samsung"),
+    (r"^WH-\d", "Sony"),                 # Sony WH-1000XM, etc
+    (r"^WF-\d", "Sony"),                 # Sony WF earbuds
+    (r"^LE_WH-\d", "Sony"),              # LE-prefixed variant
+    (r"^Bose\b", "Bose"),
+    (r"^Beats\b", "Apple (Beats)"),
+    (r"^Sennheiser\b", "Sennheiser"),
+    (r"^JBL\b", "JBL (Harman)"),
+    (r"^UGREEN\b", "UGREEN"),
+    (r"^Anker\b", "Anker"),
+    (r"^Soundcore\b", "Anker (Soundcore)"),
+    # Wearables / fitness
+    (r"^Mi (Smart )?Band\b", "Xiaomi"),
+    (r"^Mi Watch\b", "Xiaomi"),
+    (r"^Redmi (Watch|Buds)\b", "Xiaomi (Redmi)"),
+    (r"^Polar\b", "Polar Electro Oy"),
+    (r"^H10\b", "Polar Electro Oy"),
+    (r"^Fitbit\b", "Google (Fitbit)"),
+    (r"^Garmin\b", "Garmin"),
+    (r"^OURA\b", "Oura"),
+    (r"^Forerunner\b", "Garmin"),
+    (r"^Versa\b", "Google (Fitbit)"),
+    # Phones / tablets that surface a useful name
+    (r"^iPhone\b", "Apple, Inc."),
+    (r"^iPad\b", "Apple, Inc."),
+    (r"^MacBook\b", "Apple, Inc."),
+    (r"^Mac mini\b", "Apple, Inc."),
+    (r"^HUAWEI\b", "Huawei"),
+    (r"^Honor\b", "Honor"),
+    (r"^OPPO\b", "OPPO"),
+    (r"^OnePlus\b", "OnePlus"),
+    (r"^vivo\b", "vivo"),
+    (r"^realme\b", "realme"),
+    # Charging accessories
+    (r"^MOMAX\b", "MOMAX"),
+    (r"^Anker\b", "Anker"),
+    (r"^UGREEN\b", "UGREEN"),
+    (r"^Belkin\b", "Belkin"),
+    # Printers
+    (r"^HP-\w", "HP"),
+    (r"^Printer_\w", "Printer (unknown)"),
+    (r"^Brother\b", "Brother"),
+    (r"^Canon\b", "Canon"),
+    (r"^EPSON\b", "EPSON"),
+    # Misc smart-home / IoT brands
+    (r"^Tile\b", "Tile, Inc."),
+    (r"^Chipolo\b", "Chipolo"),
+    (r"^Tracker\b", None),  # too generic; placeholder for future curation
+    (r"^Yeelight\b", "Xiaomi (Yeelight)"),
+    (r"^Aqara\b", "Aqara (Lumi)"),
+    (r"^Mijia\b", "Xiaomi (Mijia)"),
+)
+
+
+def lookup_name_vendor(name: str | None) -> str | None:
+    """Heuristic vendor inference from a localName prefix.
+
+    Last-resort path when manufacturer-data and member-UUID lookups
+    have both abstained. Pattern-matching is fragile by definition
+    — a renamed AirPods called ``"Mi Earbuds"`` would falsely
+    resolve to Xiaomi — but in practice the patterns hit
+    high-confidence brand-prefix conventions every audio /
+    wearable / charging accessory follows. Returns None when no
+    pattern fires.
+    """
+    if not name:
+        return None
+    for pattern, vendor in _NAME_PATTERN_VENDORS:
+        if vendor is None:
+            continue
+        if re.match(pattern, name, re.IGNORECASE):
+            return vendor
+    return None
+
+
 def lookup_member_vendor(
     services: tuple[str, ...] | list[str],
     member_uuids: dict[str, str],
@@ -323,7 +418,8 @@ def service_category(
     *,
     gatt: dict[str, str] | None = None,
     member: dict[str, str] | None = None,
-) -> str:
+    category_only: bool = False,
+) -> str | None:
     """Map a service UUID to a user-readable category, or pass through.
 
     Resolution order:
@@ -332,8 +428,15 @@ def service_category(
       2. ``gatt`` (full SIG 16-bit GATT services list — Battery,
          Device Information, Environmental Sensing, etc.).
       3. ``member`` (SIG-assigned member UUIDs — FDAA → Xiaomi,
-         FD2A → Sony Corporation, etc.).
-      4. Raw UUID as last resort.
+         FD2A → Sony Corporation, etc.). Skipped when
+         ``category_only`` is True; the member layer surfaces a
+         vendor (company) name, not a service-class label, so
+         callers building a "what kind of devices are around" list
+         (the BLE diagnostics Categories row) should not consult
+         it. Callers labelling the per-row services column DO want
+         it as a last-resort vendor hint.
+      4. Raw UUID as last resort, or ``None`` when ``category_only``
+         is True and nothing in layers 1–2 matched.
 
     ``gatt`` and ``member`` default to the bundled tables when
     omitted; tests can pass empty dicts to verify the hand-curated
@@ -348,6 +451,11 @@ def service_category(
     hit = gatt.get(short)
     if hit is not None:
         return hit
+    if category_only:
+        # Strict mode for the Categories breakdown: vendor names
+        # from the member-UUID layer would dilute the count,
+        # which is meant to read as device-class buckets only.
+        return None
     if member is None:
         member = load_member_uuids()
     hit = member.get(short)
@@ -410,6 +518,26 @@ _APPLE_CONTINUITY_TYPE: dict[int, str] = {
     0x0D: "Tethering target",
     0x0E: "Tethering source",
     0x0F: "Nearby Action",
+    # 0x16 — "Proximity Pair Encrypted" / accessory proximity
+    # broadcast, observed at high density in real Mac scans
+    # (~30% of unlabelled Apple rows in the dogfood capture). The
+    # exact semantics are not fully documented but the type byte
+    # itself is stable; surface a generic label rather than
+    # leaving the row blank.
+    0x16: "Apple Proximity",
+}
+
+
+# Microsoft Cross Device Platform (CDP) protocol type byte. Public
+# Microsoft docs and the broadcast-protocol reverse-engineering
+# community describe at least these two types. We previously only
+# decoded 0x03 (Swift Pair); 0x01 is the general device-discovery
+# beacon used by Phone Link / Nearby Sharing — common in any
+# office with Windows laptops nearby and significant in real-Mac
+# captures (every Surface/Windows machine in earshot).
+_MS_CDP_TYPE: dict[int, str] = {
+    0x01: "MS device beacon",
+    0x03: "Swift Pair",
 }
 
 
@@ -471,8 +599,9 @@ def detect_advertisement(obj: dict[str, Any]) -> tuple[str | None, str | None]:
             if label is not None:
                 return label, None
         if company_id == _COMPANY_MICROSOFT and len(mfg_bytes) >= 3:
-            if mfg_bytes[2] == 0x03:
-                return "Swift Pair", None
+            label = _MS_CDP_TYPE.get(mfg_bytes[2])
+            if label is not None:
+                return label, None
         if company_id == _COMPANY_SAMSUNG and "FD5A" in services:
             return "SmartTag", None
 
@@ -583,6 +712,15 @@ def _build_device(
         if member_uuids is None:
             member_uuids = load_member_uuids()
         vendor = lookup_member_vendor(services, member_uuids)
+    if vendor is None and name:
+        # Last resort before giving up: pattern-match the localName
+        # against known brand prefixes. Catches the common real-Mac
+        # cases where a device broadcasts a recognisable name but
+        # either uses a private cid (Jabra Elite 8 Active broadcasts
+        # cid 14666 which SIG hasn't published) or carries no
+        # manufacturer-data at all (Mi Smart Band only emits a
+        # localName + vendor-private 128-bit service UUID).
+        vendor = lookup_name_vendor(name)
     if vendor is None and prior is not None:
         # Same flicker-protection as vendor_id: a scan-response packet
         # without manufacturer data should not blank out a name we
@@ -666,6 +804,11 @@ def _build_connected_device(
     vendor: str | None = None
     if ouis:
         vendor = lookup_oui_vendor(identifier, ouis)
+    # Connected-side name-pattern fallback. Magic Keyboard / AirPods /
+    # MX Master / etc. arriving over IOBluetooth with a name but no
+    # OUI-table hit can still resolve via brand-prefix matching.
+    if vendor is None and name:
+        vendor = lookup_name_vendor(name)
     if vendor is None and prior is not None:
         vendor = prior.vendor
 

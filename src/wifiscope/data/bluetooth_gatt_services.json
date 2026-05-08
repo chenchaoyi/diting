@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "source_commit": "a4b1acef6324b77f2162ec27d560a8f7ec82a539",
-    "fetched_at": "2026-05-07",
+    "source_commit": "unknown",
+    "fetched_at": "2026-05-08",
     "source_url": "https://bitbucket.org/bluetooth-SIG/public/raw/main/assigned_numbers/uuids/service_uuids.yaml"
   },
   "1800": "GAP",
