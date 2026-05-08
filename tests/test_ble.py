@@ -32,6 +32,7 @@ from wifiscope.ble import (
     load_ouis,
     load_vendors,
     lookup_member_vendor,
+    lookup_name_vendor,
     lookup_oui_vendor,
     lookup_vendor,
     merge_for_display,
@@ -832,6 +833,78 @@ def test_service_category_strict_skips_member_uuid_layer():
     assert service_category("1234", category_only=True) is None
     # Default mode unchanged.
     assert service_category("FDAA") == "Xiaomi Inc."
+
+
+def test_lookup_name_vendor_jabra_pattern():
+    """Jabra advertises cid 14666 which SIG hasn't published —
+    manufacturer_id lookup misses. The localName carries
+    "LE-Jabra Elite 8 Active" which the name-pattern fallback
+    must resolve to "Jabra (GN Audio)"."""
+    assert lookup_name_vendor("LE-Jabra Elite 8 Active") == "Jabra (GN Audio)"
+    assert lookup_name_vendor("Jabra Evolve 75") == "Jabra (GN Audio)"
+
+
+def test_lookup_name_vendor_xiaomi_band():
+    """Mi Smart Band 6 broadcasts only a localName + a private
+    128-bit service UUID; no manufacturer-data, no SIG member
+    UUID. Name-pattern catches the "Mi " prefix."""
+    assert lookup_name_vendor("Mi Smart Band 6") == "Xiaomi"
+    assert lookup_name_vendor("Mi Band 7") == "Xiaomi"
+
+
+def test_lookup_name_vendor_sony_audio():
+    """Sony WH-1000XM5 / WF-1000XM5 advertise their model name.
+    The pattern matches both prefixes."""
+    assert lookup_name_vendor("WH-1000XM5") == "Sony"
+    assert lookup_name_vendor("WF-1000XM4") == "Sony"
+    assert lookup_name_vendor("LE_WH-1000XM5") == "Sony"
+
+
+def test_lookup_name_vendor_apple_localnames():
+    """Apple devices that surface a useful localName (some
+    iPhones / iPads / MacBooks) resolve to Apple even when the
+    manufacturer-data field is absent on the scan-response packet
+    (CoreBluetooth is inconsistent about which advertisement
+    carries which fields)."""
+    assert lookup_name_vendor("iPhone 15 Pro") == "Apple, Inc."
+    assert lookup_name_vendor("iPad Air") == "Apple, Inc."
+    assert lookup_name_vendor("MacBook Pro") == "Apple, Inc."
+
+
+def test_lookup_name_vendor_no_pattern():
+    """Random / generic names return None — the fallback must
+    not over-claim. A custom-renamed peripheral ("My Headset")
+    or an empty name should produce no result."""
+    assert lookup_name_vendor(None) is None
+    assert lookup_name_vendor("") is None
+    assert lookup_name_vendor("My Headset") is None
+    assert lookup_name_vendor("Random-Name-1234") is None
+
+
+def test_lookup_name_vendor_anchored_at_start():
+    """Patterns are anchored at start of name to prevent over-
+    claiming. "Apple-Pie-Recipe" must NOT resolve to Apple just
+    because it contains the word."""
+    # "iPhone" is the anchored prefix, not the substring
+    assert lookup_name_vendor("My iPhone is great") is None
+    # But case-insensitive at the start works:
+    assert lookup_name_vendor("iphone 15") == "Apple, Inc."
+
+
+def test_advertising_vendor_falls_back_to_name_pattern(tmp_path):
+    """End-to-end: an advertisement with no manufacturer_id, no
+    services, just a name like "LE-Jabra Elite 8 Active" should
+    surface vendor='Jabra (GN Audio)' via the name-pattern
+    fallback. Real-Mac case from the dogfood capture."""
+    line = json.dumps({
+        "id": "AA000000-0000-0000-0000-000000000000",
+        "name": "LE-Jabra Elite 8 Active",
+        "rssi_dbm": -52,
+    })
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(devices, line, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    assert d.vendor == "Jabra (GN Audio)"
 
 
 def test_lookup_member_vendor_returns_none_for_no_match():
