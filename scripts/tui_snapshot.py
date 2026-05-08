@@ -287,31 +287,77 @@ def _inspect_ble_unknown_vendors(app: "Any", *_args) -> list[Finding]:
 
 
 def _inspect_ble_no_name_no_type(app: "Any", *_args) -> list[Finding]:
-    """A row with neither name nor type / device_class is unhelpful
-    to the user. Could point at a deep-ID gap (Apple Continuity
-    type byte we haven't decoded yet, etc.)."""
+    """Two-tier check on rows that lack a deep-ID label.
+
+    * **Completely anonymous** — no vendor, no name, no type, no
+      device_class. The user has only RSSI + a rotating MAC. No
+      adversarial guess is possible from advertisement data
+      alone; the only way to attach meaning is observation
+      patterns (proximity-walk, time-of-day correlation) which
+      wifiscope doesn't do today.
+
+    * **Vendor-only** — vendor resolved (e.g. "Apple, Inc.",
+      "Microsoft", "Polar Electro Oy") but name / type /
+      device_class all empty. The row is still informative — the
+      user can at least tell "something Apple" — but the deep-ID
+      gap suggests a missing protocol decoder. We surface it as
+      a soft note, not a warning.
+
+    Tightening from the original "any row with no name+type+
+    devclass" version: that lumped the two tiers together, so
+    "Apple, Inc. (unknown)" rows triggered the same warning as
+    rows the user has zero signal on. After the audit's first
+    pass — when the bulk of unlabelled Apple rows turned out to
+    be Continuity 0x16, decoded in dbc2406 — the remaining gap
+    is mostly vendor-only rows where the deep-ID would need
+    per-vendor schema work. Splitting tiers makes the
+    actionability honest.
+    """
     devices = list(getattr(app, "_latest_ble", []) or [])
     if not devices:
         return []
-    blank = [
+    truly_anon = [
         d for d in devices
-        if not d.name and not d.type and not d.device_class
+        if not d.vendor and not d.name and not d.type and not d.device_class
     ]
-    if len(blank) >= 3:
-        return [Finding(
-            severity="note",
+    vendor_only = [
+        d for d in devices
+        if d.vendor and not d.name and not d.type and not d.device_class
+    ]
+    out: list[Finding] = []
+    if len(truly_anon) >= 3:
+        out.append(Finding(
+            severity="warn",
             message=(
-                f"{len(blank)} BLE rows have neither name nor a "
-                f"deep-ID label. The user is left with just an RSSI "
-                f"and a vendor guess."
+                f"{len(truly_anon)} BLE rows are completely anonymous "
+                f"(no vendor, no name, no type). The user has only "
+                f"RSSI to go on."
             ),
             suggestion=(
-                "Consider parsing more Apple Continuity type bytes "
-                "(0x05/0x06/0x10/etc) or Microsoft CDP packets in "
-                "BLEAdParser.detect."
+                "These advertisements carry no manufacturer-data "
+                "company-id and no service UUIDs — there's nothing "
+                "to derive an identity from. The only ways forward "
+                "are pattern observation (proximity walk, time "
+                "correlation) which wifiscope doesn't do today, or "
+                "ignoring them."
             ),
-        )]
-    return []
+        ))
+    if len(vendor_only) >= 5:
+        out.append(Finding(
+            severity="note",
+            message=(
+                f"{len(vendor_only)} BLE rows have a known vendor but "
+                f"no name / type / device_class — partial identity. "
+                f"Decoder gap rather than missing data."
+            ),
+            suggestion=(
+                "Add per-vendor manufacturer-data decoders for the "
+                "long-tail company-ids that appear in this set "
+                "(Polar Electro Oy / Bluegiga / Telink Semiconductor "
+                "/ similar small-vendor schemas)."
+            ),
+        ))
+    return out
 
 
 def _inspect_redacted_scan(_app: "Any", text: str) -> list[Finding]:
