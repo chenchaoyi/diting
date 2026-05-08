@@ -4,7 +4,7 @@
 # keep the bilingual UI / docs workflow honest: a UI change always means
 # regenerating BOTH preview SVGs.
 
-.PHONY: help test test-all preview preview-en preview-zh preview-ble preview-ble-en preview-ble-zh preview-events preview-events-en preview-events-zh helper monitor selftest update-vendors
+.PHONY: help test test-all preview preview-en preview-zh preview-ble preview-ble-en preview-ble-zh preview-events preview-events-en preview-events-zh helper monitor snapshot update-vendors
 
 help:  ## Show this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -42,8 +42,8 @@ helper:  ## Build the Swift helper at helper/wifiscope-helper.app
 monitor:  ## Run wifiscope monitor (headless JSONL events; Ctrl+C to quit)
 	uv run wifiscope monitor
 
-selftest:  ## Drive the TUI through designed scenarios + capture screenshots
-	uv run wifiscope selftest --out-dir selftest-output
+snapshot:  ## Drive the TUI through designed scenarios + capture screenshots
+	uv run wifiscope snapshot --out-dir snapshot-output
 
 update-vendors:  ## Refresh src/wifiscope/data/bluetooth_vendors.json from Bluetooth SIG
 	uv run python scripts/update_vendors.py

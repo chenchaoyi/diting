@@ -12,7 +12,7 @@ Two flavours of output for every run:
   * One ``<scenario_id>.svg`` per scenario in the output dir (also
     rendered to ``.png`` if the platform has ``qlmanage`` or
     ``rsvg-convert`` available — purely for human inspection).
-  * One ``selftest-report.json`` with all assertions and findings,
+  * One ``snapshot-report.json`` with all assertions and findings,
     plus a console summary.
 
 This module is checked in: it doubles as the regression suite for
@@ -358,7 +358,7 @@ def _inspect_environment_silent(app: "Any", *_args) -> list[Finding]:
 def _all_scenarios() -> list[Scenario]:
     """Return the full list. Defined as a function rather than a
     module-level list so the heavy ``WifiScopeApp`` import inside
-    each ``setup`` lambda is deferred until selftest is actually
+    each ``setup`` lambda is deferred until snapshot is actually
     invoked.
     """
     from .tui import WifiScopeApp
@@ -766,7 +766,7 @@ def run(
 def render_console(report: dict) -> str:
     """Format the report for stdout — short, action-oriented."""
     lines: list[str] = []
-    lines.append(f"wifiscope selftest — {report['ts']}")
+    lines.append(f"wifiscope snapshot — {report['ts']}")
     lines.append(f"output: {report['out_dir']}")
     s = report["summary"]
     lines.append(
