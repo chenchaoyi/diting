@@ -355,8 +355,13 @@ def _inspect_environment_silent(app: "Any", *_args) -> list[Finding]:
 
 # ---------- the registry ----------
 
-def _all_scenarios() -> list[Scenario]:
-    """Return the full list. Defined as a function rather than a
+def _regression_scenarios() -> list[Scenario]:
+    """Synthetic-backend scenarios for TUI end-to-end regression.
+
+    Each scenario pins a known input (fake backend / inventory /
+    BLE roster / event ring) to a known output (assertion list +
+    inspector findings). Deterministic — safe for CI / pre-commit
+    via ``make test-system``. Defined as a function rather than a
     module-level list so the heavy ``WifiScopeApp`` import inside
     each ``setup`` lambda is deferred until snapshot is actually
     invoked.
@@ -607,6 +612,141 @@ def _all_scenarios() -> list[Scenario]:
 
 # ---------- runner ----------
 
+def _explore_scenarios() -> list[Scenario]:
+    """Real-backend scenarios for `/tui-audit` exploration runs.
+
+    Built on top of ``MacOSWiFiBackend`` + the live BLE helper:
+    each scenario captures a view of the user's *actual* network
+    and BLE environment as it exists right now. No synthetic
+    injection — what shows up is what the user would see if they
+    launched ``wifiscope`` themselves.
+
+    Suitable scenarios are limited to keystroke-driven view /
+    modal switches: we cannot fabricate "disassociated" or
+    "redacted" or "BLE unknown heavy" against a live machine, so
+    those live only in the regression list above. The inspector
+    rules still run against the live data, which is where the
+    user-actionable findings come from.
+
+    Output dirs default to a timestamped path under ``/tmp/`` —
+    the captured SVG / PNG carry the user's real SSIDs / BSSIDs
+    / device names and have no place in source control.
+    """
+    from wifiscope import _helper
+    from wifiscope.macos_backend import MacOSWiFiBackend
+    from wifiscope.network import load_inventory
+    from wifiscope.tui import WifiScopeApp
+
+    helper_path = _helper.find_helper() or ""
+
+    def _build_live() -> "Any":
+        # Default language: leave whatever WIFISCOPE_LANG / locale
+        # autodetect produced. Audit always reflects the user's
+        # actual session.
+        backend = MacOSWiFiBackend()
+        inv = load_inventory()
+        return WifiScopeApp(
+            backend, inv,
+            ble_helper_path=helper_path,
+            enable_latency=True,
+            enable_environment=True,
+        )
+
+    async def _settle_main(pilot):
+        # Real Wi-Fi scan takes ~5–7 s on CoreWLAN; latency probe
+        # needs a couple of pings to populate medians; BLE first
+        # snapshot lands ~10 s in. 15 s gives every diagnostic row
+        # something real to show.
+        await pilot.pause(15.0)
+
+    async def _switch_to_ble(pilot):
+        await pilot.pause(15.0)
+        await pilot.press("n")
+        # BLE snapshots refresh every 2 s by default; one extra
+        # interval makes the panel non-empty on a normal day.
+        await pilot.pause(8.0)
+
+    async def _open_events_modal(pilot):
+        await pilot.pause(15.0)
+        await pilot.press("m")
+        await pilot.pause(0.5)
+
+    async def _open_help(pilot):
+        await pilot.pause(5.0)
+        await pilot.press("h")
+        await pilot.pause(0.3)
+
+    async def _open_basics(pilot):
+        await pilot.pause(5.0)
+        await pilot.press("b")
+        await pilot.pause(0.3)
+
+    async def _pause_polling(pilot):
+        await pilot.pause(15.0)
+        await pilot.press("p")
+        await pilot.pause(0.5)
+
+    return [
+        Scenario(
+            id="live_main",
+            description="Live Wi-Fi main view (real backend).",
+            lang="auto",
+            setup=_build_live,
+            after_mount=_settle_main,
+            assertions=(),  # No fixed assertions — this is exploration, not regression.
+            inspectors=(_inspect_redacted_scan,),
+        ),
+        Scenario(
+            id="live_ble",
+            description="Live BLE view (real helper, real devices).",
+            lang="auto",
+            setup=_build_live,
+            after_mount=_switch_to_ble,
+            assertions=(),
+            inspectors=(
+                _inspect_ble_unknown_vendors,
+                _inspect_ble_no_name_no_type,
+            ),
+        ),
+        Scenario(
+            id="live_events_modal",
+            description="Live events modal (whatever fired this session).",
+            lang="auto",
+            setup=_build_live,
+            after_mount=_open_events_modal,
+            assertions=(),
+            inspectors=(),
+        ),
+        Scenario(
+            id="live_help",
+            description="Help modal opened against the live session.",
+            lang="auto",
+            setup=_build_live,
+            after_mount=_open_help,
+            assertions=(),
+            inspectors=(),
+        ),
+        Scenario(
+            id="live_basics",
+            description="Basics / glossary modal opened against the live session.",
+            lang="auto",
+            setup=_build_live,
+            after_mount=_open_basics,
+            assertions=(),
+            inspectors=(),
+        ),
+        Scenario(
+            id="live_paused",
+            description="Live state with polling paused (`p`).",
+            lang="auto",
+            setup=_build_live,
+            after_mount=_pause_polling,
+            assertions=(),
+            inspectors=(),
+        ),
+    ]
+
+
 async def _capture_one(scenario: Scenario, out_dir: Path) -> dict:
     """Run one scenario end-to-end, return its report row."""
     app = scenario.setup()
@@ -720,23 +860,42 @@ def _extract_text(svg: str) -> str:
     return " ".join(p.replace("&#160;", " ") for p in parts)
 
 
+_MODES = ("regression", "explore")
+
+
 async def run_async(
     out_dir: Path,
     *,
+    mode: str = "regression",
     scenario_ids: list[str] | None = None,
 ) -> dict:
-    """Run all scenarios (or a subset by id), return the report
-    dict. Caller decides what to do with it (print, write to JSON,
-    pipe through a CI gate, …).
+    """Run scenarios (or a subset by id), return the report dict.
+
+    ``mode`` selects the scenario list:
+
+    * ``regression`` — synthetic backends, deterministic input/
+      output, suitable for CI / ``make test-system``.
+    * ``explore`` — real ``MacOSWiFiBackend`` + live BLE helper,
+      captures the user's actual environment for ``/tui-audit``
+      and other audit work.
+
+    Caller decides what to do with the returned dict (print,
+    write to JSON, pipe through a CI gate, …).
     """
+    if mode not in _MODES:
+        raise ValueError(f"mode must be one of {_MODES!r}, got {mode!r}")
     out_dir.mkdir(parents=True, exist_ok=True)
-    scenarios = _all_scenarios()
+    scenarios = (
+        _regression_scenarios() if mode == "regression"
+        else _explore_scenarios()
+    )
     if scenario_ids:
         scenarios = [s for s in scenarios if s.id in set(scenario_ids)]
     rows: list[dict] = []
     for s in scenarios:
         rows.append(await _capture_one(s, out_dir))
     summary = {
+        "mode": mode,
         "total": len(rows),
         "asserts_passed": sum(
             1 for r in rows for a in r["assertions"] if a["passed"]
@@ -748,6 +907,7 @@ async def run_async(
     }
     return {
         "ts": datetime.now(timezone.utc).astimezone().isoformat(),
+        "mode": mode,
         "out_dir": str(out_dir),
         "summary": summary,
         "scenarios": rows,
@@ -757,16 +917,37 @@ async def run_async(
 def run(
     out_dir: Path,
     *,
+    mode: str = "regression",
     scenario_ids: list[str] | None = None,
 ) -> dict:
     """Sync wrapper around :func:`run_async`."""
-    return asyncio.run(run_async(out_dir, scenario_ids=scenario_ids))
+    return asyncio.run(
+        run_async(out_dir, mode=mode, scenario_ids=scenario_ids),
+    )
+
+
+def default_out_dir(mode: str) -> Path:
+    """Mode-aware default output directory.
+
+    Regression runs go under ``./snapshot-output/`` (cwd-relative,
+    deterministic, gitignored — fine to overwrite). Explore runs
+    go under ``/tmp/wfs-tui-audit-YYYYMMDD-HHMMSS/`` so multiple
+    sessions don't clobber each other and so the captured live
+    data — which contains the user's real SSIDs / BSSIDs / device
+    names — stays on a path no shell completion or Git operation
+    is going to surface accidentally.
+    """
+    if mode == "explore":
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        return Path(f"/tmp/wfs-tui-audit-{stamp}")
+    return Path("snapshot-output")
 
 
 def render_console(report: dict) -> str:
     """Format the report for stdout — short, action-oriented."""
     lines: list[str] = []
-    lines.append(f"wifiscope snapshot — {report['ts']}")
+    mode = report.get("mode", "regression")
+    lines.append(f"wifiscope snapshot [{mode}] — {report['ts']}")
     lines.append(f"output: {report['out_dir']}")
     s = report["summary"]
     lines.append(
@@ -820,13 +1001,33 @@ def _main(argv: list[str]) -> int:
     alongside ``update_vendors.py`` and the preview-capture script.
 
     Flags:
-        --out-dir DIR         output directory (default ./snapshot-output)
-        --scenarios id1,id2   subset of scenario ids (default: all)
+        --mode regression|explore
+                              regression (default): synthetic backends, fixed
+                              assertions, deterministic — for CI / make
+                              test-system. explore: real ``MacOSWiFiBackend``
+                              + live BLE helper, captures whatever the user's
+                              actual environment looks like — for /tui-audit.
+        --out-dir DIR         output directory.
+                              default regression → ./snapshot-output
+                              default explore   → /tmp/wfs-tui-audit-<stamp>
+        --scenarios id1,id2   subset of scenario ids (default: all in mode)
         --json                emit JSON to stdout instead of console summary
-        --check               exit 1 on any assertion failure (CI mode)
+        --check               exit 1 on any assertion failure (CI mode;
+                              meaningful only in regression mode — explore
+                              ships no fixed assertions)
     """
-    out_dir_str = _arg_value(argv, "--out-dir") or "snapshot-output"
-    out_dir = Path(out_dir_str).expanduser().resolve()
+    mode = (_arg_value(argv, "--mode") or "regression").strip()
+    if mode not in _MODES:
+        print(
+            f"--mode must be one of {_MODES}, got {mode!r}",
+            file=__import__("sys").stderr,
+        )
+        return 2
+    out_dir_str = _arg_value(argv, "--out-dir")
+    out_dir = (
+        Path(out_dir_str).expanduser().resolve()
+        if out_dir_str else default_out_dir(mode).resolve()
+    )
     scenarios_arg = _arg_value(argv, "--scenarios")
     scenario_ids = (
         [s.strip() for s in scenarios_arg.split(",") if s.strip()]
@@ -835,7 +1036,7 @@ def _main(argv: list[str]) -> int:
     json_only = "--json" in argv
     check_mode = "--check" in argv
 
-    report = run(out_dir, scenario_ids=scenario_ids)
+    report = run(out_dir, mode=mode, scenario_ids=scenario_ids)
 
     report_path = out_dir / "snapshot-report.json"
     report_path.write_text(

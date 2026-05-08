@@ -16,8 +16,8 @@ test-all: test  ## Run pytest under both EN and ZH default-language settings
 	WIFISCOPE_LANG=zh uv run pytest -q
 	LANG=zh_CN.UTF-8 WIFISCOPE_LANG= uv run pytest -q
 
-test-system: test-all  ## Pytest + the TUI scenario regression (scripts/tui_snapshot.py --check). Non-zero on any assertion fail.
-	uv run python scripts/tui_snapshot.py --out-dir snapshot-output --check
+test-system: test-all  ## Pytest + the TUI scenario regression (scripts/tui_snapshot.py --mode regression --check). Non-zero on any assertion fail.
+	uv run python scripts/tui_snapshot.py --mode regression --out-dir snapshot-output --check
 
 preview: preview-en preview-zh preview-ble-en preview-ble-zh preview-events-en preview-events-zh  ## Regenerate ALL preview SVGs (Wi-Fi + BLE + Events modal, EN + ZH)
 
@@ -45,8 +45,8 @@ helper:  ## Build the Swift helper at helper/wifiscope-helper.app
 monitor:  ## Run wifiscope monitor (headless JSONL events; Ctrl+C to quit)
 	uv run wifiscope monitor
 
-snapshot:  ## Drive the TUI through designed scenarios + capture screenshots (engineering tool)
-	uv run python scripts/tui_snapshot.py --out-dir snapshot-output
+snapshot:  ## Synthetic-mode TUI scenario captures + report (engineering tool)
+	uv run python scripts/tui_snapshot.py --mode regression --out-dir snapshot-output
 
 update-vendors:  ## Refresh src/wifiscope/data/bluetooth_vendors.json from Bluetooth SIG
 	uv run python scripts/update_vendors.py
