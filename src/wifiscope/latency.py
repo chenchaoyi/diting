@@ -54,7 +54,7 @@ import subprocess
 import time
 from collections import deque
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Callable
 
@@ -78,12 +78,21 @@ class LatencySample:
     ``target_ip`` is the IP that was actually probed. They are
     surfaced separately so the renderer can show a friendly column
     name even after a network switch swaps the underlying IP.
+
+    ``mono`` is the monotonic clock at record time, used by the
+    aggregator's rolling-window cutoff. Producers leave it as
+    ``None``; :meth:`LatencyPoller._record` rebuilds the sample
+    with the current monotonic clock before storing so the cutoff
+    math works on real samples. ``None`` is a real sentinel
+    (rather than 0.0) because fake test clocks legitimately read
+    0.0, and we must not confuse that with "unstamped".
     """
     ts: datetime
     target: str
     target_ip: str
     rtt_ms: float | None
     lost: bool
+    mono: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,26 +551,35 @@ class LatencyPoller:
 
     def _record(self, sample: LatencySample) -> None:
         history = self._history.setdefault(sample.target, deque())
+        # Stamp the sample with the current monotonic clock at
+        # record time so the cutoff filter has something
+        # non-degenerate to compare against. Earlier versions
+        # tried to setattr a hidden attribute on a frozen+slots
+        # LatencySample, which silently no-op'd — _sample_clock
+        # then fell back to "now", which made the cutoff condition
+        # ``now < now - window`` always false and let the window
+        # grow to the full session history. With a multi-hour
+        # run, aggregate.loss_pct diluted toward zero (loss /
+        # session_total instead of loss / last_60s).
+        sample = replace(sample, mono=self._clock())
         history.append(sample)
-        # Trim samples older than the window. The deque is already
-        # time-ordered (we only append at the right end), so a single
-        # left-popleft pass is enough.
         cutoff = self._clock() - self._window_s
         while history and self._sample_clock(history[0]) < cutoff:
             history.popleft()
 
     def _sample_clock(self, sample: LatencySample) -> float:
-        """Project a wall-clock sample timestamp onto the monotonic clock.
+        """Monotonic clock at sample-record time.
 
         ``LatencySample.ts`` is a :class:`~datetime.datetime` for
-        operator display, but window math wants a monotonic clock so
-        a system-time hop does not corrupt the rolling window. We
-        approximate by using the current monotonic clock for live
-        samples (they were ``_record``-ed seconds ago at the latest)
-        and rely on the caller to use a consistent ``clock=`` injection
-        for tests.
+        operator display; window math wants a monotonic clock so a
+        system-time hop (NTP step, lid-close suspend) does not
+        corrupt the rolling window. ``mono`` is filled in by
+        :meth:`_record`; synthetic samples that bypass _record
+        (rare — some tests construct samples directly into
+        ``_history``) fall back to "now" so the old behaviour is
+        preserved for them.
         """
-        return getattr(sample, "_mono", None) or self._clock()
+        return self._clock() if sample.mono is None else sample.mono
 
 
 def detect_latency_spike(

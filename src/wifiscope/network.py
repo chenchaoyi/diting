@@ -235,3 +235,60 @@ def cluster_label(bssid: str | None) -> str:
     if len(parts) != 6:
         return "?"
     return "?" + ":".join(parts[2:5])
+
+
+# ---- AP vendor lookup (Wi-Fi OUI → manufacturer) ----
+
+import json as _json
+
+_WIFI_OUIS_PATH = (
+    Path(__file__).resolve().parent / "data" / "wifi_ouis.json"
+)
+
+
+def load_wifi_ouis(path: Path | None = None) -> dict[str, str]:
+    """Load the bundled Wi-Fi AP OUI → vendor map.
+
+    Curated subset of the IEEE OUI registry covering common router
+    and AP vendors (Xiaomi / TP-Link / Cisco / Aruba / Netgear /
+    ASUS / etc.). Missing or unreadable file yields an empty dict
+    so the connection panel falls through to "(unknown)" rather
+    than crashing. Extending the map is a one-file edit; users
+    can drop new ``OUI: name`` entries into the JSON without code
+    changes.
+    """
+    if path is None:
+        path = _WIFI_OUIS_PATH
+    if not path.is_file():
+        return {}
+    try:
+        data = _json.loads(path.read_text())
+    except (OSError, _json.JSONDecodeError):
+        return {}
+    return {
+        str(k).lower(): str(v)
+        for k, v in data.items()
+        if k != "_meta" and isinstance(v, str)
+    }
+
+
+def lookup_ap_vendor(
+    bssid: str | None, ouis: dict[str, str] | None = None,
+) -> str | None:
+    """Return the manufacturer name for a BSSID's OUI, or ``None``.
+
+    Pure function. ``ouis`` defaults to the bundled map; tests
+    pass a custom dict. Coverage is intentionally a curated
+    subset, not the full IEEE registry — anything missing is
+    returned as ``None`` so the call site can fall back to
+    ``cluster_label`` or the raw BSSID.
+    """
+    if not bssid:
+        return None
+    parts = bssid.lower().split(":")
+    if len(parts) < 3:
+        return None
+    prefix = ":".join(parts[:3])
+    if ouis is None:
+        ouis = load_wifi_ouis()
+    return ouis.get(prefix)

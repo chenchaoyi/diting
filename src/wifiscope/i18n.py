@@ -381,6 +381,10 @@ _ZH: dict[str, str] = {
         "wifiscope：未知子命令 {cmd!r}",
     "note: writing JSONL events to {path}":
         "提示：JSONL 事件正写入 {path}",
+    "tip: summarise this session with\n"
+    "       wifiscope analyze {path}":
+        "提示：本次会话可用以下命令生成报告：\n"
+        "       wifiscope analyze {path}",
 
     # ---- `wifiscope once` plain-text output ----
     "backend:    {name}": "后端：    {name}",
@@ -1195,4 +1199,30 @@ _ZH: dict[str, str] = {
         "请提供路径：wifiscope analyze ~/wifi-20260507.jsonl",
     "wifiscope analyze: file not found: {path}":
         "wifiscope analyze：找不到文件：{path}",
+    "Network change(s) detected": "检测到网络切换",
+    "{n} gateway-IP transition(s) during this session: "
+    "{moves}. Treat per-network statistics separately — "
+    "stir / latency / loss aggregates pre and post a "
+    "network change describe physically different APs.":
+        "本次会话出现 {n} 次网关 IP 切换：{moves}。"
+        "网络切换前后的 stir / 延迟 / 丢包应分段统计 —— "
+        "它们对应的是物理上不同的 AP。",
+    "Loss bursts may be probing a stale gateway":
+        "丢包风暴可能在探测过期网关",
+    "All {n} loss-burst events target {ip}, even though "
+    "the session crossed {roams} roam(s). Pre-0.7.0 "
+    "versions had a bug where LatencyPoller did not "
+    "refresh after a network change, so the probe kept "
+    "pinging the previous network's gateway. The flood "
+    "of loss bursts is then a measurement artifact, not "
+    "real link degradation.":
+        "{n} 次丢包风暴全都在探测 {ip}，但会话期间发生了 "
+        "{roams} 次漫游。0.7.0 之前的版本有 bug：网络切换后 "
+        "LatencyPoller 不会刷新，会一直 ping 旧网关。这种"
+        "情况下大量丢包风暴是测量假阳性，不是真正的链路退化。",
+    "Update wifiscope and re-record. Post-fix the "
+    "LatencyPoller rebuilds on every gateway-IP change "
+    "and emits an explicit network_change event.":
+        "升级 wifiscope 后重新记录。修复版本会在每次网关 IP 变化"
+        "时重建 LatencyPoller，并显式发出 network_change 事件。",
 }

@@ -217,6 +217,67 @@ def test_aggregate_empty_returns_none_fields():
     assert agg.jitter_ms is None
 
 
+def test_aggregate_window_actually_drops_old_samples():
+    """Regression for the multi-hour-session bug where loss_pct was
+    diluted toward zero (e.g. log shows 0.33 instead of 33%) because
+    the rolling-window cutoff filter was a no-op. Cause: samples
+    were not stamped with their record-time monotonic clock, so
+    _sample_clock fell back to ``now``, making the cutoff condition
+    ``now < now - window`` always false. With the fix, samples
+    stamped > window seconds ago must be excluded from aggregate
+    even if they're still in the deque."""
+    clock = [1000.0]
+    poller = LatencyPoller(
+        gateway_ip="192.168.1.1",
+        clock=lambda: clock[0],
+        window_s=60.0,
+    )
+    # Record two old samples at t=1000 (mono=1000), both lost.
+    poller._record(_sample(None, lost=True))
+    poller._record(_sample(None, lost=True))
+    # Advance the clock 600 s past the window (the user's overnight
+    # session was 9 h — 600 s is plenty to assert the property).
+    clock[0] = 2000.0
+    # Record two fresh samples at t=2000 (mono=2000), one lost.
+    poller._record(_sample(10.0))
+    poller._record(_sample(None, lost=True))
+    agg = poller.aggregate("router")
+    # Window should now contain only the two fresh samples; the
+    # two old losses should have been popped on the most recent
+    # _record's left-trim pass.
+    assert agg.sample_count == 2
+    # 1 of 2 lost = 50%, NOT 3 of 4 = 75% (which we'd see if the
+    # old samples had survived).
+    assert agg.loss_pct == pytest.approx(50.0)
+
+
+def test_aggregate_loss_pct_in_zero_to_hundred_range():
+    """Concrete property test: emit one minute of 1 Hz samples with
+    a known loss ratio, assert aggregate.loss_pct lands in the
+    documented 0..100 percentage range. Pre-fix this came back as
+    a fraction (0..1) for any session longer than the window."""
+    clock = [0.0]
+    poller = LatencyPoller(
+        gateway_ip="192.168.1.1",
+        clock=lambda: clock[0],
+        window_s=60.0,
+    )
+    for i in range(60):
+        clock[0] = float(i)
+        poller._record(_sample(
+            None if i % 4 == 0 else 10.0,
+            lost=(i % 4 == 0),
+        ))
+    # Now jump forward 10 hours and emit one more sample to confirm
+    # the trim is applied at record time, not just aggregate.
+    clock[0] = 36000.0
+    poller._record(_sample(11.0))
+    agg = poller.aggregate("router")
+    # Only the one fresh sample survived the last trim.
+    assert agg.sample_count == 1
+    assert agg.loss_pct == pytest.approx(0.0)
+
+
 # --- spike + loss-burst detectors ----------------------------------
 
 def test_detect_latency_spike_requires_both_thresholds():

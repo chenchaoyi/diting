@@ -19,6 +19,8 @@ from wifiscope.network import (
     default_config_path,
     format_bssid,
     load_inventory,
+    load_wifi_ouis,
+    lookup_ap_vendor,
     resolve_config_path,
 )
 
@@ -289,3 +291,37 @@ def test_resolve_config_path_no_env_falls_through_to_default(monkeypatch):
     """
     monkeypatch.delenv("WIFISCOPE_INVENTORY", raising=False)
     assert resolve_config_path() == default_config_path()
+
+
+# ---- AP vendor lookup ----
+
+def test_lookup_ap_vendor_known_oui_returns_name():
+    """User-specific case from the overnight log: 40:fe:95 → Xiaomi.
+    Verifies the bundled curated map covers the home AP OUI."""
+    assert lookup_ap_vendor("40:fe:95:89:c7:e3") == "Xiaomi Communications"
+
+
+def test_lookup_ap_vendor_unknown_oui_returns_none():
+    """Unmapped OUIs return None so the caller can fall back to a
+    cluster_label or omit the vendor row entirely."""
+    assert lookup_ap_vendor("12:34:56:78:9a:bc") is None
+
+
+def test_lookup_ap_vendor_invalid_input_returns_none():
+    assert lookup_ap_vendor(None) is None
+    assert lookup_ap_vendor("") is None
+    assert lookup_ap_vendor("not-a-mac") is None
+
+
+def test_lookup_ap_vendor_accepts_custom_map():
+    """Tests pass an explicit ``ouis`` dict to verify behaviour
+    without depending on the bundled map's exact contents."""
+    custom = {"aa:bb:cc": "Acme Corp"}
+    assert lookup_ap_vendor("aa:bb:cc:11:22:33", ouis=custom) == "Acme Corp"
+    assert lookup_ap_vendor("11:22:33:44:55:66", ouis=custom) is None
+
+
+def test_load_wifi_ouis_ships_xiaomi():
+    """Sanity check that the bundled JSON made it into the wheel."""
+    ouis = load_wifi_ouis()
+    assert ouis.get("40:fe:95") == "Xiaomi Communications"

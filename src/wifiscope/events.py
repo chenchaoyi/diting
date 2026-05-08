@@ -52,6 +52,28 @@ class LinkStateEvent:
     ssid: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class NetworkChangeEvent:
+    """The user's gateway IP changed (subnet hop).
+
+    Fires when ConnectionUpdate.router_ip transitions to a new
+    value — typically because the user roamed to a physically
+    different network (home → office, café → mobile hotspot)
+    even when the SSID happens to match. The TUI uses this event
+    as the trigger to rebuild the LatencyPoller around the new
+    gateway / WAN-anchor; downstream analysis tools use it as a
+    segmentation marker so per-network statistics do not get
+    smeared together.
+    """
+    timestamp: datetime
+    previous_router_ip: str | None
+    new_router_ip: str | None
+    previous_ssid: str | None = None
+    new_ssid: str | None = None
+    previous_bssid: str | None = None
+    new_bssid: str | None = None
+
+
 # Union of every event the ring buffer accepts. ``RoamEvent`` is
 # imported from poller so we don't redefine it.
 Event = (
@@ -59,6 +81,7 @@ Event = (
     | LatencySpikeEvent
     | LossBurstEvent
     | LinkStateEvent
+    | NetworkChangeEvent
     | RoamEvent
 )
 

@@ -48,6 +48,7 @@ from .network import (
     band_label,
     format_bssid,
     load_inventory,
+    lookup_ap_vendor,
     resolve_config_path,
 )
 from .poller import (
@@ -297,12 +298,21 @@ async def _run_monitor(args: list[str]) -> None:
                 message=_notify_message(payload),
             )
 
+    last_ssid: dict[str, str | None] = {"value": None}
+
     async def wifi_consumer() -> None:
         async for event in poller.events():
             now = datetime.now(timezone.utc)
             if isinstance(event, ConnectionUpdate):
                 conn = event.connection
-                logger.emit_connection_update(conn, now=now)
+                if conn is not None:
+                    last_ssid["value"] = conn.ssid
+                logger.emit_connection_update(
+                    conn, now=now,
+                    vendor=lookup_ap_vendor(
+                        conn.bssid if conn else None
+                    ),
+                )
                 if conn is None:
                     continue
                 # Late-bind LatencyPoller once we know the gateway.
@@ -346,7 +356,22 @@ async def _run_monitor(args: list[str]) -> None:
                     if inv.is_same_ap(event.previous_bssid, event.new_bssid)
                     else "inter_ap"
                 )
-                logger.emit_roam(event, kind=kind)
+                logger.emit_roam(
+                    event, kind=kind,
+                    ssid=last_ssid["value"],
+                    previous_vendor=lookup_ap_vendor(event.previous_bssid),
+                    new_vendor=lookup_ap_vendor(event.new_bssid),
+                )
+
+    last_event_at: dict[tuple[str, str], float] = {}
+
+    def should_fire(kind: str, target: str, cooldown_s: float = 30.0) -> bool:
+        now = time.monotonic()
+        last = last_event_at.get((kind, target))
+        if last is not None and (now - last) < cooldown_s:
+            return False
+        last_event_at[(kind, target)] = now
+        return True
 
     async def latency_consumer(lp: LatencyPoller) -> None:
         async for sample in lp.events():
@@ -355,23 +380,25 @@ async def _run_monitor(args: list[str]) -> None:
                 continue
             spike = detect_latency_spike(history)
             if spike is not None and sample is spike:
-                agg = lp.aggregate(sample.target)
-                logger.emit_latency_spike(LatencySpikeEvent(
-                    timestamp=sample.ts,
-                    target=sample.target,
-                    target_ip=sample.target_ip,
-                    rtt_ms=round(sample.rtt_ms or 0.0, 1),
-                    loss_pct=round(agg.loss_pct or 0.0, 1),
-                ))
+                if should_fire("latency_spike", sample.target):
+                    agg = lp.aggregate(sample.target)
+                    logger.emit_latency_spike(LatencySpikeEvent(
+                        timestamp=sample.ts,
+                        target=sample.target,
+                        target_ip=sample.target_ip,
+                        rtt_ms=round(sample.rtt_ms or 0.0, 1),
+                        loss_pct=round(agg.loss_pct or 0.0, 1),
+                    ))
             if sample.lost and detect_loss_burst(history):
-                agg = lp.aggregate(sample.target)
-                logger.emit_loss_burst(LossBurstEvent(
-                    timestamp=sample.ts,
-                    target=sample.target,
-                    target_ip=sample.target_ip,
-                    loss_pct=round(agg.loss_pct or 0.0, 1),
-                    lost_in_window=sum(1 for s in history[-5:] if s.lost),
-                ))
+                if should_fire("loss_burst", sample.target):
+                    agg = lp.aggregate(sample.target)
+                    logger.emit_loss_burst(LossBurstEvent(
+                        timestamp=sample.ts,
+                        target=sample.target,
+                        target_ip=sample.target_ip,
+                        loss_pct=round(agg.loss_pct or 0.0, 1),
+                        lost_in_window=sum(1 for s in history[-5:] if s.lost),
+                    ))
 
     try:
         await wifi_consumer()
@@ -694,14 +721,14 @@ def _run_tui(*, log_path: str | None = None) -> None:
     # path it returns through so the BLE poller does not re-pick
     # whichever stale older copy find_helper() may still see.
     ble_binary = _ensure_helper_ready()
-    if log_path:
+    abs_log_path = os.path.abspath(log_path) if log_path else None
+    if abs_log_path:
         # Surface the resolved path BEFORE entering the alt-screen
         # so the user can see where their data is going. Especially
         # useful for the timestamped default case where the user
         # passed --log without a value and won't otherwise know the
         # filename.
-        abs_path = os.path.abspath(log_path)
-        print(t("note: writing JSONL events to {path}", path=abs_path))
+        print(t("note: writing JSONL events to {path}", path=abs_log_path))
     backend = MacOSWiFiBackend()
     inv = load_inventory()
     WifiScopeApp(
@@ -710,6 +737,18 @@ def _run_tui(*, log_path: str | None = None) -> None:
         ble_helper_path=ble_binary,
         event_log_path=log_path,
     ).run()
+    # Post-exit hint pointing at the analyze command. Prints AFTER
+    # the alt-screen tears down so the user sees it on the same
+    # terminal scroll-back where they read the start-up note. We
+    # only print when a log was actually written; otherwise the
+    # hint would suggest analysing an empty path.
+    if abs_log_path and os.path.isfile(abs_log_path):
+        print()
+        print(t(
+            "tip: summarise this session with\n"
+            "       wifiscope analyze {path}",
+            path=abs_log_path,
+        ))
 
 
 def _scan_interval() -> float:

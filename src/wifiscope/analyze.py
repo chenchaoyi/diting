@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import statistics
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -106,6 +106,10 @@ class Report:
     latency_spike_max_rtt: float | None
     loss_burst_count: int
     loss_burst_max_pct: float | None
+    network_changes: list[tuple[str | None, str | None]] = field(
+        default_factory=list,
+    )
+    distinct_router_ips: tuple[str, ...] = ()
     insights: list[Insight] = field(default_factory=list)
 
 
@@ -134,6 +138,9 @@ def analyze(events: list[dict[str, Any]], *, source_path: str = "") -> Report:
 
     loss_max_pct: float | None = None
     loss_count = 0
+
+    network_changes: list[tuple[str | None, str | None]] = []
+    distinct_router_ips: set[str] = set()
 
     timestamps: list[datetime] = []
 
@@ -182,6 +189,18 @@ def analyze(events: list[dict[str, Any]], *, source_path: str = "") -> Report:
                 loss_max_pct = (
                     pct if loss_max_pct is None else max(loss_max_pct, pct)
                 )
+            ip = ev.get("target_ip")
+            if isinstance(ip, str):
+                distinct_router_ips.add(ip)
+        elif kind == "network_change":
+            network_changes.append((
+                ev.get("previous_router_ip"),
+                ev.get("new_router_ip"),
+            ))
+        if kind == "latency_spike":
+            ip = ev.get("target_ip")
+            if isinstance(ip, str) and ev.get("target") == "router":
+                distinct_router_ips.add(ip)
 
     report = Report(
         path=source_path,
@@ -208,34 +227,12 @@ def analyze(events: list[dict[str, Any]], *, source_path: str = "") -> Report:
         latency_spike_max_rtt=latency_max_rtt,
         loss_burst_count=loss_count,
         loss_burst_max_pct=loss_max_pct,
+        network_changes=network_changes,
+        distinct_router_ips=tuple(sorted(distinct_router_ips)),
     )
 
     insights = list(_run_heuristics(report, events))
-    return Report(
-        path=report.path,
-        span_start=report.span_start,
-        span_end=report.span_end,
-        total_events=report.total_events,
-        counts_by_type=report.counts_by_type,
-        associations=report.associations,
-        roams=report.roams,
-        band_switches=report.band_switches,
-        inter_ap_roams=report.inter_ap_roams,
-        disassociates=report.disassociates,
-        stir_count=report.stir_count,
-        stir_modes=report.stir_modes,
-        stir_confidences=report.stir_confidences,
-        stir_locations=report.stir_locations,
-        stir_sigma_min=report.stir_sigma_min,
-        stir_sigma_max=report.stir_sigma_max,
-        stir_sigma_p50=report.stir_sigma_p50,
-        latency_spike_count=report.latency_spike_count,
-        latency_spike_by_target=report.latency_spike_by_target,
-        latency_spike_max_rtt=report.latency_spike_max_rtt,
-        loss_burst_count=report.loss_burst_count,
-        loss_burst_max_pct=report.loss_burst_max_pct,
-        insights=insights,
-    )
+    return replace(report, insights=insights)
 
 
 # ---------- heuristics ----------
@@ -367,6 +364,7 @@ def _run_heuristics(
 
     # -- 6. Loss bursts present
     if r.loss_burst_count >= 1:
+        scaled = _scaled_loss_pct(r)
         out.append(Insight(
             severity="warn",
             title=t("Real packet loss observed"),
@@ -375,12 +373,66 @@ def _run_heuristics(
                 "loss, not single-packet jitter — investigate before "
                 "assuming a transient.",
                 n=r.loss_burst_count,
-                pct=f"{r.loss_burst_max_pct:.0f}" if r.loss_burst_max_pct else "?",
+                pct=f"{scaled:.0f}" if scaled is not None else "?",
             ),
             todo=t(
                 "Check the gateway probe target separately from WAN. "
                 "Gateway loss → LAN issue (cable, AP overload). WAN "
                 "loss only → ISP / upstream issue."
+            ),
+        ))
+
+    # -- 6b. Network change observed
+    if r.network_changes:
+        moves = ", ".join(
+            f"{prev or '?'} → {new or '?'}"
+            for prev, new in r.network_changes
+        )
+        out.append(Insight(
+            severity="info",
+            title=t("Network change(s) detected"),
+            detail=t(
+                "{n} gateway-IP transition(s) during this session: "
+                "{moves}. Treat per-network statistics separately — "
+                "stir / latency / loss aggregates pre and post a "
+                "network change describe physically different APs.",
+                n=len(r.network_changes), moves=moves,
+            ),
+        ))
+
+    # -- 6c. Stale latency target after roam (the user's bug)
+    #     Pre-fix bug: LatencyPoller did not refresh on router_ip
+    #     change, so it kept pinging the previous network's
+    #     gateway. The smoking gun in the log is "all loss_burst
+    #     events target the same router IP" combined with "no
+    #     network_change events" combined with "gateway IPs
+    #     across roam events are inconsistent". When we DO have
+    #     network_change events the heuristic stays quiet — that
+    #     means the post-fix code refreshed the poller correctly.
+    if (
+        r.loss_burst_count >= 5
+        and not r.network_changes
+        and len(r.distinct_router_ips) <= 1
+        and r.roams >= 1
+    ):
+        ip = r.distinct_router_ips[0] if r.distinct_router_ips else "?"
+        out.append(Insight(
+            severity="warn",
+            title=t("Loss bursts may be probing a stale gateway"),
+            detail=t(
+                "All {n} loss-burst events target {ip}, even though "
+                "the session crossed {roams} roam(s). Pre-0.7.0 "
+                "versions had a bug where LatencyPoller did not "
+                "refresh after a network change, so the probe kept "
+                "pinging the previous network's gateway. The flood "
+                "of loss bursts is then a measurement artifact, not "
+                "real link degradation.",
+                n=r.loss_burst_count, ip=ip, roams=r.roams,
+            ),
+            todo=t(
+                "Update wifiscope and re-record. Post-fix the "
+                "LatencyPoller rebuilds on every gateway-IP change "
+                "and emits an explicit network_change event."
             ),
         ))
 
@@ -478,6 +530,27 @@ def _format_duration(seconds: float) -> str:
     return t("{h}h {m}m", h=hours, m=rem)
 
 
+def _scaled_loss_pct(report: Report) -> float | None:
+    """Best-effort percent value (0..100) for the report's max
+    loss_burst.
+
+    Logs produced before the aggregate-window fix (where the
+    rolling-window cutoff was a no-op for samples that had been
+    in history > window seconds) carried loss_pct as a
+    fraction-of-session 0..1 instead of the documented 0..100.
+    Detect that shape via "max < 1.0 AND we have any loss
+    bursts" and re-scale so the rendered "peak X%" is honest.
+    Newer logs (post-fix) already carry 0..100 percentages and
+    pass through unchanged.
+    """
+    pct = report.loss_burst_max_pct
+    if pct is None or report.loss_burst_count == 0:
+        return None
+    if 0 < pct < 1.0:
+        return pct * 100.0
+    return pct
+
+
 def render(report: Report) -> str:
     """Format the report as a multi-line string suitable for
     plain stdout. Keeps to ASCII art so it stays grep-friendly
@@ -556,11 +629,11 @@ def render(report: Report) -> str:
                 if report.latency_spike_max_rtt else "?",
             ))
         if report.loss_burst_count:
+            scaled = _scaled_loss_pct(report)
             lines.append(t(
                 "Loss bursts: {n}  peak {pct}%",
                 n=report.loss_burst_count,
-                pct=f"{report.loss_burst_max_pct:.0f}"
-                if report.loss_burst_max_pct else "?",
+                pct=f"{scaled:.0f}" if scaled is not None else "?",
             ))
         lines.append("")
 

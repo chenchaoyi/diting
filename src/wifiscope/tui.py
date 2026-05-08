@@ -44,7 +44,10 @@ from .events import (
 from .i18n import fit_cells, pad_cells, t
 from .latency import LatencyAggregate
 from .models import Connection, ScanResult
-from .network import NetworkInventory, band_label, cluster_label, format_bssid
+from .network import (
+    NetworkInventory, band_label, cluster_label, format_bssid,
+    lookup_ap_vendor,
+)
 from .poller import (
     ConnectionUpdate,
     RoamEvent,
@@ -91,9 +94,18 @@ class ConnectionPanel(Static):
         # Group of rows. Empty-valued rows (e.g. no IP yet) are omitted
         # rather than printing 'n/a' lines that take vertical space and
         # tell the user nothing.
+        # AP vendor / brand (manufacturer name resolved from BSSID's
+        # IEEE OUI prefix). Curated subset; unknown OUI returns None
+        # and the row is omitted so we never print "Vendor: (unknown)".
+        ap_vendor = lookup_ap_vendor(conn.bssid)
+
         rows: list[tuple[str, str]] = [
             (t("SSID"), _fmt(conn.ssid)),
-            (t("BSSID"), _fmt(conn.bssid)),
+            (
+                t("BSSID"),
+                f"{_fmt(conn.bssid)}"
+                + (f"  ·  {ap_vendor}" if ap_vendor else ""),
+            ),
             (
                 t("Channel"),
                 f"{_fmt(conn.channel)}  {_fmt(conn.channel_width_mhz, ' MHz')}  "
@@ -2721,14 +2733,19 @@ class WifiScopeApp(App):
         self._calibration_path = calibration_path
         # JSONL event log shared with `wifiscope monitor`. None ⇒
         # disabled; opt in via --log PATH or WIFISCOPE_LOG=PATH so
-        # users do not get surprised by silent disk writes. The
-        # logger is created here (not in on_mount) so tests that
-        # synthesise events directly into the app still see them
-        # land on disk when a path is configured.
+        # users do not get surprised by silent disk writes.
         self._event_logger = (
             EventLogger.to_path(event_log_path) if event_log_path
             else EventLogger.disabled()
         )
+        self._event_log_path = event_log_path
+        # Per-(event_type, target) last-emit monotonic timestamp,
+        # used to throttle spike / burst events that would
+        # otherwise fire every probe-tick during sustained loss.
+        # The user's overnight log had 90 loss_burst entries in 3
+        # minutes against a stale gateway — the underlying signal
+        # is one incident, not 90.
+        self._last_event_at: dict[tuple[str, str], float] = {}
         # LatencyPoller / EnvironmentMonitor lazy-init in on_mount so
         # tests / preview captures that disable them with the kwargs
         # above don't pay the import / state cost.
@@ -2861,8 +2878,17 @@ class WifiScopeApp(App):
                 # Mirror the connection edge into the JSONL log
                 # (no-op when --log is not enabled). Idempotent:
                 # the logger filters internally to only emit on
-                # associate / disassociate transitions.
-                self._event_logger.emit_connection_update(event.connection)
+                # associate / disassociate transitions. Pass the
+                # AP vendor (manufacturer resolved from BSSID OUI)
+                # so the log carries the brand context needed to
+                # tell home-router from office-AP at a glance.
+                self._event_logger.emit_connection_update(
+                    event.connection,
+                    vendor=lookup_ap_vendor(
+                        event.connection.bssid
+                        if event.connection else None
+                    ),
+                )
                 # Feed the EnvironmentMonitor with the live connection
                 # RSSI on every tick (1 Hz). This is the highest-rate
                 # samples we get for the AP we are actually using —
@@ -2909,7 +2935,23 @@ class WifiScopeApp(App):
                     )
                     else "inter_ap"
                 )
-                self._event_logger.emit_roam(event, kind=kind)
+                # Vendor change across a roam is the clearest
+                # single signal of a physical-network crossing
+                # (home → office). SSID at roam time comes from
+                # the latest connection snapshot — the poller
+                # always emits a ConnectionUpdate before / with
+                # the RoamEvent.
+                ssid = (
+                    self._latest_connection.ssid
+                    if self._latest_connection else None
+                )
+                self._event_logger.emit_roam(
+                    event,
+                    kind=kind,
+                    ssid=ssid,
+                    previous_vendor=lookup_ap_vendor(event.previous_bssid),
+                    new_vendor=lookup_ap_vendor(event.new_bssid),
+                )
 
     def _collect_environment_events(self, now: datetime) -> None:
         """Fire any pending stir events into the ring buffer + panel.
@@ -2955,86 +2997,197 @@ class WifiScopeApp(App):
         self._refresh_environment_panel()
 
     async def _consume_latency_events(self) -> None:
-        """Bring the LatencyPoller online once we know the gateway IP.
+        """Drive a LatencyPoller, rebuilding it on network change.
 
-        We wait up to ~30 s for a Connection.router_ip from the WiFi
-        consumer; if none arrives the latency probe stays dormant
-        (the diagnostics line then renders ``Link  (measuring...)``
-        until a network appears). Both detectors run on every sample
-        so spike / loss events fire in real time.
+        Outer loop waits for a known gateway, builds a poller,
+        consumes its sample stream, and breaks back to the outer
+        loop the moment ``Connection.router_ip`` shifts to a
+        different value (the home → office hop the user observed
+        on real-Mac smoke). The new poller picks up both the new
+        gateway target AND the new WAN anchor (SCDynamicStore is
+        re-read at construction), so the previous version's stuck
+        ``ping 192.168.124.1`` storm after roaming away from home
+        no longer happens.
+
+        On every poller restart we emit a NetworkChangeEvent so
+        the JSONL log carries an explicit segmentation marker for
+        downstream analysis.
         """
         from .latency import (
             LatencyPoller,
             detect_latency_spike,
             detect_loss_burst,
         )
-        # Spin until the user has a gateway IP, polling our cached
-        # connection rather than peeking at the WiFi backend (avoids
-        # the duplicated subprocess from _get_default_router).
-        for _ in range(60):
-            if (
-                self._latest_connection is not None
-                and self._latest_connection.router_ip
-            ):
-                break
-            await asyncio.sleep(0.5)
-        gw = (
-            self._latest_connection.router_ip
-            if self._latest_connection is not None else None
-        )
-        wan_override = (os.environ.get("WIFISCOPE_LATENCY_WAN_TARGET") or "").strip() or None
-        poller = LatencyPoller(gateway_ip=gw, wan_ip=wan_override)
-        self._latency_poller = poller
         panel = self.query_one("#roam", EventsPanel)
-        try:
-            async for sample in poller.events():
-                if self._paused:
-                    continue
-                # Refresh aggregates whenever a sample lands; the panel
-                # reads them on the next tick.
-                self._latency_gw_agg = poller.aggregate("router")
-                self._latency_wan_agg = poller.aggregate("wan")
-                # Spike / loss detectors over the rolling window.
-                history = list(poller._history.get(sample.target, ()))
-                if not history:
-                    continue
-                spike = detect_latency_spike(history)
-                if spike is not None and sample is spike:
-                    agg = (
-                        self._latency_gw_agg if sample.target == "router"
-                        else self._latency_wan_agg
+        current_gw: str | None = None
+        while True:
+            # Wait for a gateway. First boot or after the previous
+            # network dropped — sample the live connection up to
+            # 30 s then retry indefinitely so the worker doesn't
+            # die on a Wi-Fi outage.
+            new_gw: str | None = None
+            for _ in range(60):
+                if (
+                    self._latest_connection is not None
+                    and self._latest_connection.router_ip
+                ):
+                    new_gw = self._latest_connection.router_ip
+                    break
+                await asyncio.sleep(0.5)
+            if new_gw is None:
+                await asyncio.sleep(5.0)
+                continue
+
+            # Network-change marker. The very first poller's
+            # transition (None → first_gw) is silent; subsequent
+            # transitions (gw_a → gw_b) emit a NetworkChangeEvent.
+            if current_gw is not None and current_gw != new_gw:
+                self._fire_network_change(
+                    previous_router_ip=current_gw,
+                    new_router_ip=new_gw,
+                )
+            current_gw = new_gw
+
+            wan_override = (
+                os.environ.get("WIFISCOPE_LATENCY_WAN_TARGET") or ""
+            ).strip() or None
+            poller = LatencyPoller(
+                gateway_ip=new_gw, wan_ip=wan_override,
+            )
+            self._latency_poller = poller
+
+            try:
+                async for sample in poller.events():
+                    if self._paused:
+                        continue
+                    # Detect a gateway change between samples. If
+                    # the live connection now reports a different
+                    # router_ip, stop this poller, fall through to
+                    # the outer loop, and let it build a fresh one.
+                    live_gw = (
+                        self._latest_connection.router_ip
+                        if self._latest_connection is not None else None
                     )
-                    ev = LatencySpikeEvent(
-                        timestamp=sample.ts,
-                        target=sample.target,
-                        target_ip=sample.target_ip,
-                        rtt_ms=sample.rtt_ms or 0.0,
-                        loss_pct=(agg.loss_pct or 0.0) if agg else 0.0,
-                    )
-                    self._events_ring.push(ev)
-                    panel.append_event(ev, self._inv)
-                    self._event_logger.emit_latency_spike(ev)
-                if sample.lost and detect_loss_burst(history):
-                    agg = (
-                        self._latency_gw_agg if sample.target == "router"
-                        else self._latency_wan_agg
-                    )
-                    lost_count = sum(1 for s in history[-5:] if s.lost)
-                    ev = LossBurstEvent(
-                        timestamp=sample.ts,
-                        target=sample.target,
-                        target_ip=sample.target_ip,
-                        loss_pct=(agg.loss_pct or 0.0) if agg else 0.0,
-                        lost_in_window=lost_count,
-                    )
-                    self._events_ring.push(ev)
-                    panel.append_event(ev, self._inv)
-                    self._event_logger.emit_loss_burst(ev)
-                self._refresh_environment_panel()
-        except Exception:
-            # Same pattern as the BLE consumer — a poller hiccup
-            # must not tear down the TUI.
-            pass
+                    if live_gw and live_gw != current_gw:
+                        poller.stop()
+                        break
+                    # Refresh aggregates whenever a sample lands;
+                    # the panel reads them on the next tick.
+                    self._latency_gw_agg = poller.aggregate("router")
+                    self._latency_wan_agg = poller.aggregate("wan")
+                    # Spike / loss detectors over the rolling window.
+                    history = list(poller._history.get(sample.target, ()))
+                    if not history:
+                        continue
+                    spike = detect_latency_spike(history)
+                    if spike is not None and sample is spike:
+                        if self._should_fire_throttled(
+                            "latency_spike", sample.target,
+                        ):
+                            agg = (
+                                self._latency_gw_agg if sample.target == "router"
+                                else self._latency_wan_agg
+                            )
+                            ev = LatencySpikeEvent(
+                                timestamp=sample.ts,
+                                target=sample.target,
+                                target_ip=sample.target_ip,
+                                rtt_ms=sample.rtt_ms or 0.0,
+                                loss_pct=(agg.loss_pct or 0.0) if agg else 0.0,
+                            )
+                            self._events_ring.push(ev)
+                            panel.append_event(ev, self._inv)
+                            self._event_logger.emit_latency_spike(ev)
+                    if sample.lost and detect_loss_burst(history):
+                        if self._should_fire_throttled(
+                            "loss_burst", sample.target,
+                        ):
+                            agg = (
+                                self._latency_gw_agg if sample.target == "router"
+                                else self._latency_wan_agg
+                            )
+                            lost_count = sum(1 for s in history[-5:] if s.lost)
+                            ev = LossBurstEvent(
+                                timestamp=sample.ts,
+                                target=sample.target,
+                                target_ip=sample.target_ip,
+                                loss_pct=(agg.loss_pct or 0.0) if agg else 0.0,
+                                lost_in_window=lost_count,
+                            )
+                            self._events_ring.push(ev)
+                            panel.append_event(ev, self._inv)
+                            self._event_logger.emit_loss_burst(ev)
+                    self._refresh_environment_panel()
+            except Exception:
+                # Same pattern as the BLE consumer — a poller
+                # hiccup must not tear down the TUI. Loop back
+                # to wait for a usable gateway.
+                pass
+            finally:
+                poller.stop()
+
+    def _should_fire_throttled(
+        self, event_type: str, target: str, cooldown_s: float = 30.0,
+    ) -> bool:
+        """Cooldown gate for repeat events on the same target.
+
+        Returns True if at least ``cooldown_s`` seconds have
+        elapsed since the last fire of ``(event_type, target)``,
+        and updates the bookkeeping. Used to collapse the
+        per-3-second cascade detect_loss_burst would otherwise
+        produce during a multi-minute outage. The first event in
+        each cooldown window passes through; subsequent events
+        within the window are silently dropped (the underlying
+        signal is one ongoing incident, not many discrete ones).
+        """
+        now = time.monotonic()
+        last = self._last_event_at.get((event_type, target))
+        if last is not None and (now - last) < cooldown_s:
+            return False
+        self._last_event_at[(event_type, target)] = now
+        return True
+
+    def _fire_network_change(
+        self, *, previous_router_ip: str | None, new_router_ip: str | None,
+    ) -> None:
+        """Push one NetworkChangeEvent into the ring + log + panel.
+
+        Called by the latency consumer when the gateway IP shifts
+        between probes. Snapshots the current connection's SSID
+        and BSSID so the event payload is self-contained for log
+        readers — the previous-network values come from the
+        latency consumer's cached state.
+        """
+        from .events import NetworkChangeEvent
+        new_ssid = (
+            self._latest_connection.ssid
+            if self._latest_connection else None
+        )
+        new_bssid = (
+            self._latest_connection.bssid
+            if self._latest_connection else None
+        )
+        ev = NetworkChangeEvent(
+            timestamp=datetime.now(),
+            previous_router_ip=previous_router_ip,
+            new_router_ip=new_router_ip,
+            previous_ssid=None,
+            new_ssid=new_ssid,
+            previous_bssid=None,
+            new_bssid=new_bssid,
+        )
+        self._events_ring.push(ev)
+        self._event_logger.emit_network_change(ev)
+        # Reset latency aggregates so the diagnostics line does
+        # not keep showing the old network's RTT until the new
+        # poller produces samples.
+        self._latency_gw_agg = None
+        self._latency_wan_agg = None
+        # Reset event-throttle bookkeeping so the first spike or
+        # loss-burst on the new network fires immediately rather
+        # than being suppressed by the cooldown left over from
+        # the old network's incident.
+        self._last_event_at.clear()
 
     async def _consume_ble_events(self) -> None:
         """Drain BLE snapshots from the poller into the BLE panel.

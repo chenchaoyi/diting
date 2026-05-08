@@ -41,6 +41,7 @@ from .events import (
     LatencySpikeEvent,
     LinkStateEvent,
     LossBurstEvent,
+    NetworkChangeEvent,
     RFStirEvent,
     RoamEvent,
 )
@@ -48,28 +49,29 @@ from .models import Connection
 
 
 def _iso(now: datetime) -> str:
-    """Compact ISO-8601 with explicit UTC.
+    """Compact ISO-8601 anchored to the producer's LOCAL timezone.
 
-    Naive datetimes (no tzinfo) follow Python's convention of
-    "local clock time" — that's what ``datetime.now()`` returns
-    and what most TUI producers hand us. We must NOT label local
-    time as ``+00:00`` UTC: that would silently shift every event
-    by the local offset and break any cross-timezone log analysis
-    or AI consumer.
+    Naive datetimes (Python's `datetime.now()`) carry the device's
+    local clock by convention; aware UTC datetimes get converted
+    back to local. Every emitted timestamp therefore looks like
+    ``2026-05-08T08:50:31.123456+08:00`` — the wall-clock value is
+    immediately readable to the user reading the file in the
+    timezone they were sitting in, *and* the explicit ``+08:00``
+    offset means downstream cross-timezone analysis (sorting,
+    AI consumers, comparing logs across machines) stays correct
+    via standard ISO-8601 parsing.
 
-    ``datetime.astimezone()`` with no argument is the documented
-    way to convert a naive datetime to its local-aware equivalent
-    (Python ≥ 3.6); chaining ``.astimezone(timezone.utc)`` then
-    yields the canonical UTC form. Aware inputs are normalised
-    the same way so all output is stable +00:00.
+    Earlier versions wrote either naive-as-UTC (the bug we just
+    fixed) or true UTC. The latter forced every reader to do
+    mental arithmetic when grepping their own log; the user
+    explicitly asked to swap to local+offset, which gives both
+    sides what they need.
     """
     if now.tzinfo is None:
-        # Promote naive → local-aware → UTC. This single line is
-        # what was missing in the previous implementation, which
-        # used .replace(tzinfo=utc) and silently labelled local
-        # time as UTC.
-        now = now.astimezone()
-    return now.astimezone(timezone.utc).isoformat()
+        now = now.astimezone()       # naive → local-aware
+    else:
+        now = now.astimezone()       # aware → local-aware (no-op tz already local)
+    return now.isoformat()
 
 
 class EventLogger:
@@ -150,6 +152,7 @@ class EventLogger:
         conn: Connection | None,
         *,
         now: datetime | None = None,
+        vendor: str | None = None,
     ) -> None:
         """Synthesise link_state events from a connection snapshot.
 
@@ -158,6 +161,11 @@ class EventLogger:
         within the same session do NOT — those are surfaced as
         roam events by the consumer separately, and emitting a
         link_state too would double-count the same observation.
+
+        ``vendor`` is the manufacturer name resolved from the
+        BSSID's OUI prefix (caller's responsibility — keeps the
+        logger free of inventory/network dependencies). Included
+        verbatim in the associated-state payload when supplied.
         """
         if self._sink is None:
             return
@@ -171,13 +179,16 @@ class EventLogger:
             # "session started disassociated" — that's the boring
             # case and it shows up in the next real event anyway).
             if new_bssid is not None and conn is not None:
-                self._write({
+                payload = {
                     "ts": _iso(now),
                     "type": "link_state",
                     "state": "associated",
                     "ssid": conn.ssid,
                     "bssid": new_bssid,
-                })
+                }
+                if vendor:
+                    payload["vendor"] = vendor
+                self._write(payload)
             self._last_assoc_bssid = new_bssid
             return
         if (prev is None) == (new_bssid is None):
@@ -196,13 +207,16 @@ class EventLogger:
             })
         else:
             assert conn is not None  # for type checker; new_bssid → conn
-            self._write({
+            payload = {
                 "ts": _iso(now),
                 "type": "link_state",
                 "state": "associated",
                 "ssid": conn.ssid,
                 "bssid": new_bssid,
-            })
+            }
+            if vendor:
+                payload["vendor"] = vendor
+            self._write(payload)
         self._last_assoc_bssid = new_bssid
 
     def emit_link_state(self, event: LinkStateEvent) -> None:
@@ -221,13 +235,32 @@ class EventLogger:
         })
 
     def emit_roam(
-        self, event: RoamEvent, *, kind: str | None = None,
+        self,
+        event: RoamEvent,
+        *,
+        kind: str | None = None,
+        ssid: str | None = None,
+        previous_vendor: str | None = None,
+        new_vendor: str | None = None,
     ) -> None:
-        """Emit a roam event. ``kind`` is an optional discriminator
-        ('band_switch' if the two BSSIDs belong to the same physical
-        AP, 'inter_ap' otherwise) — callers with inventory access
-        should compute and pass it; consumers without inventory
-        omit it and downstream tooling can re-derive."""
+        """Emit a roam event with optional context.
+
+        ``kind`` discriminates 'band_switch' (same physical AP,
+        different radio) vs 'inter_ap' (different physical AP) —
+        the caller computes this from inventory.
+
+        ``ssid`` is the network name at roam time. Carried so a
+        log reader can spot SSID changes that imply a different
+        physical network (rare, but it does happen — same SSID
+        across home and office triggers seamless laptop roams
+        the user did not intend).
+
+        ``previous_vendor`` / ``new_vendor`` are the manufacturer
+        names resolved from the two BSSIDs' OUI prefixes. A
+        vendor change across a roam (e.g. Xiaomi → Aruba) is the
+        clearest single signal that the user has crossed between
+        physically separate networks.
+        """
         if self._sink is None:
             return
         payload: dict[str, Any] = {
@@ -245,6 +278,12 @@ class EventLogger:
         }
         if kind is not None:
             payload["kind"] = kind
+        if ssid is not None:
+            payload["ssid"] = ssid
+        if previous_vendor:
+            payload["previous_vendor"] = previous_vendor
+        if new_vendor:
+            payload["new_vendor"] = new_vendor
         self._write(payload)
 
     def emit_rf_stir(self, event: RFStirEvent) -> None:
@@ -284,6 +323,30 @@ class EventLogger:
             "loss_pct": event.loss_pct,
             "lost_in_window": event.lost_in_window,
         })
+
+    def emit_network_change(self, event: NetworkChangeEvent) -> None:
+        """Emit a subnet-change event. The TUI fires one whenever
+        the gateway IP transitions — even within the same SSID —
+        so downstream readers can split per-network statistics
+        cleanly.
+        """
+        if self._sink is None:
+            return
+        payload: dict[str, Any] = {
+            "ts": _iso(event.timestamp),
+            "type": "network_change",
+            "previous_router_ip": event.previous_router_ip,
+            "new_router_ip": event.new_router_ip,
+        }
+        if event.previous_ssid is not None:
+            payload["previous_ssid"] = event.previous_ssid
+        if event.new_ssid is not None:
+            payload["new_ssid"] = event.new_ssid
+        if event.previous_bssid is not None:
+            payload["previous_bssid"] = event.previous_bssid.lower()
+        if event.new_bssid is not None:
+            payload["new_bssid"] = event.new_bssid.lower()
+        self._write(payload)
 
     # ---------- lifecycle ----------
 

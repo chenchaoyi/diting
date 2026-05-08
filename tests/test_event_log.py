@@ -276,6 +276,62 @@ def test_emit_loss_burst_carries_lost_in_window(tmp_path):
     assert row["target"] == "wan"
 
 
+def test_emit_network_change_carries_router_ip_transition(tmp_path):
+    """The network_change event records the gateway-IP shift that
+    triggers a LatencyPoller rebuild. SSID / BSSID are optional
+    context; previous-side fields are typically None because the
+    previous network's metadata isn't recorded long-term."""
+    from wifiscope.events import NetworkChangeEvent
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_network_change(NetworkChangeEvent(
+        timestamp=datetime(2026, 5, 8, 9, 30, tzinfo=timezone.utc),
+        previous_router_ip="192.168.124.1",
+        new_router_ip="10.20.30.1",
+        previous_ssid=None,
+        new_ssid="office-wifi",
+        previous_bssid=None,
+        new_bssid="AA:BB:CC:11:22:33",
+    ))
+    logger.close()
+
+    row = _read_jsonl(path)[0]
+    assert row["type"] == "network_change"
+    assert row["previous_router_ip"] == "192.168.124.1"
+    assert row["new_router_ip"] == "10.20.30.1"
+    # BSSID should be lower-cased like the rest of the schema.
+    assert row["new_bssid"] == "aa:bb:cc:11:22:33"
+    # Optional fields: emitted only when set on the dataclass.
+    assert "previous_ssid" not in row
+    assert "previous_bssid" not in row
+
+
+def test_emit_roam_includes_vendor_and_ssid_when_supplied(tmp_path):
+    """Roam events carry SSID + previous/new vendor when the
+    consumer can compute them. Vendor change across a roam is
+    the clearest single signal of a physical-network crossing
+    (home Xiaomi → office Aruba)."""
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    ev = RoamEvent(
+        timestamp=datetime(2026, 5, 8, 9, 30, tzinfo=timezone.utc),
+        previous_bssid="40:fe:95:8a:3c:58", previous_channel=1,
+        new_bssid="1c:28:af:5e:a7:14", new_channel=161,
+    )
+    logger.emit_roam(
+        ev, kind="inter_ap", ssid="tedo_5G",
+        previous_vendor="Xiaomi Communications",
+        new_vendor="Liteon Technology",
+    )
+    logger.close()
+
+    row = _read_jsonl(path)[0]
+    assert row["kind"] == "inter_ap"
+    assert row["ssid"] == "tedo_5G"
+    assert row["previous_vendor"] == "Xiaomi Communications"
+    assert row["new_vendor"] == "Liteon Technology"
+
+
 def test_emit_link_state_dataclass_passthrough(tmp_path):
     """The pre-built LinkStateEvent path is for callers that
     have their own state machine. Just verify the field map."""
@@ -408,9 +464,12 @@ def test_extract_log_arg_no_value_returns_sentinel():
 
 def test_timestamps_are_iso_utc(tmp_path):
     """Every event row carries a top-level 'ts' in ISO-8601 with an
-    explicit UTC offset. AI consumers rely on this for sorting /
-    bucketing across files; a missing tz would let DST corrupt
-    relative ordering."""
+    explicit local-timezone offset. The offset is what makes
+    cross-timezone analysis still work (sorting, AI consumers,
+    comparing logs from different machines); the local-clock
+    value is what makes the file readable to a user grepping
+    their own log without doing mental arithmetic."""
+    from datetime import datetime as _dt
     path = tmp_path / "events.jsonl"
     logger = EventLogger.to_path(str(path))
     logger.emit_connection_update(_conn("aa:bb:cc:11:22:33"))
@@ -418,9 +477,10 @@ def test_timestamps_are_iso_utc(tmp_path):
 
     row = _read_jsonl(path)[0]
     ts = row["ts"]
-    # Either a +00:00 offset or a 'Z' suffix; both are ISO-8601 UTC.
-    assert ts.endswith("+00:00") or ts.endswith("Z")
     assert "T" in ts  # date-time separator
+    # ISO-8601 with explicit offset (either ±HH:MM or 'Z').
+    parsed = _dt.fromisoformat(ts.replace("Z", "+00:00"))
+    assert parsed.utcoffset() is not None
 
 
 def test_naive_datetime_treated_as_local_not_utc(tmp_path):
@@ -434,9 +494,9 @@ def test_naive_datetime_treated_as_local_not_utc(tmp_path):
 
     Verify: an aware UTC timestamp and a naive local timestamp
     that represent the *same wall-clock moment* should produce
-    identical 'ts' fields. We can't assert the exact wall-clock
-    equality without knowing the runner's local offset, so we
-    check the round-trip property via parsing instead.
+    'ts' fields that resolve to the same instant in time, even
+    though both are now serialised in the producer's local
+    timezone (with explicit offset preserving correctness).
     """
     from datetime import datetime as _dt
     path = tmp_path / "events.jsonl"
@@ -445,8 +505,6 @@ def test_naive_datetime_treated_as_local_not_utc(tmp_path):
     # equivalent of that same moment.
     naive_local = _dt(2026, 5, 7, 22, 44, 6)
     aware_utc = naive_local.astimezone().astimezone(timezone.utc)
-    # Hand both forms to the same emit path via LinkStateEvent
-    # (which lets us control the timestamp directly).
     logger.emit_link_state(LinkStateEvent(
         timestamp=naive_local, state="associated",
         bssid="aa:bb:cc:11:22:33", ssid="X",
@@ -458,11 +516,12 @@ def test_naive_datetime_treated_as_local_not_utc(tmp_path):
     logger.close()
 
     rows = _read_jsonl(path)
-    # Both rows should describe the same moment in time. Parse
-    # back to datetime and compare to within a microsecond.
+    # Both rows describe the same moment in time. Parsing back
+    # yields aware datetimes which compare equal regardless of
+    # which offset they happen to carry on the wire.
     ts0 = _dt.fromisoformat(rows[0]["ts"])
     ts1 = _dt.fromisoformat(rows[1]["ts"])
     assert abs((ts0 - ts1).total_seconds()) < 1e-6
-    # Both must be UTC.
-    assert ts0.utcoffset().total_seconds() == 0
-    assert ts1.utcoffset().total_seconds() == 0
+    # Both must carry an explicit offset — never naive.
+    assert ts0.utcoffset() is not None
+    assert ts1.utcoffset() is not None
