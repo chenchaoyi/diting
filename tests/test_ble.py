@@ -23,6 +23,7 @@ import pytest
 from wifiscope import ble
 from wifiscope.ble import (
     BLEDevice,
+    BLEHistory,
     BLEPoller,
     BLEScanUpdate,
     detect_advertisement,
@@ -125,6 +126,104 @@ def test_vendor_id_carries_forward_when_scan_response_omits_manufacturer_data():
     d = next(iter(devices.values()))
     assert d.vendor_id == 76
     assert d.vendor == "Apple, Inc."
+
+
+def test_schema_4_raw_passthrough_fields_populate():
+    """Schema-4 fields (service_data / tx_power_dbm / solicited /
+    overflow service UUIDs) plumb through from the helper JSON line
+    onto the BLEDevice dataclass. These are raw-passthrough so
+    downstream sensor / beacon decoders can read CoreBluetooth's
+    advertisementData dict without re-implementing the bridge.
+    """
+    line = json.dumps({
+        "ts": "2026-05-09T10:00:00.000Z",
+        "id": "AA000000-0000-0000-0000-000000000001",
+        "rssi_dbm": -55,
+        "is_connectable": True,
+        "service_uuids": ["FEAA"],
+        "service_data": {
+            "FEAA": "10aa00abcdef",  # Eddystone-URL frame
+            "FCD2": "deadbeef",       # vendor-private payload
+        },
+        "tx_power_dbm": -22,
+        "solicited_service_uuids": ["1812"],
+        "overflow_service_uuids": ["FE9F"],
+    })
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(devices, line, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    sd = dict(d.service_data)
+    assert sd == {"FEAA": "10aa00abcdef", "FCD2": "deadbeef"}
+    assert d.tx_power_dbm == -22
+    assert d.solicited_service_uuids == ("1812",)
+    assert d.overflow_service_uuids == ("FE9F",)
+
+
+def test_schema_4_fields_default_when_helper_omits():
+    """A schema-3 helper bundle omits the new fields; the BLEDevice
+    still builds, with empty / None defaults. Required for backward
+    compat — users running an older helper.app must not break.
+    """
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(devices, SAMPLE_AIRPODS, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    assert d.service_data == ()
+    assert d.tx_power_dbm is None
+    assert d.solicited_service_uuids == ()
+    assert d.overflow_service_uuids == ()
+
+
+def test_service_data_uuid_resolves_vendor_when_service_uuids_empty():
+    """Real-world rows from Xiaomi MiBeacon / Google Fast Pair devices
+    advertise their SIG-assigned member UUID only inside `service_data`
+    keys, leaving `service_uuids` empty. Vendor lookup must consult
+    service_data keys as a fallback so these rows don't dead-end at
+    `(unknown)`. Verified against actual helper output: an SMI-M14
+    Mi Band variant with FE95 service_data and no other identifying
+    fields previously rendered as unknown.
+    """
+    line = json.dumps({
+        "ts": "2026-05-09T11:00:00.000Z",
+        "id": "B1ED3117-1909-E3AE-5AFE-0FD2984A9AB9",
+        "rssi_dbm": -74,
+        "is_connectable": True,
+        "name": "SMI-M14",
+        # No manufacturer_id, no service_uuids — only service_data carries
+        # the SIG member UUID.
+        "service_data": {"FE95": "b054452d00b25aca754dcc080e00"},
+    })
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(devices, line, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    assert d.vendor == "Xiaomi Inc."
+
+
+def test_schema_4_fields_carry_forward_on_scan_response():
+    """Same flicker-protection as vendor_id / name / services: a
+    scan-response packet that omits the schema-4 fields should not
+    blank values established by the primary advertisement.
+    """
+    primary = json.dumps({
+        "ts": "2026-05-09T10:00:00.000Z",
+        "id": "AA000000-0000-0000-0000-000000000002",
+        "rssi_dbm": -50,
+        "is_connectable": True,
+        "service_data": {"FEAA": "10aa00"},
+        "tx_power_dbm": -22,
+    })
+    scan_response = json.dumps({
+        "ts": "2026-05-09T10:00:01.000Z",
+        "id": "AA000000-0000-0000-0000-000000000002",
+        "rssi_dbm": -52,
+        "is_connectable": True,
+        # No service_data, no tx_power_dbm — typical scan response.
+    })
+    devices: dict[str, BLEDevice] = {}
+    update_from_line(devices, primary, vendors=VENDORS)
+    update_from_line(devices, scan_response, vendors=VENDORS)
+    d = next(iter(devices.values()))
+    assert dict(d.service_data) == {"FEAA": "10aa00"}
+    assert d.tx_power_dbm == -22
 
 
 # ------------------------------------------------------------------
@@ -1258,3 +1357,63 @@ async def _run_poller_with_stream(
             f"expected state {assert_state!r} in "
             f"{[s.permission_state for s in snapshots]!r}"
         )
+
+
+# ------------------------------------------------------------------
+# BLEHistory ring buffer
+# ------------------------------------------------------------------
+
+
+def test_history_records_and_returns_samples_in_order():
+    h = BLEHistory()
+    t0 = datetime(2026, 5, 9, 14, 0, 0, tzinfo=timezone.utc)
+    h.record("dev-1", t0, -50)
+    h.record("dev-1", t0 + timedelta(seconds=2), -52)
+    h.record("dev-1", t0 + timedelta(seconds=4), -55)
+    out = h.get("dev-1")
+    assert [r for _, r in out] == [-50, -52, -55]
+
+
+def test_history_drops_none_rssi():
+    """Connected peripherals have rssi=None — the buffer must not
+    accept those, otherwise the sparkline would render garbage."""
+    h = BLEHistory()
+    t0 = datetime(2026, 5, 9, 14, 0, 0, tzinfo=timezone.utc)
+    h.record("dev-1", t0, None)
+    h.record("dev-1", t0 + timedelta(seconds=1), -55)
+    out = h.get("dev-1")
+    assert [r for _, r in out] == [-55]
+
+
+def test_history_caps_at_maxlen():
+    """Long-running session must not leak: oldest samples roll off
+    once we hit ``maxlen``."""
+    h = BLEHistory(maxlen=4)
+    t0 = datetime(2026, 5, 9, 14, 0, 0, tzinfo=timezone.utc)
+    for i in range(10):
+        h.record("dev-1", t0 + timedelta(seconds=i), -60 - i)
+    out = h.get("dev-1")
+    assert len(out) == 4
+    # The four samples retained should be the four newest.
+    assert [r for _, r in out] == [-66, -67, -68, -69]
+
+
+def test_history_get_unknown_device_returns_empty():
+    h = BLEHistory()
+    assert h.get("never-seen") == []
+
+
+def test_history_expire_drops_devices_not_in_set():
+    """Once a device leaves the snapshot we should not keep its
+    history forever — busy environments rotate through hundreds of
+    distinct random-MAC iPhones in an hour."""
+    h = BLEHistory()
+    t0 = datetime(2026, 5, 9, 14, 0, 0, tzinfo=timezone.utc)
+    h.record("dev-A", t0, -50)
+    h.record("dev-B", t0, -60)
+    h.record("dev-C", t0, -70)
+    # Snapshot only sees A and C now; B has gone.
+    h.expire({"dev-A", "dev-C"})
+    assert h.get("dev-A") != []
+    assert h.get("dev-B") == []
+    assert h.get("dev-C") != []

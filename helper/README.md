@@ -7,6 +7,12 @@ permissions so the Python TUI can read **unredacted SSID and BSSID**
 for every AP in the scan list and **stream nearby BLE advertisements**
 in the BLE view.
 
+> **Spec**: the helper's subprocess contract, schema versioning,
+> cdhash invariant, and TCC-denial signalling are pinned in
+> [`openspec/specs/macos-helper/spec.md`](../openspec/specs/macos-helper/spec.md).
+> Code changes that affect any of those MUST go through an
+> `openspec/changes/<name>/` proposal.
+
 ## Why
 
 CoreWLAN's `bssid()` / `ssid()` are TCC-redacted on macOS 14.4+ unless

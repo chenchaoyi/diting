@@ -514,6 +514,48 @@ final class BLEScanner: NSObject, CBCentralManagerDelegate {
             row["manufacturer_hex"] = mfg.map { String(format: "%02x", $0) }.joined()
         }
 
+        // Schema-4 fields (helper v0.8.0+). Optional and additive — Python
+        // tolerates absence. Surfacing more of CoreBluetooth's
+        // advertisementData dict makes the rows usable as raw input for
+        // downstream sensor / beacon decoders (Eddystone-URL, Xiaomi
+        // MiBeacon, Govee, SwitchBot, RuuviTag) that put their payload in
+        // service-data rather than manufacturer-data.
+
+        // Service-data: {uuid_string: hex_bytes}. The CBUUID may be
+        // 16-bit (Eddystone "FEAA") or 128-bit (vendor-private). Encode
+        // the bytes as hex to match manufacturer_hex's format.
+        if let svcData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data],
+           !svcData.isEmpty {
+            var out: [String: String] = [:]
+            for (uuid, data) in svcData {
+                out[uuid.uuidString] = data.map { String(format: "%02x", $0) }.joined()
+            }
+            row["service_data"] = out
+        }
+
+        // Tx-power-level: included by iBeacon / Eddystone-TLM and a few
+        // other beacons. Consumers can use it for rough distance
+        // estimation (RSSI − tx_power), or surface it as-is.
+        if let txPower = advertisementData[CBAdvertisementDataTxPowerLevelKey] as? NSNumber {
+            row["tx_power_dbm"] = txPower.intValue
+        }
+
+        // Solicited service UUIDs: services the peripheral wants to be
+        // connected for, even when not actively advertising them. HID
+        // peer-discovery and Find My peer-discovery surface here.
+        if let solicited = advertisementData[CBAdvertisementDataSolicitedServiceUUIDsKey] as? [CBUUID],
+           !solicited.isEmpty {
+            row["solicited_service_uuids"] = solicited.map { $0.uuidString }
+        }
+
+        // Overflow service UUIDs: BLE adv frames are 31 bytes; iOS
+        // spills over-budget UUIDs into a backup list. Apple Continuity
+        // secondary advertisements land here.
+        if let overflow = advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID],
+           !overflow.isEmpty {
+            row["overflow_service_uuids"] = overflow.map { $0.uuidString }
+        }
+
         // Schema-3 deep identification: tag the row with whatever
         // public-format detection produced. Both fields are optional;
         // unrecognised devices simply omit them.

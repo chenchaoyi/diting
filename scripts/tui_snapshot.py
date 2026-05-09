@@ -142,9 +142,12 @@ class _RedactedBackend(_GoodBackend):
 def _ble_devices_normal(now: datetime) -> list[BLEDevice]:
     """Healthy BLE population — most rows have a vendor, some have a
     device class, a couple have ``(unknown)`` to keep the inspector
-    honest."""
+    honest. The iBeacon and Eddystone-URL rows carry real raw bytes
+    (manufacturer_hex / service_data) so the decoder framework can
+    decode them in detail-modal regression captures."""
     def d(ident, *, name, vendor, vendor_id, services, rssi,
-          ad_count=4, age_s=1, merged=1, type=None, device_class=None):
+          ad_count=4, age_s=1, merged=1, type=None, device_class=None,
+          manufacturer_hex=None, service_data=()):
         last = now - timedelta(seconds=age_s)
         return BLEDevice(
             identifier=ident, name=name, vendor=vendor, vendor_id=vendor_id,
@@ -152,16 +155,32 @@ def _ble_devices_normal(now: datetime) -> list[BLEDevice]:
             first_seen=last - timedelta(seconds=ad_count * 3),
             last_seen=last, ad_count=ad_count, merged_count=merged,
             type=type, device_class=device_class,
+            manufacturer_hex=manufacturer_hex,
+            service_data=service_data,
         )
+    # Real iBeacon bytes: cid 0x004C + type 0x02 + length 0x15 + 16-byte
+    # UUID "550e8400-e29b-41d4-a716-446655440000" + major=1 + minor=42
+    # + tx_power -59 dBm.
+    ibeacon_bytes = (
+        "4c00" "0215"
+        "550e8400e29b41d4a716446655440000"
+        "0001" "002a" "c5"
+    )
+    # Real Eddystone-URL bytes for "https://example.com/": frame 0x10
+    # + tx_power -21 dBm + scheme 0x03 (https://) + "example" + 0x00
+    # (".com/" expansion).
+    eddystone_url_bytes = "10eb03" + "example".encode().hex() + "00"
     return [
         d("aaaa1234-...01", name=None, vendor="Apple, Inc.", vendor_id=76,
           services=(), rssi=-44, ad_count=22, device_class="iPhone"),
         d("bbbb1234-...02", name="AirTag", vendor="Apple, Inc.", vendor_id=76,
           services=("FD5A",), rssi=-46, type="AirTag"),
         d("cccc1234-...03", name=None, vendor="Apple, Inc.", vendor_id=76,
-          services=(), rssi=-52, type="iBeacon"),
+          services=(), rssi=-52, type="iBeacon",
+          manufacturer_hex=ibeacon_bytes),
         d("dddd1234-...04", name=None, vendor=None, vendor_id=None,
-          services=("FEAA",), rssi=-58, type="Eddystone-URL"),
+          services=("FEAA",), rssi=-58, type="Eddystone-URL",
+          service_data=(("FEAA", eddystone_url_bytes),)),
         d("eeee1234-...05", name=None, vendor="Apple, Inc.", vendor_id=76,
           services=("FE9F",), rssi=-61, merged=3),
         d("ffff1234-...06", name="Mi Band 7", vendor="Xiaomi, Inc.", vendor_id=637,
@@ -313,33 +332,54 @@ def _inspect_ble_no_name_no_type(app: "Any", *_args) -> list[Finding]:
     per-vendor schema work. Splitting tiers makes the
     actionability honest.
     """
+    from wifiscope.ble import is_silent_device
     devices = list(getattr(app, "_latest_ble", []) or [])
     if not devices:
         return []
-    truly_anon = [
+    # Three buckets, mutually exclusive:
+    # - silent: zero broadcast info — physical limit, no fix possible
+    # - unknown_with_data: had data but vendor lookup failed — actionable
+    # - vendor_only: vendor resolved but no deep-ID label — decoder gap
+    silent = [d for d in devices if is_silent_device(d)]
+    unknown_with_data = [
         d for d in devices
-        if not d.vendor and not d.name and not d.type and not d.device_class
+        if not d.vendor and not is_silent_device(d)
     ]
     vendor_only = [
         d for d in devices
         if d.vendor and not d.name and not d.type and not d.device_class
     ]
     out: list[Finding] = []
-    if len(truly_anon) >= 3:
+    if len(silent) >= 3:
+        out.append(Finding(
+            severity="info",
+            message=(
+                f"{len(silent)} BLE rows are truly silent — broadcasts "
+                f"carry no manufacturer_id, no service UUIDs, no name, "
+                f"no type, no device_class. Only RSSI is available."
+            ),
+            suggestion=(
+                "Nothing to derive from advertisement data. Possible "
+                "future signal: pattern observation (proximity walk, "
+                "time correlation), which wifiscope does not do today."
+            ),
+        ))
+    if len(unknown_with_data) >= 3:
         out.append(Finding(
             severity="warn",
             message=(
-                f"{len(truly_anon)} BLE rows are completely anonymous "
-                f"(no vendor, no name, no type). The user has only "
-                f"RSSI to go on."
+                f"{len(unknown_with_data)} BLE rows have broadcast data "
+                f"(manufacturer_id / services / name / type / "
+                f"device_class) but the vendor lookup chain abstained. "
+                f"This bucket IS actionable."
             ),
             suggestion=(
-                "These advertisements carry no manufacturer-data "
-                "company-id and no service UUIDs — there's nothing "
-                "to derive an identity from. The only ways forward "
-                "are pattern observation (proximity walk, time "
-                "correlation) which wifiscope doesn't do today, or "
-                "ignoring them."
+                "Inspect what data each unresolved row carries. Common "
+                "fixes: missing OUI in src/wifiscope/data/wifi_ouis.json, "
+                "missing 16-bit member UUID in bluetooth_member_uuids.json, "
+                "missing name pattern in src/wifiscope/ble.py "
+                "_NAME_PATTERN_VENDORS, or missing 128-bit member UUID "
+                "in _LONG_MEMBER_UUIDS."
             ),
         ))
     if len(vendor_only) >= 5:
@@ -440,7 +480,16 @@ def _regression_scenarios() -> list[Scenario]:
 
     async def _seed_link_and_events(pilot, ble_devices=None):
         """Common after-mount: inject link aggregates + a sample
-        event so the events strip + diagnostics row aren't empty."""
+        event so the events strip + diagnostics row aren't empty.
+
+        The App's ``_refresh_environment_panel`` can fire at any
+        moment after we paint and would otherwise call
+        ``_link_diagnostic_tuple`` / ``_environment_diagnostic_tuple``
+        — both of which return None when ``enable_latency=False``,
+        wiping the Link / Environment rows we just seeded. Monkey-
+        patch those two methods on the App instance so any later
+        refresh re-renders with the seeded tuples.
+        """
         from wifiscope.tui import EnvironmentPanel, EventsPanel
         await pilot.pause(2.0)
         env_panel = pilot.app.query_one("#env", EnvironmentPanel)
@@ -456,6 +505,11 @@ def _regression_scenarios() -> list[Scenario]:
             None,
         )
         env = ("stable", 1.4, None)
+        # Pin the seed values onto the App so any re-render path
+        # picks them up — eliminates a flaky race where a stray
+        # refresh wipes the diagnostics rows we just painted.
+        pilot.app._link_diagnostic_tuple = lambda: link
+        pilot.app._environment_diagnostic_tuple = lambda: env
         env_panel.update_environment(
             pilot.app._cached_scan, pilot.app._latest_connection,
             link=link, env=env,
@@ -485,6 +539,20 @@ def _regression_scenarios() -> list[Scenario]:
     async def _switch_to_ble(pilot, *, ble_devices):
         await _seed_link_and_events(pilot, ble_devices=ble_devices)
         await pilot.press("n")
+        await pilot.pause(0.3)
+
+    async def _switch_to_ble_and_inspect(pilot, *, ble_devices, steps: int):
+        """Switch to BLE view, push the cursor down ``steps`` times,
+        then open the detail modal. Used by the regression scenario
+        that exercises the decoder framework — the cursor needs to
+        land on a row whose payload one of the registered decoders
+        will recognise (typically the iBeacon row in
+        ``_ble_devices_normal``)."""
+        await _switch_to_ble(pilot, ble_devices=ble_devices)
+        for _ in range(steps):
+            await pilot.press("down")
+            await pilot.pause(0.02)
+        await pilot.press("i")
         await pilot.pause(0.3)
 
     async def _open_events_modal(pilot):
@@ -594,6 +662,30 @@ def _regression_scenarios() -> list[Scenario]:
             ),
         ),
         Scenario(
+            id="ble_detail_decoded",
+            description="BLE detail modal with iBeacon decoder firing.",
+            lang="en",
+            # The iBeacon row is the 3rd advertising entry in
+            # _ble_devices_normal. With 2 connected peripherals
+            # seeded by _ble_connected the cursor reaches the iBeacon
+            # at the 5th `down` press: 2 through Connected, then 3
+            # advertising rows (iPhone Nearby Info, AirTag, iBeacon).
+            setup=lambda: _build_good(lang="en"),
+            after_mount=lambda pilot: _switch_to_ble_and_inspect(
+                pilot,
+                ble_devices=_ble_devices_normal(datetime.now()),
+                steps=5,
+            ),
+            assertions=(
+                ("Decoded section header", lambda t: "Decoded payload" in t),
+                ("iBeacon UUID rendered",
+                 lambda t: "550e8400-e29b-41d4" in t),
+                ("iBeacon major+minor",
+                 lambda t: "major" in t and "minor" in t),
+            ),
+            inspectors=(),
+        ),
+        Scenario(
             id="ble_unknown_heavy",
             description="BLE view stress test — most rows lack vendor.",
             lang="en",
@@ -686,9 +778,12 @@ def _explore_scenarios() -> list[Scenario]:
     helper_path = _helper.find_helper() or ""
 
     def _build_live() -> "Any":
-        # Default language: leave whatever WIFISCOPE_LANG / locale
-        # autodetect produced. Audit always reflects the user's
-        # actual session.
+        # Honour WIFISCOPE_LANG / locale so an audit run can target
+        # the Chinese UI by setting WIFISCOPE_LANG=zh; the regression
+        # scenarios above pin lang explicitly via set_lang, so without
+        # this call the explore mode would silently inherit whatever
+        # the last regression run left _lang at.
+        i18n.set_lang(i18n.detect_default_lang())
         backend = MacOSWiFiBackend()
         inv = load_inventory()
         return WifiScopeApp(
@@ -731,6 +826,25 @@ def _explore_scenarios() -> list[Scenario]:
         await pilot.pause(15.0)
         await pilot.press("p")
         await pilot.pause(0.5)
+
+    async def _open_ble_detail(pilot):
+        # Switch to BLE first, let the list populate, then push the
+        # cursor past the Connected section (typically 2-3 paired
+        # peripherals on a normal Mac) and a few rows into Advertising
+        # so the detail modal lands on a row that actually has
+        # manufacturer_hex and (with luck) service_data — the
+        # interesting raw-byte sections. Specifically aim past the
+        # Apple-heavy top of the list (typical office: ~10 Apple
+        # rows) so we land on a Microsoft / Mi Band / etc. row where
+        # the lesser-tested decoders also fire.
+        await pilot.pause(15.0)
+        await pilot.press("n")
+        await pilot.pause(8.0)
+        for _ in range(20):
+            await pilot.press("down")
+            await pilot.pause(0.05)
+        await pilot.press("i")
+        await pilot.pause(0.4)
 
     return [
         Scenario(
@@ -778,6 +892,15 @@ def _explore_scenarios() -> list[Scenario]:
             lang="auto",
             setup=_build_live,
             after_mount=_open_basics,
+            assertions=(),
+            inspectors=(),
+        ),
+        Scenario(
+            id="live_ble_detail",
+            description="BLE detail modal (live device under cursor).",
+            lang="auto",
+            setup=_build_live,
+            after_mount=_open_ble_detail,
             assertions=(),
             inspectors=(),
         ),

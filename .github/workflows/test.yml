@@ -42,3 +42,68 @@ jobs:
 
       - name: Run pytest
         run: uv run --python ${{ matrix.python-version }} pytest
+
+  regression:
+    # Synthetic-backend TUI regression. Pinned to one Python version
+    # because Textual snapshot output is identical across 3.11+ —
+    # running on three Pythons would just triple cost without
+    # adding signal. Failures here mean a panel / modal / footer
+    # rendered something unexpected against deterministic input.
+    runs-on: macos-latest
+    needs: pytest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.11
+        run: uv python install 3.11
+
+      - name: Sync dev dependencies
+        run: uv sync --all-groups --python 3.11
+
+      - name: Run TUI regression scenarios
+        run: uv run --python 3.11 python scripts/tui_snapshot.py --mode regression
+
+      - name: Upload snapshot artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-output
+          path: snapshot-output/
+          retention-days: 7
+
+  spec-validation:
+    # OpenSpec --strict validation. The spec format is plain Markdown;
+    # we lean on the published @fission-ai/openspec CLI to confirm
+    # every spec under openspec/specs/ has a SHALL/MUST first-line
+    # body, scenarios, and the Purpose/Requirements section
+    # structure. Cheap to run, blocks merges that introduce
+    # ill-formed spec edits.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install openspec CLI
+        run: npm install -g @fission-ai/openspec@^1
+
+      - name: Validate all specs
+        run: openspec validate --specs --strict
+
+      - name: Validate active changes (if any)
+        run: |
+          if [ -n "$(ls openspec/changes 2>/dev/null | grep -v '^archive$' || true)" ]; then
+            openspec validate --changes --strict
+          else
+            echo "No active changes to validate."
+          fi
