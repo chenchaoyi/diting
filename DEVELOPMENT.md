@@ -108,8 +108,9 @@ last-byte proximity check:
    are allocated as `mgmt + N` for small N (typically 1..6). When
    several APs share an OUI block (e.g. an H3C controller handing
    out APs at `…3c:07`, `…3c:15`, `…3c:54`), the prefix alone is
-   ambiguous; we require the BSSID's last byte to fall within 8
-   above the AP's mgmt MAC last byte and pick the closest match.
+   ambiguous; the rule requires the BSSID's last byte to fall
+   within 8 above the AP's mgmt MAC last byte and picks the closest
+   match.
 2. *Octets 2..5 match + same window.* Some vendors split a chip's
    "user" SSIDs and "vendor-internal" SSIDs across sibling OUI
    blocks (H3C uses `40:fe:95:…` and `44:fe:95:…`). Octets 2..5
@@ -135,4 +136,4 @@ lives in `MacOSWiFiBackend`. A future Linux backend (`nl80211` /
 
 - [`CHANGELOG.md`](CHANGELOG.md) — version-by-version log
 - [`docs/explainers/wifi-sensing.md`](docs/explainers/wifi-sensing.md) —
-  what we deliberately do *not* claim about Wi-Fi sensing
+  what diting deliberately does *not* claim about Wi-Fi sensing

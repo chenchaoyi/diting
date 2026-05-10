@@ -30,13 +30,13 @@ How to triage: edit each `disposition` cell to `accept` / `defer` / `reject`. Ad
 | V5 | `openspec/AGENTS.md:3` | same | should-fix | `Diting's spec / change workflow.` → `diting's spec / change workflow.` | applied |
 | V6 | `CLAUDE.md:1` | same | should-fix | `# Diting (谛听) — agent / contributor brief` → `# diting (谛听) — agent / contributor brief` | applied |
 | V7 | `openspec/specs/wifi-scanning/spec.md:29` | same | should-fix | `Diting SHALL surface the redacted-scan state` → `diting SHALL surface …` | applied |
-| V8 | `README.md:79` | "you-not-we" (README.md "Person & casing") | should-fix | `for what we deliberately do not claim.` → `for what diting deliberately does not claim.` | accept |
-| V9 | `README.md:294` | same | should-fix | `which we will not do.` → `which diting will not do.` | accept |
-| V10 | `README.md:298` | same | should-fix | `We surface a binary` → `It surfaces a binary` (subject is the Environment line) | accept |
-| V11 | `README.md:307` | same | should-fix | `what we honestly do with RSSI.` → `what diting honestly does with RSSI.` | accept |
-| V12 | `README.md:313` | same | should-fix | `an invasive perturbation we deliberately avoid.` → `an invasive perturbation diting deliberately avoids.` | accept |
-| V13 | `DEVELOPMENT.md:111` | "you-not-we" — DEVELOPMENT.md is contributor-facing so "we" is more defensible than in README | nice-to-have | Either keep ("we" reads natural for contributor narrative) or rewrite to match README's voice; defer per maintainer | accept |
-| V14 | `DEVELOPMENT.md:138` | same | nice-to-have | `what we deliberately do *not* claim` → `what diting deliberately does *not* claim` (consistency with README change) | accept |
+| V8 | `README.md:79` | "you-not-we" (README.md "Person & casing") | should-fix | `for what we deliberately do not claim.` → `for what diting deliberately does not claim.` | applied |
+| V9 | `README.md:294` | same | should-fix | `which we will not do.` → `which diting will not do.` | applied |
+| V10 | `README.md:298` | same | should-fix | `We surface a binary` → `It surfaces a binary` (subject is the Environment line) | applied |
+| V11 | `README.md:307` | same | should-fix | `what we honestly do with RSSI.` → `what diting honestly does with RSSI.` | applied |
+| V12 | `README.md:313` | same | should-fix | `an invasive perturbation we deliberately avoid.` → `an invasive perturbation diting deliberately avoids.` | applied |
+| V13 | `DEVELOPMENT.md:111` | "you-not-we" — DEVELOPMENT.md is contributor-facing so "we" is more defensible than in README | nice-to-have | Either keep ("we" reads natural for contributor narrative) or rewrite to match README's voice; defer per maintainer | applied |
+| V14 | `DEVELOPMENT.md:138` | same | nice-to-have | `what we deliberately do *not* claim` → `what diting deliberately does *not* claim` (consistency with README change) | applied |
 | V15 | `src/diting/tui.py:93` | "Empty states are full sentences. … Always parenthesised, always italic, always lowercase." (README.md "Vibe & examples") | should-fix | `t("not associated")` → `t("(not associated)")` and add the matching ZH catalog entry; keeps the existing `style="dim italic"` so only the string changes | accept |
 
 **Notes for triage:**

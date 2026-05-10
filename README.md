@@ -76,7 +76,7 @@ TUI on top of the same APIs Apple uses internally:
   a presence claim — correlation, never causation. **NOT** Wi-Fi
   sensing — see
   [`docs/explainers/wifi-sensing.md`](docs/explainers/wifi-sensing.md)
-  for what we deliberately do not claim.
+  for what diting deliberately does not claim.
 - **Unified events log.** Roam / RF stir / latency spike / loss
   burst / link state — all five event types stream into one ring
   buffer. Press `m` for a full-screen browser of the last 100; use
@@ -291,11 +291,11 @@ but the encrypted payloads (lock state, AirDrop, Music-playing,
 Handoff session info) stay opaque. Per-model identification
 (iPhone 14 vs 15) is *not* in any public ad packet — anyone
 claiming to do that is reading proprietary GATT services after
-connecting, which we will not do.
+connecting, which diting will not do.
 
 **The Environment line is *not* Wi-Fi sensing.** diting sits in
 Tier 0 of the Wi-Fi-sensing capability ladder: rolling RSSI variance
-on the data CoreWLAN already exposes. We surface a binary
+on the data CoreWLAN already exposes. The line surfaces a binary
 `stable` / `active` (or `quiet` after `diting calibrate`)
 qualifier — never people-counting, never motion-with-pose, never
 breathing rate. Channel State Information (the data the academic
@@ -304,14 +304,14 @@ where it is exposed (ESP32, Intel 5300 under Linux) the Tier-3+
 demos require a research stack, not a `pip install`. See
 [`docs/explainers/wifi-sensing.md`](docs/explainers/wifi-sensing.md)
 for the full story; the `Environment` line is the live example of
-what we honestly do with RSSI.
+what diting honestly does with RSSI.
 
 **Connected peripherals have no RSSI.** `retrieveConnectedPeripherals`
-gives us the list of devices currently associated with the Mac
+returns the devices currently associated with the Mac
 (AirPods you're listening to, Magic Keyboard you're typing on),
 but reading their signal mid-session would require `readRSSI()`
-against an active connection — an invasive perturbation we
-deliberately avoid. The Connected section shows `—` for the
+against an active connection — an invasive perturbation diting
+deliberately avoids. The Connected section shows `—` for the
 signal column and sorts alphabetically by name.
 
 **`disassociate()` is unreliable for forcing a roam.** Earlier
