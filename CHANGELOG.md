@@ -11,6 +11,18 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-10
+
+The "diting" release. Project renamed from `wifiscope` to **谛听
+(Diting)**, README realigned to lead with the new positioning
+("your Mac hears more than it tells you"), the BLE deep-
+identification pipeline + decoder framework + detail modal stack
+shipped, the SDD workflow + 15 canonical specs were backfilled,
+and a design-system audit applied uniformly across voice / type /
+iconography / layout. v0.x rules — minor-version breakage allowed
+— are exercised here for the env-var rename and helper bundle ID
+change.
+
 ### BREAKING — project rename: `wifiscope` → `diting (谛听)`
 
 The project is renamed to **谛听 (Diting)**. The original name implied
