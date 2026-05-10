@@ -139,6 +139,18 @@ What this means for users:
   dev commands, bilingual discipline, and BSSID-resolution
   algorithm deep-dive all live in the new doc; nothing was
   deleted, only relocated.
+- **README realigned with the new positioning.** The `## Why`
+  section now leads with the unifying thesis ("macOS perceives
+  more than it shows; Diting surfaces it") and gives Wi-Fi /
+  BLE / link-health / RF-environment / events equal billing
+  instead of Wi-Fi-first. New `## What you can do with it` lists
+  four user-value scenarios. Roadmap rewritten into three
+  buckets: Near-term (mDNS / Bonjour, anomaly watchdog mode,
+  per-device proximity compass, cellular state), Mid-term
+  (scenario / investigate mode, JSONL replay, trend graphs,
+  auto-roam), Further out (room-presence sensing as the
+  long-term hardware-assisted flagship, menu-bar app, Linux
+  backend, Continuity / Hotspot / Private Relay state).
 
 ## [0.7.0] — 2026-05-07
 

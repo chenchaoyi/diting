@@ -40,53 +40,73 @@
 
 ## Why
 
-You set up multiple APs at home or at the office, you walk between
-rooms, and your Mac stays glued to the AP it associated with five
-hours ago at -75 dBm — even though there's a new AP within reach
-broadcasting the same SSID at -45 dBm. Zoom stutters; you grumble;
-you blame the Wi-Fi.
+macOS perceives a lot of signal around your Mac — Wi-Fi networks
+coming and going, BLE devices broadcasting nearby, gateway latency
+stretching, RF noise rising — and its built-in UI shows almost
+none of it. Apple's Wi-Fi panel reports the *current* signal and
+nothing else. Bluetooth Settings shows what you've paired, never
+what's around. macOS has no surface at all for "is my gateway
+healthy" or "did something just change in the room."
 
-Apple's Wi-Fi panel will tell you the *current* signal but nothing
-about *which AP* you're on, *whether you should be on a different
-one*, or *when* the OS roamed (or didn't). `diting` turns that
-black box into a TUI:
+Diting fills that gap. It runs in your terminal as a four-panel
+TUI on top of the same APIs Apple uses internally:
 
-- a top panel with everything Apple's "Option-click Wi-Fi" panel
-  shows, plus IP / Router / interface MAC / MCS / NSS / max link
-  speed
-- a Diagnostics panel that translates a dense scan into plain
-  findings: visible BSSID counts, open/no-password BSSIDs,
-  channel crowding, least-crowded channel hints, current-link
-  health, and a simple roam score
-- a scrollable Nearby BSSIDs panel listing every BSSID in range,
-  **grouped by physical AP** so a single AP that broadcasts five
-  SSIDs collapses into one labelled cluster
-- a bottom panel that **logs roam events as they happen**, tagged
-  `[band switch on <AP>]` for same-AP radio changes vs
-  `[inter-AP roam]` for genuine moves between physical APs
-- a **Nearby BLE devices** view (press `n` to toggle in place of the
-  scan list) split into two sections: **Connected** lists the
-  peripherals you're using *right now* (AirPods, Magic Keyboard,
-  Apple Watch — devices that are not advertising and so otherwise
-  invisible to a BLE scanner), and **Advertising** lists every BLE
-  device broadcasting nearby with **what kind of device it actually
-  is** — `AirTag`, `iBeacon`, `Eddystone-URL`, `Tile`, `SmartTag`,
-  `iPhone`, `Mac`, `Apple Watch`, `HomePod` — instead of the
-  "Apple, Inc. (anonymous) Find My" wall
-- two new **link-health** rows: a `Link` line that pings the gateway
-  and your auto-detected DNS server every second so a -55 dBm AP
-  reads as bad when the upstream is broken, and an `Environment`
-  line that surfaces rolling RSSI variance with a `stable` /
-  `active` qualifier (calibrate with `diting calibrate` for a
-  `quiet` baseline). Press `m` to open a full-screen Events
-  browser of the last 100 roam / RF-stir / latency / loss / link
-  events. **NOT** Wi-Fi sensing — see
+- **Wi-Fi visibility.** Every BSSID in range, grouped by physical
+  AP. Plain-language diagnostics on top of dense scan data —
+  visible-BSSID counts, channel crowding, least-crowded channel
+  hints, current-link health, a roam score with reasons. Roam
+  events get logged as they happen, tagged
+  `[band switch on <AP>]` vs `[inter-AP roam]`.
+- **BLE deep identification.** Two sections: *Connected* peripherals
+  you're using right now (AirPods, Magic Keyboard, Apple Watch —
+  devices that don't advertise and so are invisible to plain BLE
+  scanners), and *Advertising* devices broadcasting nearby —
+  identified as `AirTag`, `iBeacon`, `Eddystone-URL`, `Tile`,
+  `SmartTag`, `iPhone`, `Mac`, `Apple Watch`, `HomePod` instead of
+  the "Apple, Inc. (anonymous) Find My" wall. Press `i` on any row
+  for a detail view: full identifier, decoded payload, RSSI history
+  sparkline, distance estimate.
+- **Link health.** Continuous gateway + WAN probes. The `Link` row
+  reads `gw 12 ms · 0% · WAN 18 ms · 0% · jitter 3 ms` so a -55 dBm
+  AP that *looks* fine reads correctly as bad when upstream is
+  dropping packets.
+- **RF environment monitor.** Rolling RSSI variance per AP with a
+  `stable` / `active` qualifier (calibrate to `quiet` with
+  `diting calibrate`). Surfaces "something changed" without making
+  a presence claim — correlation, never causation. **NOT** Wi-Fi
+  sensing — see
   [`docs/explainers/wifi-sensing.md`](docs/explainers/wifi-sensing.md)
-  for what we deliberately do not claim
+  for what we deliberately do not claim.
+- **Unified events log.** Roam / RF stir / latency spike / loss
+  burst / link state — all five event types stream into one ring
+  buffer. Press `m` for a full-screen browser of the last 100; use
+  `diting monitor` for headless JSONL output to a Home Assistant
+  pipeline or a `tail -F` audit window.
 
-Stuck on a weak AP? Hit `c` and `diting` cycles the Wi-Fi radio so
-macOS re-runs auto-join and reassociates with the strongest BSSID.
-That's the same path as click-menu-off-then-on, but in one keystroke.
+For instance: you walk between rooms, your Mac stays glued to the
+AP it associated with five hours ago at -75 dBm — even though
+there's a new -45 dBm one within reach broadcasting the same SSID.
+Zoom stutters and you blame the Wi-Fi. Apple's panel won't tell you
+which AP you're on; diting will, and the `c` binding cycles the
+radio so macOS re-runs auto-join and reassociates with the strongest
+BSSID. Same path as menu-off-then-on, in one keystroke.
+
+## What you can do with it
+
+- **Diagnose home or office network issues.** When Zoom is bad — is
+  it RSSI? gateway? WAN? a noisy channel? someone hammering the
+  uplink? The Diagnostics panel + `Link` row + Events strip narrow
+  it down without you reading raw packets.
+- **Find Bluetooth things around you.** What IoT is in this room?
+  Where's that AirTag? The BLE list resolves vendor + protocol on
+  every advertising device; the detail modal's RSSI sparkline lets
+  you walk a target down by signal strength.
+- **Catch anomalous signals.** Latency spikes, loss bursts,
+  unexplained RF variance — diting names what changed and when.
+  Long-running sessions land in `--log` JSONL for after-the-fact
+  analysis with `diting analyze`.
+- **(Future) Room-presence sensing.** Long-term, hardware-assisted
+  flagship. See [Roadmap](#roadmap).
 
 ## Quick start
 
@@ -313,51 +333,65 @@ Version history lives in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Roadmap
 
-Planned, in rough priority order. Things below the divider are
-nice-to-have but not on a near-term release schedule.
+Three buckets: *near-term* gets actively worked, *mid-term* is on
+the queue with a clear shape, *further out* is direction without a
+timeline. No specific dates — diting is a personal project; the
+ordering is intent.
 
-### Tracked for upcoming releases
+### Near-term
 
-- **Latency / packet-loss / jitter probe** — continuous 1 Hz ping
-  to gateway and a public DNS, surfaced in Diagnostics. Closes the
-  "RSSI looks fine but Zoom is bad" gap that pure radio metrics
-  cannot answer; signal strength is necessary but not sufficient
-  for "is the link actually working".
-- **mDNS / Bonjour LAN device discovery** — new `m`-toggleable view
-  alongside Wi-Fi / BLE listing every Sonos, AppleTV, HomePod, NAS,
-  printer, AirDrop-capable Mac, HomeKit hub, Time Capsule, and
-  other service-advertising peer on the local network. Answers
-  "what is on my network and is it alive" with a much richer answer
-  than ARP alone, especially in Apple-heavy environments.
-- **Beacon Information Element parsing** — surface BSS Load
-  (current channel utilization %), 802.11k neighbour reports,
-  802.11r fast-roaming capability, and 802.11v BSS Transition
-  support per BSSID. The bytes are already in CoreWLAN scan output;
-  the helper just doesn't decode them yet. Lets diagnostics say
-  "your AP is at 78% utilization" or "3 candidate APs do not
-  support fast roaming" instead of guessing from BSSID density.
-- **RSSI history sparklines** — a small `▁▂▃▄▅▆▇█` strip in each
-  Nearby BSSID row showing the last N scans for that BSSID, so
-  trends ("dropping", "stable", "improving") are visible at a
-  glance without staring at the panel.
-- **JSONL session logging + replay** — `diting log session.jsonl`
-  appends every connection / scan / roam / latency event; a
-  `diting replay <file>` mode feeds them back through the TUI
-  for after-the-fact analysis of an incident.
-- **Trend graphs in the TUI** — RSSI / latency / channel utilization
-  over time, time-on-AP per BSSID. Builds on JSONL logging.
+- **mDNS / Bonjour LAN inventory.** A `n`-toggleable third view
+  alongside Wi-Fi / BLE listing every Sonos, Apple TV, HomePod,
+  NAS, printer, AirDrop-capable Mac, HomeKit hub, Time Capsule,
+  and other service-advertising peer. Answers "what's on my
+  network and is it alive" with a much richer answer than ARP.
+- **Anomaly watchdog mode.** Headless long-runs that push macOS
+  Notification Centre alerts on high-confidence events (stir,
+  loss burst, latency spike). Today's `diting monitor --notify`
+  is the seed; it grows configurable thresholds and per-event
+  silence windows.
+- **Per-device proximity compass.** When the BLE detail modal is
+  open and a row is selected, render a "getting warmer / colder"
+  signal-strength compass. Walk down an AirTag, Tile, or any
+  advertising device by RSSI gradient.
+- **Cellular state, when the Mac silicon exposes it.** A few Mac
+  models have cellular modems; tethered iPhone state is broadly
+  available via `pymobiledevice3`-style access. Surface signal
+  bars + carrier + technology when present, gracefully omit
+  otherwise.
+
+### Mid-term
+
+- **Investigate / scenario mode.** A guided entry — `diting
+  troubleshoot zoom`, `diting find <name>` — that walks a
+  non-power-user through the relevant panels with plain-English
+  conclusions. Keeps the dashboard view for power users.
+- **JSONL session replay.** `diting replay <file.jsonl>` feeds a
+  prior log back through the TUI as if events were happening live,
+  for after-the-fact incident review.
+- **Trend graphs in the TUI.** RSSI / latency / channel-util over
+  time, time-on-AP per BSSID. Builds on the existing JSONL log.
+- **Auto-roam mode.** Gated, conservative. When a clearly-better
+  same-SSID candidate persists ≥ N seconds, cycle the radio
+  automatically — sticky-AP pain hands-free.
 
 ### Further out
 
-- **Linux backend** — `nl80211` via `pyroute2` or shelling out to
-  `iw scan`. Architecturally already abstracted behind `WiFiBackend`.
-- **Auto-roam mode** — gated, conservative. When a clearly-better
-  same-SSID candidate persists for ≥ N seconds, automatically
-  cycle the radio. Solves the original sticky-AP pain hands-free.
-- **Optional menu-bar app** for ambient awareness without keeping a
-  terminal open.
-- **Continuity / Personal Hotspot / iCloud Private Relay state** —
-  Mac-specific integrations exposed in Diagnostics.
+- **Room-presence sensing — flagship.** Move the RF environment
+  monitor from "something changed" to "someone entered the
+  living room". This is hard; Tier-3+ sensing requires CSI (not
+  exposed by macOS) or a small auxiliary hardware probe. Long-
+  term, hardware-assisted, deliberate. See
+  [`docs/explainers/wifi-sensing.md`](docs/explainers/wifi-sensing.md)
+  for the honest read on what's possible.
+- **Optional menu-bar app** for ambient awareness without keeping
+  a terminal open.
+- **Linux backend.** `nl80211` via `pyroute2` or shelling out to
+  `iw scan`. Architecturally already abstracted behind
+  `WiFiBackend`; just unimplemented.
+- **Continuity / Personal Hotspot / iCloud Private Relay state.**
+  Mac-specific integrations surfaced in Diagnostics where they're
+  load-bearing for "why is my network weird right now".
 
 ## License
 
