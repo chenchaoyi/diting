@@ -37,7 +37,7 @@ How to triage: edit each `disposition` cell to `accept` / `defer` / `reject`. Ad
 | V12 | `README.md:313` | same | should-fix | `an invasive perturbation we deliberately avoid.` → `an invasive perturbation diting deliberately avoids.` | applied |
 | V13 | `DEVELOPMENT.md:111` | "you-not-we" — DEVELOPMENT.md is contributor-facing so "we" is more defensible than in README | nice-to-have | Either keep ("we" reads natural for contributor narrative) or rewrite to match README's voice; defer per maintainer | applied |
 | V14 | `DEVELOPMENT.md:138` | same | nice-to-have | `what we deliberately do *not* claim` → `what diting deliberately does *not* claim` (consistency with README change) | applied |
-| V15 | `src/diting/tui.py:93` | "Empty states are full sentences. … Always parenthesised, always italic, always lowercase." (README.md "Vibe & examples") | should-fix | `t("not associated")` → `t("(not associated)")` and add the matching ZH catalog entry; keeps the existing `style="dim italic"` so only the string changes | accept |
+| V15 | `src/diting/tui.py:93` | "Empty states are full sentences. … Always parenthesised, always italic, always lowercase." (README.md "Vibe & examples") | should-fix | `t("not associated")` → `t("(not associated)")` and add the matching ZH catalog entry; keeps the existing `style="dim italic"` so only the string changes | applied |
 
 **Notes for triage:**
 

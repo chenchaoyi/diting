@@ -187,7 +187,7 @@ _ZH: dict[str, str] = {
     "ble": "BLE",
 
     # ---- Connection panel ----
-    "not associated": "未连接",
+    "(not associated)": "(未连接)",
     "(unknown)": "(未知)",
     "  · country {cc}": "  · 区码 {cc}",
     "Channel": "信道",

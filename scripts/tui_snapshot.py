@@ -631,7 +631,7 @@ def _regression_scenarios() -> list[Scenario]:
             setup=_build_disassociated,
             after_mount=None,
             assertions=(
-                ("not associated label", lambda t: "not associated" in t),
+                ("not associated label", lambda t: "(not associated)" in t),
             ),
             inspectors=(),
         ),
