@@ -2,7 +2,7 @@
 
 # Test Design
 
-This document is the **canonical test plan** for wifiscope. It lives
+This document is the **canonical test plan** for diting. It lives
 next to the test code in `tests/`. It describes what we test, why,
 and the exact set of scenarios captured as automated cases. Tests in
 this directory **must conform** to this document — adjustments / new
@@ -18,7 +18,7 @@ should match it case-for-case.
 
 ### In scope
 
-- **Pure-logic transforms** that decide what wifiscope shows: AP
+- **Pure-logic transforms** that decide what diting shows: AP
   resolution, signal-band labelling, scan / connection merging,
   group-by-AP clustering.
 - **External-protocol parsing**: helper subprocess JSON (schema v1
@@ -119,12 +119,12 @@ When a new Requirement lands in any spec, an entry MUST be added here
 
 | Requirement | Test |
 |---|---|
-| `wifiscope` no-subcommand launches TUI | (manual — App boot covered by `test_tui_smoke.py::test_app_boots_and_quits`) |
+| `diting` no-subcommand launches TUI | (manual — App boot covered by `test_tui_smoke.py::test_app_boots_and_quits`) |
 | Five subcommands: `once` / `watch` / `monitor` / `calibrate` / `analyze` | (gap — no integration test of the dispatch table; subcommand internals are tested individually) |
 | `--lang en|zh` overrides env / locale | `test_i18n.py::test_resolve_cli_override_wins_over_env`, `::test_resolve_no_override_uses_env`, `::test_resolve_rejects_unknown_cli_value` |
 | `--log [PATH]` enables JSONL logging with optional default path | `test_event_log.py::test_default_log_path_is_timestamped_jsonl`, `::test_resolve_log_path_cli_no_value_uses_default`, `::test_resolve_log_path_cli_explicit_path_wins`, `::test_resolve_log_path_env_auto_uses_default`, `::test_resolve_log_path_env_blank_disables`, `::test_extract_log_arg_no_value_returns_sentinel` |
 | TUI exit prints analyze tip when `--log` was used | (gap — exit-hint string isn't covered by an automated assertion) |
-| `wifiscope monitor` emits JSONL on stdout, no banner | `test_event_log.py::test_to_path_writes_appendable_jsonl` (event format); banner-cleanliness is manual |
+| `diting monitor` emits JSONL on stdout, no banner | `test_event_log.py::test_to_path_writes_appendable_jsonl` (event format); banner-cleanliness is manual |
 | `--config <PATH>` overrides aps.yaml search | `test_network.py::test_resolve_config_path_env_override_wins`, `::test_resolve_config_path_no_env_falls_through_to_default` |
 
 ### `environment-monitor`
@@ -142,7 +142,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 
 | Requirement | Test |
 |---|---|
-| `--log` and `wifiscope monitor` produce byte-identical streams | `test_event_log.py::test_to_path_writes_appendable_jsonl`, `::test_unicode_user_strings_survive_readable` (single shared writer class) |
+| `--log` and `diting monitor` produce byte-identical streams | `test_event_log.py::test_to_path_writes_appendable_jsonl`, `::test_unicode_user_strings_survive_readable` (single shared writer class) |
 | Writer flushes after every event | `test_event_log.py::test_line_buffered_writes_are_visible_before_close` |
 | atexit hook closes writer cleanly | (gap — no direct test; behaviour validated by `test_line_buffered_writes_are_visible_before_close`) |
 | JSONL keys English regardless of UI language | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
@@ -165,7 +165,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 
 | Requirement | Test |
 |---|---|
-| Language resolved exactly once at startup | `test_i18n.py::test_detect_explicit_wifiscope_lang_wins_over_locale`, `::test_detect_zh_from_lang_env`, `::test_detect_zh_from_lc_all_overrides_lang`, `::test_detect_falls_back_to_english`, `::test_detect_ignores_invalid_wifiscope_lang_value`, `::test_resolve_cli_override_wins_over_env`, `::test_resolve_no_override_uses_env`, `::test_resolve_rejects_unknown_cli_value`, `::test_set_lang_rejects_unknown_value` |
+| Language resolved exactly once at startup | `test_i18n.py::test_detect_explicit_diting_lang_wins_over_locale`, `::test_detect_zh_from_lang_env`, `::test_detect_zh_from_lc_all_overrides_lang`, `::test_detect_falls_back_to_english`, `::test_detect_ignores_invalid_diting_lang_value`, `::test_resolve_cli_override_wins_over_env`, `::test_resolve_no_override_uses_env`, `::test_resolve_rejects_unknown_cli_value`, `::test_set_lang_rejects_unknown_value` |
 | User strings go through `t()` | `test_i18n.py::test_t_returns_english_when_lang_is_english`, `::test_t_falls_back_to_english_when_zh_key_missing`, `::test_t_substitutes_placeholders`, `::test_t_substitutes_in_english_too` (`t()` behaviour); review-enforced for "no hardcoded strings" coverage |
 | Column-aligned widgets use `pad_cells` / `fit_cells` | `test_i18n.py::test_pad_cells_pads_ascii_to_target_width`, `::test_pad_cells_treats_cjk_as_two_cells_each`, `::test_pad_cells_returns_unchanged_if_already_wide`, `::test_pad_cells_handles_mixed_ascii_and_cjk` (note: `fit_cells` itself has no direct test — gap) |
 | JSONL keys stay English in ZH UI | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
@@ -239,7 +239,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 
 ---
 
-## 3. Module: `wifiscope.network`
+## 3. Module: `diting.network`
 
 Resolves a BSSID to a physical-AP identity. This module has had two
 real production bugs (prefix5 collisions in one OUI; cross-OUI VAP
@@ -287,7 +287,7 @@ allocations) so the matching rules carry the most test weight.
 
 ---
 
-## 4. Module: `wifiscope._helper`
+## 4. Module: `diting._helper`
 
 Owns the subprocess protocol with the Swift sidecar. The wire format
 is forward-compatible (the helper's `schema` field), so we test both
@@ -302,14 +302,14 @@ v1 (string `interface`) and v2 (dict `interface`) shapes.
 - [x] Robustness: malformed JSON, non-zero exit, timeout
 - [x] `has_permission` heuristic (any populated BSSID = granted)
 - [x] `bundle_path` extraction from binary path
-- [x] `find_helper` search-order honouring of `WIFISCOPE_HELPER`
+- [x] `find_helper` search-order honouring of `DITING_HELPER`
 
 ### Test cases — `tests/test_helper.py`
 
 | Test | Scenario | Why it matters |
 |---|---|---|
 | `test_scan_v2_returns_networks_and_iface_meta` | Schema v2 payload (interface dict with country / hardware) parses into ScanResult list and a non-empty meta dict. | Primary case for the current helper output. |
-| `test_scan_v1_iface_string_yields_empty_meta` | Schema v1 payload (interface plain string) parses networks correctly; meta dict comes back empty rather than crashing. | Back-compat with helpers built before the v2 schema. Old `/Applications/wifiscope-helper.app` still works after `uv run wifiscope` upgrades. |
+| `test_scan_v1_iface_string_yields_empty_meta` | Schema v1 payload (interface plain string) parses networks correctly; meta dict comes back empty rather than crashing. | Back-compat with helpers built before the v2 schema. Old `/Applications/diting-tianer.app` still works after `uv run diting` upgrades. |
 | `test_scan_zero_noise_and_zero_rssi_become_none` | Helper output of `0` for noise / RSSI is normalised to `None` on the Python side. | CoreWLAN uses `0` as "no measurement"; passing it through would render misleading values (e.g. "0 dBm" — which is a perfect signal!) in the panel. |
 | `test_scan_lowercases_bssid` | An upper-case BSSID in the JSON comes back lower-case in `ScanResult.bssid`. | Inventory lookup is case-insensitive only because data is normalised on ingest. |
 | `test_scan_redacted_row_keeps_bssid_none` | A network entry without `ssid` / `bssid` keys (helper has no Location grant) yields a ScanResult with both as None and other fields populated. | Without permission, RSSI / channel still flow through; the panel's "(redacted)" label depends on this exact shape. |
@@ -321,13 +321,13 @@ v1 (string `interface`) and v2 (dict `interface`) shapes.
 | `test_has_permission_false_on_subprocess_error` | OSError (helper binary missing / not executable) → `False`. | Defensive: lack of grant is indistinguishable from missing helper here. |
 | `test_bundle_path_extracts_app_dir` | Given a path inside `<bundle>.app/Contents/MacOS/binary`, `bundle_path` returns the `.app` directory. | Lets the auto-launch flow `open` the bundle (which triggers the system Location prompt) given only the binary it found. |
 | `test_bundle_path_none_for_loose_binary` | A binary not inside any `.app` returns None. | Honest about the limitation — without a bundle there is no UI to launch. |
-| `test_find_helper_env_override_wins` | `WIFISCOPE_HELPER` set to a bundle path beats any standard install location. | Documents the documented override priority. |
+| `test_find_helper_env_override_wins` | `DITING_HELPER` set to a bundle path beats any standard install location. | Documents the documented override priority. |
 | `test_find_helper_env_override_can_point_at_binary` | The env var may also point directly at the executable rather than the bundle. | Dev-loop convenience. |
 | `test_find_helper_returns_none_when_nothing_present` | Env var pointing at a missing path AND `HOME` redirected away → `None`. | Auto-launch then falls through to the build path. |
 
 ---
 
-## 5. Module: `wifiscope.tui` (helpers)
+## 5. Module: `diting.tui` (helpers)
 
 Pure data transforms used by the Nearby APs panel. The TUI wiring
 itself is covered by the smoke tests in section 6.
@@ -381,7 +381,7 @@ itself is covered by the smoke tests in section 6.
 
 ---
 
-## 5b. Module: `wifiscope.ble`
+## 5b. Module: `diting.ble`
 
 The async BLE scanning layer. Owns the JSONL line parser, the rolling
 device-map TTL, the rotated-UUID fuzzy merger, vendor lookup, and
@@ -462,7 +462,7 @@ hardware (and macOS runners that have no granted helper).
 
 ---
 
-## 5c. Module: `wifiscope.latency`
+## 5c. Module: `diting.latency`
 
 The latency probe poller. Tests cover ICMP output parsing, the
 spike / loss-burst detectors, the rolling-window aggregate, and
@@ -491,7 +491,7 @@ SCDynamicStore reads are mocked at the module seam.
 - [x] DNS auto-detection: SCDynamicStore returns None
 - [x] DNS auto-detection: empty ServerAddresses
 - [x] DNS auto-detection: malformed (None / int / object) entries
-- [x] `WIFISCOPE_LATENCY_WAN_TARGET` env override beats
+- [x] `DITING_LATENCY_WAN_TARGET` env override beats
       auto-detect
 - [x] DNS refresh cadence (clock-injected, no real time)
 - [x] Explicit `wan_ip=` disables refresh entirely
@@ -507,7 +507,7 @@ text per case.
 
 ---
 
-## 5d. Module: `wifiscope.environment`
+## 5d. Module: `diting.environment`
 
 The RF-stir detector. Tests build deterministic RSSI traces with
 explicit timestamps so the rolling-window math is exact.
@@ -563,7 +563,7 @@ real Mac.
 | `test_help_modal_open_and_close` | Press `h`, then Esc. | Regression — an earlier version used `bold $accent` (Textual CSS variable) in a Rich style and crashed on first show. |
 | `test_help_modal_h_to_close` | Press `h` to open, `h` again to close. | Convenience binding inside the modal. |
 | `test_help_modal_renders_through_pilot_query` | Open the modal and assert via `app.screen_stack` that exactly one HelpScreen is on the stack; close and assert zero. | Catches regressions where the binding handler runs but the widget never actually mounts. |
-| `test_custom_scan_interval_threads_through` | Construct `WifiScopeApp(..., scan_interval=4.5)` and inspect `app._poller._scan_interval`. | The `WIFISCOPE_SCAN_INTERVAL` env var lands here; if the kwarg path silently lost it, we'd never know. |
+| `test_custom_scan_interval_threads_through` | Construct `DitingApp(..., scan_interval=4.5)` and inspect `app._poller._scan_interval`. | The `DITING_SCAN_INTERVAL` env var lands here; if the kwarg path silently lost it, we'd never know. |
 | `test_toggle_view_swaps_third_panel` | Press `n` to toggle from the Wi-Fi scan view to the BLE view; press again to return. Asserts on the `display` flag of both panels and on `app._view_mode`. | Locks the spec's "toggle in place" behaviour — neither panel ever unmounts, so consumer state on either side survives the swap. |
 | `test_ble_panel_renders_both_connected_and_advertising_sections` | Seed both `_latest_ble` (advertising) and `_latest_ble_connected` (connected), press `n`, and assert the BLEPanel body contains both `Connected (1)` and `Advertising (1)` section headers plus a row from each. | End-to-end proof of the v0.6.0 two-section render through the Textual pilot — rendering bug here breaks the spec's question-2 ("what's actually connected to my Mac?") answer. |
 | `test_events_modal_open_and_close` | Press `m` to open EventsScreen, press Esc to close. | Locks the v0.7.0 modal binding the same way `test_help_modal_open_and_close` locks the help binding. |
@@ -592,7 +592,7 @@ CI runs `uv run pytest` on macos-latest against Python 3.11 / 3.12 /
 
 ## 8. Adding tests
 
-The workflow when iterating wifiscope:
+The workflow when iterating diting:
 
 1. **Edit this document first.** Add the new test row(s) to the
    appropriate module section. Frame the scenario in plain language

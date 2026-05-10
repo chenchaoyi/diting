@@ -1,10 +1,10 @@
-// wifiscope-helper — Swift sidecar that owns the macOS Location Services
+// diting-tianer — Swift sidecar that owns the macOS Location Services
 // and Bluetooth permissions so the Python TUI can read unredacted scan-list
 // SSIDs / BSSIDs and stream nearby BLE advertisements.
 //
 // Three roles in one binary:
 //
-//   wifiscope-helper           (no args, launched as a .app from Finder
+//   diting-tianer           (no args, launched as a .app from Finder
 //                               via `open` or by Launch Services)
 //                              -> opens a small AppKit window, requests
 //                                 Location Services AND Bluetooth
@@ -13,13 +13,13 @@
 //                                 foregrounded long enough for the
 //                                 system prompts.
 //
-//   wifiscope-helper scan      (invoked by the Python backend as a
+//   diting-tianer scan      (invoked by the Python backend as a
 //                               subprocess)
 //                              -> performs a CoreWLAN scan, prints a
 //                                 single JSON document {"networks": [...]}
 //                                 to stdout, exits.
 //
-//   wifiscope-helper ble-scan  (invoked by the Python backend as a
+//   diting-tianer ble-scan  (invoked by the Python backend as a
 //                               long-running subprocess)
 //                              -> initialises CBCentralManager and
 //                                 streams JSON Lines (one ad per line)
@@ -219,7 +219,7 @@ struct BLEDetection {
 }
 
 /// Public-format BLE advertisement classifier. Mirrors the Python-side
-/// fallback in `wifiscope/ble.py` byte-for-byte; both implementations
+/// fallback in `diting/ble.py` byte-for-byte; both implementations
 /// share the same conservative scope (Tier 1 categories only). See
 /// `docs/specs/v0.6.0-ble-deep-identification.md` for the detection
 /// rules.
@@ -696,8 +696,8 @@ func emitBLEErrorAndExit(_ message: String, code: Int32) -> Never {
 
 // macOS attaches every spawned process a "responsible" pid for TCC
 // purposes — typically the GUI ancestor that started the chain (e.g.
-// Warp, iTerm2, Terminal). When wifiscope's Python TUI invokes us as
-// `<bundle>/Contents/MacOS/wifiscope-helper ble-scan` from inside such
+// Warp, iTerm2, Terminal). When diting's Python TUI invokes us as
+// `<bundle>/Contents/MacOS/diting-tianer ble-scan` from inside such
 // a terminal, the responsible process is the terminal app, *not* this
 // helper. CoreBluetooth's TCC check then looks up
 // NSBluetoothAlwaysUsageDescription in the responsible app's
@@ -723,7 +723,7 @@ private func responsibility_spawnattrs_setdisclaim(
     _ attrs: UnsafeMutablePointer<posix_spawnattr_t?>, _ disclaim: Int32
 ) -> Int32
 
-private let kDisclaimEnv = "WIFISCOPE_HELPER_DISCLAIMED"
+private let kDisclaimEnv = "DITING_HELPER_DISCLAIMED"
 
 private func reExecWithDisclaimedResponsibility() -> Never {
     var attrs: posix_spawnattr_t? = nil
@@ -874,7 +874,7 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
             backing: .buffered,
             defer: false
         )
-        window.title = "wifiscope helper"
+        window.title = "diting tianer"
         window.center()
 
         let body = NSStackView(frame: NSRect(x: 24, y: 24, width: 472, height: 232))
@@ -883,12 +883,12 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
         body.spacing = 12
         body.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = NSTextField(labelWithString: "wifiscope helper")
+        let title = NSTextField(labelWithString: "diting tianer")
         title.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
         body.addArrangedSubview(title)
 
         let intro = NSTextField(wrappingLabelWithString:
-            "This helper exists so wifiscope (the Python TUI) can read " +
+            "This helper exists so diting (the Python TUI) can read " +
             "nearby Wi-Fi network names / BSSIDs and scan for nearby BLE " +
             "devices without being blocked by macOS Location Services or " +
             "Bluetooth permissions. Grant the prompts below — a one-time " +
@@ -957,7 +957,7 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
             statusLabel.stringValue += "\n\nAll permissions granted. This window will close automatically..."
             // Give the user ~1.5 s to read the message, then exit so
             // they do not have to find Cmd+Q. The TCC grants are
-            // persistent — wifiscope's Python TUI immediately picks
+            // persistent — diting's Python TUI immediately picks
             // them up the next time it polls the helper.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 NSApp.terminate(nil)
@@ -972,7 +972,7 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
         case .restricted:
             return "Location: restricted by a system policy."
         case .denied:
-            return "Location: denied. Enable it in System Settings → Privacy & Security → Location Services → wifiscope-helper."
+            return "Location: denied. Enable it in System Settings → Privacy & Security → Location Services → diting-tianer."
         case .authorizedAlways, .authorizedWhenInUse:
             return "Location: granted."
         @unknown default:
@@ -989,7 +989,7 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
         case .unsupported:
             return "Bluetooth: unsupported on this hardware."
         case .unauthorized:
-            return "Bluetooth: denied. Enable it in System Settings → Privacy & Security → Bluetooth → wifiscope-helper."
+            return "Bluetooth: denied. Enable it in System Settings → Privacy & Security → Bluetooth → diting-tianer."
         case .poweredOff:
             return "Bluetooth: turned off. Toggle it on in Control Center."
         case .poweredOn:
@@ -1018,7 +1018,7 @@ if args.count > 1 {
         runBluetoothStatusProbe()
     case "--help", "-h":
         print("""
-        wifiscope-helper
+        diting-tianer
 
           (no args)         Launch the bundle UI; request Location Services
                             and Bluetooth, keep the window open so the

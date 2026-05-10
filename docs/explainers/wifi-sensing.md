@@ -1,16 +1,16 @@
 <sub>**English** · [中文](../zh/explainers/wifi-sensing.md)</sub>
 
-# Wi-Fi sensing and where wifiscope sits
+# Wi-Fi sensing and where diting sits
 
 If you've heard about Wi-Fi being able to "detect motion through
 walls", "count people in a room", or "monitor breathing without a
 camera" — yes, that's a real research field. It's called **Wi-Fi
-sensing**. Whether wifiscope can do it is a question we get asked
+sensing**. Whether diting can do it is a question we get asked
 often enough to deserve a written answer.
 
 ## Short answer
 
-**No, and on purpose.** wifiscope is a macOS terminal monitor for
+**No, and on purpose.** diting is a macOS terminal monitor for
 Wi-Fi roaming and signal quality. The fancy sensing capabilities
 above all require **Channel State Information (CSI)** — per-
 subcarrier amplitude and phase data — which macOS does not expose
@@ -31,7 +31,7 @@ today" to "research demo only":
 | **3. CSI vital signs** | Breathing rate, heart rate | Above + clean SNR + bandpass filtering | Real research, controlled environments |
 | **4. CSI pose / through-wall** | 17-point body pose, multi-person tracking | Multistatic mesh + heavy ML | Research only, no production-grade implementation |
 
-wifiscope sits **firmly in tier 0**, and only because RSSI is the
+diting sits **firmly in tier 0**, and only because RSSI is the
 data we already collect for the roaming dashboard.
 
 ## Why CSI is not available on macOS
@@ -55,7 +55,7 @@ For real CSI work, the practical options are:
   processing of CSI from any of the above.
 
 These projects exist; we link to them rather than reimplementing
-them poorly inside wifiscope.
+them poorly inside diting.
 
 ## What you should ignore
 
@@ -77,7 +77,7 @@ is one extended example. The underlying *science* is real (CMU's
 WiFi-DensePose paper, MIT's vital-radio work) — but turning that
 into a `pip install` is a research-grade project, not a weekend.
 
-## What wifiscope adds at tier 0 (v0.7.0)
+## What diting adds at tier 0 (v0.7.0)
 
 Without overclaiming, the RSSI / Tx-rate data we already poll
 supports — and as of **v0.7.0 actually drives** — three concrete
@@ -87,18 +87,18 @@ surfaces:
   line in the Diagnostics panel. Format: `Environment  stable σ
   1.2 dB / 5s`. The label is one of `stable` / `active` / `quiet`
   (the last only when an opt-in calibration baseline from
-  `wifiscope calibrate` is loaded). NEVER "N people" or "motion
+  `diting calibrate` is loaded). NEVER "N people" or "motion
   direction" — the wording rule is non-negotiable.
 - **Motion event logging** — when current 5 s σ exceeds 2.5 ×
   trailing 5-min median σ AND the absolute σ exceeds 3 dB, an
   `rf_stir` event is appended to the unified events ring. Confidence
   is `high` when the spike shows up on >= 2 co-located APs at once
   (RSSI >= -65 dBm), `medium` otherwise. Open the events modal with
-  `m` to browse the last 100; consume them as JSONL via `wifiscope
+  `m` to browse the last 100; consume them as JSONL via `diting
   monitor`.
-- **Occupancy `quiet` vs `active`** — `wifiscope calibrate`
+- **Occupancy `quiet` vs `active`** — `diting calibrate`
   records 5 minutes of "the room is empty" baseline RSSI and
-  writes `./wifiscope-baseline.json`. With that file present, the
+  writes `./diting-baseline.json`. With that file present, the
   Environment line label becomes `quiet` / `active` instead of
   `stable` / `active`. Anything beyond binary occupancy is
   unreliable on RSSI alone and we deliberately do not implement
@@ -114,7 +114,7 @@ macOS does not expose.
 ## If you want real Wi-Fi sensing
 
 It's a separate project. Get an ESP32-S3, flash the ESP-CSI
-toolkit, and visualise the stream. wifiscope's scope ends at
+toolkit, and visualise the stream. diting's scope ends at
 "what your Mac's radio sees"; CSI sensing starts where you add
 external dedicated hardware. We may write a companion repo for
 that some day, but it will not live inside this codebase.

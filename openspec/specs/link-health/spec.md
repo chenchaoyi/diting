@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines the contract for active link probing — how wifiscope measures
+Defines the contract for active link probing — how diting measures
 gateway / WAN reachability, latency, jitter, and loss bursts on the
 user's current Wi-Fi connection. The events ring, the analyzer, and
 the JSONL log all consume the same aggregates this capability

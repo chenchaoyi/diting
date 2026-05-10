@@ -12,13 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from wifiscope.environment import (
+from diting.environment import (
     DEFAULT_BASELINE_WINDOW_S,
     EnvironmentMonitor,
     load_calibration,
     write_calibration,
 )
-from wifiscope.network import APEntry, NetworkInventory
+from diting.network import APEntry, NetworkInventory
 
 
 _INV = NetworkInventory(
@@ -250,7 +250,7 @@ def test_aggregate_sigma_label_quiet_with_calibration():
 def test_calibration_round_trip(tmp_path):
     """write_calibration writes a JSON file load_calibration round-
     trips into a usable mapping."""
-    p = tmp_path / "wifiscope-baseline.json"
+    p = tmp_path / "diting-baseline.json"
     samples = {
         "aa:bb:cc:11:22:10": [-55, -54, -56, -55, -53],
         "aa:bb:cc:11:22:20": [-72, -73, -71, -72, -74],

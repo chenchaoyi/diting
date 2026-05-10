@@ -28,7 +28,7 @@ The two probe targets are:
 
 Resolution order for the WAN anchor:
 
-1. The ``WIFISCOPE_LATENCY_WAN_TARGET`` environment variable
+1. The ``DITING_LATENCY_WAN_TARGET`` environment variable
    (explicit override).
 2. The first SCDynamicStore-reported nameserver whose IP is **not**
    equal to the detected gateway. (Private vs public IP makes no
@@ -41,7 +41,7 @@ Resolution order for the WAN anchor:
    == gateway)`` and only the gateway probe runs.
 
 DNS detection re-runs every 60 s so a network switch updates the
-anchor without restarting wifiscope.
+anchor without restarting diting.
 """
 
 from __future__ import annotations
@@ -126,7 +126,7 @@ def _resolve_dns_anchor(
     touching ``os.environ``.
     """
     src = os.environ if env is None else env
-    override = (src.get("WIFISCOPE_LATENCY_WAN_TARGET") or "").strip()
+    override = (src.get("DITING_LATENCY_WAN_TARGET") or "").strip()
     if override:
         return override
 
@@ -161,7 +161,7 @@ def _read_dns_server_addresses() -> list[str]:
     except Exception:
         return _scutil_dns_fallback()
     try:
-        ds = SCDynamicStoreCreate(None, "wifiscope-latency", None, None)
+        ds = SCDynamicStoreCreate(None, "diting-latency", None, None)
     except Exception:
         ds = None
     if ds is None:
@@ -263,7 +263,7 @@ class LatencyPoller:
 
     DNS auto-detection re-runs every ``dns_refresh_s`` seconds.
     Pass ``wan_ip=`` to bypass detection entirely (the CLI's
-    ``--wan`` flag and ``WIFISCOPE_LATENCY_WAN_TARGET`` env var both
+    ``--wan`` flag and ``DITING_LATENCY_WAN_TARGET`` env var both
     route through here).
     """
 

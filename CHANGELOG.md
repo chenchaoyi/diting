@@ -2,13 +2,52 @@
 
 # Changelog
 
-All notable changes to wifiscope are recorded here. The format is
+All notable changes to diting (formerly `wifiscope` — see the
+[Unreleased] BREAKING note) are recorded here. The format is
 loosely based on [Keep a Changelog](https://keepachangelog.com/), and
 the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
 ## [Unreleased]
+
+### BREAKING — project rename: `wifiscope` → `diting (谛听)`
+
+The project is renamed to **谛听 (Diting)**. The original name implied
+a Wi-Fi-only tool; the project's actual scope (BLE / link health / RF
+environment, with LAN / mDNS / sensing roadmap) is much broader.
+谛听 — the Buddhist mythical creature whose ear hears all sounds in
+ten directions — covers the broader thesis: surface what macOS quietly
+perceives but doesn't show.
+
+Tagline: *"Your Mac hears more than it tells you."* /
+*「你的 Mac 听见了什么，告诉你。」*
+
+What this means for users:
+
+- CLI binary: `wifiscope` → `diting`
+- Helper bundle: `wifiscope-helper.app` → `diting-tianer.app`
+  (天耳 / "heavenly ear" — the Buddhist supernatural power 谛听
+  itself possesses; the Swift bundle that holds Location Services +
+  Bluetooth grants and brokers signals to Python). **You will need
+  to re-grant Location Services + Bluetooth on first launch** —
+  macOS TCC keys grants by cdhash, and the new bundle has a new ID
+  (`com.chenchaoyi.diting.tianer`).
+- Environment variables: `WIFISCOPE_*` → `DITING_*` (`WIFISCOPE_LANG`,
+  `WIFISCOPE_HELPER`, `WIFISCOPE_INVENTORY`, `WIFISCOPE_GATEWAY`,
+  `WIFISCOPE_WAN`, `WIFISCOPE_SCAN_INTERVAL`,
+  `WIFISCOPE_LATENCY_WAN_TARGET`). No backwards-compat shim — if you
+  had a script with the old names, update it.
+- Default JSONL log filename: `wifiscope-<TS>.jsonl` →
+  `diting-<TS>.jsonl`
+- Python package: `import wifiscope` → `import diting`; PyPI / repo
+  follow.
+- **Not changed**: code-level Wi-Fi class names (`WiFiBackend`,
+  `WiFiPoller`, `MacOSWiFiBackend` describe the *Wi-Fi capability*,
+  not the app); the 15 capability spec names; behaviour of any
+  feature.
+- Historical entries below (v0.7.0 and earlier) still say
+  `wifiscope` — those are frozen records of past releases.
 
 ### Added
 - **Spec-driven development workflow** (`openspec/`). Every

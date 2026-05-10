@@ -9,7 +9,7 @@ Five event types share one schema and one in-memory ring (last 100):
     link_state    — associated / disassociated
 
 Layer 1 (Events panel) and Layer 2 (modal EventsScreen) read from
-the same in-memory ring buffer; Layer 3 (``wifiscope monitor``)
+the same in-memory ring buffer; Layer 3 (``diting monitor``)
 streams JSON Lines to stdout / file.
 
 The contract — five-event vocabulary, ring-buffer semantics, JSONL

@@ -1,4 +1,4 @@
-# wifiscope dev tasks. Plain GNU make; no Python build steps live here
+# diting dev tasks. Plain GNU make; no Python build steps live here
 # (uv handles those). The targets exist mostly so contributors do not
 # have to remember which language flag the preview script wants, and to
 # keep the bilingual UI / docs workflow honest: a UI change always means
@@ -13,8 +13,8 @@ test:  ## Run the pytest suite
 	uv run pytest -q
 
 test-all: test  ## Run pytest under both EN and ZH default-language settings
-	WIFISCOPE_LANG=zh uv run pytest -q
-	LANG=zh_CN.UTF-8 WIFISCOPE_LANG= uv run pytest -q
+	DITING_LANG=zh uv run pytest -q
+	LANG=zh_CN.UTF-8 DITING_LANG= uv run pytest -q
 
 test-system: test-all  ## Pytest + the TUI scenario regression (scripts/tui_snapshot.py --mode regression --check). Non-zero on any assertion fail.
 	uv run python scripts/tui_snapshot.py --mode regression --out-dir snapshot-output --check
@@ -22,31 +22,31 @@ test-system: test-all  ## Pytest + the TUI scenario regression (scripts/tui_snap
 preview: preview-en preview-zh preview-ble-en preview-ble-zh preview-events-en preview-events-zh  ## Regenerate ALL preview SVGs (Wi-Fi + BLE + Events modal, EN + ZH)
 
 preview-en:  ## Regenerate docs/preview.svg (Wi-Fi view, English)
-	WIFISCOPE_LANG= WIFISCOPE_PREVIEW_VIEW=wifi uv run python docs/_capture_preview.py
+	DITING_LANG= DITING_PREVIEW_VIEW=wifi uv run python docs/_capture_preview.py
 
 preview-zh:  ## Regenerate docs/preview.zh.svg (Wi-Fi view, Chinese)
-	WIFISCOPE_LANG=zh WIFISCOPE_PREVIEW_VIEW=wifi uv run python docs/_capture_preview.py
+	DITING_LANG=zh DITING_PREVIEW_VIEW=wifi uv run python docs/_capture_preview.py
 
 preview-ble-en:  ## Regenerate docs/preview-ble.svg (BLE view, English)
-	WIFISCOPE_LANG= WIFISCOPE_PREVIEW_VIEW=ble uv run python docs/_capture_preview.py
+	DITING_LANG= DITING_PREVIEW_VIEW=ble uv run python docs/_capture_preview.py
 
 preview-ble-zh:  ## Regenerate docs/preview-ble.zh.svg (BLE view, Chinese)
-	WIFISCOPE_LANG=zh WIFISCOPE_PREVIEW_VIEW=ble uv run python docs/_capture_preview.py
+	DITING_LANG=zh DITING_PREVIEW_VIEW=ble uv run python docs/_capture_preview.py
 
 preview-events-en:  ## Regenerate docs/preview-events.svg (Events modal, English)
-	WIFISCOPE_LANG= WIFISCOPE_PREVIEW_VIEW=events uv run python docs/_capture_preview.py
+	DITING_LANG= DITING_PREVIEW_VIEW=events uv run python docs/_capture_preview.py
 
 preview-events-zh:  ## Regenerate docs/preview-events.zh.svg (Events modal, Chinese)
-	WIFISCOPE_LANG=zh WIFISCOPE_PREVIEW_VIEW=events uv run python docs/_capture_preview.py
+	DITING_LANG=zh DITING_PREVIEW_VIEW=events uv run python docs/_capture_preview.py
 
-helper:  ## Build the Swift helper at helper/wifiscope-helper.app
+helper:  ## Build the Swift helper at helper/diting-tianer.app
 	cd helper && ./build.sh
 
-monitor:  ## Run wifiscope monitor (headless JSONL events; Ctrl+C to quit)
-	uv run wifiscope monitor
+monitor:  ## Run diting monitor (headless JSONL events; Ctrl+C to quit)
+	uv run diting monitor
 
 snapshot:  ## Synthetic-mode TUI scenario captures + report (engineering tool)
 	uv run python scripts/tui_snapshot.py --mode regression --out-dir snapshot-output
 
-update-vendors:  ## Refresh src/wifiscope/data/bluetooth_vendors.json from Bluetooth SIG
+update-vendors:  ## Refresh src/diting/data/bluetooth_vendors.json from Bluetooth SIG
 	uv run python scripts/update_vendors.py

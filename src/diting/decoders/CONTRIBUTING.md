@@ -8,7 +8,7 @@ framework's contract is in
 ## Shape
 
 ```python
-# src/wifiscope/decoders/<protocol>.py
+# src/diting/decoders/<protocol>.py
 from __future__ import annotations
 from typing import Any
 from ..ble import BLEDevice
@@ -54,7 +54,7 @@ def decode(d: BLEDevice) -> dict[str, Any] | None:
 
 ## Register the new decoder
 
-Add an import line to `src/wifiscope/decoders/__init__.py`:
+Add an import line to `src/diting/decoders/__init__.py`:
 
 ```python
 from . import <protocol> as _<protocol>  # noqa: E402, F401

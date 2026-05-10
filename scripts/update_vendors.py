@@ -8,7 +8,7 @@ SIG repository:
   * ``member_uuids.yaml``          — 16-bit member-assigned service
                                      UUIDs (one per company)
 
-Each becomes its own JSON file under ``src/wifiscope/data/``. Every
+Each becomes its own JSON file under ``src/diting/data/``. Every
 output ships a ``_meta`` block recording the source commit and fetch
 date so we can audit drift.
 
@@ -31,7 +31,7 @@ COMMITS_URL = (
     f"https://api.bitbucket.org/2.0/repositories/{REPO}/commits/?pagelen=1"
 )
 DATA_DIR = (
-    Path(__file__).resolve().parents[1] / "src" / "wifiscope" / "data"
+    Path(__file__).resolve().parents[1] / "src" / "diting" / "data"
 )
 
 
@@ -41,7 +41,7 @@ def _yaml_url(path: str) -> str:
 
 def _fetch(url: str) -> bytes:
     req = urllib.request.Request(
-        url, headers={"User-Agent": "wifiscope-vendor-sync"},
+        url, headers={"User-Agent": "diting-vendor-sync"},
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return resp.read()

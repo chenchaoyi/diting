@@ -14,8 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
-from wifiscope import latency
-from wifiscope.latency import (
+from diting import latency
+from diting.latency import (
     LatencyPoller,
     LatencySample,
     _coerce_address_list,
@@ -73,7 +73,7 @@ def test_ping_once_records_rtt():
     poller = LatencyPoller(gateway_ip="192.168.1.1", wan_ip="8.8.8.8")
     out = "64 bytes from 192.168.1.1: icmp_seq=0 ttl=64 time=12.5 ms\n"
     with patch(
-        "wifiscope.latency.subprocess.run",
+        "diting.latency.subprocess.run",
         return_value=_proc(stdout=out, returncode=0),
     ):
         sample = poller._ping_once("router", "192.168.1.1")
@@ -88,7 +88,7 @@ def test_ping_once_loss_on_nonzero_exit():
     lost sample with ``rtt_ms=None`` rather than raising."""
     poller = LatencyPoller(gateway_ip="192.168.1.1", wan_ip="8.8.8.8")
     with patch(
-        "wifiscope.latency.subprocess.run",
+        "diting.latency.subprocess.run",
         return_value=_proc(returncode=2),
     ):
         sample = poller._ping_once("wan", "8.8.8.8")
@@ -102,7 +102,7 @@ def test_ping_once_loss_on_no_time_field():
     documented). Parser returns None → lost sample."""
     poller = LatencyPoller(gateway_ip="192.168.1.1", wan_ip="8.8.8.8")
     with patch(
-        "wifiscope.latency.subprocess.run",
+        "diting.latency.subprocess.run",
         return_value=_proc(stdout="--- 1.1.1.1 ping statistics ---\n"),
     ):
         sample = poller._ping_once("wan", "1.1.1.1")
@@ -114,7 +114,7 @@ def test_ping_once_loss_on_subprocess_error():
     lost sample, never an exception that tears down the poller."""
     poller = LatencyPoller(gateway_ip="192.168.1.1")
     with patch(
-        "wifiscope.latency.subprocess.run",
+        "diting.latency.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="ping", timeout=2),
     ):
         sample = poller._ping_once("router", "192.168.1.1")
@@ -336,7 +336,7 @@ def _patch_sc(serveraddresses):
     actually be installed for these tests to run.
     """
     return patch(
-        "wifiscope.latency._read_dns_server_addresses",
+        "diting.latency._read_dns_server_addresses",
         return_value=_coerce_address_list(serveraddresses),
     )
 
@@ -398,9 +398,9 @@ def test_dns_malformed_addresses_filters_to_none():
 
 
 def test_dns_env_override_wins_over_auto_detect():
-    """``WIFISCOPE_LATENCY_WAN_TARGET=1.1.1.1`` is the explicit
+    """``DITING_LATENCY_WAN_TARGET=1.1.1.1`` is the explicit
     override; it beats whatever SCDynamicStore would have picked."""
-    env = {"WIFISCOPE_LATENCY_WAN_TARGET": "1.1.1.1"}
+    env = {"DITING_LATENCY_WAN_TARGET": "1.1.1.1"}
     with _patch_sc(["8.8.8.8"]):
         assert _resolve_dns_anchor("192.168.1.1", env=env) == "1.1.1.1"
 
@@ -494,7 +494,7 @@ def test_scutil_dns_fallback_parses_resolver_block():
     )
     proc = _proc(stdout=sample, returncode=0)
     with patch(
-        "wifiscope.latency.subprocess.run", return_value=proc,
+        "diting.latency.subprocess.run", return_value=proc,
     ):
         addrs = latency._scutil_dns_fallback()
     assert addrs == ["192.168.1.1", "1.1.1.1"]

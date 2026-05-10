@@ -1,6 +1,6 @@
 <sub>[English](../../helper/README.md) · **中文**</sub>
 
-# wifiscope-helper
+# diting-tianer
 
 一个极简的 Cocoa `.app`，承担两个职责：持有 macOS「定位服务」权限
 以让 Python TUI 读取扫描列表里**每个 AP 的真实 SSID 与 BSSID**；
@@ -12,7 +12,7 @@ macOS 14.4+ 把 CoreWLAN 的 `bssid()` / `ssid()` 隐藏成 None，除非
 调用进程属于一个被授予「定位服务」权限的 `.app` 包。CoreBluetooth
 的 `CBCentralManager` 同样要求进程具备 `NSBluetoothAlwaysUsage
 Description` 入口，否则永远进不了 `.poweredOn`。从终端启动的 CLI
-工具两项都拿不到 —— `wifiscope` 主进程通过 SCDynamicStore 旁路绕开了
+工具两项都拿不到 —— `diting` 主进程通过 SCDynamicStore 旁路绕开了
 Wi-Fi *当前连接* 的限制，但邻居列表没有等价旁路，BLE 完全没有旁路。
 这个 `.app` 是规范的解法：用一个真实的 `.app` 注册到 TCC，一次性授予
 两项权限，bundle 的 CLI 子进程就会同时继承 CoreWLAN 与 CoreBluetooth
@@ -27,38 +27,38 @@ cd helper
 ./build.sh
 ```
 
-产出 `helper/wifiscope-helper.app`。
+产出 `helper/diting-tianer.app`。
 
 ## 安装
 
-把 `build.sh` 产出的 `helper/wifiscope-helper.app` 留在原位，授权一次
+把 `build.sh` 产出的 `helper/diting-tianer.app` 留在原位，授权一次
 即可：
 
 ```bash
-open helper/wifiscope-helper.app
+open helper/diting-tianer.app
 ```
 
 窗口会请求「定位服务」和「蓝牙」两项权限，逐一点 Allow 然后关闭窗口。
-下次运行 `wifiscope`，就地的 helper 包会被自动识别，不需要其它配置。
+下次运行 `diting`，就地的 helper 包会被自动识别，不需要其它配置。
 
 > 早期文档建议把 `.app` 移到 `/Applications/`，**现在不再推荐**。
 > TCC 按 cdhash 记录授权，移动包到新路径会创建一个新的 TCC 主体
 > 让你重新授权一次。**就地构建、就地授权、就地运行**最省事。
 
 如果确实想装到别处，用环境变量
-`WIFISCOPE_HELPER=/full/path/to/wifiscope-helper.app` 显式指定路径。
+`DITING_HELPER=/full/path/to/diting-tianer.app` 显式指定路径。
 
-## wifiscope 如何找到它
+## diting 如何找到它
 
-`MacOSWiFiBackend` 在构造时通过 `src/wifiscope/_helper.py:find_helper`
+`MacOSWiFiBackend` 在构造时通过 `src/diting/_helper.py:find_helper`
 按以下顺序解析辅助进程位置：
 
-1. `WIFISCOPE_HELPER` 环境变量（指向 `.app` 包或其二进制）
-2. `helper/wifiscope-helper.app`（本仓库内推荐位置 —— `build.sh`
+1. `DITING_HELPER` 环境变量（指向 `.app` 包或其二进制）
+2. `helper/diting-tianer.app`（本仓库内推荐位置 —— `build.sh`
    就地产出，`open` 一下授权即可）
-3. `/Applications/wifiscope-helper.app`（兼容此指引变更前已经
+3. `/Applications/diting-tianer.app`（兼容此指引变更前已经
    移动过去的用户）
-4. `~/Applications/wifiscope-helper.app`（同上）
+4. `~/Applications/diting-tianer.app`（同上）
 
 找到之后，`scan()` 会执行 `<binary> scan` 并解析一份未隐藏的网络
 JSON 文档。如果找不到或子进程失败，backend 会回落到直接调用
@@ -68,14 +68,14 @@ SSID / BSSID 仍被隐藏。
 ## 同一二进制的三种角色
 
 ```bash
-wifiscope-helper            # GUI：同时请求「定位服务」与「蓝牙」并停留
-wifiscope-helper scan       # CLI：输出一份 CoreWLAN 扫描的 JSON 文档后退出
-wifiscope-helper ble-scan   # CLI：流式输出 CoreBluetooth 广告 JSONL，直到 SIGTERM
+diting-tianer            # GUI：同时请求「定位服务」与「蓝牙」并停留
+diting-tianer scan       # CLI：输出一份 CoreWLAN 扫描的 JSON 文档后退出
+diting-tianer ble-scan   # CLI：流式输出 CoreBluetooth 广告 JSONL，直到 SIGTERM
 ```
 
 第一种是用户在 Finder 里双击 `.app` 时执行的形态。第二种是
 `MacOSWiFiBackend` 在 Python 里 spawn 出来扫一次 Wi-Fi 列表的形态。
-第三种是 `wifiscope.ble.BLEPoller` 长期挂着的子进程：每个广告事件
+第三种是 `diting.ble.BLEPoller` 长期挂着的子进程：每个广告事件
 就是 stdout 上的一行 JSON 对象，Python 侧逐行读取。
 
 TCC 按 bundle 而不是按二进制路径鉴权，三种调用形态都会继承同一份

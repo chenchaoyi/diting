@@ -3,35 +3,37 @@
 </p>
 
 <p align="center">
-  <img src="docs/logo.svg" alt="wifiscope" width="320">
+  <img src="docs/logo.svg" alt="diting" width="320">
 </p>
 
 <p align="center">
-  <strong>See which Wi-Fi AP your Mac is on, when it switches, and how strong the signal really is — all in your terminal.</strong>
+  <strong>Your Mac hears more than it tells you.</strong>
+  <br>
+  <sub>A macOS terminal listening post for Wi-Fi, BLE, link health, and the RF environment.</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/chenchaoyi/wifiscope/actions/workflows/test.yml"><img src="https://github.com/chenchaoyi/wifiscope/actions/workflows/test.yml/badge.svg" alt="tests"></a>
-  <a href="https://github.com/chenchaoyi/wifiscope/releases"><img src="https://img.shields.io/github/v/release/chenchaoyi/wifiscope?display_name=tag" alt="release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/chenchaoyi/wifiscope" alt="license"></a>
+  <a href="https://github.com/chenchaoyi/diting/actions/workflows/test.yml"><img src="https://github.com/chenchaoyi/diting/actions/workflows/test.yml/badge.svg" alt="tests"></a>
+  <a href="https://github.com/chenchaoyi/diting/releases"><img src="https://img.shields.io/github/v/release/chenchaoyi/diting?display_name=tag" alt="release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/chenchaoyi/diting" alt="license"></a>
 </p>
 
 ---
 
 <p align="center">
-  <img src="docs/preview.svg" alt="wifiscope TUI – Wi-Fi view" width="100%">
+  <img src="docs/preview.svg" alt="diting TUI – Wi-Fi view" width="100%">
   <br>
   <sub><i>Wi-Fi view (default)</i></sub>
 </p>
 
 <p align="center">
-  <img src="docs/preview-ble.svg" alt="wifiscope TUI – BLE view" width="100%">
+  <img src="docs/preview-ble.svg" alt="diting TUI – BLE view" width="100%">
   <br>
   <sub><i>BLE view (press <code>n</code> to toggle) — Connected peripherals on top, Advertising devices below, each labelled with its public-format identification.</i></sub>
 </p>
 
 <p align="center">
-  <img src="docs/preview-events.svg" alt="wifiscope TUI – Events modal" width="100%">
+  <img src="docs/preview-events.svg" alt="diting TUI – Events modal" width="100%">
   <br>
   <sub><i>Events modal (press <code>m</code> to open) — last 100 roam / RF-stir / latency / loss / link events, per-AP σ baseline, last-hour σ sparkline.</i></sub>
 </p>
@@ -46,7 +48,7 @@ you blame the Wi-Fi.
 
 Apple's Wi-Fi panel will tell you the *current* signal but nothing
 about *which AP* you're on, *whether you should be on a different
-one*, or *when* the OS roamed (or didn't). `wifiscope` turns that
+one*, or *when* the OS roamed (or didn't). `diting` turns that
 black box into a TUI:
 
 - a top panel with everything Apple's "Option-click Wi-Fi" panel
@@ -75,14 +77,14 @@ black box into a TUI:
   and your auto-detected DNS server every second so a -55 dBm AP
   reads as bad when the upstream is broken, and an `Environment`
   line that surfaces rolling RSSI variance with a `stable` /
-  `active` qualifier (calibrate with `wifiscope calibrate` for a
+  `active` qualifier (calibrate with `diting calibrate` for a
   `quiet` baseline). Press `m` to open a full-screen Events
   browser of the last 100 roam / RF-stir / latency / loss / link
   events. **NOT** Wi-Fi sensing — see
   [`docs/explainers/wifi-sensing.md`](docs/explainers/wifi-sensing.md)
   for what we deliberately do not claim
 
-Stuck on a weak AP? Hit `c` and `wifiscope` cycles the Wi-Fi radio so
+Stuck on a weak AP? Hit `c` and `diting` cycles the Wi-Fi radio so
 macOS re-runs auto-join and reassociates with the strongest BSSID.
 That's the same path as click-menu-off-then-on, but in one keystroke.
 
@@ -93,13 +95,13 @@ Xcode Command Line Tools (the helper bundle is built from a small
 Swift source on first launch).
 
 ```bash
-git clone git@github.com:chenchaoyi/wifiscope.git
-cd wifiscope
+git clone git@github.com:chenchaoyi/diting.git
+cd diting
 uv sync
-uv run wifiscope
+uv run diting
 ```
 
-On first run, `wifiscope` builds and opens a tiny **helper bundle**
+On first run, `diting` builds and opens a tiny **helper bundle**
 that asks for Location Services permission. Click Allow once; the
 window auto-closes; the TUI launches with full SSID and BSSID for
 every visible AP. Subsequent runs go straight to the TUI — the grant
@@ -108,18 +110,18 @@ is persistent.
 > **Why the helper?** macOS 14.4+ redacts SSID and BSSID to None
 > unless the calling process has Location Services. A Python CLI
 > launched from Terminal cannot get on that list, but a tiny `.app`
-> bundle can. `wifiscope` shells out to it for scan data and gets
+> bundle can. `diting` shells out to it for scan data and gets
 > the real values back. Press `h` inside the TUI for the full
 > story.
 
 ## Switching language
 
 ```bash
-uv run wifiscope --lang zh           # force Chinese
-WIFISCOPE_LANG=zh uv run wifiscope   # via env var
+uv run diting --lang zh           # force Chinese
+DITING_LANG=zh uv run diting   # via env var
 ```
 
-With no override, `wifiscope` autodetects the system locale —
+With no override, `diting` autodetects the system locale —
 `LANG=zh_CN.UTF-8` defaults to Chinese; everything else stays English.
 
 ## Bindings
@@ -137,15 +139,15 @@ With no override, `wifiscope` autodetects the system locale —
 | `b` | open / close Wi-Fi Basics: SSID, BSSID, channel, band, security, roam score |
 
 `watch`, `once`, `monitor`, and `calibrate` subcommands run
-wifiscope without the TUI:
+diting without the TUI:
 
 ```bash
-uv run wifiscope once                       # snapshot of current connection, exit
-uv run wifiscope watch                      # streaming text events until Ctrl+C
-uv run wifiscope monitor                    # headless JSONL events to stdout
-uv run wifiscope monitor --out events.jsonl # append JSONL to a file
-uv run wifiscope monitor --notify           # macOS Notification Centre alerts on high-confidence events
-uv run wifiscope calibrate                  # 5 min "empty room" RSSI baseline → ./wifiscope-baseline.json
+uv run diting once                       # snapshot of current connection, exit
+uv run diting watch                      # streaming text events until Ctrl+C
+uv run diting monitor                    # headless JSONL events to stdout
+uv run diting monitor --out events.jsonl # append JSONL to a file
+uv run diting monitor --notify           # macOS Notification Centre alerts on high-confidence events
+uv run diting calibrate                  # 5 min "empty room" RSSI baseline → ./diting-baseline.json
 ```
 
 The `monitor` subcommand is the long-run / Home Assistant
@@ -158,7 +160,7 @@ schema lives in
 
 ### AP aliases (optional)
 
-`wifiscope` works fine without any AP-name configuration — every
+`diting` works fine without any AP-name configuration — every
 BSSID gets an auto-clustered label like `?AB:CD:EF` so radios of the
 same physical AP group together visually, and roam classification
 between APs still works.
@@ -178,7 +180,7 @@ aps:
     mgmt_mac: bc:22:47:ca:79:46
 ```
 
-`wifiscope` then renders **`2F-living (5G)` (40:fe:95:8a:3c:58)** in
+`diting` then renders **`2F-living (5G)` (40:fe:95:8a:3c:58)** in
 place of the raw BSSID, and roam events read `[band switch on
 2F-living: 5G → 2.4G]` or `[inter-AP roam]`.
 
@@ -200,18 +202,18 @@ If your AP vendor randomises per-radio MACs (rare; some Cisco
 Meraki SKUs), add a `radio_overrides` map mapping specific BSSIDs
 to AP names. See [`aps.example.yaml`](aps.example.yaml).
 
-Set `WIFISCOPE_INVENTORY=/some/path/aps.yaml` to load the file from
+Set `DITING_INVENTORY=/some/path/aps.yaml` to load the file from
 somewhere other than the current working directory.
 
 ### Environment variables
 
 | Variable | Default | Effect |
 |---|---|---|
-| `WIFISCOPE_LANG` | autodetected | UI language: `en` or `zh`. Equivalent to `--lang`. |
-| `WIFISCOPE_INVENTORY` | `./aps.yaml` (CWD-relative) | Path to the AP-aliases YAML. The file is optional; if absent, wifiscope uses auto-cluster labels. |
-| `WIFISCOPE_HELPER` | searched in `/Applications`, `~/Applications`, repo `helper/` | Path to the `wifiscope-helper.app` bundle or its binary. |
-| `WIFISCOPE_SCAN_INTERVAL` | `7` | Seconds between scans. CoreWLAN throttles around 5 s, so values below ~6 yield empty scans every other call. Floor 3. |
-| `WIFISCOPE_LATENCY_WAN_TARGET` | autodetected from `scutil --dns` | IP for the WAN latency anchor. Default picks the first non-gateway nameserver from `SCDynamicStoreCopyValue("State:/Network/Global/DNS")`; if the only configured DNS *is* the gateway, the WAN probe is skipped and the diagnostic line reads `WAN n/a (DNS == gateway)`. Override to pin an explicit IP (e.g. `1.1.1.1` for networks that allow it). |
+| `DITING_LANG` | autodetected | UI language: `en` or `zh`. Equivalent to `--lang`. |
+| `DITING_INVENTORY` | `./aps.yaml` (CWD-relative) | Path to the AP-aliases YAML. The file is optional; if absent, diting uses auto-cluster labels. |
+| `DITING_HELPER` | searched in `/Applications`, `~/Applications`, repo `helper/` | Path to the `diting-tianer.app` bundle or its binary. |
+| `DITING_SCAN_INTERVAL` | `7` | Seconds between scans. CoreWLAN throttles around 5 s, so values below ~6 yield empty scans every other call. Floor 3. |
+| `DITING_LATENCY_WAN_TARGET` | autodetected from `scutil --dns` | IP for the WAN latency anchor. Default picks the first non-gateway nameserver from `SCDynamicStoreCopyValue("State:/Network/Global/DNS")`; if the only configured DNS *is* the gateway, the WAN probe is skipped and the diagnostic line reads `WAN n/a (DNS == gateway)`. Override to pin an explicit IP (e.g. `1.1.1.1` for networks that allow it). |
 
 ## macOS caveats
 
@@ -242,13 +244,13 @@ guest networks and accidentally-open SSIDs quickly.
 **Without the helper, the Nearby BSSIDs scan list is fully redacted.**
 RSSI, channel, band, and width still come through, but every SSID
 shows `(redacted)` and every BSSID `(redacted)`. The Connection
-panel itself is unaffected — `wifiscope` reads SSID and BSSID for
+panel itself is unaffected — `diting` reads SSID and BSSID for
 the *current* AP through a separate SCDynamicStore tunnel that
 macOS forgot to redact.
 
 **BLE devices rotate their identifier for privacy.** The same
 physical device (an AirTag, a phone, an Apple Watch) appears under
-multiple CoreBluetooth UUIDs over time. wifiscope's fuzzy merger
+multiple CoreBluetooth UUIDs over time. diting's fuzzy merger
 collapses obvious duplicates into one row by matching `(vendor_id,
 name)` plus an RSSI window, and shows a `(merged N)` badge on the
 combined entry, but the heuristic is conservative — anonymous
@@ -261,7 +263,7 @@ will feel "smaller" than the Wi-Fi scan even on a busy floor.
 
 **macOS hides the underlying BLE MAC**. CoreBluetooth gives only
 a per-host UUID; vendor identification goes through the
-manufacturer-data company ID field exclusively. wifiscope decodes
+manufacturer-data company ID field exclusively. diting decodes
 the *public* portions of Apple Continuity (the Nearby Info
 device-class nibble — `iPhone` / `iPad` / `Mac` / `Apple TV` /
 `HomePod` / `Apple Watch`) and the Find My / iBeacon signatures,
@@ -271,10 +273,10 @@ Handoff session info) stay opaque. Per-model identification
 claiming to do that is reading proprietary GATT services after
 connecting, which we will not do.
 
-**The Environment line is *not* Wi-Fi sensing.** wifiscope sits in
+**The Environment line is *not* Wi-Fi sensing.** diting sits in
 Tier 0 of the Wi-Fi-sensing capability ladder: rolling RSSI variance
 on the data CoreWLAN already exposes. We surface a binary
-`stable` / `active` (or `quiet` after `wifiscope calibrate`)
+`stable` / `active` (or `quiet` after `diting calibrate`)
 qualifier — never people-counting, never motion-with-pose, never
 breathing rate. Channel State Information (the data the academic
 sensing literature actually uses) is not exposed by macOS, and even
@@ -293,7 +295,7 @@ deliberately avoid. The Connected section shows `—` for the
 signal column and sorts alphabetically by name.
 
 **`disassociate()` is unreliable for forcing a roam.** Earlier
-versions of `wifiscope` used `iface.disassociate()` for the `c`
+versions of `diting` used `iface.disassociate()` for the `c`
 binding; on 802.1X enterprise networks it would tear down the link
 and macOS would not auto-rejoin. Cycling power via
 `setPower(false)` then `setPower(true)` mirrors the Wi-Fi-menu
@@ -338,9 +340,9 @@ nice-to-have but not on a near-term release schedule.
   Nearby BSSID row showing the last N scans for that BSSID, so
   trends ("dropping", "stable", "improving") are visible at a
   glance without staring at the panel.
-- **JSONL session logging + replay** — `wifiscope log session.jsonl`
+- **JSONL session logging + replay** — `diting log session.jsonl`
   appends every connection / scan / roam / latency event; a
-  `wifiscope replay <file>` mode feeds them back through the TUI
+  `diting replay <file>` mode feeds them back through the TUI
   for after-the-fact analysis of an incident.
 - **Trend graphs in the TUI** — RSSI / latency / channel utilization
   over time, time-on-AP per BSSID. Builds on JSONL logging.

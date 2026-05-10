@@ -5,7 +5,7 @@ allowed-tools: Bash, Read, Write, Edit
 argument-hint: [budget-minutes]
 ---
 
-You are running an **open-ended audit** of wifiscope **against
+You are running an **open-ended audit** of diting **against
 the user's actual environment**. Real backend, real BSSIDs, real
 BLE devices, real latency / RF / event data — not the synthetic
 fixtures the regression suite uses. The point is to find
@@ -70,7 +70,7 @@ Format:
    ```
 
    `scripts/tui_snapshot.py` is the engineering tool living
-   under `scripts/`, NOT a user-facing `wifiscope` subcommand.
+   under `scripts/`, NOT a user-facing `diting` subcommand.
    In `--mode explore` it builds the TUI on top of
    `MacOSWiFiBackend()` + the real BLE helper, then drives it
    through six keystroke scenarios:
@@ -147,7 +147,7 @@ Each iteration:
      can decide whether to keep the change.
 
    - **Code-only finding**: cross-read with the source under
-     `src/wifiscope/` and pin the issue to a function / line
+     `src/diting/` and pin the issue to a function / line
      number. Sometimes the screenshot only triggers the
      hypothesis; the actual finding lives in the code.
 

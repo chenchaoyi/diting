@@ -6,13 +6,13 @@ from __future__ import annotations
 
 import pytest
 
-from wifiscope import i18n
+from diting import i18n
 
 
 @pytest.fixture(autouse=True)
 def _restore_lang():
     """Each test runs with a clean language state and leaves the
-    process-wide default intact for the next test, since wifiscope
+    process-wide default intact for the next test, since diting
     sets the language exactly once at startup."""
     saved = i18n.get_lang()
     try:
@@ -24,8 +24,8 @@ def _restore_lang():
 # ---------- detect_default_lang ----------
 
 
-def test_detect_explicit_wifiscope_lang_wins_over_locale():
-    env = {"WIFISCOPE_LANG": "en", "LANG": "zh_CN.UTF-8"}
+def test_detect_explicit_diting_lang_wins_over_locale():
+    env = {"DITING_LANG": "en", "LANG": "zh_CN.UTF-8"}
     assert i18n.detect_default_lang(env) == i18n.EN
 
 
@@ -44,10 +44,10 @@ def test_detect_falls_back_to_english():
     assert i18n.detect_default_lang({"LANG": "fr_FR.UTF-8"}) == i18n.EN
 
 
-def test_detect_ignores_invalid_wifiscope_lang_value():
+def test_detect_ignores_invalid_diting_lang_value():
     """A typo in the env should not silently route to a language we
     cannot serve — fall through to locale detection instead."""
-    env = {"WIFISCOPE_LANG": "ja", "LANG": "zh_CN.UTF-8"}
+    env = {"DITING_LANG": "ja", "LANG": "zh_CN.UTF-8"}
     assert i18n.detect_default_lang(env) == i18n.ZH
 
 
@@ -55,12 +55,12 @@ def test_detect_ignores_invalid_wifiscope_lang_value():
 
 
 def test_resolve_cli_override_wins_over_env():
-    env = {"WIFISCOPE_LANG": "zh"}
+    env = {"DITING_LANG": "zh"}
     assert i18n.resolve_lang(i18n.EN, env) == i18n.EN
 
 
 def test_resolve_no_override_uses_env():
-    env = {"WIFISCOPE_LANG": "zh"}
+    env = {"DITING_LANG": "zh"}
     assert i18n.resolve_lang(None, env) == i18n.ZH
 
 

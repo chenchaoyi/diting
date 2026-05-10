@@ -5,7 +5,7 @@ category: Workflow
 tags: [workflow, testing]
 ---
 
-You are running the wifiscope self-test gate. The same four checks CI
+You are running the diting self-test gate. The same four checks CI
 will run on the PR — running them locally now means you catch
 failures before pushing.
 
@@ -29,7 +29,7 @@ user in 2-3 lines.
 2. **Spawn an Agent with `subagent_type=general-purpose`.** Brief
    it like a smart colleague who just walked into the room:
 
-   > Run wifiscope's pre-PR self-test gate from the repo root.
+   > Run diting's pre-PR self-test gate from the repo root.
    > Execute these four commands in order, capturing exit codes:
    >
    > ```

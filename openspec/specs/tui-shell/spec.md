@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines the wifiscope TUI's top-level layout — the four-panel
+Defines the diting TUI's top-level layout — the four-panel
 arrangement (Connection / Diagnostics / Scan-or-BLE / Events), the
 view-toggle mechanic that swaps Wi-Fi scan vs BLE list in place, the
 modal-screen lifecycle, and the GroupedFooter convention. Capability

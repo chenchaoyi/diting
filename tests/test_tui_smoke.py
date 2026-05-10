@@ -13,10 +13,10 @@ from typing import Any
 
 import pytest
 
-from wifiscope.backend import WiFiBackend
-from wifiscope.models import Connection, ScanResult
-from wifiscope.network import APEntry, NetworkInventory
-from wifiscope.tui import HelpScreen, WifiScopeApp
+from diting.backend import WiFiBackend
+from diting.models import Connection, ScanResult
+from diting.network import APEntry, NetworkInventory
+from diting.tui import HelpScreen, DitingApp
 
 
 class _FakeBackend(WiFiBackend):
@@ -79,7 +79,7 @@ _INVENTORY = NetworkInventory(
 
 
 async def _run_pilot(*key_presses: str, scan_interval: float = 7.0) -> None:
-    app = WifiScopeApp(_FakeBackend(), _INVENTORY, scan_interval=scan_interval)
+    app = DitingApp(_FakeBackend(), _INVENTORY, scan_interval=scan_interval)
     async with app.run_test(size=(140, 50)) as pilot:
         await pilot.pause(0.6)  # let one connection update + one scan land
         for k in key_presses:
@@ -133,7 +133,7 @@ def test_help_modal_renders_through_pilot_query():
     import asyncio
 
     async def go():
-        app = WifiScopeApp(_FakeBackend(), _INVENTORY)
+        app = DitingApp(_FakeBackend(), _INVENTORY)
         async with app.run_test(size=(140, 50)) as pilot:
             await pilot.pause(0.5)
             await pilot.press("h")
@@ -151,7 +151,7 @@ def test_help_modal_renders_through_pilot_query():
 
 def test_custom_scan_interval_threads_through():
     """The scan_interval kwarg lands on the underlying poller."""
-    app = WifiScopeApp(_FakeBackend(), _INVENTORY, scan_interval=4.5)
+    app = DitingApp(_FakeBackend(), _INVENTORY, scan_interval=4.5)
     assert app._poller._scan_interval == 4.5
 
 
@@ -160,10 +160,10 @@ def test_toggle_view_swaps_third_panel():
     then `n` again to return. Both panels stay mounted; only display
     flips, so the swap is instant and consumer state is preserved."""
     import asyncio
-    from wifiscope.tui import BLEPanel
+    from diting.tui import BLEPanel
 
     async def go():
-        app = WifiScopeApp(_FakeBackend(), _INVENTORY)
+        app = DitingApp(_FakeBackend(), _INVENTORY)
         async with app.run_test(size=(140, 50)) as pilot:
             await pilot.pause(0.5)
             scan = app.query_one("#scan")
@@ -190,10 +190,10 @@ def test_events_modal_open_and_close():
     """Press `m` to open EventsScreen; press `m` again to close.
     Mirrors the help-modal smoke test pattern for the v0.7.0 binding."""
     import asyncio
-    from wifiscope.tui import EventsScreen
+    from diting.tui import EventsScreen
 
     async def go():
-        app = WifiScopeApp(_FakeBackend(), _INVENTORY,
+        app = DitingApp(_FakeBackend(), _INVENTORY,
                            enable_latency=False, enable_environment=False)
         async with app.run_test(size=(140, 50)) as pilot:
             await pilot.pause(0.4)
@@ -218,12 +218,12 @@ def test_diagnostics_renders_link_line_when_latency_data_available():
     import asyncio
     from datetime import datetime
 
-    from wifiscope.environment import EnvironmentMonitor
-    from wifiscope.latency import LatencyAggregate
-    from wifiscope.tui import EnvironmentPanel
+    from diting.environment import EnvironmentMonitor
+    from diting.latency import LatencyAggregate
+    from diting.tui import EnvironmentPanel
 
     async def go():
-        app = WifiScopeApp(_FakeBackend(), _INVENTORY,
+        app = DitingApp(_FakeBackend(), _INVENTORY,
                            enable_latency=False, enable_environment=False)
         async with app.run_test(size=(140, 50)) as pilot:
             await pilot.pause(0.4)
@@ -270,12 +270,12 @@ def test_unified_events_panel_renders_roam_and_stir_interleaved():
 
     from textual.widgets import RichLog
 
-    from wifiscope.environment import RFStirEvent
-    from wifiscope.poller import RoamEvent
-    from wifiscope.tui import EventsPanel
+    from diting.environment import RFStirEvent
+    from diting.poller import RoamEvent
+    from diting.tui import EventsPanel
 
     async def go():
-        app = WifiScopeApp(_FakeBackend(), _INVENTORY,
+        app = DitingApp(_FakeBackend(), _INVENTORY,
                            enable_latency=False, enable_environment=False)
         async with app.run_test(size=(140, 50)) as pilot:
             await pilot.pause(0.4)
@@ -330,11 +330,11 @@ def test_ble_panel_renders_both_connected_and_advertising_sections():
 
     from textual.widgets import Static
 
-    from wifiscope.ble import BLEDevice
-    from wifiscope.tui import BLEPanel
+    from diting.ble import BLEDevice
+    from diting.tui import BLEPanel
 
     async def go():
-        app = WifiScopeApp(_FakeBackend(), _INVENTORY)
+        app = DitingApp(_FakeBackend(), _INVENTORY)
         async with app.run_test(size=(160, 56)) as pilot:
             await pilot.pause(0.5)
             now = datetime.now(timezone.utc)

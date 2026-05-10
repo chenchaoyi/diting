@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from wifiscope import _helper
+from diting import _helper
 
 
 # Realistic schema-v2 payload from a working helper run
@@ -54,7 +54,7 @@ SCHEMA_V2 = {
 
 # Schema v1 used a string for the interface field. Older helpers may
 # still be installed in /Applications when the user runs a freshly
-# checked-out wifiscope.
+# checked-out diting.
 SCHEMA_V1 = {
     "schema": 1,
     "interface": "en0",
@@ -78,7 +78,7 @@ def _mock_run(stdout, returncode=0):
 
 def test_scan_v2_returns_networks_and_iface_meta():
     raw = json.dumps(SCHEMA_V2)
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
         results, meta = _helper.scan("/fake/binary")
     assert len(results) == 2
     r = results[0]
@@ -97,7 +97,7 @@ def test_scan_v1_iface_string_yields_empty_meta():
     """v1's interface field was a plain string; the parser must not
     confuse it with a meta dict."""
     raw = json.dumps(SCHEMA_V1)
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
         results, meta = _helper.scan("/fake/binary")
     assert len(results) == 2
     assert meta == {}
@@ -114,7 +114,7 @@ def test_scan_zero_noise_and_zero_rssi_become_none():
                        "noise_dbm": 0}],
     }
     raw = json.dumps(payload)
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
         results, _ = _helper.scan("/fake/binary")
     assert results[0].rssi_dbm is None
     assert results[0].noise_dbm is None
@@ -128,7 +128,7 @@ def test_scan_lowercases_bssid():
                        "rssi_dbm": -50}],
     }
     raw = json.dumps(payload)
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
         results, _ = _helper.scan("/fake/binary")
     assert results[0].bssid == "aa:bb:cc:dd:ee:ff"
 
@@ -142,7 +142,7 @@ def test_scan_redacted_row_keeps_bssid_none():
         "networks": [{"rssi_dbm": -60, "channel": 36}],
     }
     raw = json.dumps(payload)
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
         results, _ = _helper.scan("/fake/binary")
     assert results[0].ssid is None
     assert results[0].bssid is None
@@ -151,7 +151,7 @@ def test_scan_redacted_row_keeps_bssid_none():
 
 
 def test_scan_malformed_json_returns_empty():
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run("not json")):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run("not json")):
         results, meta = _helper.scan("/fake/binary")
     assert results == []
     assert meta == {}
@@ -159,7 +159,7 @@ def test_scan_malformed_json_returns_empty():
 
 def test_scan_nonzero_exit_returns_empty():
     raw = json.dumps(SCHEMA_V2)
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw, returncode=2)):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw, returncode=2)):
         results, meta = _helper.scan("/fake/binary")
     assert results == []
     assert meta == {}
@@ -168,7 +168,7 @@ def test_scan_nonzero_exit_returns_empty():
 def test_scan_subprocess_timeout_returns_empty():
     import subprocess
     with patch(
-        "wifiscope._helper.subprocess.run",
+        "diting._helper.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="x", timeout=1),
     ):
         results, meta = _helper.scan("/fake/binary")
@@ -180,7 +180,7 @@ def test_scan_subprocess_timeout_returns_empty():
 
 def test_has_permission_true_when_any_bssid_populated():
     raw = json.dumps(SCHEMA_V2)
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
         assert _helper.has_permission("/fake/binary") is True
 
 
@@ -194,12 +194,12 @@ def test_has_permission_false_when_all_redacted():
         ],
     }
     raw = json.dumps(payload)
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
         assert _helper.has_permission("/fake/binary") is False
 
 
 def test_has_permission_false_on_subprocess_error():
-    with patch("wifiscope._helper.subprocess.run", side_effect=OSError):
+    with patch("diting._helper.subprocess.run", side_effect=OSError):
         assert _helper.has_permission("/fake/binary") is False
 
 
@@ -211,7 +211,7 @@ def test_has_permission_false_on_subprocess_error():
 # stale-bundle detection in _ensure_helper_ready can fall back to a
 # rebuild.
 _HELP_05 = b"""\
-wifiscope-helper
+diting-tianer
 
   (no args)   Launch the bundle UI ...
   scan        Perform a CoreWLAN scan ...
@@ -219,7 +219,7 @@ wifiscope-helper
 """
 
 _HELP_04 = b"""\
-wifiscope-helper
+diting-tianer
 
   (no args)   Launch the bundle UI ...
   scan        Perform a CoreWLAN scan ...
@@ -228,7 +228,7 @@ wifiscope-helper
 
 def test_has_ble_scan_subcommand_true_when_help_lists_it():
     """0.5.0+ helper bundle: --help mentions ble-scan, probe returns True."""
-    with patch("wifiscope._helper.subprocess.run",
+    with patch("diting._helper.subprocess.run",
                return_value=_mock_run(_HELP_05)):
         assert _helper.has_ble_scan_subcommand("/fake/binary") is True
 
@@ -237,7 +237,7 @@ def test_has_ble_scan_subcommand_false_for_pre_0_5_helper():
     """A 0.4.0-era bundle in /Applications/ would still answer scan but
     has no ble-scan; the probe must spot that and return False so the
     upgrade path can rebuild a 0.5.0-capable bundle in-repo."""
-    with patch("wifiscope._helper.subprocess.run",
+    with patch("diting._helper.subprocess.run",
                return_value=_mock_run(_HELP_04)):
         assert _helper.has_ble_scan_subcommand("/fake/binary") is False
 
@@ -248,7 +248,7 @@ def test_has_ble_scan_subcommand_false_on_timeout():
     so the user sees an explicit incompatible-helper hint instead of a
     silent BLE wedge."""
     import subprocess
-    with patch("wifiscope._helper.subprocess.run",
+    with patch("diting._helper.subprocess.run",
                side_effect=subprocess.TimeoutExpired(cmd="x", timeout=5)):
         assert _helper.has_ble_scan_subcommand("/fake/binary") is False
 
@@ -257,7 +257,7 @@ def test_has_bluetooth_permission_true_on_zero_exit():
     """The helper's bluetooth-status subcommand exits 0 only when
     CBCentralManager resolves to .poweredOn — i.e. TCC granted and
     radio is on. Probe wraps that as a clean True/False."""
-    with patch("wifiscope._helper.subprocess.run",
+    with patch("diting._helper.subprocess.run",
                return_value=_mock_run("", returncode=0)):
         assert _helper.has_bluetooth_permission("/fake/binary") is True
 
@@ -266,7 +266,7 @@ def test_has_bluetooth_permission_false_on_unauthorized():
     """Exit 3 (.unauthorized) — user has not granted Bluetooth.
     Treated as False so the launcher routes through the open-helper
     flow to prompt."""
-    with patch("wifiscope._helper.subprocess.run",
+    with patch("diting._helper.subprocess.run",
                return_value=_mock_run("", returncode=3)):
         assert _helper.has_bluetooth_permission("/fake/binary") is False
 
@@ -276,14 +276,14 @@ def test_has_bluetooth_permission_false_on_timeout():
     its own 2 s timeout fires, exiting 2. The Python timeout (8 s) is
     a backstop. Either path is "no" from the launcher."""
     import subprocess
-    with patch("wifiscope._helper.subprocess.run",
+    with patch("diting._helper.subprocess.run",
                side_effect=subprocess.TimeoutExpired(cmd="x", timeout=8)):
         assert _helper.has_bluetooth_permission("/fake/binary") is False
 
 
 def test_has_bluetooth_permission_false_on_oserror():
     """Defensive: missing / non-executable binary."""
-    with patch("wifiscope._helper.subprocess.run", side_effect=OSError):
+    with patch("diting._helper.subprocess.run", side_effect=OSError):
         assert _helper.has_bluetooth_permission("/fake/binary") is False
 
 
@@ -297,15 +297,15 @@ def test_has_ble_scan_subcommand_reads_stderr_too():
     p.stdout = b""
     p.stderr = _HELP_05
     p.returncode = 0
-    with patch("wifiscope._helper.subprocess.run", return_value=p):
+    with patch("diting._helper.subprocess.run", return_value=p):
         assert _helper.has_ble_scan_subcommand("/fake/binary") is True
 
 
 # --- bundle_path -----------------------------------------------------
 
 def test_bundle_path_extracts_app_dir(tmp_path):
-    bundle = tmp_path / "wifiscope-helper.app"
-    binary = bundle / "Contents" / "MacOS" / "wifiscope-helper"
+    bundle = tmp_path / "diting-tianer.app"
+    binary = bundle / "Contents" / "MacOS" / "diting-tianer"
     binary.parent.mkdir(parents=True)
     binary.write_text("")
     assert _helper.bundle_path(str(binary)) == str(bundle)
@@ -321,7 +321,7 @@ def test_bundle_path_none_for_loose_binary(tmp_path):
 
 def _make_bundle(parent: Path) -> Path:
     """Create a minimal executable that looks like a helper bundle binary."""
-    binary = parent / "wifiscope-helper.app" / "Contents" / "MacOS" / "wifiscope-helper"
+    binary = parent / "diting-tianer.app" / "Contents" / "MacOS" / "diting-tianer"
     binary.parent.mkdir(parents=True)
     binary.write_text("#!/bin/sh\nexit 0\n")
     binary.chmod(binary.stat().st_mode | stat.S_IXUSR | stat.S_IRUSR | stat.S_IWUSR)
@@ -329,9 +329,9 @@ def _make_bundle(parent: Path) -> Path:
 
 
 def test_find_helper_env_override_wins(tmp_path, monkeypatch):
-    """WIFISCOPE_HELPER must beat any candidate path on disk."""
+    """DITING_HELPER must beat any candidate path on disk."""
     binary = _make_bundle(tmp_path)
-    monkeypatch.setenv("WIFISCOPE_HELPER", str(binary.parent.parent.parent))
+    monkeypatch.setenv("DITING_HELPER", str(binary.parent.parent.parent))
     assert _helper.find_helper() == str(binary)
 
 
@@ -341,18 +341,18 @@ def test_find_helper_env_override_can_point_at_binary(tmp_path, monkeypatch):
     binary = tmp_path / "anywhere"
     binary.write_text("")
     binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
-    monkeypatch.setenv("WIFISCOPE_HELPER", str(binary))
+    monkeypatch.setenv("DITING_HELPER", str(binary))
     assert _helper.find_helper() == str(binary)
 
 
 def test_find_helper_returns_none_when_nothing_present(tmp_path, monkeypatch):
-    monkeypatch.delenv("WIFISCOPE_HELPER", raising=False)
+    monkeypatch.delenv("DITING_HELPER", raising=False)
     # Point all standard locations at empty dirs by overriding HOME
     monkeypatch.setenv("HOME", str(tmp_path))
     # We cannot un-publish /Applications, but the test still proves the
     # env-override path returns None when env is unset and no override
     # bundle exists at the override path.
-    monkeypatch.setenv("WIFISCOPE_HELPER", str(tmp_path / "missing.app"))
+    monkeypatch.setenv("DITING_HELPER", str(tmp_path / "missing.app"))
     assert _helper.find_helper() is None
 
 
@@ -377,7 +377,7 @@ def test_scan_v3_parses_bss_load_and_station_count():
         ],
     }
     raw = json.dumps(payload)
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
         results, _ = _helper.scan("/fake/binary")
     assert results[0].bss_load_pct == 78
     assert results[0].bss_station_count == 12
@@ -400,7 +400,7 @@ def test_scan_v3_parses_802_11r_capability_flag():
         ],
     }
     raw = json.dumps(payload)
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
         results, _ = _helper.scan("/fake/binary")
     assert results[0].supports_802_11r is True
     assert results[0].supports_802_11k is None
@@ -412,7 +412,7 @@ def test_scan_v2_keeps_ie_fields_none():
     every IE-derived field arrives as None so the new dataclass slots
     are forward-compatible."""
     raw = json.dumps(SCHEMA_V2)
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
         results, _ = _helper.scan("/fake/binary")
     r = results[0]
     assert r.bss_load_pct is None
@@ -443,7 +443,7 @@ def test_scan_v3_rejects_malformed_ie_values():
         ],
     }
     raw = json.dumps(payload)
-    with patch("wifiscope._helper.subprocess.run", return_value=_mock_run(raw)):
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
         results, _ = _helper.scan("/fake/binary")
     r = results[0]
     assert r.bss_load_pct is None

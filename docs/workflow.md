@@ -1,6 +1,6 @@
-# Wifiscope Workflow
+# Diting Workflow
 
-How a change to wifiscope gets from idea to merged. Short version:
+How a change to diting gets from idea to merged. Short version:
 new branch → propose change → implement → self-test → CI → review →
 archive. Skip any step and the PR doesn't get merged.
 
@@ -216,7 +216,7 @@ drill into the archive. The Chinese mirror at
 
 ### Bilingual rule (EN ↔ ZH parity)
 
-Wifiscope ships a Chinese audience as a first-class concern; a
+Diting ships a Chinese audience as a first-class concern; a
 change that drops Chinese coverage is incomplete. In a single PR:
 
 - Every `i18n.py` EN-key edit MUST update the matching ZH value.

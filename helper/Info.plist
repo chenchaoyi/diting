@@ -6,16 +6,16 @@
     <string>en</string>
 
     <key>CFBundleExecutable</key>
-    <string>wifiscope-helper</string>
+    <string>diting-tianer</string>
 
     <key>CFBundleIdentifier</key>
-    <string>com.github.chenchaoyi.wifiscope.helper</string>
+    <string>com.chenchaoyi.diting.tianer</string>
 
     <key>CFBundleName</key>
-    <string>wifiscope-helper</string>
+    <string>diting-tianer</string>
 
     <key>CFBundleDisplayName</key>
-    <string>wifiscope helper</string>
+    <string>谛听 · 天耳</string>
 
     <key>CFBundlePackageType</key>
     <string>APPL</string>
@@ -36,13 +36,13 @@
     <true/>
 
     <key>NSLocationUsageDescription</key>
-    <string>wifiscope reads nearby Wi-Fi network names and BSSIDs to label access points and detect roaming. Location data never leaves your machine.</string>
+    <string>diting reads nearby Wi-Fi network names and BSSIDs to label access points and detect roaming. Location data never leaves your machine.</string>
 
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>wifiscope reads nearby Wi-Fi network names and BSSIDs to label access points and detect roaming. Location data never leaves your machine.</string>
+    <string>diting reads nearby Wi-Fi network names and BSSIDs to label access points and detect roaming. Location data never leaves your machine.</string>
 
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>wifiscope scans nearby BLE advertisements so the TUI can show you what devices are around</string>
+    <string>diting scans nearby BLE advertisements so the TUI can show you what devices are around</string>
 
     <key>LSUIElement</key>
     <false/>

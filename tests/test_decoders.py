@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from wifiscope.ble import BLEDevice
-from wifiscope.decoders import decode_all, decoders
+from diting.ble import BLEDevice
+from diting.decoders import decode_all, decoders
 
 
 def _dev(
@@ -49,7 +49,7 @@ def test_registry_has_built_in_decoders():
 
 def test_decode_all_swallows_decoder_exceptions(monkeypatch):
     """One buggy decoder should not blank the whole panel."""
-    from wifiscope import decoders as pkg
+    from diting import decoders as pkg
 
     def boom(_d):
         raise RuntimeError("decoder bug")

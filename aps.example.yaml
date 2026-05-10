@@ -1,10 +1,10 @@
-# wifiscope AP aliases — sample config
+# diting AP aliases — sample config
 #
 # Resolution semantics (override-wins → first-five-octet → mid-four
 # → cluster-label fallback) are pinned in
 # openspec/specs/inventory/spec.md.
 #
-# This file is OPTIONAL. Without it, wifiscope still groups every
+# This file is OPTIONAL. Without it, diting still groups every
 # BSSID by physical AP using auto-cluster labels like '?40:fe:95',
 # which is enough for daily use on enterprise networks where you
 # cannot pull mgmt MACs out of the controller anyway.
@@ -13,13 +13,13 @@
 #   1. cp aps.example.yaml aps.yaml          (next to this file)
 #   2. fill in the entries below from your router or AP controller's
 #      management UI ('AP list' / 'Access points' page)
-#   3. wifiscope will pick it up automatically; no restart needed
+#   3. diting will pick it up automatically; no restart needed
 #
-# Override the location with WIFISCOPE_INVENTORY=/full/path/aps.yaml.
+# Override the location with DITING_INVENTORY=/full/path/aps.yaml.
 #
 # Most controllers (H3C, Aruba, Ubiquiti, Cisco, ASUS mesh, ...) only
 # expose the AP-level **management MAC** — not the per-radio BSSIDs
-# the AP actually broadcasts. Just list the mgmt MACs here. wifiscope
+# the AP actually broadcasts. Just list the mgmt MACs here. diting
 # derives radio attribution at runtime by two rules, both gated by a
 # last-byte proximity check (radios are mgmt + N for small N):
 #   1. first five octets match (chip's primary OUI block — the common

@@ -12,7 +12,7 @@ an NSKeyedArchiver-serialized bplist describing the AP we are
 currently associated with — and **its** BSSID and SSID_STR fields
 are NOT redacted. This is presumably an oversight; Apple may close
 it in a future release. Until then it is a clean way to get real
-identity data without bundling wifiscope as a `.app`.
+identity data without bundling diting as a `.app`.
 
 The fallback fails gracefully: if the key is gone, the structure
 shifts, or the cached record is too stale (`AGE` is reported in
@@ -62,7 +62,7 @@ def read_current_identity(interface_name: str) -> CachedAssociation:
     channel since (DFS, dynamic channel selection on enterprise APs).
     """
     empty = CachedAssociation(bssid=None, ssid=None, channel=None)
-    ds = SCDynamicStoreCreate(None, "wifiscope", None, None)
+    ds = SCDynamicStoreCreate(None, "diting", None, None)
     if ds is None:
         return empty
     val = SCDynamicStoreCopyValue(

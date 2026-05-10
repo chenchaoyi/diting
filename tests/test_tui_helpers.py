@@ -9,18 +9,18 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from wifiscope.ble import BLEDevice
-from wifiscope.environment import APBaseline, RFStirEvent
-from wifiscope.events import (
+from diting.ble import BLEDevice
+from diting.environment import APBaseline, RFStirEvent
+from diting.events import (
     LatencySpikeEvent,
     LinkStateEvent,
     LossBurstEvent,
 )
-from wifiscope.latency import LatencyAggregate
-from wifiscope.models import Connection, ScanResult
-from wifiscope.network import APEntry, NetworkInventory
-from wifiscope.poller import RoamEvent
-from wifiscope.tui import (
+from diting.latency import LatencyAggregate
+from diting.models import Connection, ScanResult
+from diting.network import APEntry, NetworkInventory
+from diting.poller import RoamEvent
+from diting.tui import (
     _aggregate_baselines,
     _baseline_table,
     _best_same_ssid_candidate,
