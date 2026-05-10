@@ -396,8 +396,8 @@ def _help_content() -> tuple[Text, Text]:
 
     body.append("diting", style="bold cyan")
     body.append(
-        t("  ·  terminal Wi-Fi monitor for macOS with link health,\n"
-          "     RF environment, and BLE devices.\n"),
+        t("  ·  macOS terminal listening post for Wi-Fi, BLE, link\n"
+          "     health, and the RF environment.\n"),
         style="dim",
     )
 

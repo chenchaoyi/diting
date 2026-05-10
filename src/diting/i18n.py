@@ -546,9 +546,9 @@ _ZH: dict[str, str] = {
     "open network": "开放网络",
 
     # ---- Help modal ----
-    "  ·  terminal Wi-Fi monitor for macOS with link health,\n"
-    "     RF environment, and BLE devices.\n":
-        "  ·  macOS 终端 Wi-Fi 监控工具：链路健康、RF 环境、BLE 设备。\n",
+    "  ·  macOS terminal listening post for Wi-Fi, BLE, link\n"
+    "     health, and the RF environment.\n":
+        "  ·  macOS 终端的信号监听台 —— Wi-Fi、BLE、链路健康、RF 环境。\n",
     "What": "概览",
     "What you get": "能看到什么",
     "  Live view of which AP / BSSID you're on, the BSSIDs around\n"
