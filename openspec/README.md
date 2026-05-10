@@ -1,4 +1,4 @@
-# OpenSpec — wifiscope
+# OpenSpec — diting
 
 Capability index. Each entry links to the canonical spec. Workflow rules
 live in `AGENTS.md`. Contributor-facing how-to is at `../docs/workflow.md`.
@@ -19,7 +19,7 @@ through normal `openspec/changes/<name>/` proposals; no further
 | `link-health` | [specs/link-health/spec.md](specs/link-health/spec.md) | Gateway / WAN ping aggregates, jitter, loss bursts, latency spikes |
 | `environment-monitor` | [specs/environment-monitor/spec.md](specs/environment-monitor/spec.md) | RF-stir detector — per-AP σ baseline, three-tier fusion modes, ratio+floor spike rule, cooldown+rearm, calibration loading |
 | `events` | [specs/events/spec.md](specs/events/spec.md) | Five-event vocabulary, in-memory `EventRing`, locale-stable JSONL serialisation |
-| `event-log` | [specs/event-log/spec.md](specs/event-log/spec.md) | JSONL writer for `--log` and `wifiscope monitor`, flush-after-each, atexit cleanup, English-keys-vs-translated-values split |
+| `event-log` | [specs/event-log/spec.md](specs/event-log/spec.md) | JSONL writer for `--log` and `diting monitor`, flush-after-each, atexit cleanup, English-keys-vs-translated-values split |
 | `analyze` | [specs/analyze/spec.md](specs/analyze/spec.md) | Pure-rules log post-processor — heuristic catalogue, loss-percent format auto-detection, duration honesty |
 | `inventory` | [specs/inventory/spec.md](specs/inventory/spec.md) | `aps.yaml` loading, four-path AP-name resolution, cluster-label stability, OUI vendor map |
 | `roam-detection` | [specs/roam-detection/spec.md](specs/roam-detection/spec.md) | 0-100 link scoring, +10 dB candidate threshold, press-c Wi-Fi cycle |

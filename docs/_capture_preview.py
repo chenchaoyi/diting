@@ -5,14 +5,14 @@ identifiers from the maintainer's environment. Re-run any time the UI
 changes:
 
     uv run python docs/_capture_preview.py            # English Wi-Fi → docs/preview.svg
-    WIFISCOPE_LANG=zh uv run python docs/_capture_preview.py
+    DITING_LANG=zh uv run python docs/_capture_preview.py
                                                       # Chinese Wi-Fi → docs/preview.zh.svg
-    WIFISCOPE_PREVIEW_VIEW=ble uv run python docs/_capture_preview.py
+    DITING_PREVIEW_VIEW=ble uv run python docs/_capture_preview.py
                                                       # English BLE → docs/preview-ble.svg
-    WIFISCOPE_LANG=zh WIFISCOPE_PREVIEW_VIEW=ble uv run python docs/_capture_preview.py
+    DITING_LANG=zh DITING_PREVIEW_VIEW=ble uv run python docs/_capture_preview.py
                                                       # Chinese BLE → docs/preview-ble.zh.svg
 
-The env vars WIFISCOPE_LANG and WIFISCOPE_PREVIEW_VIEW together select
+The env vars DITING_LANG and DITING_PREVIEW_VIEW together select
 the output filename, since the four SVGs sit side by side in docs/.
 
 CJK NOTE
@@ -41,29 +41,29 @@ from pathlib import Path
 
 from rich.cells import cell_len
 
-from wifiscope import i18n
-from wifiscope.backend import WiFiBackend
-from wifiscope.ble import BLEDevice
-from wifiscope.environment import APBaseline, RFStirEvent
-from wifiscope.events import LatencySpikeEvent, LossBurstEvent
-from wifiscope.latency import LatencyAggregate
-from wifiscope.models import Connection, ScanResult
-from wifiscope.network import APEntry, NetworkInventory
-from wifiscope.poller import RoamEvent
+from diting import i18n
+from diting.backend import WiFiBackend
+from diting.ble import BLEDevice
+from diting.environment import APBaseline, RFStirEvent
+from diting.events import LatencySpikeEvent, LossBurstEvent
+from diting.latency import LatencyAggregate
+from diting.models import Connection, ScanResult
+from diting.network import APEntry, NetworkInventory
+from diting.poller import RoamEvent
 
-# Language must be locked in before WifiScopeApp imports — its
+# Language must be locked in before DitingApp imports — its
 # BINDINGS list calls t() at class-definition time, so a late
 # set_lang() would not retranslate the footer hints.
 i18n.set_lang(i18n.resolve_lang(None, os.environ))
 
-from wifiscope.tui import WifiScopeApp  # noqa: E402  (import after set_lang)
+from diting.tui import DitingApp  # noqa: E402  (import after set_lang)
 
 
 class _FakeBackend(WiFiBackend):
     name = "macOS CoreWLAN"
 
     def __init__(self) -> None:
-        self._helper_path = "/Applications/wifiscope-helper.app/Contents/MacOS/wifiscope-helper"
+        self._helper_path = "/Applications/diting-tianer.app/Contents/MacOS/diting-tianer"
 
     def get_connection(self) -> Connection:
         return Connection(
@@ -279,7 +279,7 @@ def _synthetic_ble_connected(now: datetime) -> list[BLEDevice]:
 
 
 def _preview_view() -> str:
-    return (os.environ.get("WIFISCOPE_PREVIEW_VIEW") or "wifi").lower()
+    return (os.environ.get("DITING_PREVIEW_VIEW") or "wifi").lower()
 
 
 async def main() -> None:
@@ -289,7 +289,7 @@ async def main() -> None:
     # time without a 1 Hz background loop racing it. The events
     # preview re-enables nothing; we inject pre-built ring contents
     # directly into the modal.
-    app = WifiScopeApp(
+    app = DitingApp(
         _FakeBackend(), _INVENTORY,
         ble_helper_path="",
         enable_latency=False,
@@ -347,7 +347,7 @@ async def main() -> None:
         )
         # Seed the Diagnostics panel's Link / Environment lines with
         # well-formed aggregates and a stable σ.
-        from wifiscope.tui import EnvironmentPanel
+        from diting.tui import EnvironmentPanel
         env_panel = pilot.app.query_one("#env", EnvironmentPanel)
         link = (
             LatencyAggregate(
@@ -371,7 +371,7 @@ async def main() -> None:
             # of the SVG is a deterministic, network-free render, and
             # spinning up a real subprocess from a pytest pilot is not
             # worth the flakiness.
-            from wifiscope.tui import BLEPanel
+            from diting.tui import BLEPanel
             now_utc = datetime.now(timezone.utc)
             pilot.app._latest_ble = _synthetic_ble_devices(now_utc)
             pilot.app._latest_ble_connected = _synthetic_ble_connected(now_utc)
@@ -380,8 +380,8 @@ async def main() -> None:
             await pilot.pause(0.3)
         if view == "events":
             # Push synthetic events into the ring and open the modal.
-            from wifiscope.environment import APBaseline
-            from wifiscope.tui import EventsScreen
+            from diting.environment import APBaseline
+            from diting.tui import EventsScreen
 
             now = datetime.now()
             ring_events = [
@@ -434,7 +434,7 @@ async def main() -> None:
             pilot.app.push_screen(screen)
             await pilot.pause(0.4)
         await pilot.pause(0.3)
-        out = pilot.app.export_screenshot(title="wifiscope")
+        out = pilot.app.export_screenshot(title="diting")
     out = _fix_cjk_textlength(out)
     base_map = {"ble": "preview-ble", "events": "preview-events", "wifi": "preview"}
     base = base_map.get(view, "preview")

@@ -26,7 +26,7 @@ prefix so multiple decoders can coexist without collisions:
 Built-in decoders (iBeacon, Eddystone, Apple Continuity expansions
 later) auto-register on import. Callers see a uniform surface:
 
-    from wifiscope.decoders import decode_all
+    from diting.decoders import decode_all
     fields = decode_all(device)  # dict, possibly empty
 """
 from __future__ import annotations

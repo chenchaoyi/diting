@@ -1,4 +1,4 @@
-"""Discover and call the wifiscope-helper Swift sidecar.
+"""Discover and call the diting-tianer Swift sidecar.
 
 The helper is a tiny `.app` bundle (sources at <repo>/helper/) that owns
 Location Services permission and, when invoked as a subprocess with
@@ -9,11 +9,11 @@ redacted on macOS 26 without permission).
 
 Search order for the bundle:
 
-1. ``WIFISCOPE_HELPER`` env var — full path to either the bundle or
+1. ``DITING_HELPER`` env var — full path to either the bundle or
    the binary inside it
-2. ``/Applications/wifiscope-helper.app``
-3. ``~/Applications/wifiscope-helper.app``
-4. ``<repo>/helper/wifiscope-helper.app`` — picks up a developer build
+2. ``/Applications/diting-tianer.app``
+3. ``~/Applications/diting-tianer.app``
+4. ``<repo>/helper/diting-tianer.app`` — picks up a developer build
    without copying anywhere
 """
 
@@ -46,23 +46,23 @@ _SECURITY = {
 
 
 def find_helper() -> str | None:
-    """Return the path to a runnable wifiscope-helper binary, or None."""
-    override = os.environ.get("WIFISCOPE_HELPER")
+    """Return the path to a runnable diting-tianer binary, or None."""
+    override = os.environ.get("DITING_HELPER")
     if override:
         return _resolve(Path(override).expanduser())
     candidates = [
         # In-place developer build inside this repo — the recommended
-        # install location since 0.7.0. ``wifiscope`` is typically
+        # install location since 0.7.0. ``diting`` is typically
         # installed editable so __file__ traces back to the source
         # tree; ``build.sh`` produces the bundle here, the user grants
-        # once with ``open helper/wifiscope-helper.app``, and we pick
+        # once with ``open helper/diting-tianer.app``, and we pick
         # it up automatically. Listed first so an old leftover bundle
         # in /Applications cannot shadow a freshly-rebuilt local one.
-        Path(__file__).resolve().parents[2] / "helper" / "wifiscope-helper.app",
+        Path(__file__).resolve().parents[2] / "helper" / "diting-tianer.app",
         # Back-compat for users who moved the bundle into /Applications
         # before the in-place flow was recommended; still works.
-        Path("/Applications/wifiscope-helper.app"),
-        Path("~/Applications/wifiscope-helper.app").expanduser(),
+        Path("/Applications/diting-tianer.app"),
+        Path("~/Applications/diting-tianer.app").expanduser(),
     ]
     for c in candidates:
         resolved = _resolve(c)
@@ -75,7 +75,7 @@ def _resolve(path: Path) -> str | None:
     if path.is_file() and os.access(path, os.X_OK):
         return str(path)
     if path.suffix == ".app" and path.is_dir():
-        binary = path / "Contents" / "MacOS" / "wifiscope-helper"
+        binary = path / "Contents" / "MacOS" / "diting-tianer"
         if binary.is_file() and os.access(binary, os.X_OK):
             return str(binary)
     return None
@@ -223,7 +223,7 @@ def has_ble_scan_subcommand(binary: str) -> bool:
     """Probe whether ``binary`` understands ``ble-scan``.
 
     A 0.4.0-era helper bundle that the user installed via the README's
-    recommended ``mv wifiscope-helper.app /Applications/`` step will
+    recommended ``mv diting-tianer.app /Applications/`` step will
     still be found by :func:`find_helper` after upgrading to 0.5.0 and
     happily answers the ``scan`` subcommand — but it has no
     ``ble-scan``, so spawning it for the BLE poller produces a silent
@@ -255,11 +255,11 @@ def try_build() -> str | None:
     """Run helper/build.sh if the source tree is reachable.
 
     Returns the binary path on success, None if Swift isn't installed,
-    the source isn't reachable (e.g. wifiscope was pip-installed without
+    the source isn't reachable (e.g. diting was pip-installed without
     the Swift sources), or the build fails.
     """
     # Walk up from this module to find the repo root that ships the
-    # `helper/` directory. wifiscope is normally installed editable
+    # `helper/` directory. diting is normally installed editable
     # via `uv sync`, so __file__ points inside the repo's src/.
     repo_root = Path(__file__).resolve().parents[2]
     helper_dir = repo_root / "helper"

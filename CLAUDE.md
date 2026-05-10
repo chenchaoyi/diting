@@ -1,4 +1,4 @@
-# Wifiscope — agent / contributor brief
+# Diting (谛听) — agent / contributor brief
 
 A real-time terminal Wi-Fi + BLE monitor for macOS. Pure Python TUI on
 top of a small Swift helper bundle that owns the macOS TCC permissions
@@ -7,7 +7,7 @@ top of a small Swift helper bundle that owns the macOS TCC permissions
 ## Quick orientation
 
 ```
-src/wifiscope/        ← Python TUI + analyzers + decoders
+src/diting/        ← Python TUI + analyzers + decoders
 helper/Sources/       ← Swift helper bundle (CoreWLAN + CoreBluetooth)
 openspec/             ← Spec-driven development (SDD) — see below
 docs/                 ← Workflow guide, screenshots, translations
@@ -59,7 +59,7 @@ first, then archives into the canonical spec.
 ## Run / test commands
 
 ```bash
-uv run wifiscope                       # launch TUI
+uv run diting                       # launch TUI
 uv run pytest                          # unit + smoke (requires no real env)
 uv run python scripts/tui_snapshot.py --mode regression   # synthetic regression
 uv run python scripts/tui_snapshot.py --mode explore      # real-env audit
@@ -75,19 +75,19 @@ user reports a real-environment UX issue.
   IPs. They live in `/tmp/` by default and never get committed.
 - `aps.yaml` (AP-naming inventory) is git-ignored; `aps.example.yaml`
   is the public-shareable template.
-- `wifiscope-*.jsonl` event-log files in the repo root are git-ignored
+- `diting-*.jsonl` event-log files in the repo root are git-ignored
   per session.
 
 ## Project-specific conventions
 
 - Python target: 3.11. Type hints throughout. `from __future__ import
   annotations` in every module so forward references work.
-- Strings shown to the user go through `t()` (in `src/wifiscope/i18n.py`).
+- Strings shown to the user go through `t()` (in `src/diting/i18n.py`).
   EN is the catalog key; ZH is the alternate catalog.
 - Column-aligned widgets use `pad_cells` / `fit_cells`, NOT
   `str.ljust` — CJK glyphs occupy two terminal cells.
 - Helper schema is bumped (currently 4) when its JSON output gains
   fields. Python tolerates older schemas; never break back-compat.
-- Decoders go under `src/wifiscope/decoders/`, register via the
+- Decoders go under `src/diting/decoders/`, register via the
   `@register` decorator, and **must not raise** on malformed input —
   abstain (return `None`) instead.

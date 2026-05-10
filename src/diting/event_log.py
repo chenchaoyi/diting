@@ -1,9 +1,9 @@
-"""JSONL event logger shared by `wifiscope monitor` and the TUI.
+"""JSONL event logger shared by `diting monitor` and the TUI.
 
 Single point of truth for the wire format so both modes produce
 byte-identical streams. Schema is locale-stable English (event
 type names, state strings, field names) — log analysis scripts
-should not break when the user toggles WIFISCOPE_LANG. User-
+should not break when the user toggles DITING_LANG. User-
 supplied strings (SSID, AP location names from aps.yaml) flow
 through unchanged via ``ensure_ascii=False`` so a Chinese SSID
 like ``咖啡馆`` survives readable in the log instead of becoming
@@ -75,12 +75,12 @@ def _iso(now: datetime) -> str:
 
 
 class EventLogger:
-    """Append-only JSONL emitter for wifiscope events.
+    """Append-only JSONL emitter for diting events.
 
     Construct with ``EventLogger.to_path(path)`` for a file sink,
     ``EventLogger.to_stdout()`` for stdout (the historical monitor
     behaviour), or ``EventLogger.disabled()`` for a no-op (the
-    TUI default — opt in via ``--log`` or WIFISCOPE_LOG).
+    TUI default — opt in via ``--log`` or DITING_LOG).
 
     All ``emit_*`` calls are best-effort: an exception writing to
     the sink is logged once and then swallowed so the producer
@@ -393,7 +393,7 @@ class EventLogger:
                 # Only log once per logger lifetime so a stuck
                 # disk does not spam stderr at 1 Hz.
                 print(
-                    f"wifiscope: event log write failed: {exc}",
+                    f"diting: event log write failed: {exc}",
                     file=sys.stderr,
                 )
                 self._io_failed = True

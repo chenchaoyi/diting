@@ -2,12 +2,46 @@
 
 # 版本变更记录
 
-记录 wifiscope 的所有可见变更。格式参考
+记录 diting（之前叫 `wifiscope` —— 见 [Unreleased] 里的破坏性变更条目）
+的所有可见变更。格式参考
 [Keep a Changelog](https://keepachangelog.com/)，版本号遵循
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
 ## [Unreleased]
+
+### 破坏性变更 —— 项目改名：`wifiscope` → `diting (谛听)`
+
+项目正式更名为 **谛听 (Diting)**。原名暗示这是一个只做 Wi-Fi 的工具；
+实际的能力范围（BLE / 链路健康 / RF 环境，加上 LAN / mDNS / sensing
+的路线图）远不止于此。谛听 —— 佛教神兽，一耳能听十方世界一切声音 ——
+正好对应这个项目的核心命题：把 macOS 默默察觉到但没告诉你的信号显化
+出来。
+
+Tagline：*「你的 Mac 听见了什么，告诉你。」* /
+*"Your Mac hears more than it tells you."*
+
+对用户来说意味着什么：
+
+- CLI 二进制：`wifiscope` → `diting`
+- 辅助进程：`wifiscope-helper.app` → `diting-tianer.app`
+  （天耳 —— 佛教六神通之一，谛听本身具备的"听十方"能力；这个 Swift
+  小包持有 Location Services + Bluetooth 授权，把信号转交给 Python）。
+  **首次启动需要重新点 Allow 授权 Location 和 Bluetooth** —— macOS TCC
+  按 cdhash 锚定授权，新 bundle ID（`com.chenchaoyi.diting.tianer`）
+  对 TCC 来说是一个新身份。
+- 环境变量：`WIFISCOPE_*` → `DITING_*`（`WIFISCOPE_LANG`、
+  `WIFISCOPE_HELPER`、`WIFISCOPE_INVENTORY`、`WIFISCOPE_GATEWAY`、
+  `WIFISCOPE_WAN`、`WIFISCOPE_SCAN_INTERVAL`、
+  `WIFISCOPE_LATENCY_WAN_TARGET`）。**没有兼容兜底** —— 如果你的脚本
+  里写了旧名字，请直接改。
+- 默认 JSONL 日志文件名：`wifiscope-<TS>.jsonl` → `diting-<TS>.jsonl`
+- Python 包：`import wifiscope` → `import diting`；PyPI / 仓库随之改。
+- **没有改**：代码里的 Wi-Fi 类名（`WiFiBackend` / `WiFiPoller` /
+  `MacOSWiFiBackend` 描述的是 *Wi-Fi 能力*，不是 app 名字）；15 个
+  capability spec 名字；任何功能行为。
+- 下面的历史条目（v0.7.0 及之前）保留写着 `wifiscope` —— 那些是冻结的
+  历史发版记录。
 
 ### 新增
 - **Spec 驱动的开发流程**（`openspec/`）。每一个会改行为的能力，

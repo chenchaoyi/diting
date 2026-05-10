@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Defines wifiscope's "should the user re-roam?" scoring — the Roam
+Defines diting's "should the user re-roam?" scoring — the Roam
 score row of the Diagnostics panel and the same-SSID better-candidate
 hint that surfaces when a clearly stronger BSSID for the user's
 current network is in scan range. macOS does not aggressively roam
-off a "good enough" AP, so wifiscope nudges the user when staying
+off a "good enough" AP, so diting nudges the user when staying
 sticky costs them performance.
 
 ## Requirements

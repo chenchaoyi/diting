@@ -1,4 +1,4 @@
-"""Survey BLE vendor / device-class coverage of wifiscope's lookup chain.
+"""Survey BLE vendor / device-class coverage of diting's lookup chain.
 
 Reads a sample of helper `ble-scan` output (from --input <path> or by
 spawning the helper for a fresh capture), dedups by identifier, and
@@ -41,11 +41,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Importing wifiscope.ble assumes the script runs from the repo root or
+# Importing diting.ble assumes the script runs from the repo root or
 # with the package installed editable (`uv run` already does the right
 # thing). No path mangling here.
-from wifiscope._helper import find_helper
-from wifiscope.ble import (
+from diting._helper import find_helper
+from diting.ble import (
     load_member_uuids,
     load_vendors,
     lookup_member_vendor,
@@ -63,7 +63,7 @@ def capture_via_helper(lines: int) -> str:
     helper = find_helper()
     if helper is None:
         raise RuntimeError(
-            "wifiscope-helper.app not found. Build it first with "
+            "diting-tianer.app not found. Build it first with "
             "`./helper/build.sh` and grant Bluetooth in System Settings."
         )
     proc = subprocess.Popen(
@@ -116,7 +116,7 @@ def dedup(text: str) -> dict[str, dict]:
 def resolve_vendor(d: dict, vendors: dict, members: dict) -> str | None:
     """Mirror of _build_device's vendor chain (without prior carry-forward).
 
-    Returns the first hit or None. Order matches src/wifiscope/ble.py
+    Returns the first hit or None. Order matches src/diting/ble.py
     so this script tracks production behaviour as the chain evolves.
     """
     cid = d.get("manufacturer_id")

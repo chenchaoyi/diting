@@ -2,7 +2,7 @@
 import PackageDescription
 
 // `Info.plist` is embedded into the binary's `__TEXT,__info_plist` section
-// in addition to being copied to `wifiscope-helper.app/Contents/Info.plist`
+// in addition to being copied to `diting-tianer.app/Contents/Info.plist`
 // during build. The bundle copy is what Finder / launchd / Gatekeeper read
 // for GUI launches; the embedded copy is what TCC reads when the binary is
 // spawned directly as a subprocess (the path our Python TUI uses for both
@@ -12,12 +12,12 @@ import PackageDescription
 // plist has it — because the strict TCC path does not fall back to
 // Contents/Info.plist when bundle context was not set up by launchd.
 let package = Package(
-    name: "wifiscope-helper",
+    name: "diting-tianer",
     platforms: [.macOS(.v11)],
     targets: [
         .executableTarget(
-            name: "wifiscope-helper",
-            path: "Sources/wifiscope-helper",
+            name: "diting-tianer",
+            path: "Sources/diting-tianer",
             linkerSettings: [
                 .unsafeFlags([
                     "-Xlinker", "-sectcreate",

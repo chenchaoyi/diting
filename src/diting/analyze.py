@@ -1,7 +1,7 @@
 """Rule-based JSONL log analyser.
 
-Reads a wifiscope event log (the JSONL format produced by both
-``wifiscope monitor`` and ``wifiscope --log``) and turns it into
+Reads a diting event log (the JSONL format produced by both
+``diting monitor`` and ``diting --log``) and turns it into
 a human-readable report: time span, event counts, link timeline,
 plus a list of heuristic insights and TODOs derived from
 patterns in the data.
@@ -256,7 +256,7 @@ def _run_heuristics(
             severity="warn",
             title=t("Empty log"),
             detail=t(
-                "No JSONL events parsed. Is wifiscope still writing? "
+                "No JSONL events parsed. Is diting still writing? "
                 "Check the path and that the producer is running."
             ),
             todo=t("Re-run with --log on a session that produces events."),
@@ -298,7 +298,7 @@ def _run_heuristics(
                 "this bug."
             ),
             todo=t(
-                "Update wifiscope and re-record. Existing data is still "
+                "Update diting and re-record. Existing data is still "
                 "usable but cross-timezone analysis may misorder events."
             ),
         ))
@@ -314,7 +314,7 @@ def _run_heuristics(
             detail=t(
                 "Every RF stir landed at medium confidence and on one "
                 "AP location ({n} events). With only one co-located AP "
-                "wifiscope cannot upgrade events to high confidence — "
+                "diting cannot upgrade events to high confidence — "
                 "redundancy fusion needs ≥2 APs in the same room.",
                 n=r.stir_count,
             ),
@@ -430,7 +430,7 @@ def _run_heuristics(
                 n=r.loss_burst_count, ip=ip, roams=r.roams,
             ),
             todo=t(
-                "Update wifiscope and re-record. Post-fix the "
+                "Update diting and re-record. Post-fix the "
                 "LatencyPoller rebuilds on every gateway-IP change "
                 "and emits an explicit network_change event."
             ),
@@ -557,7 +557,7 @@ def render(report: Report) -> str:
     in pipes; no terminal-specific colour codes.
     """
     lines: list[str] = []
-    lines.append(t("wifiscope analyse {path}", path=report.path or "(stdin)"))
+    lines.append(t("diting analyse {path}", path=report.path or "(stdin)"))
     lines.append("=" * 60)
 
     # Time span

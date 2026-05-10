@@ -13,15 +13,15 @@ from datetime import datetime, timezone
 
 import pytest
 
-from wifiscope.event_log import EventLogger
-from wifiscope.events import (
+from diting.event_log import EventLogger
+from diting.events import (
     LatencySpikeEvent,
     LinkStateEvent,
     LossBurstEvent,
 )
-from wifiscope.environment import RFStirEvent
-from wifiscope.models import Connection
-from wifiscope.poller import RoamEvent
+from diting.environment import RFStirEvent
+from diting.models import Connection
+from diting.poller import RoamEvent
 
 
 def _conn(bssid: str, ssid: str = "office-wifi") -> Connection:
@@ -101,7 +101,7 @@ def test_schema_keys_stay_english_under_zh_locale(tmp_path, monkeypatch):
     log analysis scripts (jq, AI consumers) need a stable schema.
     The locale toggle changes ``t()`` resolution, but EventLogger
     bypasses i18n entirely for keys and discriminators."""
-    from wifiscope import i18n
+    from diting import i18n
     original = i18n.get_lang()
     i18n.set_lang(i18n.ZH)
     try:
@@ -281,7 +281,7 @@ def test_emit_network_change_carries_router_ip_transition(tmp_path):
     triggers a LatencyPoller rebuild. SSID / BSSID are optional
     context; previous-side fields are typically None because the
     previous network's metadata isn't recorded long-term."""
-    from wifiscope.events import NetworkChangeEvent
+    from diting.events import NetworkChangeEvent
     path = tmp_path / "events.jsonl"
     logger = EventLogger.to_path(str(path))
     logger.emit_network_change(NetworkChangeEvent(
@@ -374,19 +374,19 @@ def test_line_buffered_writes_are_visible_before_close(tmp_path):
 
 
 def test_default_log_path_is_timestamped_jsonl():
-    """`wifiscope --log` (no path) generates a timestamped filename
+    """`diting --log` (no path) generates a timestamped filename
     in the current directory. The format must be filesystem-safe
     on macOS / Linux / case-insensitive shares — no colons —
     and end in .jsonl so editors / log shippers recognise it."""
-    from wifiscope.cli import _default_log_path
+    from diting.cli import _default_log_path
     name = _default_log_path()
-    assert name.startswith("wifiscope-")
+    assert name.startswith("diting-")
     assert name.endswith(".jsonl")
     assert ":" not in name
     # Includes a date-time block: YYYYMMDD-HHMMSS sandwiched between
     # the prefix and the extension. The exact value is "now" so we
     # can't assert it equals anything; just sanity-check the shape.
-    middle = name[len("wifiscope-"):-len(".jsonl")]
+    middle = name[len("diting-"):-len(".jsonl")]
     assert "-" in middle
     date_part, time_part = middle.split("-", 1)
     assert len(date_part) == 8 and date_part.isdigit()
@@ -397,40 +397,40 @@ def test_resolve_log_path_cli_no_value_uses_default():
     """The CLI flag without a path → timestamped default. This is
     the user-friendly opt-in path: type `--log` and a sensible
     file appears in your current directory."""
-    from wifiscope.cli import _LOG_DEFAULT, _resolve_log_path
+    from diting.cli import _LOG_DEFAULT, _resolve_log_path
     resolved = _resolve_log_path(_LOG_DEFAULT)
     assert resolved is not None
-    assert resolved.startswith("wifiscope-")
+    assert resolved.startswith("diting-")
     assert resolved.endswith(".jsonl")
 
 
 def test_resolve_log_path_cli_explicit_path_wins(tmp_path, monkeypatch):
     """An explicit CLI path overrides everything else, including a
-    set WIFISCOPE_LOG env var that would otherwise have applied."""
-    from wifiscope.cli import _resolve_log_path
-    monkeypatch.setenv("WIFISCOPE_LOG", "/should/be/ignored.jsonl")
+    set DITING_LOG env var that would otherwise have applied."""
+    from diting.cli import _resolve_log_path
+    monkeypatch.setenv("DITING_LOG", "/should/be/ignored.jsonl")
     explicit = str(tmp_path / "my.jsonl")
     assert _resolve_log_path(explicit) == explicit
 
 
 def test_resolve_log_path_env_auto_uses_default(monkeypatch):
-    """``WIFISCOPE_LOG=auto`` is the env-var equivalent of bare
+    """``DITING_LOG=auto`` is the env-var equivalent of bare
     ``--log`` — useful for cron / launchd plists where positional
     flags are awkward."""
-    from wifiscope.cli import _resolve_log_path
-    monkeypatch.setenv("WIFISCOPE_LOG", "auto")
+    from diting.cli import _resolve_log_path
+    monkeypatch.setenv("DITING_LOG", "auto")
     resolved = _resolve_log_path(None)
     assert resolved is not None
-    assert resolved.startswith("wifiscope-")
+    assert resolved.startswith("diting-")
 
 
 def test_resolve_log_path_env_blank_disables(monkeypatch):
     """Blank env var means off, even if a parent shell set the
     var globally. Lets users disable logging for one invocation
-    with ``WIFISCOPE_LOG= wifiscope`` without unsetting their
+    with ``DITING_LOG= diting`` without unsetting their
     profile-level config."""
-    from wifiscope.cli import _resolve_log_path
-    monkeypatch.setenv("WIFISCOPE_LOG", "")
+    from diting.cli import _resolve_log_path
+    monkeypatch.setenv("DITING_LOG", "")
     assert _resolve_log_path(None) is None
 
 
@@ -438,7 +438,7 @@ def test_extract_log_arg_no_value_returns_sentinel():
     """`--log` followed by a subcommand or another flag (or
     nothing) parses as the no-value sentinel. Path-form still
     works alongside the sentinel form."""
-    from wifiscope.cli import _LOG_DEFAULT, _extract_log_arg
+    from diting.cli import _LOG_DEFAULT, _extract_log_arg
     # Bare --log at the end.
     args = ["--log"]
     assert _extract_log_arg(args) is _LOG_DEFAULT

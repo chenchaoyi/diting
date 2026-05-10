@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from wifiscope.analyze import (
+from diting.analyze import (
     Insight,
     Report,
     analyze,

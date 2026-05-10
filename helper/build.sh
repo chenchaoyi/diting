@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build wifiscope-helper.app from Swift source.
+# Build diting-tianer.app from Swift source.
 #
-# Output: helper/wifiscope-helper.app — a minimal Cocoa bundle that
-# wifiscope's Python backend can shell out to for unredacted CoreWLAN
+# Output: helper/diting-tianer.app — a minimal Cocoa bundle that
+# diting's Python backend can shell out to for unredacted CoreWLAN
 # scans once the user has granted Location Services to the bundle.
 #
 # Requires: Swift 5.9+ (Xcode command line tools or full Xcode).
@@ -11,8 +11,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-readonly BUNDLE="wifiscope-helper.app"
-readonly BIN_NAME="wifiscope-helper"
+readonly BUNDLE="diting-tianer.app"
+readonly BIN_NAME="diting-tianer"
 
 echo "==> swift build -c release"
 swift build -c release --product "$BIN_NAME"
@@ -43,7 +43,7 @@ echo
 echo "Next steps:"
 echo "  1. open $BUNDLE                 # triggers Location + Bluetooth prompts"
 echo "  2. Click Allow on each prompt, close the window"
-echo "  3. Run \`uv run wifiscope\` — the in-place bundle is auto-detected"
+echo "  3. Run \`uv run diting\` — the in-place bundle is auto-detected"
 echo
 echo "(Leave the bundle here. Moving it into /Applications is no longer"
 echo " recommended — TCC keys grants by cdhash, and a copy / move would"

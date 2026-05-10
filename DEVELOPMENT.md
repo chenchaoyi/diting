@@ -1,11 +1,11 @@
 <sub>**English** · [中文](docs/zh/DEVELOPMENT.md)</sub>
 
-# wifiscope — Contributing & Development
+# diting — Contributing & Development
 
-> [`README.md`](README.md) covers what wifiscope does and how to use it.
+> [`README.md`](README.md) covers what diting does and how to use it.
 > This document covers how to develop, test, and contribute to it.
 
-wifiscope runs on **OpenSpec-style SDD**. Every behaviour-affecting
+diting runs on **OpenSpec-style SDD**. Every behaviour-affecting
 change carries a spec delta proposal under `openspec/changes/`,
 gets reviewed alongside the code, and on merge has its delta applied
 to the canonical spec under `openspec/specs/<capability>/spec.md`.
@@ -40,7 +40,7 @@ the canonical spec.
 | [`link-health`](openspec/specs/link-health/spec.md) | Gateway/WAN ping aggregates, jitter/loss bursts |
 | [`environment-monitor`](openspec/specs/environment-monitor/spec.md) | RF stir detector, σ baselines, calibration |
 | [`events`](openspec/specs/events/spec.md) | Five-event vocabulary, ring buffer, JSONL serialisation |
-| [`event-log`](openspec/specs/event-log/spec.md) | JSONL writer for `--log` and `wifiscope monitor` |
+| [`event-log`](openspec/specs/event-log/spec.md) | JSONL writer for `--log` and `diting monitor` |
 | [`analyze`](openspec/specs/analyze/spec.md) | Pure-rules log post-processor + heuristic catalogue |
 | [`inventory`](openspec/specs/inventory/spec.md) | `aps.yaml` resolution, OUI vendor map, cluster labels |
 | [`roam-detection`](openspec/specs/roam-detection/spec.md) | 0–100 link score, +10 dB candidate threshold, press-`c` re-roam |
@@ -79,9 +79,9 @@ subprocess and dynamic-store boundaries.
 
 Two languages live in this repo and they must move together:
 
-1. **Strings.** Every user-visible literal in `src/wifiscope/`
+1. **Strings.** Every user-visible literal in `src/diting/`
    routes through `i18n.t(...)`. When you add or edit one, also
-   add the matching key to `_ZH` in `src/wifiscope/i18n.py`. A
+   add the matching key to `_ZH` in `src/diting/i18n.py`. A
    missing key falls back to the English source, so a stale
    catalog never breaks the app — but it does silently skip
    translation, so translation lag is on the author of the change.

@@ -29,7 +29,7 @@ Auto-classified by the AP's typical RSSI:
 Calibration
 -----------
 
-When ``./wifiscope-baseline.json`` exists (written by ``wifiscope
+When ``./diting-baseline.json`` exists (written by ``diting
 calibrate``) it overrides the adaptive median with a fixed
 "the-room-is-empty" σ baseline, which makes the ``stable`` /
 ``active`` / ``quiet`` qualifier on the diagnostic line meaningful.
@@ -412,15 +412,15 @@ class EnvironmentMonitor:
 
 
 def load_calibration(path: Path | str | None = None) -> dict:
-    """Read a wifiscope-baseline.json file, or return ``{}`` on miss.
+    """Read a diting-baseline.json file, or return ``{}`` on miss.
 
-    Path defaults to ``./wifiscope-baseline.json`` per the spec. The
+    Path defaults to ``./diting-baseline.json`` per the spec. The
     file format is a flat ``{bssid: {rssi_mean, rssi_stddev,
     sample_count}}`` mapping; everything is best-effort, missing keys
     silently fall through to the adaptive baseline at runtime.
     """
     if path is None:
-        path = Path("wifiscope-baseline.json")
+        path = Path("diting-baseline.json")
     p = Path(path)
     if not p.is_file():
         return {}
@@ -448,10 +448,10 @@ def write_calibration(
     ``samples_by_bssid`` maps each BSSID to the raw integer RSSI
     readings observed during calibration. We compute mean / stddev /
     count and write a flat dictionary to
-    ``./wifiscope-baseline.json`` (or the override path).
+    ``./diting-baseline.json`` (or the override path).
     """
     if path is None:
-        path = Path("wifiscope-baseline.json")
+        path = Path("diting-baseline.json")
     p = Path(path)
     payload: dict[str, dict] = {}
     for bssid, samples in samples_by_bssid.items():

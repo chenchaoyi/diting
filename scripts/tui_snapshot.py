@@ -38,18 +38,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from wifiscope import i18n
-from wifiscope.backend import WiFiBackend
-from wifiscope.ble import BLEDevice
-from wifiscope.events import (
+from diting import i18n
+from diting.backend import WiFiBackend
+from diting.ble import BLEDevice
+from diting.events import (
     LatencySpikeEvent,
     LossBurstEvent,
     RFStirEvent,
 )
-from wifiscope.latency import LatencyAggregate
-from wifiscope.models import Connection, ScanResult
-from wifiscope.network import APEntry, NetworkInventory
-from wifiscope.poller import RoamEvent
+from diting.latency import LatencyAggregate
+from diting.models import Connection, ScanResult
+from diting.network import APEntry, NetworkInventory
+from diting.poller import RoamEvent
 
 
 # ---------- shared synthetic backends + inventory ----------
@@ -68,7 +68,7 @@ class _GoodBackend(WiFiBackend):
     name = "macOS CoreWLAN"
 
     def __init__(self) -> None:
-        self._helper_path = "/Applications/wifiscope-helper.app/Contents/MacOS/wifiscope-helper"
+        self._helper_path = "/Applications/diting-tianer.app/Contents/MacOS/diting-tianer"
 
     def get_connection(self) -> Connection:
         return Connection(
@@ -239,7 +239,7 @@ def _ble_connected(now: datetime) -> list[BLEDevice]:
 class Scenario:
     """One TUI state to capture + check.
 
-    ``setup`` builds the WifiScopeApp. ``after_mount`` runs inside
+    ``setup`` builds the DitingApp. ``after_mount`` runs inside
     the pilot context after the app's first connection / scan have
     landed; this is where we inject synthetic BLE / events / link
     aggregates and drive any keystrokes that change the view.
@@ -251,7 +251,7 @@ class Scenario:
     id: str
     description: str
     lang: str                          # 'en' | 'zh'
-    setup: Callable[[], "Any"]         # returns WifiScopeApp
+    setup: Callable[[], "Any"]         # returns DitingApp
     after_mount: Callable[..., Awaitable[None]] | None = None
     assertions: tuple[tuple[str, Callable[[str], bool]], ...] = ()
     inspectors: tuple[Callable[..., list["Finding"]], ...] = ()
@@ -289,7 +289,7 @@ def _inspect_ble_unknown_vendors(app: "Any", *_args) -> list[Finding]:
                 f"because the bundled OUI map is curated, not exhaustive."
             ),
             suggestion=(
-                "Expand src/wifiscope/data/wifi_ouis.json with more "
+                "Expand src/diting/data/wifi_ouis.json with more "
                 "common consumer + Bluetooth-accessory OUIs, or fetch "
                 "the full IEEE OUI registry into a parallel data file."
             ),
@@ -313,7 +313,7 @@ def _inspect_ble_no_name_no_type(app: "Any", *_args) -> list[Finding]:
       adversarial guess is possible from advertisement data
       alone; the only way to attach meaning is observation
       patterns (proximity-walk, time-of-day correlation) which
-      wifiscope doesn't do today.
+      diting doesn't do today.
 
     * **Vendor-only** — vendor resolved (e.g. "Apple, Inc.",
       "Microsoft", "Polar Electro Oy") but name / type /
@@ -332,7 +332,7 @@ def _inspect_ble_no_name_no_type(app: "Any", *_args) -> list[Finding]:
     per-vendor schema work. Splitting tiers makes the
     actionability honest.
     """
-    from wifiscope.ble import is_silent_device
+    from diting.ble import is_silent_device
     devices = list(getattr(app, "_latest_ble", []) or [])
     if not devices:
         return []
@@ -361,7 +361,7 @@ def _inspect_ble_no_name_no_type(app: "Any", *_args) -> list[Finding]:
             suggestion=(
                 "Nothing to derive from advertisement data. Possible "
                 "future signal: pattern observation (proximity walk, "
-                "time correlation), which wifiscope does not do today."
+                "time correlation), which diting does not do today."
             ),
         ))
     if len(unknown_with_data) >= 3:
@@ -375,9 +375,9 @@ def _inspect_ble_no_name_no_type(app: "Any", *_args) -> list[Finding]:
             ),
             suggestion=(
                 "Inspect what data each unresolved row carries. Common "
-                "fixes: missing OUI in src/wifiscope/data/wifi_ouis.json, "
+                "fixes: missing OUI in src/diting/data/wifi_ouis.json, "
                 "missing 16-bit member UUID in bluetooth_member_uuids.json, "
-                "missing name pattern in src/wifiscope/ble.py "
+                "missing name pattern in src/diting/ble.py "
                 "_NAME_PATTERN_VENDORS, or missing 128-bit member UUID "
                 "in _LONG_MEMBER_UUIDS."
             ),
@@ -412,8 +412,8 @@ def _inspect_redacted_scan(_app: "Any", text: str) -> list[Finding]:
                 "helper bundle has not been granted Location Services."
             ),
             suggestion=(
-                "Run `open helper/wifiscope-helper.app` once, click "
-                "Allow on the macOS prompt, then relaunch wifiscope."
+                "Run `open helper/diting-tianer.app` once, click "
+                "Allow on the macOS prompt, then relaunch diting."
             ),
         )]
     return []
@@ -448,15 +448,15 @@ def _regression_scenarios() -> list[Scenario]:
     BLE roster / event ring) to a known output (assertion list +
     inspector findings). Deterministic — safe for CI / pre-commit
     via ``make test-system``. Defined as a function rather than a
-    module-level list so the heavy ``WifiScopeApp`` import inside
+    module-level list so the heavy ``DitingApp`` import inside
     each ``setup`` lambda is deferred until snapshot is actually
     invoked.
     """
-    from wifiscope.tui import WifiScopeApp
+    from diting.tui import DitingApp
 
     def _build_good(*, lang: str = "en") -> "Any":
         i18n.set_lang(lang)
-        return WifiScopeApp(
+        return DitingApp(
             _GoodBackend(), _INVENTORY,
             ble_helper_path="",
             enable_latency=False, enable_environment=False,
@@ -464,7 +464,7 @@ def _regression_scenarios() -> list[Scenario]:
 
     def _build_disassociated() -> "Any":
         i18n.set_lang("en")
-        return WifiScopeApp(
+        return DitingApp(
             _DisassociatedBackend(), _INVENTORY,
             ble_helper_path="",
             enable_latency=False, enable_environment=False,
@@ -472,7 +472,7 @@ def _regression_scenarios() -> list[Scenario]:
 
     def _build_redacted() -> "Any":
         i18n.set_lang("en")
-        return WifiScopeApp(
+        return DitingApp(
             _RedactedBackend(), _INVENTORY,
             ble_helper_path="",
             enable_latency=False, enable_environment=False,
@@ -490,7 +490,7 @@ def _regression_scenarios() -> list[Scenario]:
         patch those two methods on the App instance so any later
         refresh re-renders with the seeded tuples.
         """
-        from wifiscope.tui import EnvironmentPanel, EventsPanel
+        from diting.tui import EnvironmentPanel, EventsPanel
         await pilot.pause(2.0)
         env_panel = pilot.app.query_one("#env", EnvironmentPanel)
         link = (
@@ -529,7 +529,7 @@ def _regression_scenarios() -> list[Scenario]:
             pilot.app._latest_ble = ble_devices
             pilot.app._latest_ble_connected = _ble_connected(datetime.now())
             pilot.app._ble_permission_state = "granted"
-            from wifiscope.tui import BLEPanel
+            from diting.tui import BLEPanel
             ble_panel = pilot.app.query_one(BLEPanel)
             ble_panel.update_devices(
                 ble_devices, _ble_connected(datetime.now()), "granted",
@@ -558,7 +558,7 @@ def _regression_scenarios() -> list[Scenario]:
     async def _open_events_modal(pilot):
         await _seed_link_and_events(pilot)
         # Inject a richer event mix into the ring before opening.
-        from wifiscope.tui import EventsPanel
+        from diting.tui import EventsPanel
         events_panel = pilot.app.query_one("#roam", EventsPanel)
         now = datetime.now()
         for ev in (
@@ -757,7 +757,7 @@ def _explore_scenarios() -> list[Scenario]:
     each scenario captures a view of the user's *actual* network
     and BLE environment as it exists right now. No synthetic
     injection — what shows up is what the user would see if they
-    launched ``wifiscope`` themselves.
+    launched ``diting`` themselves.
 
     Suitable scenarios are limited to keystroke-driven view /
     modal switches: we cannot fabricate "disassociated" or
@@ -770,23 +770,23 @@ def _explore_scenarios() -> list[Scenario]:
     the captured SVG / PNG carry the user's real SSIDs / BSSIDs
     / device names and have no place in source control.
     """
-    from wifiscope import _helper
-    from wifiscope.macos_backend import MacOSWiFiBackend
-    from wifiscope.network import load_inventory
-    from wifiscope.tui import WifiScopeApp
+    from diting import _helper
+    from diting.macos_backend import MacOSWiFiBackend
+    from diting.network import load_inventory
+    from diting.tui import DitingApp
 
     helper_path = _helper.find_helper() or ""
 
     def _build_live() -> "Any":
-        # Honour WIFISCOPE_LANG / locale so an audit run can target
-        # the Chinese UI by setting WIFISCOPE_LANG=zh; the regression
+        # Honour DITING_LANG / locale so an audit run can target
+        # the Chinese UI by setting DITING_LANG=zh; the regression
         # scenarios above pin lang explicitly via set_lang, so without
         # this call the explore mode would silently inherit whatever
         # the last regression run left _lang at.
         i18n.set_lang(i18n.detect_default_lang())
         backend = MacOSWiFiBackend()
         inv = load_inventory()
-        return WifiScopeApp(
+        return DitingApp(
             backend, inv,
             ble_helper_path=helper_path,
             enable_latency=True,
@@ -928,7 +928,7 @@ async def _capture_one(scenario: Scenario, out_dir: Path) -> dict:
             await scenario.after_mount(pilot)
         else:
             await pilot.pause(2.0)
-        out = pilot.app.export_screenshot(title=f"wifiscope · {scenario.id}")
+        out = pilot.app.export_screenshot(title=f"diting · {scenario.id}")
         out = _fix_cjk_textlength(out)
         svg_path.write_text(out)
         text_for_assertions = _extract_text(out)
@@ -1116,7 +1116,7 @@ def render_console(report: dict) -> str:
     """Format the report for stdout — short, action-oriented."""
     lines: list[str] = []
     mode = report.get("mode", "regression")
-    lines.append(f"wifiscope snapshot [{mode}] — {report['ts']}")
+    lines.append(f"diting snapshot [{mode}] — {report['ts']}")
     lines.append(f"output: {report['out_dir']}")
     s = report["summary"]
     lines.append(
@@ -1146,9 +1146,9 @@ def render_console(report: dict) -> str:
 
 def _arg_value(args: list[str], flag: str) -> str | None:
     """Pop ``--flag VALUE`` (or ``--flag=VALUE``) and return VALUE,
-    or ``None`` if the flag is absent. Same shape as wifiscope's
+    or ``None`` if the flag is absent. Same shape as diting's
     other internal arg helpers — kept duplicated here so this
-    script has zero dependency on wifiscope's CLI internals.
+    script has zero dependency on diting's CLI internals.
     """
     for i, a in enumerate(args):
         if a == flag:
@@ -1163,8 +1163,8 @@ def _arg_value(args: list[str], flag: str) -> str | None:
 def _main(argv: list[str]) -> int:
     """``python scripts/tui_snapshot.py [...]`` entry point.
 
-    Engineering tool — explicitly NOT a wifiscope subcommand. The
-    user-facing ``wifiscope`` CLI stays focused on real-time
+    Engineering tool — explicitly NOT a diting subcommand. The
+    user-facing ``diting`` CLI stays focused on real-time
     dashboard / monitor / analyze functionality; capturing TUI
     screenshots for regression and audit lives here in scripts/
     alongside ``update_vendors.py`` and the preview-capture script.

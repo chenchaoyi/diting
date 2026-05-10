@@ -2,11 +2,11 @@
 
 Subcommands:
 
-    wifiscope             launch the TUI (default)
-    wifiscope once        one-shot snapshot of the current connection
-    wifiscope watch       streaming event log (Ctrl+C to quit)
-    wifiscope monitor     headless JSONL events for long-runs / Home Assistant
-    wifiscope calibrate   record an "empty room" RSSI baseline
+    diting             launch the TUI (default)
+    diting once        one-shot snapshot of the current connection
+    diting watch       streaming event log (Ctrl+C to quit)
+    diting monitor     headless JSONL events for long-runs / Home Assistant
+    diting calibrate   record an "empty room" RSSI baseline
 """
 
 from __future__ import annotations
@@ -294,7 +294,7 @@ async def _run_monitor(args: list[str]) -> None:
         side-effect monitor adds on top."""
         if notify and payload.get("confidence") == "high":
             await _macos_notify(
-                title="wifiscope",
+                title="diting",
                 message=_notify_message(payload),
             )
 
@@ -468,7 +468,7 @@ def _arg_value(args: list[str], flag: str) -> str | None:
 
 async def _run_calibrate(args: list[str]) -> None:
     """Record ``duration_s`` of RSSI samples per visible BSSID and
-    persist the result to ``./wifiscope-baseline.json``.
+    persist the result to ``./diting-baseline.json``.
 
     Used by EnvironmentMonitor to override the adaptive baseline
     with a fixed "empty-room" σ, which makes the ``stable`` /
@@ -528,8 +528,8 @@ async def _run_calibrate(args: list[str]) -> None:
 def _run_analyze(args: list[str]) -> None:
     """Read a JSONL log and print rule-based insights.
 
-    With no arg, picks the newest ``wifiscope-*.jsonl`` in the
-    current directory — convenient for "I just ran wifiscope here,
+    With no arg, picks the newest ``diting-*.jsonl`` in the
+    current directory — convenient for "I just ran diting here,
     tell me what happened" without having to remember the
     timestamped filename. Explicit path always wins.
     """
@@ -539,21 +539,21 @@ def _run_analyze(args: list[str]) -> None:
         path = Path(args[0]).expanduser()
     else:
         candidates = sorted(
-            Path(".").glob("wifiscope-*.jsonl"),
+            Path(".").glob("diting-*.jsonl"),
             key=lambda p: p.stat().st_mtime if p.exists() else 0,
             reverse=True,
         )
         if not candidates:
             print(t(
-                "wifiscope analyze: no log file given and no "
-                "wifiscope-*.jsonl found in the current directory.\n"
-                "Pass a path: wifiscope analyze ~/wifi-20260507.jsonl",
+                "diting analyze: no log file given and no "
+                "diting-*.jsonl found in the current directory.\n"
+                "Pass a path: diting analyze ~/wifi-20260507.jsonl",
             ), file=sys.stderr)
             sys.exit(2)
         path = candidates[0]
 
     if not path.is_file():
-        print(t("wifiscope analyze: file not found: {path}",
+        print(t("diting analyze: file not found: {path}",
                 path=str(path)), file=sys.stderr)
         sys.exit(2)
 
@@ -569,7 +569,7 @@ def _usage() -> str:
     print time, not at module import, so ``--lang zh --help`` sees the
     Chinese version after :func:`main` has applied the language."""
     return t(
-        "usage: wifiscope [--lang en|zh] [--log [PATH]] [SUBCOMMAND]\n"
+        "usage: diting [--lang en|zh] [--log [PATH]] [SUBCOMMAND]\n"
         "\n"
         "  (no args)   launch the TUI dashboard (default)\n"
         "  once        print the current connection and exit\n"
@@ -579,14 +579,14 @@ def _usage() -> str:
         "  calibrate   record an empty-room RSSI baseline (default 300 s)\n"
         "              flags: --duration SECONDS\n"
         "  analyze     read a JSONL log and print rule-based insights.\n"
-        "              With no PATH, uses the newest wifiscope-*.jsonl in cwd.\n"
-        "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
+        "              With no PATH, uses the newest diting-*.jsonl in cwd.\n"
+        "  --lang L    interface language: en, zh. Defaults to DITING_LANG,\n"
         "              then to the system locale (zh_* → zh, anything else → en).\n"
         "  --log[PATH] also write JSONL events while the TUI runs. With no\n"
-        "              path, writes ./wifiscope-YYYYMMDD-HHMMSS.jsonl in cwd.\n"
-        "              Same schema as `wifiscope monitor`; append-mode + line-\n"
+        "              path, writes ./diting-YYYYMMDD-HHMMSS.jsonl in cwd.\n"
+        "              Same schema as `diting monitor`; append-mode + line-\n"
         "              flushed so already-emitted events survive Ctrl+C / kill /\n"
-        "              traceback. Env: WIFISCOPE_LOG=PATH (or =auto for default).\n"
+        "              traceback. Env: DITING_LOG=PATH (or =auto for default).\n"
         "  -h, --help  show this message\n"
     )
 
@@ -637,7 +637,7 @@ def _extract_log_arg(argv: list[str]) -> str | object | None:
 
     * ``None`` — flag absent.
     * ``_LOG_DEFAULT`` sentinel — flag present without an explicit
-      value (``wifiscope --log``, or ``--log`` followed by a
+      value (``diting --log``, or ``--log`` followed by a
       subcommand / another flag). Caller resolves to a timestamped
       default file in the cwd.
     * ``str`` — explicit ``--log path`` or ``--log=path``.
@@ -679,7 +679,7 @@ def _default_log_path() -> str:
     on macOS / Linux / case-insensitive shares without quoting.
     """
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return f"wifiscope-{stamp}.jsonl"
+    return f"diting-{stamp}.jsonl"
 
 
 def _resolve_log_path(cli_value: str | object | None) -> str | None:
@@ -688,21 +688,21 @@ def _resolve_log_path(cli_value: str | object | None) -> str | None:
     Resolution order:
       1. CLI flag with explicit path → that path.
       2. CLI flag with no value (sentinel) → timestamped default.
-      3. WIFISCOPE_LOG env var matching ``auto`` (any case) →
+      3. DITING_LOG env var matching ``auto`` (any case) →
          timestamped default. Useful in shells that do not pass
          positional flags easily (cron, launchd plist).
-      4. WIFISCOPE_LOG env var with a path → that path.
+      4. DITING_LOG env var with a path → that path.
       5. Otherwise → None (logging disabled).
 
     A blank env var is treated as "off" so a parent shell can
-    disable logging with ``WIFISCOPE_LOG= wifiscope`` even when
+    disable logging with ``DITING_LOG= diting`` even when
     the profile sets it globally.
     """
     if isinstance(cli_value, str) and cli_value:
         return cli_value
     if cli_value is _LOG_DEFAULT:
         return _default_log_path()
-    env = (os.environ.get("WIFISCOPE_LOG") or "").strip()
+    env = (os.environ.get("DITING_LOG") or "").strip()
     if not env:
         return None
     if env.lower() == "auto":
@@ -711,9 +711,9 @@ def _resolve_log_path(cli_value: str | object | None) -> str | None:
 
 
 def _run_tui(*, log_path: str | None = None) -> None:
-    # Imported lazily so `wifiscope once` and `wifiscope watch` do not
+    # Imported lazily so `diting once` and `diting watch` do not
     # pull in textual / rich on every invocation.
-    from .tui import WifiScopeApp
+    from .tui import DitingApp
 
     # _ensure_helper_ready resolves the binary path AND, when the
     # detected helper predates 0.5.0 (no `ble-scan` subcommand),
@@ -731,7 +731,7 @@ def _run_tui(*, log_path: str | None = None) -> None:
         print(t("note: writing JSONL events to {path}", path=abs_log_path))
     backend = MacOSWiFiBackend()
     inv = load_inventory()
-    WifiScopeApp(
+    DitingApp(
         backend, inv,
         scan_interval=_scan_interval(),
         ble_helper_path=ble_binary,
@@ -746,13 +746,13 @@ def _run_tui(*, log_path: str | None = None) -> None:
         print()
         print(t(
             "tip: summarise this session with\n"
-            "       wifiscope analyze {path}",
+            "       diting analyze {path}",
             path=abs_log_path,
         ))
 
 
 def _scan_interval() -> float:
-    """Resolve scan interval from the WIFISCOPE_SCAN_INTERVAL env var.
+    """Resolve scan interval from the DITING_SCAN_INTERVAL env var.
 
     Default is 7 s, which empirically sits above CoreWLAN's ~5 s
     throttle window — going below it just produces alternating empty
@@ -761,7 +761,7 @@ def _scan_interval() -> float:
     the platform; smaller values are clamped.
     """
     import os
-    raw = os.environ.get("WIFISCOPE_SCAN_INTERVAL")
+    raw = os.environ.get("DITING_SCAN_INTERVAL")
     if not raw:
         return 7.0
     try:
@@ -799,7 +799,7 @@ def _ensure_helper_ready() -> str | None:
         binary = _helper.try_build()
     if binary is None:
         print(t(
-            "note: wifiscope-helper not found and could not be built.\n"
+            "note: diting-tianer not found and could not be built.\n"
             "      Scan list will be TCC-redacted. To fix, install the\n"
             "      Swift toolchain (Xcode CLT) and rerun, or build helper/\n"
             "      manually. See README's helper section."
@@ -916,7 +916,7 @@ def _ensure_helper_ready() -> str | None:
         print()
         print(t(
             "(no full grant after {n}s; starting TUI anyway with whatever\n"
-            " permissions did land. Rerun wifiscope after granting to\n"
+            " permissions did land. Rerun diting after granting to\n"
             " unlock the remaining views.)",
             n=int(timeout),
         ))
@@ -963,7 +963,7 @@ def main() -> None:
     if cmd in ("-h", "--help"):
         print(_usage(), end="")
         return
-    print(t("wifiscope: unknown subcommand {cmd!r}", cmd=cmd) + "\n",
+    print(t("diting: unknown subcommand {cmd!r}", cmd=cmd) + "\n",
           file=sys.stderr)
     print(_usage(), end="", file=sys.stderr)
     sys.exit(2)

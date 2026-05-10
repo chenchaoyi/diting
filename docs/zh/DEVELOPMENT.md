@@ -1,11 +1,11 @@
 <sub>[English](../../DEVELOPMENT.md) · **中文**</sub>
 
-# wifiscope —— 贡献与开发
+# diting —— 贡献与开发
 
-> [`README.md`](../../README.md)（[中文](README.md)）介绍 wifiscope 是
+> [`README.md`](../../README.md)（[中文](README.md)）介绍 diting 是
 > 什么、怎么用。本文聚焦于如何开发、测试、贡献。
 
-wifiscope 用 **OpenSpec 形态的 SDD** 推进。每一个会改动行为的变更
+diting 用 **OpenSpec 形态的 SDD** 推进。每一个会改动行为的变更
 都带一份位于 `openspec/changes/` 下的 spec delta 提案，与代码同评，
 合并时把 delta 应用进 `openspec/specs/<capability>/spec.md` 这份
 权威契约。
@@ -38,7 +38,7 @@ wifiscope 用 **OpenSpec 形态的 SDD** 推进。每一个会改动行为的变
 | [`link-health`](../../openspec/specs/link-health/spec.md) | 网关 / WAN ping 聚合、抖动、丢包风暴 |
 | [`environment-monitor`](../../openspec/specs/environment-monitor/spec.md) | RF 扰动检测、σ 基线、校准 |
 | [`events`](../../openspec/specs/events/spec.md) | 五事件词汇表、环形缓冲、JSONL 序列化 |
-| [`event-log`](../../openspec/specs/event-log/spec.md) | `--log` 与 `wifiscope monitor` 共用的 JSONL writer |
+| [`event-log`](../../openspec/specs/event-log/spec.md) | `--log` 与 `diting monitor` 共用的 JSONL writer |
 | [`analyze`](../../openspec/specs/analyze/spec.md) | 纯规则日志后处理 + 启发式目录 |
 | [`inventory`](../../openspec/specs/inventory/spec.md) | `aps.yaml` 解析、OUI 厂商表、cluster 标签 |
 | [`roam-detection`](../../openspec/specs/roam-detection/spec.md) | 0–100 链路评分、+10 dB 候选门限、按 `c` 重选 AP |
@@ -76,9 +76,9 @@ GitHub Actions 在每次 push 与 PR 上对 `main` 跑 macOS-latest × Python
 
 仓库里两种语言并存，必须同步推进：
 
-1. **文案**。`src/wifiscope/` 里所有用户可见的字符串都经
+1. **文案**。`src/diting/` 里所有用户可见的字符串都经
    `i18n.t(...)`。新增或修改一条时，请同步在
-   `src/wifiscope/i18n.py` 的 `_ZH` 字典里加 / 改对应 key。缺 key
+   `src/diting/i18n.py` 的 `_ZH` 字典里加 / 改对应 key。缺 key
    时会回退到英文原文 —— 应用不会因此崩，但会静默漏译，所以漏
    翻的责任在改动作者本人。
 2. **文档**。每份英文文档在 `docs/zh/` 下都有中文镜像。改一份

@@ -1,6 +1,6 @@
 <sub>**English** · [中文](../docs/zh/HELPER.md)</sub>
 
-# wifiscope-helper
+# diting-tianer
 
 A minimal Cocoa `.app` that owns macOS Location Services AND Bluetooth
 permissions so the Python TUI can read **unredacted SSID and BSSID**
@@ -20,7 +20,7 @@ the calling process belongs to a `.app` bundle that has been granted
 Location Services. CoreBluetooth's `CBCentralManager` similarly refuses
 to enter `.poweredOn` for processes without an `NSBluetoothAlwaysUsage
 Description` entitlement. CLI tools launched from a terminal cannot
-get either grant — wifiscope's main `wifiscope` CLI works around the
+get either grant — diting's main `diting` CLI works around the
 Wi-Fi side for the *current connection* via an SCDynamicStore
 side-channel, but the neighbour list has no equivalent and BLE has no
 side-channel at all. This bundle is the proper fix: register a real
@@ -36,19 +36,19 @@ cd helper
 ./build.sh
 ```
 
-Produces `helper/wifiscope-helper.app`.
+Produces `helper/diting-tianer.app`.
 
 ## Install
 
-Just leave `wifiscope-helper.app` where `build.sh` produced it
-(`helper/wifiscope-helper.app`) and grant once:
+Just leave `diting-tianer.app` where `build.sh` produced it
+(`helper/diting-tianer.app`) and grant once:
 
 ```bash
-open helper/wifiscope-helper.app
+open helper/diting-tianer.app
 ```
 
 The bundle window appears and requests Location Services + Bluetooth.
-Click Allow on each prompt, close the window. `wifiscope` auto-detects
+Click Allow on each prompt, close the window. `diting` auto-detects
 the in-place bundle on the next launch — no further setup.
 
 > Earlier versions of this README suggested moving the bundle into
@@ -59,20 +59,20 @@ the in-place bundle on the next launch — no further setup.
 > subject and forces you to re-grant. Easiest path: build in place,
 > grant in place, run in place.
 
-Override the location with `WIFISCOPE_HELPER=/full/path/to/wifiscope-helper.app`
+Override the location with `DITING_HELPER=/full/path/to/diting-tianer.app`
 if you really do want to install it elsewhere.
 
-## How wifiscope finds it
+## How diting finds it
 
 `MacOSWiFiBackend` resolves the helper at construction time via
-`src/wifiscope/_helper.py:find_helper`, in this order:
+`src/diting/_helper.py:find_helper`, in this order:
 
-1. `WIFISCOPE_HELPER` env var (path to bundle or binary)
-2. `helper/wifiscope-helper.app` next to this README (the recommended
+1. `DITING_HELPER` env var (path to bundle or binary)
+2. `helper/diting-tianer.app` next to this README (the recommended
    location — `build.sh` produces it here, grant once with `open`)
-3. `/Applications/wifiscope-helper.app` (back-compat for users who
+3. `/Applications/diting-tianer.app` (back-compat for users who
    moved it there before this guidance changed)
-4. `~/Applications/wifiscope-helper.app` (same)
+4. `~/Applications/diting-tianer.app` (same)
 
 If found, `scan()` shells out to `<binary> scan` and parses one JSON
 document of unredacted networks. If absent or the subprocess fails,
@@ -83,14 +83,14 @@ permission.
 ## Three roles in one binary
 
 ```bash
-wifiscope-helper            # GUI: request Location Services AND Bluetooth, park
-wifiscope-helper scan       # CLI: print one JSON document of CoreWLAN scan, exit
-wifiscope-helper ble-scan   # CLI: stream JSONL CoreBluetooth ads until SIGTERM
+diting-tianer            # GUI: request Location Services AND Bluetooth, park
+diting-tianer scan       # CLI: print one JSON document of CoreWLAN scan, exit
+diting-tianer ble-scan   # CLI: stream JSONL CoreBluetooth ads until SIGTERM
 ```
 
 The first form is what runs when the user double-clicks the bundle in
 Finder. The second is what `MacOSWiFiBackend` invokes from Python for
-the Wi-Fi scan list. The third is what `wifiscope.ble.BLEPoller`
+the Wi-Fi scan list. The third is what `diting.ble.BLEPoller`
 spawns as a long-running subprocess for the BLE view — every
 advertisement event becomes one JSON object on stdout, parsed line by
 line on the Python side.

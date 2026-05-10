@@ -21,7 +21,7 @@ Band labels come from the channel number alone, never from the MAC:
 - 32..177 -> 5G
 
 YAML schema (./aps.yaml in the current working directory; override
-with the WIFISCOPE_INVENTORY environment variable):
+with the DITING_INVENTORY environment variable):
 
     aps:
       - name: 1F-bedroom
@@ -145,16 +145,16 @@ def _last_byte(mac: str) -> int:
 def default_config_path() -> Path:
     """Default AP-aliases location: ``./aps.yaml`` in the current working
     directory. Resolved against CWD at lookup time (not at import time)
-    so users running wifiscope from inside the cloned repo find the file
+    so users running diting from inside the cloned repo find the file
     next to ``aps.example.yaml`` without having to ``mkdir -p
-    ~/.config/wifiscope/`` first. Set ``WIFISCOPE_INVENTORY=/path`` to
+    ~/.config/diting/`` first. Set ``DITING_INVENTORY=/path`` to
     point elsewhere.
     """
     return Path("aps.yaml")
 
 
 def resolve_config_path() -> Path:
-    override = os.environ.get("WIFISCOPE_INVENTORY")
+    override = os.environ.get("DITING_INVENTORY")
     return Path(override).expanduser() if override else default_config_path()
 
 

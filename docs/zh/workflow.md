@@ -1,6 +1,6 @@
 <sub>[English](../workflow.md) · **中文**</sub>
 
-# Wifiscope 开发流程
+# Diting 开发流程
 
 一个改动从想法走到合入主干的全过程。简而言之：新分支 → 起 spec
 change → 实现 → 自测 → CI → 评审 → 归档。任何一步漏掉，PR 不合入。
@@ -141,7 +141,7 @@ openspec validate <change-name> --strict
 
 ### 测试设计纪律
 
-`tests/TESTING.md` 是 wifiscope 的**权威测试方案**——每条自动化测
+`tests/TESTING.md` 是 diting 的**权威测试方案**——每条自动化测
 试都对应那份文档里的一行。改动测试面时的顺序：
 
 1. 先改 `tests/TESTING.md`（英文版 + 中文镜像
@@ -238,7 +238,7 @@ PR 模板（`.github/pull_request_template.md`）会自动填上结构。
 
 ### 中英文双语规则（EN ↔ ZH parity）
 
-中文受众是 wifiscope 的一等公民；丢中文的 change 是不完整的。在
+中文受众是 diting 的一等公民；丢中文的 change 是不完整的。在
 一个 PR 里：
 
 - `i18n.py` 每改一个 EN 键，必须同时改对应的 ZH 值。

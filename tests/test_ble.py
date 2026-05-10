@@ -20,8 +20,8 @@ from typing import Any
 
 import pytest
 
-from wifiscope import ble
-from wifiscope.ble import (
+from diting import ble
+from diting.ble import (
     BLEDevice,
     BLEHistory,
     BLEPoller,

@@ -1,4 +1,4 @@
-"""Static-at-launch i18n for the wifiscope TUI / CLI.
+"""Static-at-launch i18n for the diting TUI / CLI.
 
 Contract pinned in ``openspec/specs/i18n/spec.md`` — language
 resolution order, ``t()`` lookup, pad_cells / fit_cells column-cell
@@ -12,7 +12,7 @@ re-laying out the whole TUI mid-session is more risk than value.
 Resolution order (first hit wins):
 
     1. Explicit `--lang {en,zh}` on the CLI
-    2. ``WIFISCOPE_LANG=zh`` environment variable
+    2. ``DITING_LANG=zh`` environment variable
     3. System locale (``LC_ALL`` / ``LC_MESSAGES`` / ``LANG``) starting
        with ``zh_``
     4. English fallback
@@ -66,7 +66,7 @@ def detect_default_lang(env: dict[str, str] | None = None) -> str:
     a synthetic dict to avoid leaking the host's locale into asserts.
     """
     src = os.environ if env is None else env
-    explicit = (src.get("WIFISCOPE_LANG") or "").strip().lower()
+    explicit = (src.get("DITING_LANG") or "").strip().lower()
     if explicit in _VALID:
         return explicit
     for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
@@ -349,7 +349,7 @@ _ZH: dict[str, str] = {
     "MS device beacon": "Microsoft 信标",
 
     # ---- CLI --help ----
-    "usage: wifiscope [--lang en|zh] [--log [PATH]] [SUBCOMMAND]\n"
+    "usage: diting [--lang en|zh] [--log [PATH]] [SUBCOMMAND]\n"
     "\n"
     "  (no args)   launch the TUI dashboard (default)\n"
     "  once        print the current connection and exit\n"
@@ -359,16 +359,16 @@ _ZH: dict[str, str] = {
     "  calibrate   record an empty-room RSSI baseline (default 300 s)\n"
     "              flags: --duration SECONDS\n"
     "  analyze     read a JSONL log and print rule-based insights.\n"
-    "              With no PATH, uses the newest wifiscope-*.jsonl in cwd.\n"
-    "  --lang L    interface language: en, zh. Defaults to WIFISCOPE_LANG,\n"
+    "              With no PATH, uses the newest diting-*.jsonl in cwd.\n"
+    "  --lang L    interface language: en, zh. Defaults to DITING_LANG,\n"
     "              then to the system locale (zh_* → zh, anything else → en).\n"
     "  --log[PATH] also write JSONL events while the TUI runs. With no\n"
-    "              path, writes ./wifiscope-YYYYMMDD-HHMMSS.jsonl in cwd.\n"
-    "              Same schema as `wifiscope monitor`; append-mode + line-\n"
+    "              path, writes ./diting-YYYYMMDD-HHMMSS.jsonl in cwd.\n"
+    "              Same schema as `diting monitor`; append-mode + line-\n"
     "              flushed so already-emitted events survive Ctrl+C / kill /\n"
-    "              traceback. Env: WIFISCOPE_LOG=PATH (or =auto for default).\n"
+    "              traceback. Env: DITING_LOG=PATH (or =auto for default).\n"
     "  -h, --help  show this message\n":
-        "用法：wifiscope [--lang en|zh] [--log [PATH]] [子命令]\n"
+        "用法：diting [--lang en|zh] [--log [PATH]] [子命令]\n"
         "\n"
         "  (无参数)    启动 TUI 仪表盘（默认）\n"
         "  once        打印当前连接快照后退出\n"
@@ -378,25 +378,25 @@ _ZH: dict[str, str] = {
         "  calibrate   采集「房间没人」基线（默认 300 秒）\n"
         "              选项：--duration SECONDS\n"
         "  analyze     读取 JSONL 日志，输出基于规则的洞察。\n"
-        "              不带 PATH 时使用 cwd 里最新的 wifiscope-*.jsonl。\n"
-        "  --lang L    界面语言：en、zh。默认读 WIFISCOPE_LANG，\n"
+        "              不带 PATH 时使用 cwd 里最新的 diting-*.jsonl。\n"
+        "  --lang L    界面语言：en、zh。默认读 DITING_LANG，\n"
         "              再退到系统 locale（zh_* → zh，其余 → en）。\n"
         "  --log[PATH] TUI 运行的同时把 JSONL 事件追加写入文件。不带\n"
-        "              PATH 时写入 cwd 的 wifiscope-YYYYMMDD-HHMMSS.jsonl。\n"
-        "              schema 与 `wifiscope monitor` 一致，append 模式 + 行\n"
+        "              PATH 时写入 cwd 的 diting-YYYYMMDD-HHMMSS.jsonl。\n"
+        "              schema 与 `diting monitor` 一致，append 模式 + 行\n"
         "              刷新，已写入的事件 Ctrl+C / kill / traceback 后都\n"
-        "              留在文件里。环境变量：WIFISCOPE_LOG=PATH 或 =auto。\n"
+        "              留在文件里。环境变量：DITING_LOG=PATH 或 =auto。\n"
         "  -h, --help  显示本说明\n",
-    "wifiscope: unknown subcommand {cmd!r}":
-        "wifiscope：未知子命令 {cmd!r}",
+    "diting: unknown subcommand {cmd!r}":
+        "diting：未知子命令 {cmd!r}",
     "note: writing JSONL events to {path}":
         "提示：JSONL 事件正写入 {path}",
     "tip: summarise this session with\n"
-    "       wifiscope analyze {path}":
+    "       diting analyze {path}":
         "提示：本次会话可用以下命令生成报告：\n"
-        "       wifiscope analyze {path}",
+        "       diting analyze {path}",
 
-    # ---- `wifiscope once` plain-text output ----
+    # ---- `diting once` plain-text output ----
     "backend:    {name}": "后端：    {name}",
     "status:     not associated": "状态：    未连接",
     "timestamp:  {ts}": "时间：     {ts}",
@@ -413,17 +413,17 @@ _ZH: dict[str, str] = {
     "note: SSID/BSSID via SCDynamicStore fallback (CoreWLAN is redacted).\n":
         "提示：SSID 与 BSSID 来自 SCDynamicStore 旁路（CoreWLAN 已被隐藏）。\n",
 
-    # ---- `wifiscope watch` plain-text banner ----
+    # ---- `diting watch` plain-text banner ----
     "backend: {name}  (Ctrl+C to quit)": "后端：{name}  (Ctrl+C 退出)",
     "inventory: {n_aps} APs, {n_overrides} overrides — {path}":
         "清单：{n_aps} 台 AP，{n_overrides} 条覆盖 — {path}",
 
     # ---- TUI launch flow: helper auto-build / grant prompts ----
-    "note: wifiscope-helper not found and could not be built.\n"
+    "note: diting-tianer not found and could not be built.\n"
     "      Scan list will be TCC-redacted. To fix, install the\n"
     "      Swift toolchain (Xcode CLT) and rerun, or build helper/\n"
     "      manually. See README's helper section.":
-        "提示：未找到 wifiscope-helper，且自动构建失败。\n"
+        "提示：未找到 diting-tianer，且自动构建失败。\n"
         "      扫描列表将被 TCC 隐藏。请安装 Swift 工具链（Xcode CLT）\n"
         "      后重试，或手动构建 helper/ 目录。详见 README 的\n"
         "      「Helper」一节。",
@@ -439,9 +439,9 @@ _ZH: dict[str, str] = {
     "  failed to open helper: {err}": "  启动 helper 失败：{err}",
     "Permission granted — starting TUI.": "授权成功，正在启动 TUI。",
     "(no grant after {n}s; starting TUI anyway.\n"
-    " rerun wifiscope after granting to see unredacted scan.)":
+    " rerun diting after granting to see unredacted scan.)":
         "({n} 秒内未授权，TUI 仍将启动。\n"
-        " 授权后重新运行 wifiscope 即可看到未隐藏的扫描数据。)",
+        " 授权后重新运行 diting 即可看到未隐藏的扫描数据。)",
     "Skipped; starting TUI with redacted scan.":
         "已跳过，TUI 将以隐藏的扫描数据启动。",
 
@@ -465,10 +465,10 @@ _ZH: dict[str, str] = {
     "All permissions granted — starting TUI.":
         "所有权限已授予 —— 正在启动 TUI。",
     "(no full grant after {n}s; starting TUI anyway with whatever\n"
-    " permissions did land. Rerun wifiscope after granting to\n"
+    " permissions did land. Rerun diting after granting to\n"
     " unlock the remaining views.)":
         "({n} 秒内未全部授权，TUI 仍将以当前已有的权限启动。\n"
-        " 授权完整之后重新运行 wifiscope 即可解锁剩余视图。)",
+        " 授权完整之后重新运行 diting 即可解锁剩余视图。)",
     "Skipped; starting TUI with whatever permissions are in place.":
         "已跳过，TUI 将以当前已有的权限启动。",
 
@@ -606,13 +606,13 @@ _ZH: dict[str, str] = {
         "基线、最近一小时 σ 走势）\n",
     "AP aliases (optional)": "AP 别名（可选）",
     "  Drop ./aps.yaml (next to aps.example.yaml in the cloned repo)\n"
-    "  listing your APs by management MAC; wifiscope renders friendly\n"
+    "  listing your APs by management MAC; diting renders friendly\n"
     "  names ('1F-bedroom') in place of MAC fragments ('?af:5e:a7').\n"
     "  Without the file the tool still works — every BSSID gets an\n"
     "  auto-cluster label like '?AB:CD:EF' so radios of the same\n"
     "  physical AP still group together.\n":
         "  在 ./aps.yaml（与 aps.example.yaml 同目录，通常是 clone\n"
-        "  出来的仓库根目录）里按管理 MAC 列出你的 AP，wifiscope 会把\n"
+        "  出来的仓库根目录）里按管理 MAC 列出你的 AP，diting 会把\n"
         "  MAC 片段（'?af:5e:a7'）显示成可读名字（'1F-书房'）。没有\n"
         "  这份文件也能用 —— 每个 BSSID 会自动获得形如 '?AB:CD:EF' 的\n"
         "  聚簇标签，同一台物理 AP 的所有无线电仍然会被分到同一组。\n",
@@ -639,24 +639,24 @@ _ZH: dict[str, str] = {
         "事件日志（--log） —— TUI 和 monitor 共用同一份 schema",
     "\n"
     "  Adds a background JSONL writer to the normal TUI session.\n"
-    "  Same event schema as `wifiscope monitor`, append-mode, line-\n"
+    "  Same event schema as `diting monitor`, append-mode, line-\n"
     "  buffered + flushed after every event — already-emitted events\n"
     "  survive Ctrl+C, kill, or even an unhandled traceback. Only a\n"
     "  kernel panic / power loss between an event and the next disk\n"
     "  sync window can drop something.\n"
     "\n"
     "  The schema is locale-stable (English keys / values regardless\n"
-    "  of WIFISCOPE_LANG) so log analysis scripts and AI consumers\n"
+    "  of DITING_LANG) so log analysis scripts and AI consumers\n"
     "  do not break when you toggle the UI to Chinese. User-supplied\n"
     "  strings — SSID, AP names from aps.yaml — pass through as UTF-8\n"
     "  so a Chinese SSID like 咖啡馆 stays grep-able in the file.\n":
         "\n"
         "  在正常 TUI 会话之上增加一个后台 JSONL 写入器。事件 schema 与\n"
-        "  `wifiscope monitor` 一致，append 模式 + 每个事件落盘 ——\n"
+        "  `diting monitor` 一致，append 模式 + 每个事件落盘 ——\n"
         "  Ctrl+C / kill / 异常 traceback 都不会丢已经写入的事件。\n"
         "  只有内核 panic / 断电这种掉电场景才可能丢失刚写还没落盘的数据。\n"
         "\n"
-        "  schema 与界面语言无关（无论 WIFISCOPE_LANG 设置什么，写入文件\n"
+        "  schema 与界面语言无关（无论 DITING_LANG 设置什么，写入文件\n"
         "  的 keys / values 都保持英文），日志分析脚本和 AI 消费方不会\n"
         "  因为 UI 切到中文而失效。用户自定义字符串 —— SSID、aps.yaml 里\n"
         "  的 AP 名字 —— 以 UTF-8 原样写入，中文 SSID 像 咖啡馆 这样的\n"
@@ -683,9 +683,9 @@ _ZH: dict[str, str] = {
     "                  SCDynamicStore. Probe is TCP/53 connect.\n"
     "\n"
     "  Examples:\n"
-    "    wifiscope monitor                              # to stdout\n"
-    "    wifiscope monitor --out ~/wifi.jsonl --notify  # daemon-ish\n"
-    "    wifiscope monitor --gateway 192.168.1.1 --wan 1.1.1.1\n"
+    "    diting monitor                              # to stdout\n"
+    "    diting monitor --out ~/wifi.jsonl --notify  # daemon-ish\n"
+    "    diting monitor --gateway 192.168.1.1 --wan 1.1.1.1\n"
     "\n"
     "  Tail-friendly: each line is a self-contained JSON object\n"
     "  with a top-level 'ts' (ISO-8601) and 'type'. Pipe through\n"
@@ -710,9 +710,9 @@ _ZH: dict[str, str] = {
         "                  连接握手。\n"
         "\n"
         "  示例：\n"
-        "    wifiscope monitor                              # 输出到 stdout\n"
-        "    wifiscope monitor --out ~/wifi.jsonl --notify  # 类守护进程\n"
-        "    wifiscope monitor --gateway 192.168.1.1 --wan 1.1.1.1\n"
+        "    diting monitor                              # 输出到 stdout\n"
+        "    diting monitor --out ~/wifi.jsonl --notify  # 类守护进程\n"
+        "    diting monitor --gateway 192.168.1.1 --wan 1.1.1.1\n"
         "\n"
         "  适合 tail：每行是一个独立的 JSON 对象，顶层包含 ts（ISO-8601）\n"
         "  和 type 字段。可用 jq 过滤：\n"
@@ -746,76 +746,76 @@ _ZH: dict[str, str] = {
     "  caller has Location Services granted; CoreBluetooth refuses\n"
     "  to enter poweredOn for processes without Bluetooth grant. A\n"
     "  Terminal-launched Python CLI cannot earn either. The helper\n"
-    "  is a tiny Swift .app bundle that can — wifiscope auto-builds\n"
+    "  is a tiny Swift .app bundle that can — diting auto-builds\n"
     "  it on first launch, opens it once so macOS shows the prompts,\n"
     "  and from then on shells out to the bundle for unredacted\n"
     "  scan data plus the BLE feed.\n\n"
     "  Build / grant: ./helper/build.sh, then\n"
-    "    open helper/wifiscope-helper.app  (one-time, click Allow).\n"
+    "    open helper/diting-tianer.app  (one-time, click Allow).\n"
     "  Leave the bundle in place; do NOT move it to /Applications/\n"
     "  (TCC keys grants by cdhash so a copy forces a re-grant).\n":
         "  macOS 14.4+ 扫描结果里的 SSID / BSSID 会被遮蔽，除非调用者\n"
         "  已获得「定位服务」授权；没有「蓝牙」授权的进程，CoreBluetooth\n"
         "  也不会进入 poweredOn。从终端启动的 Python CLI 拿不到任何一项。\n"
-        "  辅助进程是一个小巧的 Swift .app 包 —— 它能 —— wifiscope 首\n"
+        "  辅助进程是一个小巧的 Swift .app 包 —— 它能 —— diting 首\n"
         "  次启动时自动编译并 open 一次，让 macOS 弹出授权提示，之后所有\n"
         "  扫描和 BLE 数据都通过它拿到完整结果。\n\n"
         "  构建 / 授权：./helper/build.sh，然后\n"
-        "    open helper/wifiscope-helper.app  （一次性，点 Allow 即可）。\n"
+        "    open helper/diting-tianer.app  （一次性，点 Allow 即可）。\n"
         "  让包留在原地；**不要**移动到 /Applications/\n"
         "  （TCC 按 cdhash 记授权，复制 / 移动会强制让你重新授权）。\n",
     "  macOS 14.4+ redacts the SSID and BSSID of every AP in the scan\n"
     "  list to None unless the calling process has Location Services\n"
     "  permission, and a Python CLI launched from Terminal cannot get\n"
     "  on that list. The helper is a tiny Swift `.app` bundle that\n"
-    "  can — wifiscope auto-builds and `open`s it once on first launch,\n"
+    "  can — diting auto-builds and `open`s it once on first launch,\n"
     "  the user clicks Allow in the macOS prompt, and from then on\n"
-    "  wifiscope shells out to the bundle's binary for unredacted scan\n"
+    "  diting shells out to the bundle's binary for unredacted scan\n"
     "  data. The TCC grant is persistent; the helper window auto-\n"
     "  closes on grant. Without it the Nearby APs panel works but\n"
     "  every row shows '(redacted)' for SSID and BSSID.\n":
         "  macOS 14.4+ 会把扫描列表里所有 AP 的 SSID 和 BSSID 隐藏成\n"
         "  None，除非调用进程拿到了「定位服务」权限；从终端启动的\n"
         "  Python CLI 进不了授权列表。辅助进程是一个极小的 Swift .app\n"
-        "  打包，它可以进列表 —— 首次启动时 wifiscope 会自动编译并\n"
+        "  打包，它可以进列表 —— 首次启动时 diting 会自动编译并\n"
         "  `open` 它一次，你在 macOS 弹窗里点 Allow，后续每次扫描\n"
-        "  wifiscope 都会调它的二进制拿到未隐藏的数据。授权是持久的，\n"
+        "  diting 都会调它的二进制拿到未隐藏的数据。授权是持久的，\n"
         "  辅助进程窗口在授权后会自动关闭。没有它，附近 BSSID 面板\n"
         "  仍可工作，但每行 SSID 和 BSSID 会显示为「(已遮蔽)」。\n",
     "Tunables": "可调参数",
-    "  WIFISCOPE_SCAN_INTERVAL=N    seconds between scans, default 7.\n"
+    "  DITING_SCAN_INTERVAL=N    seconds between scans, default 7.\n"
     "                                CoreWLAN throttles around 5 s,\n"
     "                                so values below ~6 yield empty\n"
     "                                scans every other call. Min 3.\n"
-    "  WIFISCOPE_INVENTORY=path     override aps.yaml location.\n"
-    "  WIFISCOPE_HELPER=path        override helper.app path.\n"
-    "  WIFISCOPE_LANG=en|zh         override interface language.\n":
-        "  WIFISCOPE_SCAN_INTERVAL=N    扫描间隔（秒），默认 7。\n"
+    "  DITING_INVENTORY=path     override aps.yaml location.\n"
+    "  DITING_HELPER=path        override helper.app path.\n"
+    "  DITING_LANG=en|zh         override interface language.\n":
+        "  DITING_SCAN_INTERVAL=N    扫描间隔（秒），默认 7。\n"
         "                                CoreWLAN 大约 5 秒限流一次，\n"
         "                                低于 ~6 秒时每隔一次返回空。\n"
         "                                最小 3 秒。\n"
-        "  WIFISCOPE_INVENTORY=path     覆盖 aps.yaml 路径。\n"
-        "  WIFISCOPE_HELPER=path        覆盖 helper.app 路径。\n"
-        "  WIFISCOPE_LANG=en|zh         覆盖界面语言。\n",
-    "  WIFISCOPE_SCAN_INTERVAL=N    seconds between Wi-Fi scans,\n"
+        "  DITING_INVENTORY=path     覆盖 aps.yaml 路径。\n"
+        "  DITING_HELPER=path        覆盖 helper.app 路径。\n"
+        "  DITING_LANG=en|zh         覆盖界面语言。\n",
+    "  DITING_SCAN_INTERVAL=N    seconds between Wi-Fi scans,\n"
     "                                default 7. CoreWLAN throttles\n"
     "                                around 5 s; values below ~6\n"
     "                                yield empty scans. Min 3.\n"
-    "  WIFISCOPE_INVENTORY=path     override aps.yaml location.\n"
-    "  WIFISCOPE_HELPER=path        override helper.app path.\n"
-    "  WIFISCOPE_LANG=en|zh         override interface language.\n"
-    "  WIFISCOPE_GATEWAY=ip         override gateway probe target.\n"
-    "  WIFISCOPE_WAN=ip             override WAN probe target\n"
+    "  DITING_INVENTORY=path     override aps.yaml location.\n"
+    "  DITING_HELPER=path        override helper.app path.\n"
+    "  DITING_LANG=en|zh         override interface language.\n"
+    "  DITING_GATEWAY=ip         override gateway probe target.\n"
+    "  DITING_WAN=ip             override WAN probe target\n"
     "                                (default: auto-detected DNS).\n":
-        "  WIFISCOPE_SCAN_INTERVAL=N    Wi-Fi 扫描间隔（秒），默认 7。\n"
+        "  DITING_SCAN_INTERVAL=N    Wi-Fi 扫描间隔（秒），默认 7。\n"
         "                                CoreWLAN 大约 5 秒限流一次，\n"
         "                                低于 ~6 秒时每隔一次返回空。\n"
         "                                最小 3 秒。\n"
-        "  WIFISCOPE_INVENTORY=path     覆盖 aps.yaml 路径。\n"
-        "  WIFISCOPE_HELPER=path        覆盖 helper.app 路径。\n"
-        "  WIFISCOPE_LANG=en|zh         覆盖界面语言。\n"
-        "  WIFISCOPE_GATEWAY=ip         覆盖网关探测目标。\n"
-        "  WIFISCOPE_WAN=ip             覆盖 WAN 探测目标\n"
+        "  DITING_INVENTORY=path     覆盖 aps.yaml 路径。\n"
+        "  DITING_HELPER=path        覆盖 helper.app 路径。\n"
+        "  DITING_LANG=en|zh         覆盖界面语言。\n"
+        "  DITING_GATEWAY=ip         覆盖网关探测目标。\n"
+        "  DITING_WAN=ip             覆盖 WAN 探测目标\n"
         "                                （默认：自动检测的 DNS）。\n",
     "made by ": "作者：",
     "Esc or h to close": "Esc 或 h 关闭",
@@ -823,9 +823,9 @@ _ZH: dict[str, str] = {
     # ---- Basics modal ----
     "Wi-Fi Basics": "Wi-Fi 基础知识",
     "Glossary": "术语表",
-    "  ·  the words wifiscope uses in the dashboard\n":
+    "  ·  the words diting uses in the dashboard\n":
         "  ·  仪表盘里这些术语都是什么意思\n",
-    "  ·  every term wifiscope shows in the dashboard\n":
+    "  ·  every term diting shows in the dashboard\n":
         "  ·  仪表盘里出现的每个术语\n",
     "Wi-Fi": "Wi-Fi",
     "Link health": "链路健康",
@@ -847,12 +847,12 @@ _ZH: dict[str, str] = {
     "SSIDs on 2.4 GHz and 5 GHz.":
         "一个 AP 上某个 SSID 对应的无线电身份。一台物理 AP 在 "
         "2.4 GHz 和 5 GHz 同时广播多个 SSID 时，会暴露多个 BSSID。",
-    "wifiscope's best guess for the physical access point that owns "
+    "diting's best guess for the physical access point that owns "
     "a BSSID. Names you set in ./aps.yaml (optional, next to "
     "aps.example.yaml in the repo) are most accurate; ? labels are "
     "auto-inferred from MAC address patterns when no aps.yaml entry "
     "matches.":
-        "wifiscope 推断的「这个 BSSID 属于哪台物理 AP」。"
+        "diting 推断的「这个 BSSID 属于哪台物理 AP」。"
         "你在 ./aps.yaml（可选，与仓库里的 aps.example.yaml 同目录）"
         "里配置的名字最准确；找不到匹配条目时，会用以 ? 开头的标签"
         "按 MAC 前缀自动推断。",
@@ -917,10 +917,10 @@ _ZH: dict[str, str] = {
     "feel choppy when jitter is high even if average latency is low.":
         "相邻探测之间的延迟变化幅度。即便平均延迟不高，抖动大时通话和"
         "游戏体验仍会卡顿。",
-    "wifiscope probes a public DNS server via TCP port 53 (not ICMP) "
+    "diting probes a public DNS server via TCP port 53 (not ICMP) "
     "because many resolvers block ping. A successful TCP handshake "
     "means the WAN path works even when ping is silent.":
-        "wifiscope 用 TCP 53 端口探测公共 DNS（不用 ICMP），因为很多 "
+        "diting 用 TCP 53 端口探测公共 DNS（不用 ICMP），因为很多 "
         "DNS 服务商会屏蔽 ping。TCP 握手成功就说明 WAN 通了，即便 "
         "ping 不响应。",
 
@@ -930,10 +930,10 @@ _ZH: dict[str, str] = {
     "Co-located vs spatial channel": "同位 AP 与邻信道 AP",
     "Standard deviation of RSSI over a short window. A still room has "
     "low σ (signal barely changes); people walking around or doors "
-    "opening push σ up. wifiscope uses σ as the substrate for the "
+    "opening push σ up. diting uses σ as the substrate for the "
     "Stir / Environment monitor.":
         "短窗口内 RSSI 的标准差。安静的房间 σ 很低（信号几乎不变）；"
-        "人走动、开关门会把 σ 推高。wifiscope 用它作为环境扰动监测的基础。",
+        "人走动、开关门会把 σ 推高。diting 用它作为环境扰动监测的基础。",
     "An event fired when current σ exceeds the AP's running baseline "
     "by ≥3× and clears 5 dB on its own. 'High confidence' if two or "
     "more nearby APs see the spike at the same time; 'medium' alone.":
@@ -965,11 +965,11 @@ _ZH: dict[str, str] = {
     "Find My target / AirTag": "Find My 目标 / AirTag",
     "AirDrop / Hotspot / Watch pairing": "AirDrop / 热点 / Watch 配对",
     "Privacy-preserving devices (most modern phones, AirPods) rotate "
-    "their BLE identifier every ~15 min. wifiscope's fuzzy merger "
+    "their BLE identifier every ~15 min. diting's fuzzy merger "
     "groups rotations of the same vendor + name + signal range as "
     "one row tagged '(merged N)' so the list does not balloon.":
         "保护隐私的设备（多数现代手机、AirPods）每 ~15 分钟轮换一次 "
-        "BLE 标识。wifiscope 的模糊合并器把同厂商 + 同名称 + 同信号区间的"
+        "BLE 标识。diting 的模糊合并器把同厂商 + 同名称 + 同信号区间的"
         "轮换实例归为一行，标记为「合并 N」，避免列表爆炸。",
     "Connected: peripherals you're actively using (keyboard, AirPods). "
     "These come from the system Bluetooth stack and rarely change. "
@@ -977,22 +977,22 @@ _ZH: dict[str, str] = {
         "已连接：正在使用的外设（键盘、AirPods 等），来自系统蓝牙栈，"
         "变化很少。正在广播：附近所有发广播包的设备，每 2 秒刷新。",
     "Standardised public-format BLE broadcasts. iBeacon and Eddystone "
-    "are commercial location beacons; Tile is a tracker. wifiscope "
+    "are commercial location beacons; Tile is a tracker. diting "
     "labels them by parsing the public protocol fields, not by guess.":
         "标准化的公开格式 BLE 广播。iBeacon 和 Eddystone 是商用位置信标，"
-        "Tile 是物品追踪器。wifiscope 通过解析公开协议字段识别，不是猜测。",
+        "Tile 是物品追踪器。diting 通过解析公开协议字段识别，不是猜测。",
     "Apple Find My broadcasts. AirTag-class hardware never carries a "
     "name (privacy by design). AirPods and Apple Watch broadcast the "
     "same Find My beacon when away from their owner but DO carry a "
-    "name — wifiscope uses the name as the AirTag-vs-rest tiebreaker.":
+    "name — diting uses the name as the AirTag-vs-rest tiebreaker.":
         "苹果 Find My 广播。AirTag 类硬件按设计绝不带名称（隐私需求）。"
         "AirPods 和 Apple Watch 远离主人时会发送同样的 Find My 信标，"
-        "但会携带设备名 —— wifiscope 用 name 是否存在区分二者。",
-    "Apple Continuity protocol broadcasts. wifiscope parses the "
+        "但会携带设备名 —— diting 用 name 是否存在区分二者。",
+    "Apple Continuity protocol broadcasts. diting parses the "
     "manufacturer-data type byte to label what intent the device is "
     "broadcasting (AirDrop transfer, Personal Hotspot, Watch unlock "
     "pairing, etc.) — answers 'why is this Apple device chirping?'.":
-        "苹果 Continuity 协议广播。wifiscope 解析 manufacturer-data 的 "
+        "苹果 Continuity 协议广播。diting 解析 manufacturer-data 的 "
         "type 字节，标出设备在广播什么动作（AirDrop 传输、个人热点、"
         "Watch 解锁配对 等）——回答「这台苹果设备到底在嚷什么？」。",
     "(anonymous) vs (unknown)": "(匿名) 与 (未知)",
@@ -1073,7 +1073,7 @@ _ZH: dict[str, str] = {
         "未采集到样本 —— 保持连在同一个网络后重试。",
 
     # ---- analyze CLI ----
-    "wifiscope analyse {path}": "wifiscope 分析 {path}",
+    "diting analyse {path}": "diting 分析 {path}",
     "Time range: {start} → {end}  ({duration})":
         "时间范围：{start} → {end}  （{duration}）",
     "{n} min": "{n} 分钟",
@@ -1095,9 +1095,9 @@ _ZH: dict[str, str] = {
     "TODO: ": "待办：",
 
     "Empty log": "空日志",
-    "No JSONL events parsed. Is wifiscope still writing? "
+    "No JSONL events parsed. Is diting still writing? "
     "Check the path and that the producer is running.":
-        "未解析到 JSONL 事件。wifiscope 还在写吗？"
+        "未解析到 JSONL 事件。diting 还在写吗？"
         "检查路径以及生产端是否还在运行。",
     "Re-run with --log on a session that produces events.":
         "用 --log 重启一次能产生事件的会话再分析。",
@@ -1109,18 +1109,18 @@ _ZH: dict[str, str] = {
     "this bug.":
         "相邻事件之间隔了整数小时，通常是生产端把本地时间"
         "标成了 UTC。时间戳 bug 修复之前的版本会出现这个问题。",
-    "Update wifiscope and re-record. Existing data is still "
+    "Update diting and re-record. Existing data is still "
     "usable but cross-timezone analysis may misorder events.":
-        "升级 wifiscope 后重新记录。已有数据仍然可读，"
+        "升级 diting 后重新记录。已有数据仍然可读，"
         "但跨时区分析时事件顺序可能会乱。",
 
     "All stir events medium-confidence": "全部扰动事件均为中等置信",
     "Every RF stir landed at medium confidence and on one "
     "AP location ({n} events). With only one co-located AP "
-    "wifiscope cannot upgrade events to high confidence — "
+    "diting cannot upgrade events to high confidence — "
     "redundancy fusion needs ≥2 APs in the same room.":
         "全部 {n} 条 RF 扰动均为中等置信，且都来自同一台 AP。"
-        "只有一台同位 AP 时，wifiscope 没法升级到高置信 —— "
+        "只有一台同位 AP 时，diting 没法升级到高置信 —— "
         "冗余融合需要同房间至少 2 台 AP。",
     "If you want richer presence detection, add a second "
     "AP in the same area on a different channel. Keep your "
@@ -1219,14 +1219,14 @@ _ZH: dict[str, str] = {
         "没有特别的洞察 —— 会话看起来一切如常。"
         "可以用更长的日志或更嘈杂的环境再跑一次。",
 
-    "wifiscope analyze: no log file given and no "
-    "wifiscope-*.jsonl found in the current directory.\n"
-    "Pass a path: wifiscope analyze ~/wifi-20260507.jsonl":
-        "wifiscope analyze：没指定日志文件，当前目录也没有 "
-        "wifiscope-*.jsonl。\n"
-        "请提供路径：wifiscope analyze ~/wifi-20260507.jsonl",
-    "wifiscope analyze: file not found: {path}":
-        "wifiscope analyze：找不到文件：{path}",
+    "diting analyze: no log file given and no "
+    "diting-*.jsonl found in the current directory.\n"
+    "Pass a path: diting analyze ~/wifi-20260507.jsonl":
+        "diting analyze：没指定日志文件，当前目录也没有 "
+        "diting-*.jsonl。\n"
+        "请提供路径：diting analyze ~/wifi-20260507.jsonl",
+    "diting analyze: file not found: {path}":
+        "diting analyze：找不到文件：{path}",
     "Network change(s) detected": "检测到网络切换",
     "{n} gateway-IP transition(s) during this session: "
     "{moves}. Treat per-network statistics separately — "
@@ -1248,9 +1248,9 @@ _ZH: dict[str, str] = {
         "{roams} 次漫游。0.7.0 之前的版本有 bug：网络切换后 "
         "LatencyPoller 不会刷新，会一直 ping 旧网关。这种"
         "情况下大量丢包风暴是测量假阳性，不是真正的链路退化。",
-    "Update wifiscope and re-record. Post-fix the "
+    "Update diting and re-record. Post-fix the "
     "LatencyPoller rebuilds on every gateway-IP change "
     "and emits an explicit network_change event.":
-        "升级 wifiscope 后重新记录。修复版本会在每次网关 IP 变化"
+        "升级 diting 后重新记录。修复版本会在每次网关 IP 变化"
         "时重建 LatencyPoller，并显式发出 network_change 事件。",
 }

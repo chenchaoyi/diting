@@ -1,4 +1,4 @@
-"""Textual TUI for wifiscope.
+"""Textual TUI for diting.
 
 Three vertically-stacked panels driven by a single WiFiPoller:
 
@@ -324,7 +324,7 @@ class EnvironmentPanel(Static):
 
 class HelpScreen(ModalScreen):
     """Modal overlay that documents the tool, the bindings, and the
-    project. Triggered by the 'h' binding from WifiScopeApp; dismissed
+    project. Triggered by the 'h' binding from DitingApp; dismissed
     by Esc or h again.
 
     The content lives here rather than scattered around the README
@@ -394,7 +394,7 @@ def _help_content() -> tuple[Text, Text]:
         body.append(f"{label:<6}", style="bold")
         body.append(desc + "\n")
 
-    body.append("wifiscope", style="bold cyan")
+    body.append("diting", style="bold cyan")
     body.append(
         t("  ·  terminal Wi-Fi monitor for macOS with link health,\n"
           "     RF environment, and BLE devices.\n"),
@@ -461,7 +461,7 @@ def _help_content() -> tuple[Text, Text]:
     section(t("AP aliases (optional)"))
     body.append(t(
         "  Drop ./aps.yaml (next to aps.example.yaml in the cloned repo)\n"
-        "  listing your APs by management MAC; wifiscope renders friendly\n"
+        "  listing your APs by management MAC; diting renders friendly\n"
         "  names ('1F-bedroom') in place of MAC fragments ('?af:5e:a7').\n"
         "  Without the file the tool still works — every BSSID gets an\n"
         "  auto-cluster label like '?AB:CD:EF' so radios of the same\n"
@@ -474,12 +474,12 @@ def _help_content() -> tuple[Text, Text]:
         "  caller has Location Services granted; CoreBluetooth refuses\n"
         "  to enter poweredOn for processes without Bluetooth grant. A\n"
         "  Terminal-launched Python CLI cannot earn either. The helper\n"
-        "  is a tiny Swift .app bundle that can — wifiscope auto-builds\n"
+        "  is a tiny Swift .app bundle that can — diting auto-builds\n"
         "  it on first launch, opens it once so macOS shows the prompts,\n"
         "  and from then on shells out to the bundle for unredacted\n"
         "  scan data plus the BLE feed.\n\n"
         "  Build / grant: ./helper/build.sh, then\n"
-        "    open helper/wifiscope-helper.app  (one-time, click Allow).\n"
+        "    open helper/diting-tianer.app  (one-time, click Allow).\n"
         "  Leave the bundle in place; do NOT move it to /Applications/\n"
         "  (TCC keys grants by cdhash so a copy forces a re-grant).\n"
     ))
@@ -494,23 +494,23 @@ def _help_content() -> tuple[Text, Text]:
 
     section(t("Event log (--log) — TUI + monitor share the schema"))
     body.append(
-        "  uv run wifiscope --log                  # default: ./wifiscope-YYYYMMDD-HHMMSS.jsonl\n"
-        "  uv run wifiscope --log ~/wifi.jsonl     # explicit path\n"
-        "  WIFISCOPE_LOG=auto wifiscope            # env-var equivalent of bare --log\n"
-        "  WIFISCOPE_LOG=~/wifi.jsonl wifiscope    # env-var explicit path\n",
+        "  uv run diting --log                  # default: ./diting-YYYYMMDD-HHMMSS.jsonl\n"
+        "  uv run diting --log ~/wifi.jsonl     # explicit path\n"
+        "  DITING_LOG=auto diting            # env-var equivalent of bare --log\n"
+        "  DITING_LOG=~/wifi.jsonl diting    # env-var explicit path\n",
         style="dim",
     )
     body.append(t(
         "\n"
         "  Adds a background JSONL writer to the normal TUI session.\n"
-        "  Same event schema as `wifiscope monitor`, append-mode, line-\n"
+        "  Same event schema as `diting monitor`, append-mode, line-\n"
         "  buffered + flushed after every event — already-emitted events\n"
         "  survive Ctrl+C, kill, or even an unhandled traceback. Only a\n"
         "  kernel panic / power loss between an event and the next disk\n"
         "  sync window can drop something.\n"
         "\n"
         "  The schema is locale-stable (English keys / values regardless\n"
-        "  of WIFISCOPE_LANG) so log analysis scripts and AI consumers\n"
+        "  of DITING_LANG) so log analysis scripts and AI consumers\n"
         "  do not break when you toggle the UI to Chinese. User-supplied\n"
         "  strings — SSID, AP names from aps.yaml — pass through as UTF-8\n"
         "  so a Chinese SSID like 咖啡馆 stays grep-able in the file.\n"
@@ -518,7 +518,7 @@ def _help_content() -> tuple[Text, Text]:
 
     section(t("monitor (headless event stream)"))
     body.append(
-        "  uv run wifiscope monitor [--out FILE] [--notify]\n"
+        "  uv run diting monitor [--out FILE] [--notify]\n"
         "                           [--gateway IP] [--wan IP]\n",
         style="dim",
     )
@@ -545,9 +545,9 @@ def _help_content() -> tuple[Text, Text]:
         "                  SCDynamicStore. Probe is TCP/53 connect.\n"
         "\n"
         "  Examples:\n"
-        "    wifiscope monitor                              # to stdout\n"
-        "    wifiscope monitor --out ~/wifi.jsonl --notify  # daemon-ish\n"
-        "    wifiscope monitor --gateway 192.168.1.1 --wan 1.1.1.1\n"
+        "    diting monitor                              # to stdout\n"
+        "    diting monitor --out ~/wifi.jsonl --notify  # daemon-ish\n"
+        "    diting monitor --gateway 192.168.1.1 --wan 1.1.1.1\n"
         "\n"
         "  Tail-friendly: each line is a self-contained JSON object\n"
         "  with a top-level 'ts' (ISO-8601) and 'type'. Pipe through\n"
@@ -556,15 +556,15 @@ def _help_content() -> tuple[Text, Text]:
 
     section(t("Tunables"))
     body.append(t(
-        "  WIFISCOPE_SCAN_INTERVAL=N    seconds between Wi-Fi scans,\n"
+        "  DITING_SCAN_INTERVAL=N    seconds between Wi-Fi scans,\n"
         "                                default 7. CoreWLAN throttles\n"
         "                                around 5 s; values below ~6\n"
         "                                yield empty scans. Min 3.\n"
-        "  WIFISCOPE_INVENTORY=path     override aps.yaml location.\n"
-        "  WIFISCOPE_HELPER=path        override helper.app path.\n"
-        "  WIFISCOPE_LANG=en|zh         override interface language.\n"
-        "  WIFISCOPE_GATEWAY=ip         override gateway probe target.\n"
-        "  WIFISCOPE_WAN=ip             override WAN probe target\n"
+        "  DITING_INVENTORY=path     override aps.yaml location.\n"
+        "  DITING_HELPER=path        override helper.app path.\n"
+        "  DITING_LANG=en|zh         override interface language.\n"
+        "  DITING_GATEWAY=ip         override gateway probe target.\n"
+        "  DITING_WAN=ip             override WAN probe target\n"
         "                                (default: auto-detected DNS).\n"
     ))
 
@@ -574,8 +574,8 @@ def _help_content() -> tuple[Text, Text]:
     footer.append("ccy", style="bold dim")
     footer.append("  ·  ", style="dim")
     footer.append(
-        "github.com/chenchaoyi/wifiscope",
-        style="dim underline link https://github.com/chenchaoyi/wifiscope",
+        "github.com/chenchaoyi/diting",
+        style="dim underline link https://github.com/chenchaoyi/diting",
     )
     footer.append("\n")
     footer.append(
@@ -1005,7 +1005,7 @@ def _basics_content() -> tuple[Text, Text]:
 
     body.append(t("Glossary"), style="bold cyan")
     body.append(
-        t("  ·  every term wifiscope shows in the dashboard\n"),
+        t("  ·  every term diting shows in the dashboard\n"),
         style="dim",
     )
 
@@ -1032,7 +1032,7 @@ def _basics_content() -> tuple[Text, Text]:
     term(
         t("AP host"),
         t(
-            "wifiscope's best guess for the physical access point that owns "
+            "diting's best guess for the physical access point that owns "
             "a BSSID. Names you set in ./aps.yaml (optional, next to "
             "aps.example.yaml in the repo) are most accurate; ? labels are "
             "auto-inferred from MAC address patterns when no aps.yaml entry "
@@ -1125,7 +1125,7 @@ def _basics_content() -> tuple[Text, Text]:
     term(
         t("WAN reachability"),
         t(
-            "wifiscope probes a public DNS server via TCP port 53 (not ICMP) "
+            "diting probes a public DNS server via TCP port 53 (not ICMP) "
             "because many resolvers block ping. A successful TCP handshake "
             "means the WAN path works even when ping is silent."
         ),
@@ -1137,7 +1137,7 @@ def _basics_content() -> tuple[Text, Text]:
         t(
             "Standard deviation of RSSI over a short window. A still room has "
             "low σ (signal barely changes); people walking around or doors "
-            "opening push σ up. wifiscope uses σ as the substrate for the "
+            "opening push σ up. diting uses σ as the substrate for the "
             "Stir / Environment monitor."
         ),
     )
@@ -1174,7 +1174,7 @@ def _basics_content() -> tuple[Text, Text]:
         t("BSSID rotation / merged N"),
         t(
             "Privacy-preserving devices (most modern phones, AirPods) rotate "
-            "their BLE identifier every ~15 min. wifiscope's fuzzy merger "
+            "their BLE identifier every ~15 min. diting's fuzzy merger "
             "groups rotations of the same vendor + name + signal range as "
             "one row tagged '(merged N)' so the list does not balloon."
         ),
@@ -1191,7 +1191,7 @@ def _basics_content() -> tuple[Text, Text]:
         t("iBeacon / Eddystone / Tile"),
         t(
             "Standardised public-format BLE broadcasts. iBeacon and Eddystone "
-            "are commercial location beacons; Tile is a tracker. wifiscope "
+            "are commercial location beacons; Tile is a tracker. diting "
             "labels them by parsing the public protocol fields, not by guess."
         ),
     )
@@ -1201,13 +1201,13 @@ def _basics_content() -> tuple[Text, Text]:
             "Apple Find My broadcasts. AirTag-class hardware never carries a "
             "name (privacy by design). AirPods and Apple Watch broadcast the "
             "same Find My beacon when away from their owner but DO carry a "
-            "name — wifiscope uses the name as the AirTag-vs-rest tiebreaker."
+            "name — diting uses the name as the AirTag-vs-rest tiebreaker."
         ),
     )
     term(
         t("AirDrop / Hotspot / Watch pairing"),
         t(
-            "Apple Continuity protocol broadcasts. wifiscope parses the "
+            "Apple Continuity protocol broadcasts. diting parses the "
             "manufacturer-data type byte to label what intent the device is "
             "broadcasting (AirDrop transfer, Personal Hotspot, Watch unlock "
             "pairing, etc.) — answers 'why is this Apple device chirping?'."
@@ -1238,7 +1238,7 @@ class BLEPanel(VerticalScroll):
     user toggles to the BLE view via the `n` binding.
 
     Sort order is RSSI desc by default. The rolling map of devices is
-    owned by :class:`wifiscope.ble.BLEPoller`; this widget renders
+    owned by :class:`diting.ble.BLEPoller`; this widget renders
     whatever the latest snapshot contained, including merge-folded
     rows (which carry a ``(merged N)`` badge so the user can see the
     fuzzy-merge happening rather than wondering where rotated UUIDs
@@ -3269,7 +3269,7 @@ class GroupedFooter(Static):
         self.update(out)
 
 
-class WifiScopeApp(App):
+class DitingApp(App):
     """Top-level Textual app.
 
     Layout, view-toggle, modal lifecycle, and footer-grouping
@@ -3331,8 +3331,8 @@ class WifiScopeApp(App):
         self._enable_latency = enable_latency
         self._enable_environment = enable_environment
         self._calibration_path = calibration_path
-        # JSONL event log shared with `wifiscope monitor`. None ⇒
-        # disabled; opt in via --log PATH or WIFISCOPE_LOG=PATH so
+        # JSONL event log shared with `diting monitor`. None ⇒
+        # disabled; opt in via --log PATH or DITING_LOG=PATH so
         # users do not get surprised by silent disk writes.
         self._event_logger = (
             EventLogger.to_path(event_log_path) if event_log_path
@@ -3371,7 +3371,7 @@ class WifiScopeApp(App):
         # "Last hour σ" chart would only ever show the most recent
         # ~2 min of data.
         self._sigma_last_at: datetime | None = None
-        # The BLE poller spawns wifiscope-helper ble-scan as a long-
+        # The BLE poller spawns diting-tianer ble-scan as a long-
         # running subprocess. If no helper path is supplied, the poller
         # surfaces a permission_state of "unavailable" and yields
         # empty snapshots — the BLE panel then renders a placeholder
@@ -3424,7 +3424,7 @@ class WifiScopeApp(App):
         # current AP pinned. The grouped view is more readable on dense
         # corporate networks where one AP broadcasts many BSSIDs.
         self._sort_mode: str = "ap"
-        self.title = "wifiscope"
+        self.title = "diting"
         self.sub_title = self._build_subtitle()
 
     def compose(self) -> ComposeResult:
@@ -3661,7 +3661,7 @@ class WifiScopeApp(App):
             current_gw = new_gw
 
             wan_override = (
-                os.environ.get("WIFISCOPE_LATENCY_WAN_TARGET") or ""
+                os.environ.get("DITING_LATENCY_WAN_TARGET") or ""
             ).strip() or None
             poller = LatencyPoller(
                 gateway_ip=new_gw, wan_ip=wan_override,

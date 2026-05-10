@@ -34,6 +34,7 @@ htmlcov/
 helper/.build/
 helper/.swiftpm/
 helper/Package.resolved
+helper/diting-tianer.app/
 helper/wifiscope-helper.app/
 
 # User's own AP aliases — created by copying aps.example.yaml. Contains
@@ -41,12 +42,13 @@ helper/wifiscope-helper.app/
 # business in version control and would expose private deployment info.
 aps.yaml
 
-# Event log files produced by `wifiscope --log` and `wifiscope monitor`.
+# Event log files produced by `diting --log` and `diting monitor`.
 # Contain MAC addresses / SSIDs / timestamps from the user's network and
 # have no place in source control. The default-named pattern catches
-# anything written via `wifiscope --log` (no path) and the documented
+# anything written via `diting --log` (no path) and the documented
 # example filenames; users who pass an explicit path elsewhere stay
 # uncovered — that location was their choice.
+diting-*.jsonl
 wifiscope-*.jsonl
 
 # `scripts/tui_snapshot.py` (and the `/tui-audit` slash command) write

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from wifiscope.network import (
+from diting.network import (
     APEntry,
     NetworkInventory,
     band_label,
@@ -264,21 +264,21 @@ def test_load_inventory_top_level_must_be_mapping(tmp_path):
 
 def test_default_config_path_is_cwd_relative():
     """The default lives next to the executed command, not in $HOME.
-    Driven by user feedback that ``mkdir -p ~/.config/wifiscope`` and
+    Driven by user feedback that ``mkdir -p ~/.config/diting`` and
     copying the example into a hidden directory was unnecessarily
     fiddly for a personal CLI tool that is most often run from inside
     its cloned repo. Returning a relative ``Path('aps.yaml')`` resolves
-    against CWD at lookup time, so ``cd /repo && wifiscope`` finds the
+    against CWD at lookup time, so ``cd /repo && diting`` finds the
     file next to the example template without ceremony.
     """
     assert default_config_path() == Path("aps.yaml")
 
 
 def test_resolve_config_path_env_override_wins(monkeypatch):
-    """``WIFISCOPE_INVENTORY`` always beats the default. ``~`` in the
+    """``DITING_INVENTORY`` always beats the default. ``~`` in the
     override is expanded so users can write ``~/somewhere/aps.yaml``.
     """
-    monkeypatch.setenv("WIFISCOPE_INVENTORY", "~/custom/aps.yaml")
+    monkeypatch.setenv("DITING_INVENTORY", "~/custom/aps.yaml")
     resolved = resolve_config_path()
     assert resolved == Path("~/custom/aps.yaml").expanduser()
 
@@ -289,7 +289,7 @@ def test_resolve_config_path_no_env_falls_through_to_default(monkeypatch):
     Pinning this contract here so future refactors of the default
     cannot silently drift away from the env-override path.
     """
-    monkeypatch.delenv("WIFISCOPE_INVENTORY", raising=False)
+    monkeypatch.delenv("DITING_INVENTORY", raising=False)
     assert resolve_config_path() == default_config_path()
 
 

@@ -4,7 +4,7 @@
 
 Defines the per-device inspect modal — the user picks a row in the
 BLE list (keyboard or mouse), opens the modal, and sees every field
-wifiscope has on that device plus the decoded payload. This is the
+diting has on that device plus the decoded payload. This is the
 primary "go deep on one peripheral" surface of the tool; future
 features (RSSI history charts, sensor dashboards, beacon URL launch)
 extend it rather than replacing it.
