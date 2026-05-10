@@ -1,0 +1,217 @@
+/* diting Design System — Colors & Type
+ * ----------------------------------------------------------------
+ * The diting brand is a TUI: a single-window terminal listening post
+ * for Wi-Fi, BLE, link health and the RF environment on macOS.
+ * Everything visual flows from a Rich-rendered Textual UI rendered in
+ * Fira Code on a near-black background, with one warm-orange brand
+ * accent and a small Monokai-leaning palette of semantic states.
+ * ---------------------------------------------------------------- */
+
+@font-face {
+  font-family: "Fira Code";
+  src: local("FiraCode-Regular"),
+       url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Fira Code";
+  src: local("FiraCode-SemiBold"),
+       url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-SemiBold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Fira Code";
+  src: local("FiraCode-Bold"),
+       url("https://cdnjs.cloudflare.com/ajax/libs/firacode/6.2.0/woff2/FiraCode-Bold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
+:root {
+  /* ----- core surfaces (Textual / Monokai-leaning) ----- */
+  --bg-window:      #292929;   /* macOS window chrome around the TUI */
+  --bg-panel:       #121212;   /* default panel interior */
+  --bg-panel-soft:  #1e1e1e;   /* footer / muted bands */
+  --bg-row-alt:     #262626;   /* alternating row band, hover */
+  --bg-meter-on:    #2c363f;   /* signal-bar filled cell */
+  --bg-meter-off:   #242f38;   /* signal-bar empty cell */
+
+  /* ----- foreground type ----- */
+  --fg1:            #e0e0e0;   /* primary text */
+  --fg2:            #c5c8c6;   /* default body / readouts */
+  --fg3:            #a0a3a6;   /* secondary labels (— · country CN) */
+  --fg-dim:         #999999;   /* tertiary, key labels */
+  --fg-muted:       #c4c5b5;   /* very low-contrast helper text */
+
+  /* ----- brand ----- */
+  --brand-orange:   #fea62b;   /* radar arcs, panel borders, key glyphs */
+  --brand-orange-hi:#ffc56b;   /* hover/lift state on brand glyphs */
+
+  /* ----- semantic states (Rich palette names in parens) ----- */
+  --ok:             #98e024;   /* (green)   stable / connected */
+  --warn:           #fd971f;   /* (yellow)  active / fair / open net */
+  --warn-bold:      #fdac4a;   /* bold yellow heads */
+  --alert:          #f4005f;   /* (red)     loss / disassoc / error */
+  --info:           #58d1eb;   /* (cyan)    AP names, links, info */
+  --info-soft:      #92c5ec;   /* footer-key foreground softening */
+  --accent:         #ae81ff;   /* (magenta) ROAM markers */
+  --link:           #0178d4;   /* footer band background */
+  --link-fg:        #ddedf9;   /* footer text on --link */
+
+  /* ----- traffic-light dots (window chrome) ----- */
+  --tl-red:         #ff5f57;
+  --tl-yellow:      #febc2e;
+  --tl-green:       #28c840;
+
+  /* ----- borders ----- */
+  --border-heavy:   var(--brand-orange);   /* heavy panel border */
+  --border-soft:    rgba(255,255,255,0.08);
+  --border-frame:   rgba(255,255,255,0.35);
+
+  /* ----- type system ----- */
+  --font-mono: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, ui-monospace, monospace;
+  --font-ui:   -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+
+  /* size scale — terminal grid baseline 24.4px @ 20px glyph */
+  --t-cell:    20px;        /* default monospace glyph */
+  --t-cell-lh: 24.4px;
+  --t-tiny:    11px;
+  --t-small:   13px;
+  --t-body:    15px;
+  --t-mono:    16px;
+  --t-h3:      18px;
+  --t-h2:      22px;
+  --t-h1:      30px;
+  --t-display: 44px;
+
+  --w-regular: 400;
+  --w-medium:  500;
+  --w-bold:    700;
+
+  /* ----- spacing & radii (Textual cells → 6/12 px grid) ----- */
+  --sp-0:  0;
+  --sp-1:  4px;
+  --sp-2:  6px;        /* one half-cell */
+  --sp-3:  8px;
+  --sp-4:  12px;       /* one cell */
+  --sp-5:  16px;
+  --sp-6:  24px;       /* two cells */
+  --sp-7:  32px;
+  --sp-8:  48px;
+
+  --r-sm:  2px;        /* almost none — TUI box-drawing has no radius */
+  --r-md:  4px;
+  --r-lg:  8px;        /* macOS window radius */
+  --r-pill:999px;
+
+  /* ----- shadow / elevation ----- */
+  --shadow-window: 0 24px 80px rgba(0,0,0,0.55), 0 2px 0 rgba(255,255,255,0.04) inset;
+  --shadow-modal:  0 12px 40px rgba(0,0,0,0.6);
+  --glow-accent:   0 0 0 1px rgba(254,166,43,0.35), 0 0 24px rgba(254,166,43,0.18);
+}
+
+/* ----------------------------------------------------------------
+ * Semantic type styles — apply to plain HTML elements so any page
+ * that includes this stylesheet picks up the diting voice.
+ * ---------------------------------------------------------------- */
+
+html, body {
+  background: var(--bg-window);
+  color: var(--fg2);
+  font-family: var(--font-mono);
+  font-size: var(--t-body);
+  line-height: 1.4;
+  letter-spacing: -0.04em;
+  font-feature-settings: "calt" 1, "ss02" 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+p, .body { letter-spacing: -0.04em; }
+
+h1, .h1 {
+  font-family: var(--font-mono);
+  font-weight: var(--w-bold);
+  font-size: var(--t-h1);
+  letter-spacing: -0.01em;
+  color: var(--fg1);
+  margin: 0 0 var(--sp-4);
+}
+h2, .h2 {
+  font-family: var(--font-mono);
+  font-weight: var(--w-bold);
+  font-size: var(--t-h2);
+  color: var(--fg1);
+  margin: 0 0 var(--sp-3);
+}
+h3, .h3 {
+  font-family: var(--font-mono);
+  font-weight: var(--w-bold);
+  font-size: var(--t-h3);
+  color: var(--info);              /* "bold cyan" panel titles */
+  margin: 0 0 var(--sp-3);
+}
+h4, .h4 {
+  font-family: var(--font-mono);
+  font-weight: var(--w-bold);
+  font-size: var(--t-body);
+  color: var(--warn-bold);          /* "bold yellow" sub-section */
+  margin: 0 0 var(--sp-2);
+  text-transform: none;
+}
+
+p { margin: 0 0 var(--sp-4); color: var(--fg2); }
+small, .small { font-size: var(--t-small); color: var(--fg-dim); }
+.dim    { color: var(--fg-dim); }
+.muted  { color: var(--fg3); }
+.hint   { color: var(--fg-dim); font-style: italic; }
+
+code, kbd, pre, .mono {
+  font-family: var(--font-mono);
+  font-size: var(--t-mono);
+}
+code { color: var(--info); }
+kbd {
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  background: var(--bg-row-alt);
+  color: var(--fg1);
+  border: 1px solid var(--border-soft);
+}
+
+/* Semantic state classes — match Rich style names from tui.py */
+.s-ok      { color: var(--ok); }
+.s-warn    { color: var(--warn); }
+.s-alert   { color: var(--alert); }
+.s-info    { color: var(--info); }
+.s-accent  { color: var(--accent); }
+.s-bold    { font-weight: var(--w-bold); }
+
+/* "Border title" — heavy orange border with inset chip-style title */
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--brand-orange);
+  border-radius: var(--r-sm);
+  padding: var(--sp-4) var(--sp-5);
+  position: relative;
+}
+.panel-title {
+  position: absolute;
+  top: -10px; left: var(--sp-5);
+  background: var(--bg-window);
+  color: var(--brand-orange);
+  font-family: var(--font-mono);
+  font-weight: var(--w-bold);
+  font-size: var(--t-small);
+  padding: 0 6px;
+  letter-spacing: 0.02em;
+}
+
+/* Row label — dim 11-cell padded key in front of a value */
+.row-key { color: var(--fg-dim); display: inline-block; min-width: 11ch; }

@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css"><style>
+html,body{margin:0;padding:0;background:var(--bg-window);}
+.wrap{padding:16px 20px;}
+.row{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;}
+.col{display:flex;flex-direction:column;gap:8px;}
+.sw{width:108px;height:60px;border-radius:2px;position:relative;display:flex;align-items:flex-end;padding:6px 8px;font:11px var(--font-mono);}
+.sw .lbl{position:absolute;left:8px;top:6px;font:11px var(--font-mono);}
+.sw .hex{font:11px var(--font-mono);}
+.cap{font:11px var(--font-mono);color:var(--fg-dim);}
+.tagrow{display:flex;gap:6px;flex-wrap:wrap;}
+.kbd{font:12px var(--font-mono);padding:3px 8px;background:var(--bg-row-alt);color:var(--fg1);border:1px solid rgba(255,255,255,.08);}
+.tag{font:12px var(--font-mono);background:var(--bg-row-alt);color:var(--fg1);padding:3px 8px;letter-spacing:.02em;}
+.panelDemo{border:1px solid var(--brand-orange);background:var(--bg-panel);position:relative;padding:14px 16px 12px;color:var(--fg2);font:13px/1.55 var(--font-mono);min-height:60px;}
+.panelDemo .pt{position:absolute;top:-9px;left:14px;background:var(--bg-window);color:var(--brand-orange);font:600 12px var(--font-mono);padding:0 6px;}
+.spec{display:flex;align-items:baseline;gap:18px;font-family:var(--font-mono);}
+.spec .name{color:var(--fg-dim);font-size:11px;width:74px;}
+.spec .val{color:var(--fg1);}
+.dot{width:14px;height:14px;border-radius:999px;display:inline-block;}
+.metercell{width:10px;height:18px;display:inline-block;}
+</style></head><body><div class="wrap">
+<div class="row">
+  <div class="sw" style="background:#fea62b;color:#1a1300"><div class="lbl"><b>brand-orange</b></div><span class="hex">#fea62b</span></div>
+  <div class="sw" style="background:#ffc56b;color:#1a1300"><div class="lbl"><b>brand-orange-hi</b></div><span class="hex">#ffc56b</span></div>
+  <div class="col" style="justify-content:center;font:12px/1.5 var(--font-mono);color:var(--fg3);max-width:300px;">
+    <div style="color:var(--fg1);font-weight:700;">Brand</div>
+    <div>Heavy 1px panel borders. Logo radar arcs. Reserved — never used for body type or hierarchy.</div>
+  </div>
+</div></div></body></html>

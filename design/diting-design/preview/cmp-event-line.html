@@ -1,0 +1,48 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css"><style>
+html,body{margin:0;padding:0;background:var(--bg-window);}
+.wrap{padding:16px 20px;}
+.cap{font:11px var(--font-mono);color:var(--fg-dim);margin-top:10px;}
+.row{
+  display:grid;
+  grid-template-columns: 9ch 8ch 1fr;
+  column-gap:14px;
+  align-items:baseline;
+  font:13px/1.7 var(--font-mono);
+  letter-spacing:-0.02em;
+  font-variant-numeric: tabular-nums;
+  padding:1px 4px;
+}
+.ts   { color: var(--fg-dim); }
+.tag  { font-weight:700; padding:0 4px; background:var(--bg-row-alt); border-radius:2px; text-align:center; }
+.t-roam { color: var(--accent); }
+.t-stir { color: var(--warn); }
+.t-loss { color: var(--alert); }
+.t-link { color: var(--info); }
+.body { color: var(--fg2); }
+.body .delta-up { color: var(--info); }
+.body .sigma    { color: var(--warn); }
+.body .pct      { color: var(--alert); }
+.body .ok       { color: var(--ok); }
+</style></head><body><div class="wrap">
+<div class="row">
+  <span class="ts">14:15:19</span>
+  <span class="tag t-roam">[ROAM]</span>
+  <span class="body">inter-AP  1F-bedroom → 2F-living  <span class="delta-up">Δ +14 dB</span></span>
+</div>
+<div class="row">
+  <span class="ts">14:14:02</span>
+  <span class="tag t-stir">[STIR]</span>
+  <span class="body">2F-living  <span class="sigma">σ 6.4 → 11.8 dB</span></span>
+</div>
+<div class="row">
+  <span class="ts">14:11:48</span>
+  <span class="tag t-loss">[LOSS]</span>
+  <span class="body">gateway  3/30 echoes  <span class="pct">10%</span></span>
+</div>
+<div class="row">
+  <span class="ts">14:09:11</span>
+  <span class="tag t-link">[LINK]</span>
+  <span class="body">WAN reachable  DNS <span class="ok">13 ms</span></span>
+</div>
+<div class="cap">3-column grid · timestamp · tag · message · tabular nums for vertical-align of digits.</div>
+</div></body></html>
