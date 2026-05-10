@@ -1,14 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 80" width="360" height="80">
-  <!-- Wi-Fi arcs (radar-scope cue) anchored at the lower-left -->
-  <g fill="none" stroke="#fea62b" stroke-width="4" stroke-linecap="round">
-    <circle cx="42" cy="56" r="4" fill="#fea62b" stroke="none"/>
-    <path d="M 30 56 A 12 12 0 0 1 54 56"/>
-    <path d="M 22 56 A 20 20 0 0 1 62 56"/>
-    <path d="M 14 56 A 28 28 0 0 1 70 56"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 88" shape-rendering="crispEdges">
+  <g transform="translate(8 12)" fill="#fea62b">
+    <rect x="16" y="0" width="8" height="16"></rect>
+    <rect x="0" y="16" width="64" height="8"></rect>
+    <rect x="0" y="24" width="72" height="8"></rect>
+    <rect x="0" y="32" width="72" height="8"></rect>
+    <rect x="8" y="40" width="8" height="8"></rect>
+    <rect x="16" y="40" width="8" height="8"></rect>
+    <rect x="48" y="40" width="8" height="8"></rect>
+    <rect x="56" y="40" width="8" height="8"></rect>
   </g>
-  <!-- Wordmark in a monospace face matching the TUI -->
-  <text x="92" y="63"
-        font-family="'Fira Code', 'JetBrains Mono', 'SF Mono', Menlo, monospace"
-        font-size="34" font-weight="600" letter-spacing="-0.5"
-        fill="#e6e6e6">diting</text>
+  <rect x="16" y="36" width="8" height="8" fill="#121212"></rect>
+  <rect x="8" y="62" width="72" height="2" fill="#fea62b"></rect>
+  <text x="100" y="50" font-family="&#39;JetBrains Mono&#39;,&#39;Fira Code&#39;,&#39;SF Mono&#39;,Menlo,monospace" font-weight="600" font-size="34" letter-spacing="-1.4" fill="#e0e0e0">dìtīng</text>
+  <text x="101" y="72" font-family="&#39;Songti SC&#39;,&#39;Noto Serif CJK SC&#39;,&#39;SimSun&#39;,serif" font-weight="400" font-size="13" letter-spacing="6" fill="#fea62b">谛 听</text>
 </svg>
