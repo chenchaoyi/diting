@@ -5,7 +5,7 @@ smoke test (test_tui_smoke) covers actually mounting the App.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -31,6 +31,10 @@ from wifiscope.tui import (
     _ble_label_summary,
     _ble_vendors_line,
     _ble_visible_line,
+    _format_duration_short,
+    _free_space_distance_m,
+    _hex_dump,
+    _rssi_sparkline,
     _channel_hint,
     _environment_diagnostic_line,
     _environment_line,
@@ -816,3 +820,104 @@ def test_ble_connected_line_counts_peripherals_and_categories():
     assert "4 peripherals" in text
     assert "Audio 3" in text
     assert "HID 1" in text
+
+
+# ------------------------------------------------------------------
+# BLE detail modal helpers
+# ------------------------------------------------------------------
+
+
+def test_format_duration_short_buckets():
+    assert _format_duration_short(0) == "0s"
+    assert _format_duration_short(35) == "35s"
+    assert _format_duration_short(252) == "4m 12s"
+    assert _format_duration_short(3 * 3600 + 7 * 60) == "3h 07m"
+
+
+def test_format_duration_short_negative_clamps_to_zero():
+    """Clock skew can occasionally produce a negative ``last_seen ago``;
+    show 0 instead of a confusing minus sign."""
+    assert _format_duration_short(-5) == "0s"
+
+
+def test_free_space_distance_m_at_one_meter_returns_one():
+    """RSSI = tx_power means distance ≈ 1 m by definition."""
+    d = _free_space_distance_m(-50, -50)
+    assert d is not None
+    assert 0.99 < d < 1.01
+
+
+def test_free_space_distance_m_doubles_at_minus_six_db():
+    """Free-space loss: every −6 dB ≈ doubling of distance."""
+    d = _free_space_distance_m(-50, -56)
+    assert d is not None
+    assert 1.95 < d < 2.05
+
+
+def test_free_space_distance_m_zero_rssi_returns_none():
+    """RSSI = 0 is a CoreBluetooth sentinel, not a real reading."""
+    assert _free_space_distance_m(-50, 0) is None
+
+
+def test_hex_dump_groups_bytes_in_pairs_and_wraps():
+    blob = "4c001006271efe0b8af9"
+    out = _hex_dump(blob)
+    # 10 bytes / 5 uint16 chunks on one line.
+    assert out == "4c00 1006 271e fe0b 8af9"
+
+
+def test_hex_dump_wraps_at_per_line_threshold():
+    # 18 bytes triggers a line break at the 16-byte mark by default.
+    blob = "00" * 18
+    lines = _hex_dump(blob).splitlines()
+    assert len(lines) == 2
+    assert lines[0].count(" ") == 7  # 8 uint16 chunks per line
+    assert lines[1].startswith("0000")
+
+
+def test_hex_dump_empty_string_returns_empty():
+    assert _hex_dump("") == ""
+
+
+# ------------------------------------------------------------------
+# RSSI sparkline
+# ------------------------------------------------------------------
+
+
+def _t(seconds_offset: int) -> datetime:
+    base = datetime(2026, 5, 9, 14, 0, 0, tzinfo=timezone.utc)
+    return base + timedelta(seconds=seconds_offset)
+
+
+def test_rssi_sparkline_empty_history_returns_empty():
+    assert _rssi_sparkline([]) == ""
+
+
+def test_rssi_sparkline_single_sample_returns_empty():
+    """One sample isn't a history; rendering ⎯ as a sparkline would
+    just be noise."""
+    assert _rssi_sparkline([(_t(0), -60)]) == ""
+
+
+def test_rssi_sparkline_constant_rssi_renders_flat_line():
+    """A device sitting still at -60 dBm should not panic-divide;
+    return a flat mid-block sequence so the user sees "stable"
+    rather than a jagged artifact of integer rounding."""
+    samples = [(_t(i), -60) for i in range(5)]
+    out = _rssi_sparkline(samples)
+    assert len(out) == 5
+    assert len(set(out)) == 1  # all same character
+
+
+def test_rssi_sparkline_maps_extremes_to_top_and_bottom_blocks():
+    """Highest RSSI → top block (█), lowest → bottom block (▁)."""
+    samples = [(_t(0), -90), (_t(1), -40)]
+    out = _rssi_sparkline(samples)
+    assert out[0] == "▁"
+    assert out[1] == "█"
+
+
+def test_rssi_sparkline_renders_one_char_per_sample():
+    samples = [(_t(i), -60 + i * 3) for i in range(7)]
+    out = _rssi_sparkline(samples)
+    assert len(out) == 7

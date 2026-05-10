@@ -94,6 +94,116 @@ class BLEDevice:
     # RSSI sample arrives; matches ``rssi_dbm`` for the very first
     # sample so the first render is not artificially weighted.
     rssi_smooth: int | None = None
+    # Schema-4 (v0.8.0+) raw advertisement-data passthrough. Empty / None
+    # for older helpers. Plumbed through so downstream payload decoders
+    # (sensor data, Eddystone, MiBeacon, Govee, SwitchBot) can run
+    # against the raw bytes without re-implementing a CoreBluetooth
+    # bridge in Python.
+    #
+    # Manufacturer-specific data, hex-encoded. The first 2 bytes are
+    # the SIG company ID (little-endian, mirrors ``vendor_id``); the
+    # remainder is vendor-specific payload. Helper emits this when the
+    # advertisement carries ``CBAdvertisementDataManufacturerDataKey``.
+    manufacturer_hex: str | None = None
+    # ``service_data`` is a tuple of (uuid_string, hex_bytes) pairs
+    # rather than a dict so the dataclass stays frozen + hashable. Keys
+    # are CBUUID strings as emitted by the helper (16-bit short like
+    # "FEAA" or 128-bit canonical like "FD5A0000-..."); values are the
+    # raw payload as hex, matching ``manufacturer_hex``'s encoding.
+    service_data: tuple[tuple[str, str], ...] = ()
+    # CoreBluetooth's ``CBAdvertisementDataTxPowerLevelKey``: the
+    # transmitter's reported tx power in dBm. Consumers can derive a
+    # rough distance from ``tx_power_dbm − rssi_dbm``.
+    tx_power_dbm: int | None = None
+    # ``CBAdvertisementDataSolicitedServiceUUIDsKey`` — services the
+    # peripheral wants to be connected for. Useful for HID / Find My
+    # peer-discovery rows that omit primary service UUIDs.
+    solicited_service_uuids: tuple[str, ...] = ()
+    # ``CBAdvertisementDataOverflowServiceUUIDsKey`` — UUIDs that
+    # didn't fit in the primary 31-byte adv frame. Apple Continuity
+    # secondary advertisements land here.
+    overflow_service_uuids: tuple[str, ...] = ()
+
+
+class BLEHistory:
+    """Per-device rolling RSSI sample buffer.
+
+    BLEDevice is a frozen dataclass with one current reading per
+    field; tracking history requires a separate, mutable container.
+    Each ``identifier`` gets a deque of ``(timestamp, rssi_dbm)``
+    pairs capped at ``maxlen`` samples — enough to draw a 30-sample
+    sparkline in the detail modal without growing unbounded over a
+    multi-hour session.
+
+    Devices that drop out of the snapshot are pruned via
+    :meth:`expire` so a long session of churning random-MAC
+    advertisers does not leak history forever.
+    """
+
+    def __init__(self, *, maxlen: int = 60) -> None:
+        from collections import deque
+        self._samples: dict[str, "deque[tuple[datetime, int]]"] = {}
+        self._maxlen = maxlen
+        self._deque = deque  # closed over for ``record``
+
+    def record(
+        self, identifier: str, ts: datetime, rssi_dbm: int | None,
+    ) -> None:
+        """Append one sample to the device's history.
+
+        ``rssi_dbm = None`` is silently dropped — connected
+        peripherals from IOBluetoothDevice never get an RSSI
+        reading and would otherwise pollute the buffer with
+        sentinel values. The cap is enforced by the deque, so old
+        samples roll off the front as new ones arrive.
+        """
+        if rssi_dbm is None:
+            return
+        buf = self._samples.get(identifier)
+        if buf is None:
+            buf = self._deque(maxlen=self._maxlen)
+            self._samples[identifier] = buf
+        buf.append((ts, rssi_dbm))
+
+    def get(self, identifier: str) -> list[tuple[datetime, int]]:
+        """Return a copy of the history for ``identifier``.
+
+        Empty list if we have nothing — the renderer treats that
+        the same as "device just appeared, no signal yet".
+        """
+        return list(self._samples.get(identifier, ()))
+
+    def expire(self, keep_ids: set[str]) -> None:
+        """Drop history for identifiers not in ``keep_ids``.
+
+        Called once per snapshot in the App. Without this a
+        scenario where a busy office churns through 200 distinct
+        random-MAC iPhones in an hour would accumulate 200
+        deques worth of stale history we will never render.
+        """
+        for ident in list(self._samples.keys()):
+            if ident not in keep_ids:
+                del self._samples[ident]
+
+
+def is_silent_device(d: BLEDevice) -> bool:
+    """True iff the device's broadcast carries zero identifying info.
+
+    A "silent" beacon transmits only RSSI and a connectable flag — no
+    manufacturer_id, no service UUIDs, no localName, no Apple Continuity
+    type byte, no Nearby-Info device class. There is literally nothing
+    in the advertisement payload that any decoder can resolve, so the
+    UI distinguishes ``(anonymous)`` (truly silent) from ``(unknown)``
+    (vendor lookup chain failed but at least something was broadcast).
+    """
+    return (
+        d.vendor is None
+        and d.vendor_id is None
+        and not d.services
+        and not d.name
+        and not d.type
+        and not d.device_class
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,6 +452,17 @@ _NAME_PATTERN_VENDORS: tuple[tuple[str, str], ...] = (
     (r"^iPad\b", "Apple, Inc."),
     (r"^MacBook\b", "Apple, Inc."),
     (r"^Mac mini\b", "Apple, Inc."),
+    # Apple peripherals — patterns are NOT anchored, so user-renamed
+    # variants like "ccy's Magic Keyboard" still match. The tokens
+    # are distinctive enough that false positives are unlikely.
+    (r"\bMagic Keyboard\b", "Apple, Inc."),
+    (r"\bMagic Mouse\b", "Apple, Inc."),
+    (r"\bMagic Trackpad\b", "Apple, Inc."),
+    (r"\bAirPods\b", "Apple, Inc."),
+    (r"\bApple Watch\b", "Apple, Inc."),
+    (r"\bApple TV\b", "Apple, Inc."),
+    (r"\bAirPort\b", "Apple, Inc."),
+    (r"\bHomePod\b", "Apple, Inc."),
     (r"^HUAWEI\b", "Huawei"),
     (r"^Honor\b", "Honor"),
     (r"^OPPO\b", "OPPO"),
@@ -385,9 +506,28 @@ def lookup_name_vendor(name: str | None) -> str | None:
     for pattern, vendor in _NAME_PATTERN_VENDORS:
         if vendor is None:
             continue
-        if re.match(pattern, name, re.IGNORECASE):
+        # Use search rather than match so patterns without a leading
+        # ``^`` anchor can fire on substrings — `Magic Keyboard` shows
+        # up in user-renamed peripherals like "ccy's Magic Keyboard"
+        # which a strict prefix match would miss. Patterns that DO want
+        # to anchor at the start keep their explicit ``^``.
+        if re.search(pattern, name, re.IGNORECASE):
             return vendor
     return None
+
+
+# Curated 128-bit member UUIDs that SIG has assigned to vendors but
+# that we cannot collapse to a 4-char short form via _normalize_uuid
+# (their tail is not the BLE base UUID). Without this table, Mi Band /
+# Huami devices broadcasting `5A310100-0000-0000-0000-000000000000`
+# would land in the (unknown) bucket because the bundled member-UUID
+# JSON only carries 16-bit short keys.
+_LONG_MEMBER_UUIDS: dict[str, str] = {
+    # Anhui Huami — Mi Band 3+, Amazfit, Zepp
+    "5A310100000000000000000000000000": "Anhui Huami Information Technology Co., Ltd.",
+    "5A310200000000000000000000000000": "Anhui Huami Information Technology Co., Ltd.",
+    "5A310300000000000000000000000000": "Anhui Huami Information Technology Co., Ltd.",
+}
 
 
 def lookup_member_vendor(
@@ -407,7 +547,14 @@ def lookup_member_vendor(
         if not isinstance(s, str):
             continue
         short = _normalize_uuid(s)
+        # 16-bit shortform first (covers the bulk of SIG assignments)
         name = member_uuids.get(short)
+        if name:
+            return name
+        # 128-bit fallback: a small handful of vendor-prefix UUIDs that
+        # SIG assigned but bluetooth_member_uuids.json doesn't carry
+        # because the file only contains 16-bit shortform keys.
+        name = _LONG_MEMBER_UUIDS.get(short)
         if name:
             return name
     return None
@@ -712,6 +859,21 @@ def _build_device(
         if member_uuids is None:
             member_uuids = load_member_uuids()
         vendor = lookup_member_vendor(services, member_uuids)
+    # Schema-4 fallback: many vendors (Xiaomi MiBeacon FE95, Google
+    # Fast Pair FCF1, Microsoft Find My FDEE) advertise their UUID
+    # only inside ``service_data`` keys, leaving ``service_uuids``
+    # empty. Those devices were unresolvable until we plumbed
+    # service_data through. The dict keys ARE service UUIDs in the
+    # SIG sense, so the same member-UUID table applies.
+    if vendor is None:
+        sd_keys: list[str] = []
+        raw_sd = obj.get("service_data")
+        if isinstance(raw_sd, dict):
+            sd_keys = [k for k in raw_sd.keys() if isinstance(k, str)]
+        if sd_keys:
+            if member_uuids is None:
+                member_uuids = load_member_uuids()
+            vendor = lookup_member_vendor(tuple(sd_keys), member_uuids)
     if vendor is None and name:
         # Last resort before giving up: pattern-match the localName
         # against known brand prefixes. Catches the common real-Mac
@@ -748,6 +910,52 @@ def _build_device(
     if detect_dc is None and prior is not None:
         detect_dc = prior.device_class
 
+    # Schema-4 raw passthrough fields. Same flicker-protection as the
+    # other optional fields: a scan-response packet that omits these
+    # carries the prior values forward rather than blanking them.
+    raw_mfg_hex = obj.get("manufacturer_hex")
+    if isinstance(raw_mfg_hex, str) and raw_mfg_hex:
+        mfg_hex: str | None = raw_mfg_hex
+    else:
+        mfg_hex = prior.manufacturer_hex if prior is not None else None
+
+    raw_svc_data = obj.get("service_data")
+    if isinstance(raw_svc_data, dict):
+        service_data = tuple(
+            (k, v) for k, v in raw_svc_data.items()
+            if isinstance(k, str) and isinstance(v, str)
+        )
+    else:
+        service_data = ()
+    if not service_data and prior is not None:
+        service_data = prior.service_data
+
+    raw_tx = obj.get("tx_power_dbm")
+    if isinstance(raw_tx, bool):
+        tx_power: int | None = None
+    elif isinstance(raw_tx, (int, float)):
+        tx_power = int(raw_tx)
+    else:
+        tx_power = None
+    if tx_power is None and prior is not None:
+        tx_power = prior.tx_power_dbm
+
+    raw_solicited = obj.get("solicited_service_uuids")
+    if isinstance(raw_solicited, list):
+        solicited = tuple(s for s in raw_solicited if isinstance(s, str))
+    else:
+        solicited = ()
+    if not solicited and prior is not None:
+        solicited = prior.solicited_service_uuids
+
+    raw_overflow = obj.get("overflow_service_uuids")
+    if isinstance(raw_overflow, list):
+        overflow = tuple(s for s in raw_overflow if isinstance(s, str))
+    else:
+        overflow = ()
+    if not overflow and prior is not None:
+        overflow = prior.overflow_service_uuids
+
     return BLEDevice(
         identifier=identifier,
         name=name,
@@ -762,6 +970,11 @@ def _build_device(
         ad_count=ad_count,
         type=detect_type,
         device_class=detect_dc,
+        manufacturer_hex=mfg_hex,
+        service_data=service_data,
+        tx_power_dbm=tx_power,
+        solicited_service_uuids=solicited,
+        overflow_service_uuids=overflow,
     )
 
 

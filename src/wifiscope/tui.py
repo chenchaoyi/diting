@@ -31,8 +31,21 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, RichLog, Static
 
 from .backend import WiFiBackend
-from .ble import BLEDevice, BLEPoller, BLEScanUpdate, service_category
-from .environment import APBaseline, EnvironmentMonitor, RFStirEvent
+from .ble import (
+    BLEDevice,
+    BLEHistory,
+    BLEPoller,
+    BLEScanUpdate,
+    is_silent_device,
+    service_category,
+)
+from .environment import (
+    APBaseline,
+    DEFAULT_SPIKE_MIN_DB,
+    DEFAULT_SPIKE_RATIO,
+    EnvironmentMonitor,
+    RFStirEvent,
+)
 from .event_log import EventLogger
 from .events import (
     Event as MonitorEvent,
@@ -41,7 +54,7 @@ from .events import (
     LinkStateEvent,
     LossBurstEvent,
 )
-from .i18n import fit_cells, pad_cells, t
+from .i18n import cell_len, fit_cells, pad_cells, t
 from .latency import LatencyAggregate
 from .models import Connection, ScanResult
 from .network import (
@@ -417,6 +430,11 @@ def _help_content() -> tuple[Text, Text]:
     body.append(" " * 8 + t("baseline, last-hour σ sparkline)\n"))
     line("h", t("toggle this help"))
     line("b", t("open Wi-Fi / BLE basics glossary"))
+    # BLE-view-only navigation. These bindings fire only in the BLE
+    # view; in Wi-Fi view they're no-ops. Listed here because they
+    # don't show in the footer (priority + show=False).
+    line("↑/↓", t("BLE list cursor — move selection up / down (BLE view only)"))
+    line("enter / i", t("inspect the selected BLE row (open detail modal)"))
 
     section(t("Events modal (m)"))
     body.append(t(
@@ -793,7 +811,11 @@ def _baseline_table(rows: list[APBaseline]) -> Text:
 
     text = Text()
     text.append(
-        t("σ = RSSI stddev; current σ over baseline ×3 fires [STIR]")
+        t(
+            "σ = RSSI stddev; current σ > baseline ×{ratio} (≥{floor} dB) fires [STIR]",
+            ratio=DEFAULT_SPIKE_RATIO,
+            floor=int(DEFAULT_SPIKE_MIN_DB),
+        )
         + "\n",
         style="dim italic",
     )
@@ -1136,6 +1158,16 @@ def _basics_content() -> tuple[Text, Text]:
             "Below −85 dBm an AP is too noisy to draw conclusions from."
         ),
     )
+    term(
+        t("Stir is correlation, never presence"),
+        t(
+            "A stir says 'something in the RF environment changed' — it does "
+            "NOT say 'a person walked by'. A passing person, a neighbour AP "
+            "rebooting, your phone refreshing a background scan, and a "
+            "moving curtain all produce the same σ spike. Treat the signal "
+            "as a hint to look, not a claim about who or what."
+        ),
+    )
 
     section(t("BLE"))
     term(
@@ -1181,6 +1213,16 @@ def _basics_content() -> tuple[Text, Text]:
             "pairing, etc.) — answers 'why is this Apple device chirping?'."
         ),
     )
+    term(
+        t("(anonymous) vs (unknown)"),
+        t(
+            "(anonymous) means the broadcast carries zero identifying info — "
+            "no manufacturer ID, no service UUIDs, no name. There is nothing "
+            "to look up; the device is a privacy beacon by design. (unknown) "
+            "means there IS some data but the lookup chain abstained — that "
+            "row is actionable: a missing OUI / member UUID / name pattern."
+        ),
+    )
 
     footer = Text(no_wrap=False)
     footer.append("─" * 82 + "\n", style="dim")
@@ -1222,12 +1264,48 @@ class BLEPanel(VerticalScroll):
 
     def on_mount(self) -> None:
         self.border_title = t("Nearby BLE devices")
+        # Per-line mapping populated on every update_devices() call.
+        # ``_y_to_id[i]`` is the identifier rendered at body line i, or
+        # None for header / spacer rows. Used by ``on_click`` to turn a
+        # mouse click into a selection. Cleared when the panel resets
+        # to its empty / permission-blocked state.
+        self._y_to_id: list[str | None] = []
+
+    def on_click(self, event) -> None:
+        """Click-to-select-and-inspect.
+
+        Translates the click coordinates into a body line via Textual's
+        ``get_content_offset`` (handles border / padding / scroll for
+        us), then matches that line to an identifier via ``_y_to_id``.
+        Single click both selects the row and opens the detail modal —
+        same gesture mobile users expect, and saves the user from
+        having to chase the click with a keyboard ``i``. Clicks on
+        header / spacer / out-of-content land on None and no-op.
+        """
+        try:
+            body = self.query_one("#ble-body", Static)
+        except Exception:
+            return
+        offset = event.get_content_offset(body)
+        if offset is None:
+            return
+        line = offset.y
+        if line < 0 or line >= len(self._y_to_id):
+            return
+        ident = self._y_to_id[line]
+        if ident is None:
+            return
+        app = self.app
+        if hasattr(app, "_ble_set_selected"):
+            app._ble_set_selected(ident, inspect=True)
 
     def update_devices(
         self,
         devices: list[BLEDevice],
         connected: list[BLEDevice],
         permission_state: str,
+        *,
+        selected_id: str | None = None,
     ) -> None:
         # Only show a "(N)" device-count suffix when scanning is actually
         # working. In every other state the count would be 0 and the
@@ -1247,8 +1325,12 @@ class BLEPanel(VerticalScroll):
             if not devices and not connected:
                 body.update(Text(t("(no BLE devices yet — scanning...)"),
                                  style="dim italic"))
+                self._y_to_id = []
                 return
             lines: list[Text] = []
+            # Per-line identifier map for click-to-select. Mirrors
+            # ``lines`` 1:1 — header / spacer rows hold None.
+            y_map: list[str | None] = []
             # Connected section first (per spec layout B): "what's
             # actually connected to my Mac right now?" answers a more
             # immediate question than "what's broadcasting nearby?".
@@ -1256,22 +1338,41 @@ class BLEPanel(VerticalScroll):
             # paired peripherals does not get an empty header.
             if connected:
                 lines.append(_ble_section_header("Connected", len(connected)))
+                y_map.append(None)
                 lines.append(_ble_header_line())
+                y_map.append(None)
                 for d in connected:
-                    lines.append(_ble_connected_row_line(d))
+                    row = _ble_connected_row_line(d)
+                    if selected_id is not None and d.identifier == selected_id:
+                        row.stylize("reverse")
+                    lines.append(row)
+                    y_map.append(d.identifier)
                 # Spacer between sections so they read as distinct.
                 lines.append(Text(""))
+                y_map.append(None)
             if devices:
                 lines.append(_ble_section_header("Advertising", len(devices)))
+                y_map.append(None)
                 lines.append(_ble_header_line())
+                y_map.append(None)
                 now = datetime.now(devices[0].last_seen.tzinfo)
                 for d in devices:
-                    lines.append(_ble_row_line(d, now))
+                    row = _ble_row_line(d, now)
+                    if selected_id is not None and d.identifier == selected_id:
+                        # Reverse video makes the cursor stand out without
+                        # adding a new colour role; works in both light
+                        # and dark terminals.
+                        row.stylize("reverse")
+                    lines.append(row)
+                    y_map.append(d.identifier)
             body.update(Group(*lines))
+            self._y_to_id = y_map
             return
 
         # Non-granted: drop the count, show a state-specific message.
+        # No clickable rows in any of these states.
         self.border_title = base_title
+        self._y_to_id = []
         if permission_state == "denied":
             body.update(Text(t("(BLE permission required)"),
                              style="dim italic"))
@@ -1778,7 +1879,11 @@ def _ble_visible_line(devices: list[BLEDevice]) -> Text:
     # iBeacons, and unknown gadgets all surface this way; tracking the
     # count gives the user a sense of how "private" the local airspace
     # is at a glance.
-    anonymous = sum(1 for d in devices if not d.vendor and not d.name)
+    # "anonymous" here means a broadcast that carries no identifying
+    # info at all (matches the per-row "(anonymous)" placeholder).
+    # A device with an unknown vendor_id but otherwise some signal does
+    # NOT count — that's "(unknown)", a different problem class.
+    anonymous = sum(1 for d in devices if is_silent_device(d))
     line = Text()
     line.append(t("Visible BLE  "), style="bold dim")
     line.append(t("{n} total", n=n), style="white")
@@ -1902,8 +2007,12 @@ def _ble_closest_line(devices: list[BLEDevice]) -> Text:
     rssi = closest.rssi_dbm
     if closest.name and closest.vendor:
         label = f"{closest.name} ({closest.vendor})"
+    elif closest.name or closest.vendor:
+        label = closest.name or closest.vendor
+    elif is_silent_device(closest):
+        label = t("(anonymous)")
     else:
-        label = closest.name or closest.vendor or t("(anonymous)")
+        label = t("(unknown)")
     line.append(
         f"{rssi if rssi is not None else '?'} dBm",
         style=_rssi_color(rssi) if rssi is not None else "dim",
@@ -1939,6 +2048,10 @@ def _visible_networks_line(results: list[ScanResult]) -> Text:
     return line
 
 
+def _en_bssid_word(n: int) -> str:
+    return "BSSID" if n == 1 else "BSSIDs"
+
+
 def _environment_warnings_line(
     results: list[ScanResult], current: Connection | None
 ) -> Text:
@@ -1950,13 +2063,16 @@ def _environment_warnings_line(
     current_load = _current_channel_load(results, current)
     warnings: list[tuple[str, str]] = []
     if open_count:
-        warnings.append((t("{n} open/no-password BSSIDs", n=open_count), "yellow"))
+        warnings.append((t("{n} open/no-password {b}",
+                          n=open_count, b=_en_bssid_word(open_count)), "yellow"))
     if ht40_2g:
-        warnings.append((t("{n} wide 2.4 GHz BSSIDs", n=ht40_2g), "yellow"))
+        warnings.append((t("{n} wide 2.4 GHz {b}",
+                          n=ht40_2g, b=_en_bssid_word(ht40_2g)), "yellow"))
     if current_load is not None:
         style = "yellow" if current_load >= 5 else "dim"
         warnings.append(
-            (t("{n} other BSSIDs on your channel", n=current_load), style)
+            (t("{n} other {b} on your channel",
+               n=current_load, b=_en_bssid_word(current_load)), style)
         )
     if len(_country_codes(results)) > 1:
         warnings.append((t("mixed country codes nearby"), "yellow"))
@@ -2040,7 +2156,13 @@ def _environment_line(results: list[ScanResult], current: Connection | None) -> 
 
 
 def _health_line(results: list[ScanResult], current: Connection | None) -> Text:
-    """Explain the current association in terms a human can act on."""
+    """Explain the current association in terms a human can act on.
+
+    Vocabulary (``weak`` / ``fair`` / ...) MUST stay in sync with
+    ``_link_score`` — the two functions render adjacent rows of the
+    Diagnostics panel and a divergence reads as a tool bug. The
+    invariant is pinned in ``openspec/specs/roam-detection/spec.md``.
+    """
     line = Text()
     line.append(t("Current link  "), style="bold dim")
     if current is None:
@@ -2131,6 +2253,8 @@ def _link_score(
     *,
     baseline: Connection,
 ) -> _LinkScore:
+    # Reasons vocabulary MUST stay aligned with ``_health_line``;
+    # see openspec/specs/roam-detection/spec.md for the contract.
     score = 50
     reasons: list[str] = []
     rssi = link.rssi_dbm
@@ -2482,6 +2606,47 @@ _COL_BLE_AGO = 8
 _COL_BLE_ID = 10
 
 
+# A handful of SIG-published vendor names exceed _COL_BLE_VENDOR (18
+# cells). Without a shorter form, the column truncates mid-word —
+# "Hewlett Packard Enterprise" → "Hewlett Packard En",
+# "TomTom International BV" → "TomTom Internation". This map gives the
+# common consumer brands a tighter display string. Vendors not listed
+# here fall through to ``_fit_vendor`` which adds a trailing "…" so
+# truncation is at least signalled.
+_BLE_VENDOR_DISPLAY: dict[str, str] = {
+    "Hewlett Packard Enterprise": "HP Enterprise",
+    "Samsung Electronics Co. Ltd.": "Samsung Electronics",
+    "TomTom International BV": "TomTom",
+    "Belkin International, Inc.": "Belkin",
+    "Garmin International, Inc.": "Garmin",
+    "Logitech International SA": "Logitech",
+    "Polar Electro Europe B.V.": "Polar Electro",
+    "Anker Innovations Limited": "Anker",
+    "HUAWEI Technologies Co., Ltd.": "HUAWEI",
+    "Murata Manufacturing Co., Ltd.": "Murata",
+    "SENNHEISER electronic GmbH & Co. KG": "Sennheiser",
+    "Sony Ericsson Mobile Communications": "Sony Ericsson",
+    "Honor Device Co., Ltd.": "Honor",
+    "Telink Semiconductor Co. Ltd": "Telink Semi",
+    "Sony Honda Mobility Inc.": "Sony Honda",
+    "Starkey Hearing Technologies": "Starkey Hearing",
+}
+
+
+def _fit_vendor(name: str) -> str:
+    """Fit a vendor name into ``_COL_BLE_VENDOR`` cells.
+
+    Applies the alias map first; if the result still overflows, append
+    "…" (one cell) so the truncation is visible rather than blending
+    into the next column.
+    """
+    display = _BLE_VENDOR_DISPLAY.get(name, name)
+    if cell_len(display) <= _COL_BLE_VENDOR:
+        return pad_cells(display, _COL_BLE_VENDOR)
+    truncated = fit_cells(display, _COL_BLE_VENDOR - 1).rstrip()
+    return pad_cells(truncated + "…", _COL_BLE_VENDOR)
+
+
 def _ble_header_line() -> Text:
     h = Text(style="bold dim")
     h.append(
@@ -2499,7 +2664,15 @@ def _ble_header_line() -> Text:
 def _ble_row_line(d: BLEDevice, now: datetime) -> Text:
     rssi_color = _rssi_color(d.rssi_dbm) if d.rssi_dbm is not None else "dim"
     rssi_text = f"{d.rssi_dbm:>{_COL_BLE_RSSI}}" if d.rssi_dbm is not None else f"{'?':>{_COL_BLE_RSSI}}"
-    vendor_text = d.vendor or t("(unknown)")
+    if d.vendor:
+        vendor_cell = _fit_vendor(d.vendor)
+    else:
+        # Distinguish "(anonymous)" — broadcast carries no identifying
+        # info at all — from "(unknown)" — broadcast had data but the
+        # vendor lookup chain abstained. The user can act on the second
+        # (file an OUI / cid gap); the first is a physical-data limit.
+        placeholder = "(anonymous)" if is_silent_device(d) else "(unknown)"
+        vendor_cell = pad_cells(t(placeholder), _COL_BLE_VENDOR)
     name_text = d.name or t("(unknown)")
     name_style = "white" if d.name else "dim italic"
     label_text = _ble_label_summary(d)
@@ -2517,7 +2690,7 @@ def _ble_row_line(d: BLEDevice, now: datetime) -> Text:
     line.append(f"{rssi_text}  ", style=rssi_color)
     line.append(_signal_bar(d.rssi_dbm, length=_COL_BLE_SIGNAL))
     line.append("  ")
-    line.append(fit_cells(vendor_text, _COL_BLE_VENDOR) + "  ",
+    line.append(vendor_cell + "  ",
                 style="cyan" if d.vendor else "dim")
     line.append(fit_cells(name_text, _COL_BLE_NAME) + "  ", style=name_style)
     line.append(fit_cells(label_text, _COL_BLE_SERVICES) + "  ",
@@ -2558,10 +2731,17 @@ def _ble_connected_row_line(d: BLEDevice) -> Text:
     # OUI prefix (see ble.lookup_oui_vendor); when the prefix is in the
     # bundled subset we render the brand cyan exactly like the
     # advertising rows, when it is not we fall back to "(unknown)" dim.
-    vendor_text = d.vendor or t("(unknown)")
+    # Connected peripherals never have a fully-silent broadcast — at
+    # minimum the helper provides a name and HID services — so the
+    # "(anonymous)" branch from advertising rows does not fire here.
+    if d.vendor:
+        vendor_cell = _fit_vendor(d.vendor)
+    elif is_silent_device(d):
+        vendor_cell = pad_cells(t("(anonymous)"), _COL_BLE_VENDOR)
+    else:
+        vendor_cell = pad_cells(t("(unknown)"), _COL_BLE_VENDOR)
     vendor_style = "cyan" if d.vendor else "dim"
-    line.append(fit_cells(vendor_text, _COL_BLE_VENDOR) + "  ",
-                style=vendor_style)
+    line.append(vendor_cell + "  ", style=vendor_style)
     line.append(fit_cells(name_text, _COL_BLE_NAME) + "  ", style=name_style)
     label_style = "white" if (d.type or d.device_class) else "dim"
     line.append(fit_cells(label_text, _COL_BLE_SERVICES) + "  ",
@@ -2635,6 +2815,394 @@ def _ble_age_text(d: BLEDevice, now: datetime) -> str:
     return t("{n}s", n=int(delta))
 
 
+def _format_duration_short(seconds: float) -> str:
+    """Compact human duration: ``35s``, ``4m 12s``, ``1h 03m``."""
+    s = int(seconds)
+    if s < 0:
+        s = 0
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60:02d}s"
+    return f"{s // 3600}h {(s % 3600) // 60:02d}m"
+
+
+def _free_space_distance_m(tx_power_dbm: int, rssi_dbm: int) -> float | None:
+    """Rough free-space distance estimate from tx_power and RSSI.
+
+    ``tx_power_dbm`` is the device's reported transmitter strength
+    (semantically: RSSI expected at 1 m). The relationship at free
+    space is RSSI = tx_power − 20·log10(d), so d = 10^((tx − rssi)/20).
+
+    This is a deliberately simple estimate. Real BLE propagation
+    indoors is closer to a path-loss exponent of 3 and varies with
+    body / wall obstruction; the printed value is a vibes-grade
+    upper bound, not a measurement. The detail panel labels it
+    "rough free-space" so users don't read it as a precise reading.
+    """
+    if rssi_dbm == 0:
+        return None
+    try:
+        d = 10 ** ((tx_power_dbm - rssi_dbm) / 20.0)
+    except OverflowError:
+        return None
+    if d > 1000 or d < 0:
+        return None
+    return d
+
+
+def _rssi_sparkline(samples: list[tuple[datetime, int]]) -> str:
+    """Render a per-device RSSI history as a single-line sparkline.
+
+    ``samples`` is a list of ``(timestamp, rssi_dbm)`` pairs as
+    captured by :class:`BLEHistory`. Maps each RSSI to one of 9
+    Unicode block characters with the highest (least-negative)
+    sample as a full block and the lowest as a near-empty block.
+    Returns "" when there are fewer than 2 samples — a single dot
+    is not a "history" worth drawing.
+
+    Style choice: this is the BLE-detail-modal local helper, not a
+    shared sparkline. ``_sigma_sparkline`` covers the events-modal
+    σ-over-time chart with binning by absolute time; here we want a
+    "last N samples" view that doesn't suffer from gappy buckets
+    when the device only just appeared.
+    """
+    if len(samples) < 2:
+        return ""
+    blocks = "▁▂▃▄▅▆▇█"
+    rssi_values = [s[1] for s in samples]
+    lo = min(rssi_values)
+    hi = max(rssi_values)
+    span = hi - lo
+    if span <= 0:
+        # Constant RSSI — show a flat line at mid-block height.
+        return blocks[len(blocks) // 2] * len(rssi_values)
+    out: list[str] = []
+    for v in rssi_values:
+        idx = int((v - lo) * (len(blocks) - 1) / span)
+        idx = max(0, min(len(blocks) - 1, idx))
+        out.append(blocks[idx])
+    return "".join(out)
+
+
+def _hex_dump(blob: str, group: int = 2, per_line: int = 16) -> str:
+    """Format a hex string as `4c00 1007 7f1f 34f0 5191 58` style.
+
+    ``blob`` is the helper's hex encoding (no separators). ``group``
+    is the number of bytes per spaced chunk (2 → uint16-ish). Long
+    payloads wrap at ``per_line`` bytes.
+    """
+    if not blob:
+        return ""
+    chunks = [blob[i:i + 2] for i in range(0, len(blob), 2)]
+    lines: list[str] = []
+    for off in range(0, len(chunks), per_line):
+        line_chunks = chunks[off:off + per_line]
+        pieces: list[str] = []
+        for j in range(0, len(line_chunks), group):
+            pieces.append("".join(line_chunks[j:j + group]))
+        lines.append(" ".join(pieces))
+    return "\n".join(lines)
+
+
+class BLEDetailScreen(ModalScreen):
+    """Detail view for a single BLE device.
+
+    A1-phase framework: surfaces every BLEDevice field passively,
+    including the schema-4 raw passthroughs (manufacturer_hex,
+    service_data, tx_power, solicited / overflow service UUIDs).
+    Decoders that turn those raw bytes into readable per-protocol
+    structure (AirPods battery, Eddystone URL, RuuviTag temperature,
+    etc.) plug in later — this screen renders whatever's available.
+    """
+
+    BINDINGS = [
+        Binding("escape,i,q", "app.pop_screen", t("Close")),
+    ]
+
+    DEFAULT_CSS = """
+    BLEDetailScreen {
+        align: center middle;
+    }
+    BLEDetailScreen > #ble-detail-box {
+        width: 100;
+        height: 90%;
+        border: heavy $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+    BLEDetailScreen #ble-detail-scroll {
+        height: 1fr;
+    }
+    BLEDetailScreen #ble-detail-content {
+        height: auto;
+    }
+    BLEDetailScreen #ble-detail-footer {
+        height: auto;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        device: BLEDevice,
+        history: list[tuple[datetime, int]] | None = None,
+    ) -> None:
+        super().__init__()
+        self._device = device
+        # History snapshot at the moment the modal opened — we don't
+        # live-update the sparkline since the user is reading detail,
+        # not watching real-time. They can close + reopen to refresh.
+        self._history = list(history or [])
+
+    def compose(self) -> ComposeResult:
+        body = Static(self._render_body(), id="ble-detail-content")
+        footer = Static(
+            Text(t("Esc / i to close"), style="dim"),
+            id="ble-detail-footer",
+        )
+        yield Vertical(
+            VerticalScroll(body, id="ble-detail-scroll"),
+            footer,
+            id="ble-detail-box",
+        )
+
+    def on_mount(self) -> None:
+        d = self._device
+        head = d.name or d.vendor or (
+            t("(anonymous)") if is_silent_device(d) else t("(unknown)")
+        )
+        self.query_one("#ble-detail-box").border_title = (
+            t("BLE device")
+            + "  ·  " + head
+        )
+
+    # ------------------------------------------------------------------
+    # Rendering
+    # ------------------------------------------------------------------
+
+    def _render_body(self) -> Text:
+        d = self._device
+        out = Text()
+        self._section_identity(out)
+        out.append("\n")
+        self._section_signal(out)
+        out.append("\n")
+        self._section_activity(out)
+        out.append("\n")
+        self._section_services(out)
+        if d.solicited_service_uuids or d.overflow_service_uuids:
+            out.append("\n")
+            self._section_extra_uuids(out)
+        # Decoded payload comes BEFORE the raw bytes — readers can see
+        # "this is an iBeacon with UUID …" before scrolling past the
+        # hex dumps. The section is omitted if no decoder matched, so
+        # an iPhone Nearby Info row (no decoder yet) doesn't get an
+        # empty header.
+        from .decoders import decode_all
+        decoded = decode_all(d)
+        if decoded:
+            out.append("\n")
+            self._section_decoded(out, decoded)
+        if d.vendor_id is not None or d.type or d.device_class:
+            out.append("\n")
+            self._section_manufacturer_data(out)
+        if d.service_data:
+            out.append("\n")
+            self._section_service_data(out)
+        return out
+
+    def _label(self, out: Text, name: str, value: str | None,
+               *, label_w: int = 14, dim_when_empty: bool = True) -> None:
+        out.append("  " + pad_cells(name, label_w), style="dim")
+        if value is None or value == "":
+            out.append(t("—") + "\n", style="dim italic")
+        elif dim_when_empty and value in {t("(unknown)"), t("(anonymous)"), "—"}:
+            out.append(value + "\n", style="dim")
+        else:
+            out.append(value + "\n", style="white")
+
+    def _heading(self, out: Text, label: str) -> None:
+        out.append(label + "\n", style="bold cyan")
+
+    def _section_identity(self, out: Text) -> None:
+        d = self._device
+        self._heading(out, t("Identity"))
+        self._label(out, t("name"), d.name)
+        vendor_str = d.vendor
+        if vendor_str and d.vendor_id is not None:
+            vendor_str = f"{d.vendor}  (cid {d.vendor_id} / 0x{d.vendor_id:04x})"
+        elif d.vendor_id is not None and not d.vendor:
+            vendor_str = f"cid {d.vendor_id} / 0x{d.vendor_id:04x}  ({t('vendor unknown')})"
+        self._label(out, t("vendor"), vendor_str)
+        self._label(out, t("type"), d.type)
+        self._label(out, t("device class"), d.device_class)
+        self._label(out, t("identifier"), d.identifier)
+        flags: list[str] = []
+        if d.is_connected:
+            flags.append(t("connected"))
+        if d.is_connectable:
+            flags.append(t("connectable"))
+        self._label(out, t("flags"), ", ".join(flags) if flags else None)
+
+    def _section_signal(self, out: Text) -> None:
+        d = self._device
+        self._heading(out, t("Signal"))
+        if d.rssi_dbm is None:
+            self._label(out, t("RSSI"), None)
+        else:
+            rssi_str = f"{d.rssi_dbm} dBm"
+            if d.rssi_smooth is not None and d.rssi_smooth != d.rssi_dbm:
+                rssi_str += f"  ({t('smoothed')} {d.rssi_smooth} dBm)"
+            self._label(out, t("RSSI"), rssi_str)
+        if d.tx_power_dbm is not None:
+            self._label(out, t("tx power"), f"{d.tx_power_dbm} dBm")
+        else:
+            self._label(out, t("tx power"), None)
+        if d.tx_power_dbm is not None and d.rssi_dbm is not None:
+            dist = _free_space_distance_m(d.tx_power_dbm, d.rssi_dbm)
+            if dist is not None:
+                self._label(out, t("distance"),
+                            f"~{dist:.1f} m  ({t('rough free-space estimate')})")
+        if self._history:
+            spark = _rssi_sparkline(self._history)
+            if spark:
+                rssi_values = [s[1] for s in self._history]
+                lo = min(rssi_values)
+                hi = max(rssi_values)
+                span_s = (
+                    self._history[-1][0] - self._history[0][0]
+                ).total_seconds()
+                if lo == hi:
+                    range_str = f"{lo} dBm"
+                else:
+                    range_str = f"{hi}..{lo} dBm"
+                summary = (
+                    f"{spark}  {range_str}  ({len(self._history)} "
+                    f"{t('samples over')} {int(span_s)}s)"
+                )
+                self._label(out, t("rssi history"), summary)
+
+    def _section_activity(self, out: Text) -> None:
+        d = self._device
+        self._heading(out, t("Activity"))
+        now = datetime.now(d.last_seen.tzinfo)
+        first_ago = (now - d.first_seen).total_seconds()
+        last_ago = (now - d.last_seen).total_seconds()
+        self._label(out, t("first seen"),
+                    f"{_format_duration_short(first_ago)} {t('ago')}")
+        self._label(out, t("last seen"),
+                    f"{_format_duration_short(last_ago)} {t('ago')}")
+        # Connected peripherals come from IOBluetoothDevice and never
+        # go through the advertising callback, so ``ad_count`` stays
+        # at 0. Hide the row rather than printing "0", which reads as
+        # a bug.
+        if not d.is_connected:
+            ad_str = str(d.ad_count)
+            # If we've seen at least 2 ads spanning >0 s, surface the
+            # observed broadcast interval. iBeacons fire every ~100
+            # ms, low-power sensors fire every 10-30 s — this number
+            # is the user's quickest way to tell a chatty device from
+            # a well-behaved one.
+            span = (d.last_seen - d.first_seen).total_seconds()
+            if d.ad_count >= 2 and span > 0:
+                interval_ms = (span / max(1, d.ad_count - 1)) * 1000.0
+                ad_str += f"  (~{interval_ms:.0f} ms {t('between ads')})"
+            self._label(out, t("ad count"), ad_str)
+        if d.merged_count > 1:
+            self._label(out, t("merged"),
+                        f"{d.merged_count}  ({t('rotated UUIDs folded')})")
+
+    def _section_services(self, out: Text) -> None:
+        d = self._device
+        if not d.services:
+            self._heading(out, t("Services"))
+            self._label(out, t("(none advertised)"), None)
+            return
+        self._heading(out, t("Services") + f"  ({len(d.services)})")
+        for s in d.services:
+            short = s.split("-")[0].upper() if "-" in s else s.upper()
+            cat = service_category(s) or "?"
+            out.append(f"  {pad_cells(short, 10)}  {cat}\n", style="white")
+
+    def _section_extra_uuids(self, out: Text) -> None:
+        d = self._device
+        self._heading(out, t("Extra UUID lists"))
+        if d.solicited_service_uuids:
+            self._label(
+                out, t("solicited"),
+                ", ".join(d.solicited_service_uuids),
+            )
+        if d.overflow_service_uuids:
+            self._label(
+                out, t("overflow"),
+                ", ".join(d.overflow_service_uuids),
+            )
+
+    def _section_manufacturer_data(self, out: Text) -> None:
+        d = self._device
+        self._heading(out, t("Manufacturer data"))
+        if d.vendor_id is None and d.manufacturer_hex is None:
+            self._label(out, t("(no manufacturer-specific data)"), None)
+            return
+        if d.vendor_id is not None:
+            cid_str = f"cid {d.vendor_id} / 0x{d.vendor_id:04x}"
+            if d.vendor:
+                cid_str += f"  ·  {d.vendor}"
+            out.append("  " + cid_str + "\n", style="white")
+        if d.type:
+            out.append("  " + t("decoded as") + f": {d.type}\n",
+                       style="cyan")
+        if d.device_class:
+            out.append("  " + t("device class") + f": {d.device_class}\n",
+                       style="cyan")
+        if d.manufacturer_hex:
+            byte_count = len(d.manufacturer_hex) // 2
+            out.append(
+                f"  {t('raw payload')}  ·  {byte_count} {t('bytes')}\n",
+                style="white",
+            )
+            dump = _hex_dump(d.manufacturer_hex)
+            for line in dump.split("\n"):
+                out.append(f"    {line}\n", style="dim")
+
+    def _section_decoded(self, out: Text, decoded: dict) -> None:
+        """Render decoded fields. Groups keys by their ``protocol.``
+        prefix so e.g. ``ibeacon.uuid`` / ``ibeacon.major`` cluster
+        under one ``iBeacon`` heading instead of being intermixed
+        with ``eddystone.url`` etc.
+        """
+        self._heading(out, t("Decoded payload"))
+        # Group by protocol prefix
+        by_proto: dict[str, list[tuple[str, object]]] = {}
+        for k, v in sorted(decoded.items()):
+            if "." in k:
+                proto, _, leaf = k.partition(".")
+            else:
+                proto, leaf = "misc", k
+            by_proto.setdefault(proto, []).append((leaf, v))
+        for proto, items in by_proto.items():
+            out.append("  " + proto + "\n", style="bold")
+            for leaf, value in items:
+                out.append("    " + pad_cells(leaf, 16), style="dim")
+                out.append(str(value) + "\n", style="white")
+
+    def _section_service_data(self, out: Text) -> None:
+        d = self._device
+        self._heading(out, t("Service data") + f"  ({len(d.service_data)})")
+        for uuid, hex_blob in d.service_data:
+            short = uuid.split("-")[0].upper() if "-" in uuid else uuid.upper()
+            cat = service_category(uuid) or t("(uncategorised)")
+            byte_count = len(hex_blob) // 2
+            out.append(
+                f"  {short}  ·  {cat}  ·  {byte_count} {t('bytes')}\n",
+                style="white",
+            )
+            dump = _hex_dump(hex_blob)
+            for line in dump.split("\n"):
+                out.append(f"    {line}\n", style="dim")
+
+
 # ---------- app ----------
 
 class GroupedFooter(Static):
@@ -2702,6 +3270,15 @@ class GroupedFooter(Static):
 
 
 class WifiScopeApp(App):
+    """Top-level Textual app.
+
+    Layout, view-toggle, modal lifecycle, and footer-grouping
+    contracts are pinned in ``openspec/specs/tui-shell/spec.md``.
+    Per-panel content contracts live in their respective capability
+    specs (``wifi-scanning``, ``bluetooth-scanning``, ``link-health``,
+    ``environment-monitor``, ``events``, ``ble-detail-modal``).
+    """
+
     CSS = """
     Screen { layout: vertical; }
     """
@@ -2721,6 +3298,18 @@ class WifiScopeApp(App):
         Binding("m", "show_events", t("Events")),
         Binding("h", "show_help", t("Help")),
         Binding("b", "show_basics", t("Basics")),
+        # BLE-row navigation. Hidden from the footer (show=False) so the
+        # main grouped footer stays single-line; the keys are listed in
+        # the help modal alongside the existing arrow-key conventions.
+        # ``priority=True`` is required because BLEPanel inherits from
+        # VerticalScroll, which binds up / down / enter to its own
+        # scroll-the-content handlers. Without priority those handlers
+        # consume the key before our action ever fires. The action
+        # itself is a no-op outside the BLE view, so making it priority
+        # globally does not steal arrows from Wi-Fi-mode users.
+        Binding("up", "ble_select_prev", show=False, priority=True),
+        Binding("down", "ble_select_next", show=False, priority=True),
+        Binding("enter,i", "ble_inspect", show=False, priority=True),
     ]
 
     def __init__(
@@ -2799,6 +3388,18 @@ class WifiScopeApp(App):
         self._latest_ble: list[BLEDevice] = []
         self._latest_ble_connected: list[BLEDevice] = []
         self._ble_permission_state: str = "unknown"
+        # Selection cursor for the BLE list. Tracks by identifier rather
+        # than by index so a re-sort or a row dropping out doesn't yank
+        # the cursor onto a different device. None until the user moves
+        # the cursor for the first time; ``i`` / ``enter`` with no
+        # selection inspects the strongest-signal advertising row as a
+        # convenience default.
+        self._ble_selected_id: str | None = None
+        # Per-device RSSI history, fed once per BLE snapshot. The
+        # detail modal pulls it for the sparkline; the BLE table
+        # itself does not consume it (the smoothed-EMA RSSI on
+        # BLEDevice already covers row-sort stability).
+        self._ble_history: BLEHistory = BLEHistory()
         # 'wifi' (default) or 'ble' — toggled by `n`. Both panels are
         # mounted; we flip widget.display rather than mount/unmount so
         # the widget tree stays stable for tests and the swap is
@@ -3217,6 +3818,22 @@ class WifiScopeApp(App):
                     self._latest_ble = event.devices
                     self._latest_ble_connected = event.connected
                     self._ble_permission_state = event.permission_state
+                    # Record one sample per device per snapshot so the
+                    # detail modal's sparkline has something to draw.
+                    # Connected peripherals have no RSSI; BLEHistory
+                    # silently drops those.
+                    snap_ids: set[str] = set()
+                    for d in event.devices:
+                        snap_ids.add(d.identifier)
+                        self._ble_history.record(
+                            d.identifier, d.last_seen, d.rssi_dbm,
+                        )
+                    for d in event.connected:
+                        snap_ids.add(d.identifier)
+                    # Prune history for devices that have left the
+                    # snapshot — keeps memory bounded across long
+                    # sessions in busy environments.
+                    self._ble_history.expire(snap_ids)
                     self._refresh_ble_panel()
         except Exception:
             # Don't let a poller hiccup tear down the whole TUI.
@@ -3227,10 +3844,17 @@ class WifiScopeApp(App):
             panel = self.query_one("#ble", BLEPanel)
         except Exception:
             return
+        # Reset the selection if the device dropped out of the snapshot
+        # — keeps the cursor pointing at something real instead of a
+        # ghost id the user can no longer see in the table.
+        if self._ble_selected_id is not None:
+            if self._ble_selected_id not in self._ble_ordered_ids():
+                self._ble_selected_id = None
         panel.update_devices(
             self._latest_ble,
             self._latest_ble_connected,
             self._ble_permission_state,
+            selected_id=self._ble_selected_id,
         )
         # Refresh diagnostics whenever the BLE data updates AND the user
         # is actually looking at the BLE view; otherwise leave the Wi-Fi
@@ -3364,6 +3988,108 @@ class WifiScopeApp(App):
             ring_snapshot=self._events_ring.snapshot(),
             baselines=baselines,
             sigma_history=list(self._sigma_history),
+        ))
+
+    # ------------------------------------------------------------------
+    # BLE row navigation + inspect
+    #
+    # Moving the cursor by identifier (not index) keeps the selection
+    # stable across snapshots — RSSI re-sort, merge folds, devices
+    # dropping off the list, all of those are common, and an
+    # index-based cursor would jump to a different physical device on
+    # essentially every snapshot. The ordered-id list is the order the
+    # panel currently renders.
+    # ------------------------------------------------------------------
+
+    def _ble_ordered_ids(self) -> list[str]:
+        """The full identifier order rendered in the BLE panel right now.
+
+        Connected peripherals first (matching the panel layout), then
+        advertising rows in their RSSI-sorted order. Both lists are
+        owned by the poller, the App caches the latest snapshot.
+        """
+        return (
+            [d.identifier for d in self._latest_ble_connected]
+            + [d.identifier for d in self._latest_ble]
+        )
+
+    def _ble_lookup(self, ident: str) -> BLEDevice | None:
+        for d in self._latest_ble_connected:
+            if d.identifier == ident:
+                return d
+        for d in self._latest_ble:
+            if d.identifier == ident:
+                return d
+        return None
+
+    def _ble_set_selected(self, ident: str, *, inspect: bool = False) -> None:
+        """Public hook for child widgets (BLEPanel mouse handler) to
+        request a selection change. Optionally opens the detail modal
+        in the same call — mouse clicks are tap-to-inspect, so the
+        user doesn't have to follow the click with a keyboard 'i'.
+        """
+        if ident not in self._ble_ordered_ids():
+            return
+        self._ble_selected_id = ident
+        self._refresh_ble_panel()
+        if inspect:
+            device = self._ble_lookup(ident)
+            if device is not None:
+                self.push_screen(BLEDetailScreen(
+                    device=device,
+                    history=self._ble_history.get(ident),
+                ))
+
+    def action_ble_select_prev(self) -> None:
+        if self._view_mode != "ble":
+            return
+        order = self._ble_ordered_ids()
+        if not order:
+            return
+        if self._ble_selected_id is None or self._ble_selected_id not in order:
+            self._ble_selected_id = order[0]
+        else:
+            i = order.index(self._ble_selected_id)
+            self._ble_selected_id = order[max(0, i - 1)]
+        self._refresh_ble_panel()
+
+    def action_ble_select_next(self) -> None:
+        if self._view_mode != "ble":
+            return
+        order = self._ble_ordered_ids()
+        if not order:
+            return
+        if self._ble_selected_id is None or self._ble_selected_id not in order:
+            self._ble_selected_id = order[0]
+        else:
+            i = order.index(self._ble_selected_id)
+            self._ble_selected_id = order[min(len(order) - 1, i + 1)]
+        self._refresh_ble_panel()
+
+    def action_ble_inspect(self) -> None:
+        """Open the BLE detail modal for the selected device.
+
+        With no explicit selection (user hasn't moved the cursor yet),
+        defaults to the first row in the panel — strongest connected
+        peripheral if any, otherwise the strongest advertising row.
+        """
+        if self._view_mode != "ble":
+            return
+        order = self._ble_ordered_ids()
+        if not order:
+            return
+        ident = self._ble_selected_id if self._ble_selected_id in order else order[0]
+        device = self._ble_lookup(ident)
+        if device is None:
+            return
+        # Stash the selection so the panel highlight reflects the
+        # device the modal is currently looking at, even on the first
+        # press (no prior up/down).
+        self._ble_selected_id = ident
+        self._refresh_ble_panel()
+        self.push_screen(BLEDetailScreen(
+            device=device,
+            history=self._ble_history.get(ident),
         ))
 
     def action_reroam(self) -> None:

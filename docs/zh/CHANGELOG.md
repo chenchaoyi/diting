@@ -9,7 +9,63 @@
 
 ## [Unreleased]
 
-_暂无未发布的变更。_
+### 新增
+- **Spec 驱动的开发流程**（`openspec/`）。每一个会改行为的能力，
+  现在都对应 `openspec/specs/<name>/spec.md` 下的一份权威契约；
+  新工作走 `openspec/changes/<name>/` 提案，merge 后归档。流程规则：
+  `docs/workflow.md`（英）/ `docs/zh/workflow.md`（中）。本次回流
+  15 个能力的 spec。
+- **CI 强化** —— `.github/workflows/test.yml` 现在三关：pytest 矩阵
+  + TUI 快照回归（失败时上传 `snapshot-output/`）+
+  `openspec validate --strict` 校验。`.github/pull_request_template.md`
+  PR 模板把分支 / spec / 测试 / 文档 / 归档 5 块强制勾选。
+- **`/opsx:test` slash 命令** 把完整自测（pytest + 回归 + spec 校验）
+  delegate 给子 agent，主线程上下文不被测试日志污染。
+- **逐协议 BLE decoder** 落在 `src/wifiscope/decoders/`：iBeacon、
+  Eddystone（UID/URL/TLM）、Apple Continuity（Nearby Info / Find My
+  / Handoff，多子帧链式遍历）、Microsoft CDP + Swift Pair、
+  RuuviTag Format 5。`@register` 装饰器注册，输出键带协议命名空间
+  前缀。
+- **BLE 详情模态**（`i` / `enter`）：键盘 up/down + 鼠标单击选中并
+  inspect、按设备 RSSI 历史 sparkline（`BLEHistory` 环形缓冲）、
+  距离估算、manufacturer / service data 原始 hex dump、"Decoded
+  payload" 段聚合 `decode_all(d)` 的输出。
+- **Helper schema-4 原始字段透传** —— `service_data`、`tx_power_dbm`、
+  `solicited_service_uuids`、`overflow_service_uuids`、
+  `manufacturer_hex` 全部直达 `BLEDevice`，下游 decoder 不再需要
+  重复一遍 CoreBluetooth bridge。
+- **31 个 Apple BT-MAC OUI** 加入 `wifi_ouis.json`，已连接的 Magic
+  Keyboard / Trackpad 行终于显示 "Apple, Inc." 而不是 `(unknown)`。
+- **Vendor 解析链** 增加了 `service_data` keys 的查询（之前只查
+  `service_uuids`），把 Xiaomi MiBeacon / Google Fast Pair /
+  Microsoft Find My 类设备从 `(unknown)` 救出。真实环境覆盖率从
+  64% → 99.5%。
+- **`(anonymous)` 与 `(unknown)` 区分** —— 完全静默的广播渲染为
+  `(anonymous)`（物理上限），有数据但解析链放弃的渲染为
+  `(unknown)`（可改进的 decoder 缺口）。
+
+### 改动
+- **STIR 图例** 现在读 `current σ > baseline ×2.5 (≥3 dB)` ——
+  从 `DEFAULT_SPIKE_RATIO` / `DEFAULT_SPIKE_MIN_DB` 取，再不会
+  和触发逻辑漂移。之前写的是 `×3`，把比率和绝对阈值搞混了。
+- **BSSID 单复数语法** —— `1 wide 2.4 GHz BSSID`（单数）和
+  `27 wide 2.4 GHz BSSIDs`（复数）在英文 UI 现在都正确。
+- **BLE 厂商列截断** 用 `…` 标识，16 个常见消费品牌走别名表
+  （`Hewlett Packard En` → `HP Enterprise`）。
+- **中文翻译打磨** —— 重写 16 处生硬 / 歧义 / AI 痕迹的字串：
+  `σ 是 RSSI 抖动` → `σ 是 RSSI 标准差`（术语正确性）、
+  `宽带 BSSID` → `宽信道 BSSID`、同屏 `最近` 歧义拆为 `最强` /
+  `最近见到`、`扫描频率 7s` → `扫描间隔 7s` 等。
+- **`scripts/tui_snapshot.py` explore 模式** 现在尊重
+  `WIFISCOPE_LANG=zh`，可以审中文 UI。
+
+### 修复
+- BLE 行导航键（`↑` / `↓` / `enter`）通过 `priority=True` 绑定优先
+  于 `VerticalScroll` 的内置滚动处理。鼠标单击 BLE 行也能选中并
+  打开详情。
+- 回归套件里 Diagnostics 面板渲染稳定性 —— seed helper 把
+  `_link_diagnostic_tuple` / `_environment_diagnostic_tuple` pin
+  到 App，避免随机一次刷新把 seeded 的 Link / Environment 行擦掉。
 
 ## [0.7.0] — 2026-05-07
 

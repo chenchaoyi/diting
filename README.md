@@ -335,6 +335,40 @@ notion of the radio's current associated channel and is stable.
 lives in `MacOSWiFiBackend`. A future Linux backend (`nl80211` /
 `iw`) drops in without touching the polling, alias, or UI layers.
 
+## Specifications
+
+Wifiscope runs on OpenSpec-style SDD. Every behaviour-affecting
+capability has a canonical contract under `openspec/specs/<name>/spec.md`.
+
+- **Workflow** (English): [`docs/workflow.md`](docs/workflow.md)
+- **Workflow** (中文): [`docs/zh/workflow.md`](docs/zh/workflow.md)
+- **Agent rules**: [`openspec/AGENTS.md`](openspec/AGENTS.md)
+- **Test plan**: [`tests/TESTING.md`](tests/TESTING.md) ([中文](docs/zh/TESTING.md))
+- **PR template**: [`.github/pull_request_template.md`](.github/pull_request_template.md)
+- **CI gates**: pytest matrix · regression · `openspec --strict` validation
+
+| Capability | What it owns |
+|---|---|
+| [`macos-helper`](openspec/specs/macos-helper/spec.md) | Swift helper bundle (TCC, subprocess contract, schemas) |
+| [`wifi-scanning`](openspec/specs/wifi-scanning/spec.md) | What a scan row promises; redaction handling |
+| [`bluetooth-scanning`](openspec/specs/bluetooth-scanning/spec.md) | Schema-4 raw passthrough, vendor resolution chain, anonymous-vs-unknown |
+| [`ble-decoders`](openspec/specs/ble-decoders/spec.md) | Per-protocol decoder framework (iBeacon / Eddystone / Apple Continuity / MS CDP / RuuviTag) |
+| [`ble-detail-modal`](openspec/specs/ble-detail-modal/spec.md) | Per-device inspect modal: selection, sparkline, decoded payload |
+| [`link-health`](openspec/specs/link-health/spec.md) | Gateway/WAN ping aggregates, jitter/loss bursts |
+| [`environment-monitor`](openspec/specs/environment-monitor/spec.md) | RF stir detector, σ baselines, calibration |
+| [`events`](openspec/specs/events/spec.md) | Five-event vocabulary, ring buffer, JSONL serialisation |
+| [`event-log`](openspec/specs/event-log/spec.md) | JSONL writer for `--log` and `wifiscope monitor` |
+| [`analyze`](openspec/specs/analyze/spec.md) | Pure-rules log post-processor + heuristic catalogue |
+| [`inventory`](openspec/specs/inventory/spec.md) | `aps.yaml` resolution, OUI vendor map, cluster labels |
+| [`roam-detection`](openspec/specs/roam-detection/spec.md) | 0–100 link score, +10 dB candidate threshold, press-`c` re-roam |
+| [`i18n`](openspec/specs/i18n/spec.md) | EN / ZH UI invariants, JSONL English-keys rule, column-cell math |
+| [`tui-shell`](openspec/specs/tui-shell/spec.md) | Four-panel layout, view-toggle, modal lifecycle, GroupedFooter |
+| [`cli`](openspec/specs/cli/spec.md) | Subcommand vocabulary, `--lang` precedence, `--log`, exit-hint |
+
+Future capability work flows through `openspec/changes/<name>/`
+proposals; no edits to canonical specs outside the archive step
+of a merged change.
+
 ## Development
 
 ```bash

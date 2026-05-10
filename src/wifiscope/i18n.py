@@ -1,5 +1,9 @@
 """Static-at-launch i18n for the wifiscope TUI / CLI.
 
+Contract pinned in ``openspec/specs/i18n/spec.md`` — language
+resolution order, ``t()`` lookup, pad_cells / fit_cells column-cell
+math, English-keys-in-JSONL invariant, acronym non-translation rule.
+
 Two languages: English (default) and Simplified Chinese. The active
 language is decided once at process start and does not change
 afterwards — CJK character widths affect column-aligned tables, and
@@ -164,7 +168,7 @@ _ZH: dict[str, str] = {
     "Pause": "暂停",
     "Rescan": "重扫",
     "Sort": "排序",
-    "Re-roam": "断开重连",
+    "Re-roam": "重选 AP",
     "View": "视图",  # legacy; kept for command-palette / Ctrl+P
     "Toggle Wi-Fi / BLE view": "切换 Wi-Fi / BLE 视图",
     "→ {view}": "→ {view}",
@@ -174,7 +178,7 @@ _ZH: dict[str, str] = {
 
     # ---- header subtitle ----
     "sort: {mode}": "排序：{mode}",
-    "scan {n}s": "扫描频率 {n}s",
+    "scan {n}s": "扫描间隔 {n}s",
     "PAUSED": "已暂停",
     "ap": "AP",
     "signal": "信号",
@@ -266,7 +270,7 @@ _ZH: dict[str, str] = {
     "  ·  {n} anonymous": "  ·  {n} 匿名",
     "Vendors  ": "厂商  ",
     "Categories  ": "类别  ",
-    "Closest  ": "最近  ",
+    "Closest  ": "最强  ",
     "(none)": "(无)",
     "(anonymous)": "(匿名)",
     "? {n}": "? {n}",
@@ -281,7 +285,7 @@ _ZH: dict[str, str] = {
     "vendor": "厂商",
     "name": "名称",
     "services": "服务",
-    "last seen": "最近",
+    "last seen": "最近见到",
     "id": "ID",
     # Service categories — translation matches the spec list. Anything
     # not in this catalog (raw 16-bit UUIDs etc.) passes through as-is.
@@ -337,12 +341,12 @@ _ZH: dict[str, str] = {
     "AirPlay target": "AirPlay 接收",
     "AirPlay source": "AirPlay 源",
     "Watch pairing": "Watch 配对",
-    "Handoff": "接力 Handoff",
+    "Handoff": "接力",
     "Tethering target": "热点共享端",
     "Tethering source": "热点客户端",
-    "Nearby Action": "附近动作",
+    "Nearby Action": "附近请求",
     "Apple Proximity": "Apple 邻近",
-    "MS device beacon": "Microsoft 设备",
+    "MS device beacon": "Microsoft 信标",
 
     # ---- CLI --help ----
     "usage: wifiscope [--lang en|zh] [--log [PATH]] [SUBCOMMAND]\n"
@@ -497,16 +501,16 @@ _ZH: dict[str, str] = {
 
     # ---- Diagnostics: warnings line ----
     "Things to notice  ": "提醒  ",
-    "{n} open/no-password BSSIDs": "{n} 个 BSSID 无密码",
-    "{n} wide 2.4 GHz BSSIDs": "{n} 个 2.4 GHz 宽带 BSSID",
-    "{n} other BSSIDs on your channel": "本机信道上还有 {n} 个 BSSID",
+    "{n} open/no-password {b}": "{n} 个 BSSID 无密码",
+    "{n} wide 2.4 GHz {b}": "{n} 个 2.4 GHz 宽信道 BSSID",
+    "{n} other {b} on your channel": "本机信道上还有 {n} 个 BSSID",
     "mixed country codes nearby": "附近区码混合",
     "No obvious environment warnings from the scan.":
         "扫描未发现明显环境异常。",
 
     # ---- Diagnostics: recommendations line ----
     "Least crowded channels  ": "最空闲信道  ",
-    "Estimated from the scan.": "按扫描结果估算。",
+    "Estimated from the scan.": "按扫描结果估算",
     "  {band}: ch{n}": "  {band}: 信道 {n}",
     " (no AP heard)": "（信道无 AP）",
 
@@ -518,7 +522,7 @@ _ZH: dict[str, str] = {
     "stronger same-name AP nearby: +{delta} dB ({label})":
         "附近有同名 AP 信号更强：+{delta} dB ({label})",
     "Looks OK": "正常",
-    "  press c to re-roam": "  按 c 断开重连",
+    "  press c to re-roam": "  按 c 重选 AP",
 
     # ---- Diagnostics: roam score line ----
     "Roam score  ": "漫游评分  ",
@@ -559,7 +563,7 @@ _ZH: dict[str, str] = {
     "  device list — everything macOS hides from its own Wi-Fi\n"
     "  menu plus the diagnostic surfaces it never exposed.\n":
         "  实时看清你连在哪个 AP / BSSID、附近还有哪些 BSSID、到网关 /\n"
-        "  WAN 的延迟 / 丢包 / 抖动、基于 RSSI 抖动的环境监测，以及完整\n"
+        "  WAN 的延迟 / 丢包 / 抖动、基于 RSSI 波动的环境监测，以及完整\n"
         "  的 BLE 设备列表 —— 把 macOS 隐藏掉的 Wi-Fi 信息和它从来没\n"
         "  暴露过的诊断维度都摆出来。\n",
     "Panels": "面板",
@@ -573,7 +577,7 @@ _ZH: dict[str, str] = {
     "BSSIDs near you, or the BLE device list (toggle: n)":
         "附近的 BSSID，或 BLE 设备列表（按 n 切换）",
     "strip at the bottom; full browser via m":
-        "底部窗格；按 m 打开完整浏览器",
+        "底部窗格；按 m 打开完整查看器",
     "current AP, signal bar, link / IP / radio details":
         "当前 AP、信号条、链路 / IP / 无线参数",
     "every BSSID in range, grouped by physical AP":
@@ -582,24 +586,28 @@ _ZH: dict[str, str] = {
         "频段切换与跨 AP 漫游事件实时记录",
     "Bindings": "按键",
     "quit": "退出",
-    "pause / resume polling": "暂停 / 恢复轮询",
+    "pause / resume polling": "暂停 / 恢复刷新",
     "force a rescan now (CoreWLAN ~5s throttle still applies)":
         "立即重新扫描（CoreWLAN 仍有 ~5s 限流）",
     "cycle scan sort:  by AP  ↔  by signal":
         "扫描排序切换：按 AP ↔ 按信号",
     "force re-roam (cycle WiFi off/on so the OS re-picks the":
-        "断开重连（关再开 Wi-Fi，让系统重新挑选",
+        "重选 AP（关再开 Wi-Fi，让系统重新挑选",
     "strongest BSSID — fixes sticky associations)\n":
         "最强 BSSID —— 解决卡死在弱 AP 的问题）\n",
-    "toggle this help": "打开 / 关闭本帮助",
+    "toggle this help": "切换帮助",
     "toggle Nearby view: Wi-Fi BSSIDs ↔ BLE devices":
         "切换附近视图：Wi-Fi BSSID ↔ BLE 设备",
     "open Wi-Fi basics for SSID, BSSID, channel, band, security":
         "打开 Wi-Fi 基础知识：SSID / BSSID / 信道 / 频段 / 加密",
     "open Wi-Fi / BLE basics glossary":
         "打开 Wi-Fi / BLE 术语表",
+    "BLE list cursor — move selection up / down (BLE view only)":
+        "BLE 列表光标——上下移动选中行（仅 BLE 视图）",
+    "inspect the selected BLE row (open detail modal)":
+        "查看选中的 BLE 行（打开详情）",
     "open the Events browser (filterable list, per-AP σ":
-        "打开事件浏览器（可过滤列表、各 AP σ",
+        "打开事件查看器（可过滤列表、各 AP σ",
     "baseline, last-hour σ sparkline)\n":
         "基线、最近一小时 σ 走势）\n",
     "AP aliases (optional)": "AP 别名（可选）",
@@ -616,7 +624,7 @@ _ZH: dict[str, str] = {
         "  聚簇标签，同一台物理 AP 的所有无线电仍然会被分到同一组。\n",
     "Helper": "辅助进程",
     "Helper bundle": "辅助进程包",
-    "Events modal (m)": "事件浏览器（m）",
+    "Events modal (m)": "事件查看器（m）",
     "BLE view": "BLE 视图",
     "Subcommands": "子命令",
     "(none)": "（无参数）",
@@ -693,7 +701,7 @@ _ZH: dict[str, str] = {
         "  可安全重定向 / 管道 / tail。事件类型：\n"
         "    link_state    — 关联 / 断开（BSSID、SSID）\n"
         "    roam          — 频段切换或跨 AP 漫游\n"
-        "    rf_stir       — RSSI 抖动尖峰，带置信度标签\n"
+        "    rf_stir       — RSSI 波动尖峰，带置信度标签\n"
         "    latency_spike — 网关或 WAN 的 RTT 超阈值\n"
         "    loss_burst    — 网关或 WAN 探测丢包超阈值\n"
         "\n"
@@ -734,7 +742,7 @@ _ZH: dict[str, str] = {
     "  Apple Continuity protocol parsing for AirDrop / AirPods /\n"
     "  Watch pairing / Hotspot etc. RSSI is EMA-smoothed for the\n"
     "  sort key so the row order stops jiggling on packet jitter.\n":
-        "  按 n 切换。两个分区：已连接（系统配对、正在使用的外设 ——\n"
+        "  按 n 切换。分两组：已连接（系统配对、正在使用的外设 ——\n"
         "  键盘、AirPods、Magic Trackpad），正在广播（附近所有发广播\n"
         "  的设备）。厂商 / 设备类识别基于公开的 Bluetooth SIG 数据\n"
         "  （manufacturer-ID、GATT 服务、member UUID），以及苹果\n"
@@ -838,7 +846,7 @@ _ZH: dict[str, str] = {
     "Roam score": "漫游评分",
     "The Wi-Fi name people choose from, such as Meituan or Guest. "
     "Many access points can broadcast the same SSID.":
-        "用户在 Wi-Fi 列表里看到的网络名字，比如 Meituan 或 Guest。"
+        "Wi-Fi 列表里看到的网络名字，比如 Meituan 或 Guest。"
         "多个接入点可以广播同一个 SSID。",
     "The radio identity behind one SSID on one AP/radio. A single "
     "physical AP may expose many BSSIDs when it broadcasts several "
@@ -853,7 +861,7 @@ _ZH: dict[str, str] = {
         "wifiscope 推断的「这个 BSSID 属于哪台物理 AP」。"
         "你在 ./aps.yaml（可选，与仓库里的 aps.example.yaml 同目录）"
         "里配置的名字最准确；找不到匹配条目时，会用以 ? 开头的标签"
-        "按 MAC 模式自动猜测。",
+        "按 MAC 前缀自动推断。",
     "Received signal strength. Less negative is stronger: -45 dBm is "
     "excellent, -65 dBm is usable, and around -75 dBm is weak.":
         "接收信号强度。负值越接近 0 越强：-45 dBm 极好，-65 dBm 可用，"
@@ -945,6 +953,16 @@ _ZH: dict[str, str] = {
         "同房间 AP（RSSI ≥ −60）组成冗余组：两台同时报扰动时会被升级"
         "为「高置信」。较远 AP（−60 到 −85 dBm）各自作为独立的空间「通道」。"
         "弱于 −85 dBm 的 AP 太嘈杂，从中得不出可靠结论。",
+    "Stir is correlation, never presence": "扰动是相关性，不是「有人」",
+    "A stir says 'something in the RF environment changed' — it does "
+    "NOT say 'a person walked by'. A passing person, a neighbour AP "
+    "rebooting, your phone refreshing a background scan, and a "
+    "moving curtain all produce the same σ spike. Treat the signal "
+    "as a hint to look, not a claim about who or what.":
+        "扰动事件说的是「RF 环境变了」，不是「有人路过」。路过的人、"
+        "重启的邻居 AP、你手机做后台扫描、挪动的窗帘——都会产生同样的"
+        " σ 尖峰。把这个信号当成「值得看一眼」的提示，不要当作是谁、"
+        "是什么的判断。",
 
     # ---- Basics modal: BLE ----
     "BSSID rotation / merged N": "BSSID 轮换 / 合并 N",
@@ -983,6 +1001,16 @@ _ZH: dict[str, str] = {
         "苹果 Continuity 协议广播。wifiscope 解析 manufacturer-data 的 "
         "type 字节，标出设备在广播什么动作（AirDrop 传输、个人热点、"
         "Watch 解锁配对 等）——回答「这台苹果设备到底在嚷什么？」。",
+    "(anonymous) vs (unknown)": "(匿名) 与 (未知)",
+    "(anonymous) means the broadcast carries zero identifying info — "
+    "no manufacturer ID, no service UUIDs, no name. There is nothing "
+    "to look up; the device is a privacy beacon by design. (unknown) "
+    "means there IS some data but the lookup chain abstained — that "
+    "row is actionable: a missing OUI / member UUID / name pattern.":
+        "(匿名) 表示广播里完全没有可识别字段——没有 manufacturer ID、"
+        "没有服务 UUID、没有名称，本身就是按设计的隐私信标，没东西可查。"
+        "(未知) 表示有一些数据但查找链路放弃了识别——这种行是可改进的："
+        "缺一个 OUI、缺一个 member UUID、或者缺一条 name pattern。",
 
     # ---- v0.7.0 Diagnostics rows: Link / Environment ----
     "Link  ": "链路  ",
@@ -1020,8 +1048,8 @@ _ZH: dict[str, str] = {
     "latency": "延迟",
     "loss": "丢包",
     "Per-AP σ baseline": "各 AP 环境稳定度",
-    "σ = RSSI stddev; current σ over baseline ×3 fires [STIR]":
-        "σ 是 RSSI 抖动；当前 σ 超过基线 ×3 时报告 [扰动]",
+    "σ = RSSI stddev; current σ > baseline ×{ratio} (≥{floor} dB) fires [STIR]":
+        "σ 是 RSSI 标准差；当前 σ 超过基线 ×{ratio}（且 ≥{floor} dB）时报告 [扰动]",
     "AP": "AP",
     "mode": "模式",
     "BSSIDs": "BSSID",

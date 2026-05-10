@@ -10,7 +10,71 @@ behaviours between releases.
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+- **Spec-driven development workflow** (`openspec/`). Every
+  behaviour-affecting capability is now pinned by a canonical spec
+  under `openspec/specs/<name>/spec.md`; new work goes through
+  `openspec/changes/<name>/` proposals, archived after merge.
+  Workflow rules: `docs/workflow.md` (EN) / `docs/zh/workflow.md`
+  (ZH). 15 capabilities backfilled in this release.
+- **CI hardened** — `.github/workflows/test.yml` now runs three
+  jobs: pytest matrix, TUI snapshot regression (uploads
+  `snapshot-output/` on failure), and `openspec validate --strict`.
+  PR template at `.github/pull_request_template.md` enforces the
+  branch / spec / test / docs / archive checklist.
+- **`/opsx:test` slash command** delegates the full self-test
+  (pytest + regression + spec validation) to a subagent so the
+  parent context stays clean.
+- **Per-protocol BLE decoders** under `src/wifiscope/decoders/`:
+  iBeacon, Eddystone (UID/URL/TLM), Apple Continuity (Nearby Info
+  / Find My / Handoff with multi-subtype walking), Microsoft CDP
+  + Swift Pair, RuuviTag Format 5. Plug-in framework via
+  `@register`; output keys protocol-namespaced.
+- **BLE detail modal** (`i` / `enter`) with keyboard up/down +
+  mouse click-to-inspect, RSSI history sparkline (per-device
+  `BLEHistory` ring buffer), distance estimate, raw-byte hex
+  dumps for manufacturer / service data, and a "Decoded payload"
+  section.
+- **Helper schema-4 raw passthrough** — `service_data`,
+  `tx_power_dbm`, `solicited_service_uuids`,
+  `overflow_service_uuids`, and `manufacturer_hex` now reach
+  `BLEDevice` so downstream decoders can read CoreBluetooth's
+  full advertisement view without re-implementing the bridge.
+- **31 Apple BT-MAC OUIs** added to `wifi_ouis.json` so connected
+  Magic Keyboard / Trackpad rows resolve to "Apple, Inc." instead
+  of `(unknown)`.
+- **Vendor lookup chain** now consults `service_data` keys (not
+  just `service_uuids`), recovering Xiaomi MiBeacon / Google Fast
+  Pair / Microsoft Find My devices that previously dead-ended at
+  `(unknown)`. Real-environment coverage improved from 64 % → 99.5 %.
+- **`(anonymous)` vs `(unknown)` distinction** — silent broadcasts
+  render as `(anonymous)` (physical limit); lookup-chain misses
+  with data render as `(unknown)` (actionable decoder gap).
+
+### Changed
+- **STIR legend** now reads `current σ > baseline ×2.5 (≥3 dB)` —
+  pulled from `DEFAULT_SPIKE_RATIO` / `DEFAULT_SPIKE_MIN_DB` so it
+  cannot drift from the firing logic. Previously read `×3`,
+  conflating the ratio with the absolute floor.
+- **BSSID singular / plural grammar** — `1 wide 2.4 GHz BSSID` vs
+  `27 wide 2.4 GHz BSSIDs` now both render correctly in EN.
+- **BLE vendor column** truncation signalled with `…` and 16
+  consumer-brand aliases (`Hewlett Packard En` → `HP Enterprise`).
+- **ZH translation polish** — 16 awkward / ambiguous strings
+  rewritten: `σ 是 RSSI 抖动` → `σ 是 RSSI 标准差` (technical
+  accuracy), `宽带 BSSID` → `宽信道 BSSID`, `最近` 同屏歧义拆为
+  `最强` / `最近见到`, `扫描频率 7s` → `扫描间隔 7s`, etc.
+- **`scripts/tui_snapshot.py` explore mode** respects
+  `WIFISCOPE_LANG=zh` so audits can run in the ZH UI.
+
+### Fixed
+- BLE row navigation keys (`↑` / `↓` / `enter`) win over
+  `VerticalScroll`'s built-in scroll handlers via `priority=True`.
+  Mouse click on a BLE row also selects + opens detail.
+- Diagnostics panel rendering stability in regression — seed helper
+  pins `_link_diagnostic_tuple` / `_environment_diagnostic_tuple`
+  on the App so a stray refresh cannot wipe seeded Link /
+  Environment rows.
 
 ## [0.7.0] — 2026-05-07
 

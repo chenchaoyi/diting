@@ -1,5 +1,9 @@
 # wifiscope AP aliases — sample config
 #
+# Resolution semantics (override-wins → first-five-octet → mid-four
+# → cluster-label fallback) are pinned in
+# openspec/specs/inventory/spec.md.
+#
 # This file is OPTIONAL. Without it, wifiscope still groups every
 # BSSID by physical AP using auto-cluster labels like '?40:fe:95',
 # which is enough for daily use on enterprise networks where you

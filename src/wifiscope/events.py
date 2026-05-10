@@ -2,15 +2,19 @@
 
 Five event types share one schema and one in-memory ring (last 100):
 
-    rf_stir       — RSSI variance crossed threshold (commits 3, 4)
-    latency_spike — rtt > 200 ms AND > 5× median (commit 5)
-    loss_burst    — 3 of last 5 ping samples lost (commit 5)
-    roam          — BSSID change (commits 4 / re-export of poller event)
-    link_state    — associated / disassociated (commit 5)
+    rf_stir       — RSSI variance crossed threshold
+    latency_spike — rtt > 200 ms AND > 5× median
+    loss_burst    — 3 of last 5 ping samples lost
+    roam          — BSSID change
+    link_state    — associated / disassociated
 
 Layer 1 (Events panel) and Layer 2 (modal EventsScreen) read from
 the same in-memory ring buffer; Layer 3 (``wifiscope monitor``)
 streams JSON Lines to stdout / file.
+
+The contract — five-event vocabulary, ring-buffer semantics, JSONL
+key stability, NetworkChangeEvent-as-control-plane — is pinned in
+``openspec/specs/events/spec.md``.
 """
 
 from __future__ import annotations
