@@ -10,6 +10,15 @@
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-05-10
+
+「谛听」版本。项目从 `wifiscope` 改名为 **谛听 (Diting)**，README
+按新定位重写（核心命题：「你的 Mac 听见了什么，告诉你」），BLE 深度
+识别 + decoder 框架 + 详情模态整套上线，SDD 流程 + 15 份能力 spec
+回流，并对 voice / type / iconography / layout 整体做了一次设计
+系统审计与对齐。本版本利用 v0.x 阶段允许的次要破坏性变更，对环境
+变量和 helper bundle ID 做了重命名。
+
 ### 破坏性变更 —— 项目改名：`wifiscope` → `diting (谛听)`
 
 项目正式更名为 **谛听 (Diting)**。原名暗示这是一个只做 Wi-Fi 的工具；
