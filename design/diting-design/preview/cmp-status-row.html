@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css"><style>
+html,body{margin:0;padding:0;background:var(--bg-window);}
+.wrap{padding:16px 20px;}
+.row{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;}
+.col{display:flex;flex-direction:column;gap:8px;}
+.sw{width:108px;height:60px;border-radius:2px;position:relative;display:flex;align-items:flex-end;padding:6px 8px;font:11px var(--font-mono);}
+.sw .lbl{position:absolute;left:8px;top:6px;font:11px var(--font-mono);}
+.sw .hex{font:11px var(--font-mono);}
+.cap{font:11px var(--font-mono);color:var(--fg-dim);}
+.tagrow{display:flex;gap:6px;flex-wrap:wrap;}
+.kbd{font:12px var(--font-mono);padding:3px 8px;background:var(--bg-row-alt);color:var(--fg1);border:1px solid rgba(255,255,255,.08);}
+.tag{font:12px var(--font-mono);background:var(--bg-row-alt);color:var(--fg1);padding:3px 8px;letter-spacing:.02em;}
+.panelDemo{border:1px solid var(--brand-orange);background:var(--bg-panel);position:relative;padding:14px 16px 12px;color:var(--fg2);font:13px/1.55 var(--font-mono);min-height:60px;}
+.panelDemo .pt{position:absolute;top:-9px;left:14px;background:var(--bg-window);color:var(--brand-orange);font:600 12px var(--font-mono);padding:0 6px;}
+.spec{display:flex;align-items:baseline;gap:18px;font-family:var(--font-mono);}
+.spec .name{color:var(--fg-dim);font-size:11px;width:74px;}
+.spec .val{color:var(--fg1);}
+.dot{width:14px;height:14px;border-radius:999px;display:inline-block;}
+.metercell{width:10px;height:18px;display:inline-block;}
+</style></head><body><div class="wrap">
+<pre style="margin:0;font:14px/1.5 var(--font-mono);color:var(--fg2);">
+<span style="color:var(--fg-dim)">Link       </span><span style="color:var(--ok)">gw 1.2 ms</span>  <span style="color:var(--ok)">DNS 11 ms</span>  <span style="color:var(--ok)">loss 0%</span>
+<span style="color:var(--fg-dim)">Link       </span><span style="color:var(--warn)">gw 38 ms</span>  <span style="color:var(--warn)">WAN unreachable</span>  <span style="color:var(--alert)">loss 14%</span>
+<span style="color:var(--fg-dim)">Env        </span><span style="color:var(--ok)">stable</span>  σ 1.8 dB    <span style="color:var(--warn)">⚠ active</span>  σ 6.2 dB</pre></div></body></html>

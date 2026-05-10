@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Brand — logo</title>
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg-window);
+    color: var(--fg2);
+    font-family: var(--font-mono);
+    padding: 22px 24px;
+    display: grid;
+    grid-template-columns: 1.15fr 1fr 1fr;
+    gap: 18px;
+    align-items: stretch;
+  }
+  .cell {
+    border: 1px solid var(--border-soft);
+    background: var(--bg-panel);
+    border-radius: 2px;
+    padding: 18px 18px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    position: relative;
+  }
+  .cell .role {
+    position: absolute;
+    top: -8px; left: 14px;
+    background: var(--bg-window);
+    color: var(--brand-orange);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    padding: 0 6px;
+  }
+  .meta {
+    color: var(--fg-dim);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .meta b { color: var(--fg2); font-weight: 600; }
+
+  /* ── A: lockup with mark + wordmark ── */
+  .lockup {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 4px 2px;
+  }
+  .lockup .mark { flex-shrink: 0; }
+  .word {
+    line-height: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .word .en {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 34px;
+    color: var(--fg1);
+    letter-spacing: -0.5px;
+  }
+  .word .cjk {
+    font-family: "Songti SC", "Noto Serif CJK SC", "SimSun", serif;
+    font-weight: 400;
+    font-size: 13px;
+    color: var(--brand-orange);
+    letter-spacing: 6px;
+    padding-left: 1px;
+  }
+
+  /* ── B: TUI rendering ── */
+  pre.tui {
+    margin: 0;
+    color: var(--brand-orange);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.15;
+    white-space: pre;
+    padding: 10px 8px 12px;
+    background: var(--bg-panel);
+    border: 1px dashed rgba(254,166,43,0.25);
+    border-radius: 2px;
+  }
+  pre.tui .fg { color: var(--fg1); }
+
+  /* ── C: 谛 seal ── */
+  .seal-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 4px 0;
+  }
+  .seal {
+    width: 64px;
+    height: 64px;
+    flex-shrink: 0;
+    background: var(--brand-orange);
+    color: #1a1a1a;
+    font-family: "Songti SC", "Noto Serif CJK SC", "SimSun", serif;
+    font-weight: 400;
+    font-size: 44px;
+    display: grid;
+    place-items: center;
+    border-radius: 2px;
+  }
+  .seal-meta .en {
+    color: var(--fg1);
+    font-weight: 600;
+    font-size: 18px;
+  }
+  .seal-meta .reading {
+    color: var(--fg-dim);
+    font-size: 11px;
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+
+<div class="cell">
+  <span class="role">A · primary lockup</span>
+  <div class="lockup">
+    <svg class="mark" width="90" height="70" viewBox="0 0 72 56" shape-rendering="crispEdges" aria-label="dìtīng">
+      <g fill="#fea62b">
+        <rect x="16" y="0"  width="8" height="16"/>
+        <rect x="0"  y="16" width="64" height="8"/>
+        <rect x="0"  y="24" width="72" height="8"/>
+        <rect x="0"  y="32" width="72" height="8"/>
+        <rect x="8"  y="40" width="8" height="8"/>
+        <rect x="16" y="40" width="8" height="8"/>
+        <rect x="48" y="40" width="8" height="8"/>
+        <rect x="56" y="40" width="8" height="8"/>
+      </g>
+      <rect x="8" y="24" width="8" height="8" fill="#121212"/>
+      <rect x="0" y="50" width="72" height="2" fill="#fea62b"/>
+    </svg>
+    <div class="word">
+      <span class="en">dìtīng</span>
+      <span class="cjk">谛 听</span>
+    </div>
+  </div>
+  <div class="meta">
+    <b>Pixel beast.</b> 9 × 7 cells. One horn, one chunky body, two
+    leg pairs, eye reversed out. Bigger forms / fewer pixels — reads
+    as a stocky creature head-on, not a graphic abstraction.
+  </div>
+</div>
+
+<div class="cell">
+  <span class="role">B · TUI rendering</span>
+<pre class="tui">  ██
+████████
+█<span class="fg" style="color:#1e1e1e;background:#fea62b">·</span>███████
+████████
+██    ██
+▔▔    ▔▔   <span class="fg">dìtīng</span></pre>
+  <div class="meta">
+    Same three primitives in box-drawing characters. Drops directly
+    into a Rich panel <code style="color:var(--info)">border_title</code>
+    or a banner line. Pure mono — no SVG required.
+  </div>
+</div>
+
+<div class="cell">
+  <span class="role">C · 谛 seal (alt)</span>
+  <div class="seal-row">
+    <div class="seal">谛</div>
+    <div class="seal-meta">
+      <div class="en">dìtīng</div>
+      <div class="reading">dì · "discern; listen for truth"</div>
+    </div>
+  </div>
+  <div class="meta">
+    Single character mark — 谛 (dì), "discern; listen for truth".
+    Use where the lockup is too wide (favicon, app icon, inline
+    byline) or where a CJK audience is primary. The seal block
+    echoes a name-chop printed on rice paper.
+  </div>
+</div>
+
+</body>
+</html>

@@ -26,7 +26,7 @@ APs). Optional fields: `channel_width_mhz`, `noise_dbm`,
 - **THEN** `ssid` is `""` and the panel renders `(hidden)`
 
 ### Requirement: When the helper is unavailable, scan results SHALL be REDACTED rather than missing
-Diting SHALL surface the redacted-scan state explicitly with the
+diting SHALL surface the redacted-scan state explicitly with the
 placeholder `(redacted)` and a one-liner pointing the user at
 `helper/diting-tianer.app`, and SHALL NOT pretend the scan
 returned nothing or fail silently. On macOS 14.4+, a Terminal-launched

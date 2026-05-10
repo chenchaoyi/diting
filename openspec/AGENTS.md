@@ -1,6 +1,6 @@
 # OpenSpec — agent rules
 
-Diting's spec / change workflow. Read this once before touching any
+diting's spec / change workflow. Read this once before touching any
 file under `openspec/`.
 
 ## Tooling

@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css"><style>
+html,body{margin:0;padding:0;background:var(--bg-window);}
+.wrap{padding:16px 20px;}
+.row{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;}
+.col{display:flex;flex-direction:column;gap:8px;}
+.sw{width:108px;height:60px;border-radius:2px;position:relative;display:flex;align-items:flex-end;padding:6px 8px;font:11px var(--font-mono);}
+.sw .lbl{position:absolute;left:8px;top:6px;font:11px var(--font-mono);}
+.sw .hex{font:11px var(--font-mono);}
+.cap{font:11px var(--font-mono);color:var(--fg-dim);}
+.tagrow{display:flex;gap:6px;flex-wrap:wrap;}
+.kbd{font:12px var(--font-mono);padding:3px 8px;background:var(--bg-row-alt);color:var(--fg1);border:1px solid rgba(255,255,255,.08);}
+.tag{font:12px var(--font-mono);background:var(--bg-row-alt);color:var(--fg1);padding:3px 8px;letter-spacing:.02em;}
+.panelDemo{border:1px solid var(--brand-orange);background:var(--bg-panel);position:relative;padding:14px 16px 12px;color:var(--fg2);font:13px/1.55 var(--font-mono);min-height:60px;}
+.panelDemo .pt{position:absolute;top:-9px;left:14px;background:var(--bg-window);color:var(--brand-orange);font:600 12px var(--font-mono);padding:0 6px;}
+.spec{display:flex;align-items:baseline;gap:18px;font-family:var(--font-mono);}
+.spec .name{color:var(--fg-dim);font-size:11px;width:74px;}
+.spec .val{color:var(--fg1);}
+.dot{width:14px;height:14px;border-radius:999px;display:inline-block;}
+.metercell{width:10px;height:18px;display:inline-block;}
+</style></head><body><div class="wrap">
+<div class="row">
+  <div class="sw" style="background:#98e024;color:#0a1500"><div class="lbl"><b>ok</b> · green</div><span class="hex">#98e024</span></div>
+  <div class="sw" style="background:#fd971f;color:#1a0d00"><div class="lbl"><b>warn</b> · yellow</div><span class="hex">#fd971f</span></div>
+  <div class="sw" style="background:#f4005f;color:#fff"><div class="lbl"><b>alert</b> · red</div><span class="hex">#f4005f</span></div>
+  <div class="sw" style="background:#58d1eb;color:#001722"><div class="lbl"><b>info</b> · cyan</div><span class="hex">#58d1eb</span></div>
+  <div class="sw" style="background:#ae81ff;color:#150a2b"><div class="lbl"><b>accent</b> · magenta</div><span class="hex">#ae81ff</span></div>
+</div>
+<div class="cap" style="margin-top:8px;">Strict semantic role: green=ok/stable · yellow=active/fair/open · red=loss/error · cyan=current AP/link · magenta=ROAM event.</div></div></body></html>

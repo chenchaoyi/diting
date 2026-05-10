@@ -1,6 +1,6 @@
 <sub>[English](../workflow.md) · **中文**</sub>
 
-# Diting 开发流程
+# diting 开发流程
 
 一个改动从想法走到合入主干的全过程。简而言之：新分支 → 起 spec
 change → 实现 → 自测 → CI → 评审 → 归档。任何一步漏掉，PR 不合入。

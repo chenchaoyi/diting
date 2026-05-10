@@ -1,0 +1,62 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../colors_and_type.css"><style>
+html,body{margin:0;padding:0;background:var(--bg-window);}
+.wrap{padding:16px 20px;}
+.cap{font:11px var(--font-mono);color:var(--fg-dim);}
+.head, .row {
+  display:grid;
+  grid-template-columns: 110px 50px 60px 70px 90px 80px 20px;
+  column-gap:18px;
+  font:13px/1.6 var(--font-mono);
+  letter-spacing:-0.02em;
+  font-variant-numeric: tabular-nums;
+  padding:1px 4px;
+}
+.head { color:var(--fg-dim); border-bottom:1px solid rgba(255,255,255,.08); padding-bottom:4px; margin-bottom:2px; text-transform:uppercase; font-size:11px; }
+.head > span { font-size:11px; }
+.row { font-size:13px; }
+.row.cur { box-shadow: inset 3px 0 0 var(--info); }
+.row.alt { background: var(--bg-row-alt); }
+.row.unk { color: var(--fg3); }
+.ap-cur  { color: var(--info); font-weight:700; }
+.ap-alt  { color: var(--fg2); }
+.ap-unk  { color: var(--fg-dim); font-weight:700; }
+.band    { color: var(--info); }
+.rssi-ok { color: var(--ok); }
+.rssi-w  { color: var(--warn); }
+.rssi-a  { color: var(--alert); }
+.open    { color: var(--warn); font-weight:700; }
+.star    { color: var(--info); font-weight:700; }
+</style></head><body><div class="wrap">
+<div class="head">
+  <span>AP</span><span>band</span><span>ch</span><span>width</span>
+  <span>RSSI</span><span>security</span><span></span>
+</div>
+<div class="row cur">
+  <span class="ap-cur">2F-living</span>
+  <span class="band">5G</span>
+  <span>ch48</span>
+  <span>80MHz</span>
+  <span class="rssi-ok">-58 dBm</span>
+  <span>WPA2</span>
+  <span class="star">★</span>
+</div>
+<div class="row alt">
+  <span class="ap-alt">2F-living</span>
+  <span>2.4G</span>
+  <span>ch6</span>
+  <span>20MHz</span>
+  <span class="rssi-w">-72 dBm</span>
+  <span>WPA2</span>
+  <span></span>
+</div>
+<div class="row unk">
+  <span class="ap-unk">?40:fe:95</span>
+  <span>5G</span>
+  <span>ch149</span>
+  <span>80MHz</span>
+  <span class="rssi-a">-78 dBm</span>
+  <span class="open">OPEN</span>
+  <span></span>
+</div>
+<div class="cap" style="margin-top:10px;">Tabular grid · cyan-bold = current AP · dim-bold = unmapped cluster · OPEN = warn bold.</div>
+</div></body></html>

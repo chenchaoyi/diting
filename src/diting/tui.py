@@ -90,7 +90,7 @@ class ConnectionPanel(Static):
 
     def _paint(self, conn: Connection | None, inv: NetworkInventory | None = None) -> None:
         if conn is None:
-            self.update(Text(t("not associated"), style="dim italic"))
+            self.update(Text(t("(not associated)"), style="dim italic"))
             return
         assert inv is not None
         # Inventory match wins; otherwise fall through to the
@@ -2166,7 +2166,7 @@ def _health_line(results: list[ScanResult], current: Connection | None) -> Text:
     line = Text()
     line.append(t("Current link  "), style="bold dim")
     if current is None:
-        line.append(t("not associated"), style="dim italic")
+        line.append(t("(not associated)"), style="dim italic")
         return line
 
     issues: list[tuple[str, str]] = []
@@ -2208,7 +2208,7 @@ def _score_line(results: list[ScanResult], current: Connection | None) -> Text:
     line = Text()
     line.append(t("Roam score  "), style="bold dim")
     if current is None:
-        line.append(t("not associated"), style="dim italic")
+        line.append(t("(not associated)"), style="dim italic")
         return line
     current_score = _link_score(current, results, baseline=current)
     candidate = _best_roam_candidate(results, current)

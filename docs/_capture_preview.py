@@ -436,6 +436,7 @@ async def main() -> None:
         await pilot.pause(0.3)
         out = pilot.app.export_screenshot(title="diting")
     out = _fix_cjk_textlength(out)
+    out = _replace_title_font(out)
     base_map = {"ble": "preview-ble", "events": "preview-events", "wifi": "preview"}
     base = base_map.get(view, "preview")
     suffix = ".zh.svg" if i18n.get_lang() == i18n.ZH else ".svg"
@@ -471,6 +472,19 @@ def _fix_cjk_textlength(svg: str, cell_width_px: float = 12.2) -> str:
         return f'{prefix}{new_len:g}{mid}{body}{suffix}'
 
     return _TEXT_RX.sub(_rewrite, svg)
+
+
+# Textual's screenshot pipeline writes the small title-bar text
+# ("diting") into a `.terminal-XXX-title` CSS class with
+# `font-family: arial;` baked in. The design system at
+# `design/diting-design/` mandates Fira Code / JetBrains Mono on
+# any mono surface, including the snapshot title bar. Rewrite the
+# baked CSS so the rendered title matches the rest of the chrome.
+def _replace_title_font(svg: str) -> str:
+    return svg.replace(
+        "font-family: arial;",
+        "font-family: 'JetBrains Mono','Fira Code','SF Mono',Menlo,monospace;",
+    )
 
 
 if __name__ == "__main__":
