@@ -4097,17 +4097,17 @@ class WifiScopeApp(App):
 
         macOS does not roam off a 'good enough' AP (~ -75 dBm threshold,
         independent of nearby alternatives). This binding cycles the
-        WiFi radio off then on, which is the same path as
+        Wi-Fi radio off then on, which is the same path as
         click-menu-off, click-menu-on — full auto-join with Keychain
         credentials, works for both WPA personal and 802.1X Enterprise.
         """
         ok = bool(getattr(self._backend, "force_reroam", lambda: False)())
         if ok:
             self.notify(
-                t("WiFi off → on — reconnecting via auto-join (2-5 s)")
+                t("Wi-Fi off → on — reconnecting via auto-join (2-5 s)")
             )
         else:
-            self.notify(t("no WiFi interface"), severity="warning")
+            self.notify(t("no Wi-Fi interface"), severity="warning")
 
     def _build_subtitle(self) -> str:
         # Header subtitle is for state the user can't otherwise see at
