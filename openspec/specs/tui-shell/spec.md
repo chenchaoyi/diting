@@ -8,11 +8,9 @@ view-toggle mechanic that swaps Wi-Fi scan vs BLE list in place, the
 modal-screen lifecycle, and the GroupedFooter convention. Capability
 specs for the panel CONTENTS (wifi-scanning, bluetooth-scanning,
 link-health, etc.) ride on top of this layout contract.
-
 ## Requirements
-
 ### Requirement: The TUI SHALL have exactly four stacked panels in a fixed order
-`WifiScopeApp.compose()` SHALL yield, top to bottom: Header,
+`DitingApp.compose()` SHALL yield, top to bottom: Header,
 ConnectionPanel (`#conn`), EnvironmentPanel (`#env`), then EITHER
 ScanPanel (`#scan`) OR BLEPanel (`#ble`) depending on view, then
 EventsPanel (`#roam`), then GroupedFooter (`#footer`). Both Scan and
@@ -98,3 +96,4 @@ the user changes a relevant flag.
 #### Scenario: User pauses polling
 - **WHEN** the user presses `p`
 - **THEN** the subtitle updates from `view: wifi · scan 7s` to `view: wifi · scan 7s · PAUSED` immediately
+

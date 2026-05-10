@@ -9,9 +9,7 @@ future per-protocol UI views (sensor dashboards, beacon URL launchers)
 will consume the same surface. Decoders are extension points, not
 consumers — adding a new vendor-specific decoder MUST NOT touch the
 modal.
-
 ## Requirements
-
 ### Requirement: Decoders SHALL be registered functions taking a `BLEDevice` and returning a dict
 Each decoder SHALL be a callable with the signature
 `decode(d: BLEDevice) -> dict[str, Any] | None` and SHALL register
@@ -22,7 +20,7 @@ correctness — multiple decoders on the same device produce a
 key-merged dict.
 
 #### Scenario: Adding a new decoder
-- **WHEN** a contributor creates `src/wifiscope/decoders/foo.py` with `@register def decode(d): ...`
+- **WHEN** a contributor creates `src/diting/decoders/foo.py` with `@register def decode(d): ...`
 - **THEN** importing the package picks up `foo.py` and `decode_all` includes its output
 
 ### Requirement: Decoders SHALL never raise on malformed input
@@ -105,3 +103,4 @@ multi-frame protocols. SHALL NOT shotgun-decode every device.
 #### Scenario: Eddystone decoder on non-FEAA service-data
 - **WHEN** a device emits `service_data={"FE95": "..."}` (Xiaomi)
 - **THEN** the Eddystone decoder skips (UUID != FEAA)
+

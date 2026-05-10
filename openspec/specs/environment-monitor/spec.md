@@ -2,15 +2,13 @@
 
 ## Purpose
 
-Defines the RF-stir detector — wifiscope's "something changed in the
+Defines the RF-stir detector — diting's "something changed in the
 RF environment around me" signal. Computes per-BSSID rolling RSSI
 standard deviation, compares short window vs long-window adaptive
 baseline, fires `RFStirEvent` on threshold crossing. The Diagnostics
 panel's Environment line, the events ring, and the σ baseline modal
 all read from this module.
-
 ## Requirements
-
 ### Requirement: σ thresholds SHALL be defined as named constants, not magic numbers
 The detector SHALL expose its trigger constants as module-level
 names: `DEFAULT_BASELINE_WINDOW_S` (300 s), `DEFAULT_SPIKE_WINDOW_S`
@@ -75,17 +73,17 @@ on each subsequent tick while the spike is still elevated.
 ### Requirement: Calibration SHALL be loadable from a user-recorded baseline file
 The detector SHALL accept a calibration file mapping BSSID → known
 empty-room σ baseline. `load_calibration` SHALL load it; the
-`wifiscope calibrate` subcommand SHALL produce one. Calibrated
+`diting calibrate` subcommand SHALL produce one. Calibrated
 baselines SHALL take precedence over the adaptive baseline for the
 first `DEFAULT_BASELINE_WINDOW_S` after launch — until the rolling
 window has enough samples to be statistically meaningful.
 
 #### Scenario: Fresh launch with prior calibration
-- **WHEN** the user has recorded `~/.wifiscope/calibration.json` and starts wifiscope
+- **WHEN** the user has recorded `~/.diting/calibration.json` and starts diting
 - **THEN** the detector uses the calibrated baseline immediately, can fire stir events in the first 30 s of the session
 
 #### Scenario: First-ever launch, no calibration
-- **WHEN** the user has never run `wifiscope calibrate`
+- **WHEN** the user has never run `diting calibrate`
 - **THEN** the detector silently falls back to adaptive-baseline-only and the first 5 minutes of the session are "warming up" — events can fire but baselines are still settling
 
 ### Requirement: Wording SHALL frame stir as "something changed", never as a presence claim
@@ -100,3 +98,4 @@ neighbour AP, and a OS-driven background scan all produce identical
 #### Scenario: User asks "is this presence detection?"
 - **WHEN** they read the Environment line and the events strip
 - **THEN** every label says "stir" / "active" / "RF disturbance" — neutral correlation language, no presence claim
+

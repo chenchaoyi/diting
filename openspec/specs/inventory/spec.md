@@ -2,15 +2,13 @@
 
 ## Purpose
 
-Defines how wifiscope turns a flat list of BSSIDs into named physical
+Defines how diting turns a flat list of BSSIDs into named physical
 APs. Most controllers expose only a per-AP "management MAC" (one per
 device), but each radio / VAP advertises a different BSSID — derived
 from the management MAC by varying the last octet. This module's job
 is the derivation, plus loading the user-supplied `aps.yaml` that
 maps management MACs to friendly location names.
-
 ## Requirements
-
 ### Requirement: AP attribution SHALL try four resolution paths in order
 For each scanned BSSID, `NetworkInventory.resolve(bssid)` SHALL try
 in order:
@@ -46,11 +44,11 @@ back to cluster-label-only attribution. SHALL NOT crash, SHALL NOT
 prompt the user.
 
 #### Scenario: First-time user, no aps.yaml
-- **WHEN** the user runs wifiscope without ever creating `aps.yaml`
+- **WHEN** the user runs diting without ever creating `aps.yaml`
 - **THEN** the panel renders cluster labels (`?ab`, `?cd`, ...) for every BSSID and the tool functions normally
 
 ### Requirement: Inventory SHALL ALSO carry the Wi-Fi-OUI-vendor map
-`load_wifi_ouis` SHALL load `src/wifiscope/data/wifi_ouis.json` (the
+`load_wifi_ouis` SHALL load `src/diting/data/wifi_ouis.json` (the
 curated subset of the IEEE OUI registry plus common Apple BT MAC
 ranges) and `lookup_ap_vendor(bssid)` SHALL return the vendor name
 for a BSSID's OUI prefix. This is what feeds the Connection panel's
@@ -73,7 +71,7 @@ prefix, and across re-runs of the tool. SHALL NOT include
 session-specific salt.
 
 #### Scenario: Same AP, two sessions
-- **WHEN** the user runs wifiscope today and again tomorrow against the same AP at `aa:bb:cc:de:ad:be`
+- **WHEN** the user runs diting today and again tomorrow against the same AP at `aa:bb:cc:de:ad:be`
 - **THEN** the cluster label is identical in both sessions (`?be`)
 
 ### Requirement: BSSID format normalisation SHALL be lowercase colon-separated
@@ -85,3 +83,4 @@ analyzer SHALL all use this canonical form.
 #### Scenario: Mixed-case input
 - **WHEN** `aps.yaml` has `mgmt: "AA:BB:CC:11:22:53"` and scan returns `aa:bb:cc:11:22:5E`
 - **THEN** the lookup matches (case folded on both sides) and the panel renders `aa:bb:cc:11:22:5e`
+

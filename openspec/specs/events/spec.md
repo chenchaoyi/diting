@@ -3,13 +3,11 @@
 ## Purpose
 
 Defines the unified event vocabulary every diagnostic surface in
-wifiscope shares — the in-memory ring buffer the TUI's events strip
-and modal browser read from, the JSONL stream `wifiscope monitor`
+diting shares — the in-memory ring buffer the TUI's events strip
+and modal browser read from, the JSONL stream `diting monitor`
 writes, and the analyzer consumes. One schema, five event types, one
 source of truth for what "event" means across the tool.
-
 ## Requirements
-
 ### Requirement: Five event types SHALL share one schema and one ring
 The system SHALL emit exactly five event types — `roam`, `rf_stir`,
 `latency_spike`, `loss_burst`, `link_state` — into a single
@@ -22,8 +20,8 @@ sixth event type MUST file an ADDED Requirement on this capability.
 - **WHEN** the user looks at the bottom Events strip
 - **THEN** they see the most-recent N events drawn from the ring, regardless of which producer (poller, latency watcher, environment monitor) emitted them
 
-#### Scenario: Headless `wifiscope monitor`
-- **WHEN** the user runs `wifiscope monitor > events.jsonl`
+#### Scenario: Headless `diting monitor`
+- **WHEN** the user runs `diting monitor > events.jsonl`
 - **THEN** every event flowing through the same ring also lands as one JSONL line on stdout, byte-identical to what the TUI's `--log` would write
 
 ### Requirement: Each event SHALL be a frozen dataclass with an explicit timestamp
@@ -56,7 +54,7 @@ aps.yaml) SHALL pass through with `ensure_ascii=False` so a Chinese
 SSID like `咖啡馆` lands readable in the log instead of `哖...`.
 
 #### Scenario: ZH UI, Chinese SSID
-- **WHEN** the user runs `wifiscope --lang zh --log /tmp/wifi.jsonl`, gets a roam event from `咖啡馆 → Office`
+- **WHEN** the user runs `diting --lang zh --log /tmp/wifi.jsonl`, gets a roam event from `咖啡馆 → Office`
 - **THEN** the JSONL line is `{"type":"roam","previous_ssid":"咖啡馆", ...}` — keys English, values raw UTF-8
 
 ### Requirement: Timestamps in the JSONL stream SHALL be local-TZ ISO-8601 with offset
@@ -81,3 +79,4 @@ the JSONL log SHALL NOT carry it.
 #### Scenario: User roams from home Wi-Fi to office Wi-Fi
 - **WHEN** the connection changes
 - **THEN** a `NetworkChangeEvent` reaches the latency poller (which resets gateway/WAN probes), AND a separate `RoamEvent` reaches the user-visible ring; the analyzer sees only the `RoamEvent`
+

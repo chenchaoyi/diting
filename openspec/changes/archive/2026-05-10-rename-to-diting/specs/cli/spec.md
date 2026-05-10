@@ -1,3 +1,11 @@
+## RENAMED Requirements
+
+- FROM: ### Requirement: `wifiscope` with no subcommand SHALL launch the TUI
+- TO: ### Requirement: `diting` with no subcommand SHALL launch the TUI
+
+- FROM: ### Requirement: `wifiscope monitor` SHALL emit JSONL on stdout with no other output
+- TO: ### Requirement: `diting monitor` SHALL emit JSONL on stdout with no other output
+
 ## MODIFIED Requirements
 
 ### Requirement: `diting` with no subcommand SHALL launch the TUI
