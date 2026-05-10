@@ -83,6 +83,13 @@
 - **`Wi-Fi` / `WiFi` 用法归一** —— 所有面向用户的散文（README、
   帮助弹窗、re-roam 弹窗提示）统一为 `Wi-Fi`。内部类名
   （`WiFiBackend`、`WiFiPoller`）保留不动。
+- **README 现在纯面向用户。** 偏向贡献者的几节
+  （`Specifications`、`Development`、`How it works`）整体搬到了
+  仓库根目录新增的 [`DEVELOPMENT.md`](../../DEVELOPMENT.md)，
+  中文镜像在 [`DEVELOPMENT.md`](DEVELOPMENT.md)。README 在靠近底部
+  的位置只留一条到 DEVELOPMENT.md 的指针。能力索引、开发命令、
+  双语纪律、BSSID 解析算法深度细节都在新文档里；没有删任何内容，
+  只是搬了位置。
 
 ## [0.7.0] — 2026-05-07
 
