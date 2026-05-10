@@ -1,3 +1,8 @@
+## RENAMED Requirements
+
+- FROM: ### Requirement: Both `--log` and `wifiscope monitor` SHALL produce byte-identical streams
+- TO: ### Requirement: Both `--log` and `diting monitor` SHALL produce byte-identical streams
+
 ## MODIFIED Requirements
 
 ### Requirement: Both `--log` and `diting monitor` SHALL produce byte-identical streams

@@ -7,9 +7,7 @@ become `BLEDevice` instances, how vendors get resolved, how rotated
 identifiers fold into a single visible row, and what the panel shows
 when nothing is identifiable. Sits between `macos-helper` (which emits
 the JSONL stream) and `ble-decoders` (which interpret payload bytes).
-
 ## Requirements
-
 ### Requirement: Each helper JSONL line SHALL produce or update exactly one `BLEDevice`
 The Python poller SHALL parse one helper JSONL line per call and merge
 it into a `dict[identifier, BLEDevice]` keyed by lowercase
@@ -131,9 +129,10 @@ busy environment churning through random-MAC iPhones cannot leak
 history forever.
 
 #### Scenario: Long session with rotating identifiers
-- **WHEN** the user runs wifiscope in a busy office for 8 hours with iPhones cycling through 1000 distinct random MACs
+- **WHEN** the user runs diting in a busy office for 8 hours with iPhones cycling through 1000 distinct random MACs
 - **THEN** `BLEHistory` holds at most ~300 deques (corresponding to currently-visible devices), not 1000
 
 #### Scenario: Connected peripheral
 - **WHEN** the snapshot includes a connected Magic Keyboard with `rssi_dbm=None`
 - **THEN** `BLEHistory.record` skips the sample silently — no None-tagged entries enter the buffer
+

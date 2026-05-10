@@ -8,9 +8,7 @@ the system degrades when permissions / IE data are missing. The
 scanner sits at the bottom of the diagnostic stack; the Diagnostics
 panel, the events log, and the analyzer all assume the scan output
 matches this contract.
-
 ## Requirements
-
 ### Requirement: Each scanned BSSID SHALL carry RSSI, channel, band, security mode, and BSSID itself
 A scan result row SHALL include: `rssi_dbm` (int, negative), `channel`
 (int), `band` (one of `2.4G`, `5G`, `6G`), `security` (one of `OPEN`,
@@ -28,15 +26,15 @@ APs). Optional fields: `channel_width_mhz`, `noise_dbm`,
 - **THEN** `ssid` is `""` and the panel renders `(hidden)`
 
 ### Requirement: When the helper is unavailable, scan results SHALL be REDACTED rather than missing
-Wifiscope SHALL surface the redacted-scan state explicitly with the
+Diting SHALL surface the redacted-scan state explicitly with the
 placeholder `(redacted)` and a one-liner pointing the user at
-`helper/wifiscope-helper.app`, and SHALL NOT pretend the scan
+`helper/diting-tianer.app`, and SHALL NOT pretend the scan
 returned nothing or fail silently. On macOS 14.4+, a Terminal-launched
 Python process cannot earn Location Services TCC and CoreWLAN scans
 return rows with `ssid=None` and `bssid=None`.
 
 #### Scenario: First-run user without granted helper
-- **WHEN** wifiscope launches and the helper is uninstalled or
+- **WHEN** diting launches and the helper is uninstalled or
   ungranted
 - **THEN** the scan panel renders rows with `(redacted)` SSID/BSSID and the diagnostics row points the user at the helper bundle
 
@@ -92,3 +90,4 @@ with the active link.
 #### Scenario: Scan misses the associated AP
 - **WHEN** the scan returns 8 BSSIDs but none match the current `Connection.bssid`
 - **THEN** the Nearby list shows 9 rows — the 8 scanned plus a synthetic "current" row populated from the Connection panel's data
+

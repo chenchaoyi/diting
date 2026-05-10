@@ -2,15 +2,13 @@
 
 ## Purpose
 
-Defines the `wifiscope analyze <log.jsonl>` post-processor — what
+Defines the `diting analyze <log.jsonl>` post-processor — what
 shape the report takes, which heuristics fire on which patterns,
 and how it stays a pure rule-based tool (no LLM, no network calls).
 Users run it after a problematic session to get a checklist of what
 went wrong; the heuristics are pinned by tests so each rule's
 trigger condition is concrete.
-
 ## Requirements
-
 ### Requirement: Analyze SHALL be pure rules, no LLM, no network
 The analyzer SHALL produce its report from local JSONL alone, with
 no external API calls and no statistical model. Each heuristic SHALL
@@ -19,7 +17,7 @@ attached. The user SHALL be able to read the source and predict the
 output for a given log.
 
 #### Scenario: Offline analysis
-- **WHEN** the user runs `wifiscope analyze /tmp/wifi.jsonl` with airplane mode on
+- **WHEN** the user runs `diting analyze /tmp/wifi.jsonl` with airplane mode on
 - **THEN** the report renders identically to an online run
 
 ### Requirement: The report SHALL open with span / counts / connection timeline
@@ -81,3 +79,4 @@ takeaway — the rest is context.
 #### Scenario: Several issues
 - **WHEN** three heuristics fire
 - **THEN** the report ends with a TODO section containing three bulleted `todo` lines, one per Insight
+
