@@ -92,6 +92,14 @@ behaviours between releases.
 - **`Wi-Fi` / `WiFi` normalisation** across user-visible prose
   (README, help modal, force-reroam toast). Internal class
   names (`WiFiBackend`, `WiFiPoller`) intentionally untouched.
+- **README is now purely user-facing.** Contributor-leaning
+  sections (`Specifications`, `Development`, `How it works`)
+  moved into a new [`DEVELOPMENT.md`](DEVELOPMENT.md) at repo
+  root with a ZH mirror at [`docs/zh/DEVELOPMENT.md`](docs/zh/DEVELOPMENT.md).
+  README links to it once near the bottom. The capability index,
+  dev commands, bilingual discipline, and BSSID-resolution
+  algorithm deep-dive all live in the new doc; nothing was
+  deleted, only relocated.
 
 ## [0.7.0] — 2026-05-07
 

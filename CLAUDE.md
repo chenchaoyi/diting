@@ -25,7 +25,8 @@ canonical `openspec/specs/<capability>/spec.md`.
 - Agent rules: `openspec/AGENTS.md` (read this once before touching
   anything in `openspec/`)
 - Capability index + active changes: `openspec/README.md`
-- Contributor-facing how-to: `docs/workflow.md` (中文：`docs/zh/workflow.md`)
+- Contributor entry point: `DEVELOPMENT.md` (中文：`docs/zh/DEVELOPMENT.md`)
+- SDD process detail: `docs/workflow.md` (中文：`docs/zh/workflow.md`)
 - Test plan: `tests/TESTING.md` (中文：`docs/zh/TESTING.md`) — canonical
 - PR template: `.github/pull_request_template.md`
 
