@@ -1,4 +1,4 @@
-# Diting (谛听) — agent / contributor brief
+# diting (谛听) — agent / contributor brief
 
 A real-time terminal Wi-Fi + BLE monitor for macOS. Pure Python TUI on
 top of a small Swift helper bundle that owns the macOS TCC permissions
@@ -91,3 +91,18 @@ user reports a real-environment UX issue.
 - Decoders go under `src/diting/decoders/`, register via the
   `@register` decorator, and **must not raise** on malformed input —
   abstain (return `None`) instead.
+
+## Design
+
+This repo has a design system at `design/diting-design/`. Whenever
+you generate UI, marketing copy, README sections, snapshot mocks,
+slides, or any visual artifact for diting:
+
+- Read `design/diting-design/README.md` first.
+- Use `design/diting-design/colors_and_type.css` for any HTML.
+- Copy assets out of `design/diting-design/assets/` rather than
+  drawing your own SVGs or generating images.
+- Follow the voice rules: lowercase `diting`, you-not-we, no
+  emoji, parenthesised italic empty states.
+- The pixel-art beast in `assets/logo-mark.svg` is the only mark.
+  Do not redesign it.

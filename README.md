@@ -48,7 +48,7 @@ nothing else. Bluetooth Settings shows what you've paired, never
 what's around. macOS has no surface at all for "is my gateway
 healthy" or "did something just change in the room."
 
-Diting fills that gap. It runs in your terminal as a four-panel
+diting fills that gap. It runs in your terminal as a four-panel
 TUI on top of the same APIs Apple uses internally:
 
 - **Wi-Fi visibility.** Every BSSID in range, grouped by physical

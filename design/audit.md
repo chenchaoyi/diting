@@ -23,13 +23,13 @@ How to triage: edit each `disposition` cell to `accept` / `defer` / `reject`. Ad
 
 | # | file:line | rule | severity | proposed fix | disposition |
 |---|---|---|---|---|---|
-| V1 | `README.md:51` | "always lowercase in running prose" (SKILL.md L20; README.md "Person & casing") | should-fix | `Diting fills that gap.` → `diting fills that gap.` | accept |
-| V2 | `docs/workflow.md:1` | same | should-fix | `# Diting Workflow` → `# diting Workflow` (or `# diting · workflow`) | accept |
-| V3 | `docs/workflow.md:219` | same | should-fix | `Diting ships a Chinese audience as a first-class concern` → `diting ships …` | accept |
-| V4 | `docs/zh/workflow.md:3` | same — CJK title with capital | should-fix | `# Diting 开发流程` → `# diting 开发流程` | accept |
-| V5 | `openspec/AGENTS.md:3` | same | should-fix | `Diting's spec / change workflow.` → `diting's spec / change workflow.` | accept |
-| V6 | `CLAUDE.md:1` | same | should-fix | `# Diting (谛听) — agent / contributor brief` → `# diting (谛听) — agent / contributor brief` | accept |
-| V7 | `openspec/specs/wifi-scanning/spec.md:29` | same | should-fix | `Diting SHALL surface the redacted-scan state` → `diting SHALL surface …` | accept |
+| V1 | `README.md:51` | "always lowercase in running prose" (SKILL.md L20; README.md "Person & casing") | should-fix | `Diting fills that gap.` → `diting fills that gap.` | applied |
+| V2 | `docs/workflow.md:1` | same | should-fix | `# Diting Workflow` → `# diting Workflow` (or `# diting · workflow`) | applied |
+| V3 | `docs/workflow.md:219` | same | should-fix | `Diting ships a Chinese audience as a first-class concern` → `diting ships …` | applied |
+| V4 | `docs/zh/workflow.md:3` | same — CJK title with capital | should-fix | `# Diting 开发流程` → `# diting 开发流程` | applied |
+| V5 | `openspec/AGENTS.md:3` | same | should-fix | `Diting's spec / change workflow.` → `diting's spec / change workflow.` | applied |
+| V6 | `CLAUDE.md:1` | same | should-fix | `# Diting (谛听) — agent / contributor brief` → `# diting (谛听) — agent / contributor brief` | applied |
+| V7 | `openspec/specs/wifi-scanning/spec.md:29` | same | should-fix | `Diting SHALL surface the redacted-scan state` → `diting SHALL surface …` | applied |
 | V8 | `README.md:79` | "you-not-we" (README.md "Person & casing") | should-fix | `for what we deliberately do not claim.` → `for what diting deliberately does not claim.` | accept |
 | V9 | `README.md:294` | same | should-fix | `which we will not do.` → `which diting will not do.` | accept |
 | V10 | `README.md:298` | same | should-fix | `We surface a binary` → `It surfaces a binary` (subject is the Environment line) | accept |
