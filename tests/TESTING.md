@@ -47,8 +47,195 @@ should match it case-for-case.
 
 | Layer | Where | What it proves |
 |---|---|---|
-| Unit  | `tests/test_network.py`, `test_helper.py`, `test_tui_helpers.py`, `test_ble.py`, `test_i18n.py` | Each pure function behaves as specified across its full input space, including the regression cases from real bugs. |
-| Smoke | `tests/test_tui_smoke.py` | The Textual App can be composed, mounted, driven through every binding (including the new `n` view toggle), and unmounted, without exceptions. Uses a `_FakeBackend` that returns deterministic data. |
+| Unit  | `tests/test_*.py` (excluding tui_smoke) | Each pure function behaves as specified across its full input space, including the regression cases from real bugs. |
+| Smoke | `tests/test_tui_smoke.py` | The Textual App can be composed, mounted, driven through every binding, and unmounted, without exceptions. Uses a `_FakeBackend` that returns deterministic data. |
+| Snapshot regression | `scripts/tui_snapshot.py --mode regression` | 11 scenarios exercise the rendered TUI under fixed synthetic inputs; assertions verify panel content, modal layout, and decoder output. CI uploads `snapshot-output/` on failure. |
+
+---
+
+## 2.5. Spec coverage matrix
+
+For every Requirement under `openspec/specs/<name>/spec.md`, this
+matrix points to the test that exercises it. Entries marked
+**(review-enforced)** are conventions whose violation can't be caught
+by a unit test; reviewers check them in PR. Entries marked
+**(regression-only)** are exercised through `scripts/tui_snapshot.py
+--mode regression` rather than direct pytest cases. **(gap)** flags
+a Requirement with no current automated coverage — file an entry in
+the roadmap to close it.
+
+When a new Requirement lands in any spec, an entry MUST be added here
+(and a test, unless review-enforced).
+
+### `analyze`
+
+| Requirement | Test |
+|---|---|
+| Pure rules, no LLM, no network | (review-enforced — code imports no network libs) |
+| Report opens with span / counts / connection timeline | `test_analyze.py::test_render_includes_path_and_event_counts`, `::test_analyze_records_associations_and_roams` |
+| Insights produced by named heuristics with explicit triggers | `test_analyze.py::test_repeated_disassociates_warns`, `::test_loss_burst_present_warns_real_loss`, `::test_short_session_triggers_low_data_hint`, `::test_timezone_mismatch_heuristic_triggers_on_hour_jump`, `::test_single_ap_medium_only_triggers_redundancy_hint`, `::test_latency_without_loss_triggers_jitter_hint` |
+| Loss-pct rendering auto-detects 0..1 fractions vs 0..100 percent | `test_analyze.py::test_loss_burst_present_warns_real_loss` (covers the scaled-loss path) |
+| Duration formatting honesty (`30s`, never `1 min`) | `test_tui_helpers.py::test_format_duration_short_buckets`, `::test_format_duration_short_negative_clamps_to_zero` |
+| TODO section gates on whether any insight fires | `test_analyze.py::test_render_handles_zero_events`, `::test_empty_log_warns` |
+
+### `ble-decoders`
+
+| Requirement | Test |
+|---|---|
+| Decoders are `@register`-decorated functions | `test_decoders.py::test_registry_has_built_in_decoders` |
+| Decoders never raise on malformed input | `test_decoders.py::test_decode_all_swallows_decoder_exceptions`; per-protocol `test_*_skips_truncated_*`, `test_*_skips_when_too_short` |
+| Output keys protocol-namespaced | (review-enforced — convention checked in code review; canonical-decode tests assert namespaced keys) |
+| Bundled decoders cover the public-spec protocols | iBeacon: `test_ibeacon_canonical_decode`; Eddystone: `test_eddystone_url_canonical_decode`, `::test_eddystone_uid_decode`, `::test_eddystone_tlm_decode`, `::test_eddystone_eid_frame_recognised_but_not_decoded`; Apple Continuity: `test_nearby_info_canonical_short_form`, `::test_find_my_short_form_minimum_payload`, `::test_handoff_canonical_decode`, `::test_handoff_chained_with_nearby_info_decodes_both`; MS CDP: `test_ms_device_beacon_real_capture`, `::test_swift_pair_decodes_utf8_model_name`; Ruuvi: `test_ruuvi_format5_canonical_decode` |
+| No semantic claims for unstable bits | (review-enforced — bundled decoders surface raw byte hex, no flag interpretations) |
+| Decoders gate on identifying bytes | `test_decoders.py::test_ibeacon_skips_non_apple_cid`, `::test_nearby_info_skips_non_apple_cid`, `::test_eddystone_skips_non_feaa_service_data`, `::test_ms_device_beacon_skips_when_subtype_is_swift_pair`, `::test_ruuvi_skips_non_ruuvi_cid` |
+
+### `ble-detail-modal`
+
+| Requirement | Test |
+|---|---|
+| Rows selectable by identifier, stable across snapshots | `tui_snapshot.py::ble_detail_decoded` (regression-only) |
+| Keyboard `up` / `down` / `enter` / `i` priority bindings | `tui_snapshot.py::ble_detail_decoded` walks cursor with `down` × N then `i` (regression-only) |
+| Mouse click → select-and-inspect | (gap — manual / future regression) |
+| Modal renders every BLEDevice field + decoded payload | `tui_snapshot.py::ble_detail_decoded` asserts `Decoded section header`, `iBeacon UUID rendered`, `iBeacon major+minor` (regression-only) |
+| Activity section hides ad_count for connected peripherals | (review-enforced; visible in `live_ble_detail` explore captures) |
+| RSSI sparkline when ≥ 2 history samples | `test_tui_helpers.py::test_rssi_sparkline_empty_history_returns_empty`, `::test_rssi_sparkline_single_sample_returns_empty`, `::test_rssi_sparkline_constant_rssi_renders_flat_line`, `::test_rssi_sparkline_maps_extremes_to_top_and_bottom_blocks`, `::test_rssi_sparkline_renders_one_char_per_sample` (rendering); `test_ble.py::test_history_records_and_returns_samples_in_order` (data path) |
+| Modal close (Esc / `i` / `q`) doesn't mutate selection | (manual; modal binding is declarative) |
+| Distance estimate labelled "rough free-space" | `test_tui_helpers.py::test_free_space_distance_m_at_one_meter_returns_one`, `::test_free_space_distance_m_doubles_at_minus_six_db`, `::test_free_space_distance_m_zero_rssi_returns_none` |
+
+### `bluetooth-scanning`
+
+| Requirement | Test |
+|---|---|
+| Each helper JSONL line → exactly one BLEDevice | `test_ble.py::test_parse_advertisement_populates_all_fields`, `::test_parse_subsequent_advertisement_carries_history`, `::test_line_without_id_field_skipped` |
+| Vendor resolution: 5-step deterministic chain | `test_ble.py::test_vendor_fallback_via_member_uuid_when_manufacturer_id_absent`, `::test_manufacturer_id_takes_priority_over_member_uuid_vendor`, `::test_service_data_uuid_resolves_vendor_when_service_uuids_empty`, `::test_advertising_vendor_falls_back_to_name_pattern`, `::test_vendor_id_carries_forward_when_scan_response_omits_manufacturer_data` |
+| Connected peripherals via separate code path | `test_ble.py::test_connected_line_routes_to_connected_dict_only`, `::test_connected_entries_skip_advertising_ttl`, `::test_connected_snapshot_sentinel_prunes_disappeared_entries` |
+| Rotated-identifier merge folds privacy-rotated rows | `test_ble.py::test_merge_folds_same_vendor_and_name_within_rssi_window`, `::test_merge_keeps_distant_rssi_separate`, `::test_merge_sorts_by_rssi_descending` |
+| `(anonymous)` vs `(unknown)` distinction | `test_ble.py::test_merge_does_not_combine_anonymous_devices` (data path); `tui_snapshot.py::ble_normal` (rendering) |
+| RSSI smoothing for stable sort order | `test_ble.py::test_rssi_smooth_seeds_from_first_sample`, `::test_rssi_smooth_dampens_packet_jitter`, `::test_merge_sort_key_uses_smoothed_rssi` |
+| Schema-4 raw fields plumbed onto BLEDevice | `test_ble.py::test_schema_4_raw_passthrough_fields_populate`, `::test_schema_4_fields_default_when_helper_omits`, `::test_schema_4_fields_carry_forward_on_scan_response` |
+| BLE history capped + pruned | `test_ble.py::test_history_records_and_returns_samples_in_order`, `::test_history_drops_none_rssi`, `::test_history_caps_at_maxlen`, `::test_history_get_unknown_device_returns_empty`, `::test_history_expire_drops_devices_not_in_set` |
+
+### `cli`
+
+| Requirement | Test |
+|---|---|
+| `wifiscope` no-subcommand launches TUI | (manual — App boot covered by `test_tui_smoke.py::test_app_boots_and_quits`) |
+| Five subcommands: `once` / `watch` / `monitor` / `calibrate` / `analyze` | (gap — no integration test of the dispatch table; subcommand internals are tested individually) |
+| `--lang en|zh` overrides env / locale | `test_i18n.py::test_resolve_cli_override_wins_over_env`, `::test_resolve_no_override_uses_env`, `::test_resolve_rejects_unknown_cli_value` |
+| `--log [PATH]` enables JSONL logging with optional default path | `test_event_log.py::test_default_log_path_is_timestamped_jsonl`, `::test_resolve_log_path_cli_no_value_uses_default`, `::test_resolve_log_path_cli_explicit_path_wins`, `::test_resolve_log_path_env_auto_uses_default`, `::test_resolve_log_path_env_blank_disables`, `::test_extract_log_arg_no_value_returns_sentinel` |
+| TUI exit prints analyze tip when `--log` was used | (gap — exit-hint string isn't covered by an automated assertion) |
+| `wifiscope monitor` emits JSONL on stdout, no banner | `test_event_log.py::test_to_path_writes_appendable_jsonl` (event format); banner-cleanliness is manual |
+| `--config <PATH>` overrides aps.yaml search | `test_network.py::test_resolve_config_path_env_override_wins`, `::test_resolve_config_path_no_env_falls_through_to_default` |
+
+### `environment-monitor`
+
+| Requirement | Test |
+|---|---|
+| σ thresholds defined as named constants | (review-enforced — STIR legend pulls from `DEFAULT_SPIKE_RATIO` / `DEFAULT_SPIKE_MIN_DB` at render time; `test_environment.py::test_sigma_above_threshold_fires_event` indirectly verifies the constants are wired correctly) |
+| Spike fires only when ratio AND floor both exceeded | `test_environment.py::test_sigma_above_threshold_fires_event`, `::test_sigma_below_threshold_no_event` |
+| Three fusion modes (co_located / spatial_channel / ignored) | `test_environment.py::test_co_located_vs_spatial_channel_classification`, `::test_redundancy_fusion_makes_two_co_located_events_high_confidence`, `::test_single_co_located_event_is_medium_confidence`, `::test_spatial_channel_event_uses_ap_location_label`, `::test_aps_below_minus_85_excluded` |
+| Cooldown + rearm prevents repeat events | (gap — no direct cooldown / rearm test; behaviour is observed indirectly through fusion-confidence tests) |
+| Calibration loadable from file | `test_environment.py::test_calibration_overrides_adaptive_baseline`, `::test_calibration_round_trip`, `::test_load_calibration_returns_empty_dict_on_missing_file` |
+| Wording: correlation, not presence | (review-enforced — no string in `i18n.py` asserts "person" / "motion" / "presence") |
+
+### `event-log`
+
+| Requirement | Test |
+|---|---|
+| `--log` and `wifiscope monitor` produce byte-identical streams | `test_event_log.py::test_to_path_writes_appendable_jsonl`, `::test_unicode_user_strings_survive_readable` (single shared writer class) |
+| Writer flushes after every event | `test_event_log.py::test_line_buffered_writes_are_visible_before_close` |
+| atexit hook closes writer cleanly | (gap — no direct test; behaviour validated by `test_line_buffered_writes_are_visible_before_close`) |
+| JSONL keys English regardless of UI language | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
+| Timestamps local-TZ ISO-8601 with offset | `test_event_log.py::test_timestamps_are_iso_utc`, `::test_naive_datetime_treated_as_local_not_utc` |
+| Writer accepts `None` as no-op | `test_event_log.py::test_disabled_logger_is_a_no_op` |
+| `connection_update` is log-only (not in EventRing) | `test_event_log.py::test_connection_update_emits_associated_on_first_poll`, `::test_connection_update_silent_when_first_poll_is_disassociated`, `::test_connection_update_emits_disassociate_on_drop`, `::test_connection_update_does_not_emit_on_bssid_to_bssid_change` |
+
+### `events`
+
+| Requirement | Test |
+|---|---|
+| Five event types share one schema and ring | `test_event_log.py::test_emit_roam_includes_kind_when_supplied`, `::test_emit_latency_spike_carries_target_and_rtt`, `::test_emit_loss_burst_carries_lost_in_window`, `::test_emit_link_state_dataclass_passthrough`, `::test_emit_network_change_carries_router_ip_transition` |
+| Each event a frozen dataclass with timestamp | (compiler/dataclass-enforced; verified at construction in test files that build them) |
+| EventRing size-bounded, single-thread async | (gap — no direct EventRing-cap test; ring is owned by App in production) |
+| JSONL serialisation uses English keys | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
+| Timestamps local-TZ ISO with offset | `test_event_log.py::test_timestamps_are_iso_utc`, `::test_naive_datetime_treated_as_local_not_utc` |
+| `NetworkChangeEvent` is control-plane, not user-visible | `test_event_log.py::test_emit_network_change_carries_router_ip_transition` (the writer accepts it); user-visible-routing absence is review-enforced |
+
+### `i18n`
+
+| Requirement | Test |
+|---|---|
+| Language resolved exactly once at startup | `test_i18n.py::test_detect_explicit_wifiscope_lang_wins_over_locale`, `::test_detect_zh_from_lang_env`, `::test_detect_zh_from_lc_all_overrides_lang`, `::test_detect_falls_back_to_english`, `::test_detect_ignores_invalid_wifiscope_lang_value`, `::test_resolve_cli_override_wins_over_env`, `::test_resolve_no_override_uses_env`, `::test_resolve_rejects_unknown_cli_value`, `::test_set_lang_rejects_unknown_value` |
+| User strings go through `t()` | `test_i18n.py::test_t_returns_english_when_lang_is_english`, `::test_t_falls_back_to_english_when_zh_key_missing`, `::test_t_substitutes_placeholders`, `::test_t_substitutes_in_english_too` (`t()` behaviour); review-enforced for "no hardcoded strings" coverage |
+| Column-aligned widgets use `pad_cells` / `fit_cells` | `test_i18n.py::test_pad_cells_pads_ascii_to_target_width`, `::test_pad_cells_treats_cjk_as_two_cells_each`, `::test_pad_cells_returns_unchanged_if_already_wide`, `::test_pad_cells_handles_mixed_ascii_and_cjk` (note: `fit_cells` itself has no direct test — gap) |
+| JSONL keys stay English in ZH UI | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
+| Acronyms (SSID/BSSID/RSSI/...) untranslated | (review-enforced — catalog convention) |
+| Catalog `{placeholder}` parity preserved | (review-enforced — would surface as KeyError at render) |
+
+### `inventory`
+
+| Requirement | Test |
+|---|---|
+| Four-step AP attribution chain | `test_network.py::test_radio_overrides_win_over_rule_match`, `::test_radio_overrides_case_insensitive`, `::test_resolve_primary_rule`, `::test_resolve_secondary_rule_cross_oui`, `::test_resolve_three_aps_in_one_oui_do_not_collapse`, `::test_resolve_outside_window_returns_none`, `::test_cluster_label_groups_chip` (fallback) |
+| `aps.yaml` optional, tool runs without it | `test_network.py::test_load_inventory_missing_file_returns_empty` |
+| Inventory carries Wi-Fi-OUI vendor map | `test_network.py::test_lookup_ap_vendor_known_oui_returns_name`, `::test_lookup_ap_vendor_unknown_oui_returns_none`, `::test_lookup_ap_vendor_invalid_input_returns_none`, `::test_lookup_ap_vendor_accepts_custom_map`, `::test_load_wifi_ouis_ships_xiaomi`, `test_ble.py::test_load_ouis_ships_apple_magic_keyboard_oui` |
+| Cluster labels stable across sessions | `test_network.py::test_cluster_label_groups_chip`, `::test_cluster_label_separates_unrelated`, `::test_cluster_label_none_or_malformed` |
+| BSSID format normalised (lowercase, colon-separated) | `test_network.py::test_format_bssid_known_with_band`, `::test_format_bssid_unknown_passthrough`, `::test_format_bssid_none`, `test_ble.py::test_lookup_oui_vendor_dash_separated_mac`, `::test_lookup_oui_vendor_colon_separated_mac` |
+
+### `link-health`
+
+| Requirement | Test |
+|---|---|
+| Gateway via ICMP, WAN via TCP/53 | `test_latency.py::test_ping_once_records_rtt`, `::test_parse_ping_time_ms_decimal`, `::test_parse_ping_time_ms_integer` (ICMP); `::test_tcp_probe_records_rtt_on_successful_connect`, `::test_tcp_probe_loss_on_timeout`, `::test_tcp_probe_loss_on_connection_refused` (TCP) |
+| Rolling 60s window, monotonic clock eviction | `test_latency.py::test_aggregate_yields_median_loss_and_jitter`, `::test_aggregate_window_actually_drops_old_samples`, `::test_aggregate_loss_pct_in_zero_to_hundred_range`, `::test_aggregate_empty_returns_none_fields` |
+| Network change → probe reset | (gap — `NetworkChangeEvent` is plumbed; reset behaviour observed via DNS-refresh tests `test_dns_refresh_runs_on_cadence`) |
+| Loss burst + latency spike events | `test_latency.py::test_detect_latency_spike_requires_both_thresholds`, `::test_detect_loss_burst_three_of_last_five`, `::test_detect_loss_burst_one_loss_does_not_fire` |
+| WAN-only outage distinguishable from full link loss | `test_latency.py::test_wan_skipped_reason_dns_eq_gateway`, `::test_wan_skipped_reason_no_dns` |
+
+### `macos-helper`
+
+| Requirement | Test |
+|---|---|
+| Helper ships as `.app` bundle, cdhash-keyed TCC grants | (manual — bundle build path; tested by users at install) |
+| Helper exposes discrete subcommands as integration surface | `test_helper.py::test_has_ble_scan_subcommand_true_when_help_lists_it`, `::test_has_ble_scan_subcommand_false_for_pre_0_5_helper`, `::test_has_bluetooth_permission_true_on_zero_exit`, `::test_has_bluetooth_permission_false_on_unauthorized` |
+| Wi-fi-scan JSON carries `schema` integer | `test_helper.py::test_scan_v2_returns_networks_and_iface_meta`, `::test_scan_v1_iface_string_yields_empty_meta`, `::test_scan_v3_parses_bss_load_and_station_count`, `::test_scan_v3_parses_802_11r_capability_flag` |
+| BLE scan stream emits one JSON object per advertisement | `test_ble.py::test_malformed_line_skipped_subsequent_parsed`, `::test_mixed_stream_routes_each_line_to_correct_bucket` |
+| Adv objects plumb required CoreBluetooth fields | `test_ble.py::test_schema_4_raw_passthrough_fields_populate` |
+| Connected snapshots from IOBluetoothDevice (not CoreBluetooth) | `test_ble.py::test_connected_line_routes_to_connected_dict_only`, `::test_ble_scan_update_propagates_connected_through_poller` |
+| Helper auto-detectable from Python | `test_helper.py::test_find_helper_env_override_wins`, `::test_find_helper_env_override_can_point_at_binary`, `::test_find_helper_returns_none_when_nothing_present`, `::test_bundle_path_extracts_app_dir`, `::test_bundle_path_none_for_loose_binary` |
+| Helper exits 3 + writes "bluetooth unauthorized" on TCC denial | `test_ble.py::test_permission_denied_via_subprocess_exit_code`, `test_helper.py::test_has_bluetooth_permission_false_on_unauthorized` |
+
+### `roam-detection`
+
+| Requirement | Test |
+|---|---|
+| 0–100 link score with reasoned adjustments | `test_tui_helpers.py::test_link_score_rewards_stronger_cleaner_candidate` |
+| Same-SSID better-candidate surfaces only when ≥+10 dB stronger | `test_tui_helpers.py::test_best_same_ssid_candidate_requires_meaningful_delta` |
+| Surfaced candidate carries score + press-`c` hint | `test_tui_helpers.py::test_score_line_reports_better_same_ssid_candidate` |
+| Press-`c` cycles Wi-Fi off/on | (manual — `force_reroam()` is backend-specific) |
+| Vocabulary aligned between `_health_line` and `_link_score` | (review-enforced — convention; the bug it guards against landed once already) |
+
+### `tui-shell`
+
+| Requirement | Test |
+|---|---|
+| Four stacked panels in fixed order | `test_tui_smoke.py::test_app_boots_and_quits` (App composes; panel presence implicit) |
+| Diagnostics content follows active view | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`, `::test_diagnostics_renders_link_line_when_latency_data_available` |
+| Modals push onto stack, Esc/letter closes | `test_tui_smoke.py::test_help_modal_open_and_close`, `::test_help_modal_h_to_close`, `::test_help_modal_renders_through_pilot_query`, `::test_events_modal_open_and_close`; `tui_snapshot.py::events_modal`, `::help_modal`, `::basics_modal`, `::ble_detail_decoded` (regression) |
+| Footer is one GroupedFooter with three semantic groups | (gap — no footer-grouping unit test; visible in regression captures) |
+| Hidden bindings exist for power-user navigation | `test_tui_smoke.py::test_pause_and_resume`, `::test_force_rescan_does_not_crash`, `::test_cycle_sort_modes` (binding firing); footer omission of hidden bindings is review-enforced |
+| Header shows title + clock; subtitle reflects live state | (gap — no subtitle assertion in pytest; visible in regression captures) |
+
+### `wifi-scanning`
+
+| Requirement | Test |
+|---|---|
+| Scan rows carry RSSI / channel / band / security / BSSID | `test_helper.py::test_scan_v2_returns_networks_and_iface_meta`, `::test_scan_lowercases_bssid`, `::test_scan_zero_noise_and_zero_rssi_become_none` |
+| Redacted scans surface `(redacted)` placeholder, not silence | `tui_snapshot.py::wifi_redacted` (regression-only); `test_helper.py::test_scan_redacted_row_keeps_bssid_none` (data path) |
+| Beacon IE keys optional and additive | `test_helper.py::test_scan_v2_keeps_ie_fields_none`, `::test_scan_v3_parses_bss_load_and_station_count`, `::test_scan_v3_parses_802_11r_capability_flag`, `::test_scan_v3_rejects_malformed_ie_values` |
+| CoreWLAN throttle respected (≥7s cadence) | (gap — poller cadence is configured, not unit-tested) |
+| Sentinel RSSI rows filtered before panel | `test_ble.py::test_rssi_unavailable_sentinel_filtered`, `::test_rssi_zero_or_positive_dbm_treated_as_invalid` (BLE side; `test_helper.py::test_scan_zero_noise_and_zero_rssi_become_none` Wi-Fi side) |
+| Current BSSID merged into scan when CoreWLAN omits it | `test_tui_helpers.py::test_merge_current_prepends_when_scan_omits_associated_ap`, `::test_merge_current_replaces_when_scan_already_has_ap`, `::test_merge_current_no_op_when_disconnected`, `::test_merge_current_no_op_when_connection_has_no_bssid`, `::test_merge_current_case_insensitive_match` |
 
 ---
 

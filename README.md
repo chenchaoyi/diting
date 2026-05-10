@@ -42,14 +42,14 @@ You set up multiple APs at home or at the office, you walk between
 rooms, and your Mac stays glued to the AP it associated with five
 hours ago at -75 dBm — even though there's a new AP within reach
 broadcasting the same SSID at -45 dBm. Zoom stutters; you grumble;
-you blame the WiFi.
+you blame the Wi-Fi.
 
-Apple's WiFi panel will tell you the *current* signal but nothing
+Apple's Wi-Fi panel will tell you the *current* signal but nothing
 about *which AP* you're on, *whether you should be on a different
 one*, or *when* the OS roamed (or didn't). `wifiscope` turns that
 black box into a TUI:
 
-- a top panel with everything Apple's "Option-click WiFi" panel
+- a top panel with everything Apple's "Option-click Wi-Fi" panel
   shows, plus IP / Router / interface MAC / MCS / NSS / max link
   speed
 - a Diagnostics panel that translates a dense scan into plain
@@ -82,7 +82,7 @@ black box into a TUI:
   [`docs/explainers/wifi-sensing.md`](docs/explainers/wifi-sensing.md)
   for what we deliberately do not claim
 
-Stuck on a weak AP? Hit `c` and `wifiscope` cycles the WiFi radio so
+Stuck on a weak AP? Hit `c` and `wifiscope` cycles the Wi-Fi radio so
 macOS re-runs auto-join and reassociates with the strongest BSSID.
 That's the same path as click-menu-off-then-on, but in one keystroke.
 
@@ -296,7 +296,7 @@ signal column and sorts alphabetically by name.
 versions of `wifiscope` used `iface.disassociate()` for the `c`
 binding; on 802.1X enterprise networks it would tear down the link
 and macOS would not auto-rejoin. Cycling power via
-`setPower(false)` then `setPower(true)` mirrors the WiFi-menu
+`setPower(false)` then `setPower(true)` mirrors the Wi-Fi-menu
 off/on path and reliably triggers full auto-join with Keychain
 credentials.
 

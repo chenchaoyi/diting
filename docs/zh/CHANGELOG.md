@@ -66,6 +66,23 @@
 - 回归套件里 Diagnostics 面板渲染稳定性 —— seed helper 把
   `_link_diagnostic_tuple` / `_environment_diagnostic_tuple` pin
   到 App，避免随机一次刷新把 seeded 的 Link / Environment 行擦掉。
+- **帮助弹窗里 `force re-roam` 行的中文翻译** —— `i18n.py` 里登记的
+  catalog key 是 `cycle WiFi off/on`，但 `tui.py:426` 调用方写的是
+  `cycle Wi-Fi off/on`，导致中文查表 miss、静默回退到英文。
+  Catalog key 已和调用方对齐。
+
+### 文档
+- **Spec 覆盖矩阵** 落进 `tests/TESTING.md`（中文镜像在
+  `docs/zh/TESTING.md`）—— `openspec/specs/<capability>/spec.md` 里
+  每条 Requirement 现在都对应：一个真实测试名 / 一条
+  `(review-enforced)` 约定 / 一个 `(regression-only)` 快照场景 /
+  或一个诚实的 `(gap)`。冷却 / rearm 逻辑、EventRing 容量上限、
+  footer 分组、subtitle、fit_cells、network-change 探针重置、
+  atexit writer 关闭、几条 CLI 派发路径等覆盖空白现在显式可见，
+  不再是隐性的。
+- **`Wi-Fi` / `WiFi` 用法归一** —— 所有面向用户的散文（README、
+  帮助弹窗、re-roam 弹窗提示）统一为 `Wi-Fi`。内部类名
+  （`WiFiBackend`、`WiFiPoller`）保留不动。
 
 ## [0.7.0] — 2026-05-07
 

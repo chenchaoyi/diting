@@ -242,9 +242,9 @@ _ZH: dict[str, str] = {
     "[inter-AP roam]": "[跨 AP 漫游]",
 
     # ---- App notifications ----
-    "WiFi off → on — reconnecting via auto-join (2-5 s)":
-        "WiFi 关 → 开，正在通过自动加入重连（2-5 秒）",
-    "no WiFi interface": "未发现 WiFi 网卡",
+    "Wi-Fi off → on — reconnecting via auto-join (2-5 s)":
+        "Wi-Fi 关 → 开，正在通过自动加入重连（2-5 秒）",
+    "no Wi-Fi interface": "未发现 Wi-Fi 网卡",
 
     # ---- Diagnostics: waiting state ----
     "(waiting for scan data...)": "(等待扫描数据…)",
@@ -546,17 +546,11 @@ _ZH: dict[str, str] = {
     "open network": "开放网络",
 
     # ---- Help modal ----
-    "  ·  terminal WiFi monitor for macOS, focused on roaming visibility.\n":
-        "  ·  macOS 终端 Wi-Fi 监控工具，专注于漫游可见性。\n",
     "  ·  terminal Wi-Fi monitor for macOS with link health,\n"
     "     RF environment, and BLE devices.\n":
         "  ·  macOS 终端 Wi-Fi 监控工具：链路健康、RF 环境、BLE 设备。\n",
     "What": "概览",
     "What you get": "能看到什么",
-    "  See which AP you are on, when your Mac switches, and how strong\n"
-    "  the signal is — the things macOS hides from its own WiFi panel.\n":
-        "  看清你的 Mac 连在哪个 AP、什么时候切换、信号到底有多强 ——\n"
-        "  这些都是 macOS 自带 Wi-Fi 面板不会告诉你的信息。\n",
     "  Live view of which AP / BSSID you're on, the BSSIDs around\n"
     "  you, connection latency / loss / jitter to the gateway and\n"
     "  WAN, an RSSI-variance environment monitor, and a deep BLE\n"
@@ -591,7 +585,7 @@ _ZH: dict[str, str] = {
         "立即重新扫描（CoreWLAN 仍有 ~5s 限流）",
     "cycle scan sort:  by AP  ↔  by signal":
         "扫描排序切换：按 AP ↔ 按信号",
-    "force re-roam (cycle WiFi off/on so the OS re-picks the":
+    "force re-roam (cycle Wi-Fi off/on so the OS re-picks the":
         "重选 AP（关再开 Wi-Fi，让系统重新挑选",
     "strongest BSSID — fixes sticky associations)\n":
         "最强 BSSID —— 解决卡死在弱 AP 的问题）\n",

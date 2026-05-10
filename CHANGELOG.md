@@ -75,6 +75,23 @@ behaviours between releases.
   pins `_link_diagnostic_tuple` / `_environment_diagnostic_tuple`
   on the App so a stray refresh cannot wipe seeded Link /
   Environment rows.
+- **Help-modal ZH translation for `force re-roam`** — the catalog key
+  in `i18n.py` was `cycle WiFi off/on` but the call site at
+  `tui.py:426` used `cycle Wi-Fi off/on`, so ZH lookup silently
+  fell back to English. Catalog key now matches the call site.
+
+### Docs
+- **Spec coverage matrix** in `tests/TESTING.md` (and ZH mirror) —
+  every requirement under `openspec/specs/<capability>/spec.md`
+  now points to a real test, a `(review-enforced)` convention,
+  a `(regression-only)` snapshot scenario, or an honest `(gap)`.
+  Coverage holes (cooldown / rearm logic, EventRing length cap,
+  footer grouping, subtitle, fit_cells, network-change probe
+  reset, atexit writer close, several CLI dispatch paths) are
+  now visible instead of implicit.
+- **`Wi-Fi` / `WiFi` normalisation** across user-visible prose
+  (README, help modal, force-reroam toast). Internal class
+  names (`WiFiBackend`, `WiFiPoller`) intentionally untouched.
 
 ## [0.7.0] — 2026-05-07
 

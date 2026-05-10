@@ -41,8 +41,192 @@
 
 | 层 | 位置 | 证明的事 |
 |---|---|---|
-| 单元 | `tests/test_network.py`、`test_helper.py`、`test_tui_helpers.py`、`test_ble.py`、`test_i18n.py` | 每个纯函数在其全部输入空间内表现符合规约，包括来自真实 bug 的回归用例。 |
-| 冒烟 | `tests/test_tui_smoke.py` | Textual App 能被 compose、mount、走完每个绑定（含新增的 `n` 视图切换）、unmount，全程不抛异常。使用一个返回确定数据的 `_FakeBackend`。 |
+| 单元 | `tests/test_*.py`（除 tui_smoke） | 每个纯函数在其全部输入空间内表现符合规约，包括来自真实 bug 的回归用例。 |
+| 冒烟 | `tests/test_tui_smoke.py` | Textual App 能被 compose、mount、走完每个绑定、unmount，全程不抛异常。使用一个返回确定数据的 `_FakeBackend`。 |
+| 快照回归 | `scripts/tui_snapshot.py --mode regression` | 11 个场景在固定合成输入下渲染 TUI；断言验证面板内容、模态布局、解码输出。CI 失败时上传 `snapshot-output/`。 |
+
+---
+
+## 2.5. Spec 覆盖矩阵
+
+`openspec/specs/<name>/spec.md` 里每条 Requirement，本表都指出对应的
+测试。标 **(review-enforced)** 表示是约定，违反需要 reviewer 拦，没
+办法做单元测试；标 **(regression-only)** 表示通过
+`scripts/tui_snapshot.py --mode regression` 而不是 pytest 直接验证。
+**(gap)** 标的是当前没有自动化覆盖，需要在路线图里补。
+
+任何 spec 加新 Requirement 时，本表必须同步加一行（并补对应测试，
+除非 review-enforced）。
+
+### `analyze`
+
+| Requirement | 测试 |
+|---|---|
+| 纯规则、不联网 | (review-enforced — 代码不 import 任何网络库) |
+| 报告以 span / 计数 / 关联时间线开头 | `test_analyze.py::test_render_includes_path_and_event_counts`、`::test_analyze_records_associations_and_roams` |
+| Insights 由命名启发式产出，触发条件显式 | `test_analyze.py::test_repeated_disassociates_warns`、`::test_loss_burst_present_warns_real_loss`、`::test_short_session_triggers_low_data_hint`、`::test_timezone_mismatch_heuristic_triggers_on_hour_jump`、`::test_single_ap_medium_only_triggers_redundancy_hint`、`::test_latency_without_loss_triggers_jitter_hint` |
+| 丢包率自动识别 0..1 分数 vs 0..100 百分比 | `test_analyze.py::test_loss_burst_present_warns_real_loss`（覆盖 scaled-loss 路径） |
+| 时长格式诚实（`30s`，永远不写 `1 min`） | `test_tui_helpers.py::test_format_duration_short_buckets`、`::test_format_duration_short_negative_clamps_to_zero` |
+| 有 insight 时才出 TODO 段 | `test_analyze.py::test_render_handles_zero_events`、`::test_empty_log_warns` |
+
+### `ble-decoders`
+
+| Requirement | 测试 |
+|---|---|
+| Decoder 是 `@register` 装饰过的函数 | `test_decoders.py::test_registry_has_built_in_decoders` |
+| Decoder 永不在格式不对时抛 | `test_decoders.py::test_decode_all_swallows_decoder_exceptions`；每个协议另有 `test_*_skips_truncated_*`、`test_*_skips_when_too_short` |
+| 输出键带协议命名空间前缀 | (review-enforced — 代码 review 时确认；canonical-decode 测试断言带前缀的键) |
+| 内置 decoder 覆盖公开 spec 协议 | iBeacon: `test_ibeacon_canonical_decode`；Eddystone: `test_eddystone_url_canonical_decode`、`::test_eddystone_uid_decode`、`::test_eddystone_tlm_decode`、`::test_eddystone_eid_frame_recognised_but_not_decoded`；Apple Continuity: `test_nearby_info_canonical_short_form`、`::test_find_my_short_form_minimum_payload`、`::test_handoff_canonical_decode`、`::test_handoff_chained_with_nearby_info_decodes_both`；MS CDP: `test_ms_device_beacon_real_capture`、`::test_swift_pair_decodes_utf8_model_name`；Ruuvi: `test_ruuvi_format5_canonical_decode` |
+| 不为含义未稳定的 bit 编造语义 | (review-enforced — 内置 decoder 都只暴露 byte hex) |
+| Decoder 用识别字节做 gate | `test_decoders.py::test_ibeacon_skips_non_apple_cid`、`::test_nearby_info_skips_non_apple_cid`、`::test_eddystone_skips_non_feaa_service_data`、`::test_ms_device_beacon_skips_when_subtype_is_swift_pair`、`::test_ruuvi_skips_non_ruuvi_cid` |
+
+### `ble-detail-modal`
+
+| Requirement | 测试 |
+|---|---|
+| 行选择按 identifier、跨 snapshot 稳定 | `tui_snapshot.py::ble_detail_decoded`（regression-only） |
+| 键盘 `up` / `down` / `enter` / `i` 优先级绑定 | `tui_snapshot.py::ble_detail_decoded` 用 `down` × N + `i` 走光标（regression-only） |
+| 鼠标单击 → 选中并 inspect | (gap — 人工 / 后续回归) |
+| Modal 渲染所有 BLEDevice 字段 + 解码后 payload | `tui_snapshot.py::ble_detail_decoded` 断言 `Decoded section header`、`iBeacon UUID rendered`、`iBeacon major+minor`（regression-only） |
+| Activity 段对已连接外设隐藏 ad_count | (review-enforced；在 `live_ble_detail` 真机捕获里可见) |
+| ≥ 2 历史样本时显示 RSSI sparkline | `test_tui_helpers.py::test_rssi_sparkline_empty_history_returns_empty`、`::test_rssi_sparkline_single_sample_returns_empty`、`::test_rssi_sparkline_constant_rssi_renders_flat_line`、`::test_rssi_sparkline_maps_extremes_to_top_and_bottom_blocks`、`::test_rssi_sparkline_renders_one_char_per_sample`（渲染）；`test_ble.py::test_history_records_and_returns_samples_in_order`（数据通路） |
+| Esc / `i` / `q` 关闭 modal 不动选择 | (人工；模态 binding 是声明式的) |
+| 距离估算标 "rough free-space" | `test_tui_helpers.py::test_free_space_distance_m_at_one_meter_returns_one`、`::test_free_space_distance_m_doubles_at_minus_six_db`、`::test_free_space_distance_m_zero_rssi_returns_none` |
+
+### `bluetooth-scanning`
+
+| Requirement | 测试 |
+|---|---|
+| 每行 helper JSONL → 一个 BLEDevice | `test_ble.py::test_parse_advertisement_populates_all_fields`、`::test_parse_subsequent_advertisement_carries_history`、`::test_line_without_id_field_skipped` |
+| Vendor 解析：5 步确定性链 | `test_ble.py::test_vendor_fallback_via_member_uuid_when_manufacturer_id_absent`、`::test_manufacturer_id_takes_priority_over_member_uuid_vendor`、`::test_service_data_uuid_resolves_vendor_when_service_uuids_empty`、`::test_advertising_vendor_falls_back_to_name_pattern`、`::test_vendor_id_carries_forward_when_scan_response_omits_manufacturer_data` |
+| 已连接外设走独立代码路径 | `test_ble.py::test_connected_line_routes_to_connected_dict_only`、`::test_connected_entries_skip_advertising_ttl`、`::test_connected_snapshot_sentinel_prunes_disappeared_entries` |
+| 轮换标识合并 | `test_ble.py::test_merge_folds_same_vendor_and_name_within_rssi_window`、`::test_merge_keeps_distant_rssi_separate`、`::test_merge_sorts_by_rssi_descending` |
+| `(anonymous)` 与 `(unknown)` 区分 | `test_ble.py::test_merge_does_not_combine_anonymous_devices`（数据通路）；`tui_snapshot.py::ble_normal`（渲染） |
+| RSSI 平滑保稳定排序 | `test_ble.py::test_rssi_smooth_seeds_from_first_sample`、`::test_rssi_smooth_dampens_packet_jitter`、`::test_merge_sort_key_uses_smoothed_rssi` |
+| Schema-4 raw 字段透传到 BLEDevice | `test_ble.py::test_schema_4_raw_passthrough_fields_populate`、`::test_schema_4_fields_default_when_helper_omits`、`::test_schema_4_fields_carry_forward_on_scan_response` |
+| BLE history 限长 + 剪枝 | `test_ble.py::test_history_records_and_returns_samples_in_order`、`::test_history_drops_none_rssi`、`::test_history_caps_at_maxlen`、`::test_history_get_unknown_device_returns_empty`、`::test_history_expire_drops_devices_not_in_set` |
+
+### `cli`
+
+| Requirement | 测试 |
+|---|---|
+| `wifiscope` 不带子命令 → 启动 TUI | (人工 — App boot 由 `test_tui_smoke.py::test_app_boots_and_quits` 间接覆盖) |
+| 5 个子命令：`once` / `watch` / `monitor` / `calibrate` / `analyze` | (gap — 没有派发表的集成测试；子命令内部各自有测试) |
+| `--lang en|zh` 优先于 env / locale | `test_i18n.py::test_resolve_cli_override_wins_over_env`、`::test_resolve_no_override_uses_env`、`::test_resolve_rejects_unknown_cli_value` |
+| `--log [PATH]` 启用 JSONL 日志，可省略路径 | `test_event_log.py::test_default_log_path_is_timestamped_jsonl`、`::test_resolve_log_path_cli_no_value_uses_default`、`::test_resolve_log_path_cli_explicit_path_wins`、`::test_resolve_log_path_env_auto_uses_default`、`::test_resolve_log_path_env_blank_disables`、`::test_extract_log_arg_no_value_returns_sentinel` |
+| 用了 `--log` 时退出印 analyze 提示 | (gap — 退出 hint 字符串没有自动化断言) |
+| `wifiscope monitor` stdout 只发 JSONL | `test_event_log.py::test_to_path_writes_appendable_jsonl`（事件格式）；banner-cleanliness 是人工 |
+| `--config <PATH>` 覆盖 aps.yaml 搜索路径 | `test_network.py::test_resolve_config_path_env_override_wins`、`::test_resolve_config_path_no_env_falls_through_to_default` |
+
+### `environment-monitor`
+
+| Requirement | 测试 |
+|---|---|
+| σ 阈值用命名常量 | (review-enforced — STIR 图例渲染时从 `DEFAULT_SPIKE_RATIO` / `DEFAULT_SPIKE_MIN_DB` 拿值；`test_environment.py::test_sigma_above_threshold_fires_event` 间接验证常量被正确串起来了) |
+| 必须同时超 ratio 和绝对 floor 才触发 | `test_environment.py::test_sigma_above_threshold_fires_event`、`::test_sigma_below_threshold_no_event` |
+| 每个 AP 归三档 fusion mode | `test_environment.py::test_co_located_vs_spatial_channel_classification`、`::test_redundancy_fusion_makes_two_co_located_events_high_confidence`、`::test_single_co_located_event_is_medium_confidence`、`::test_spatial_channel_event_uses_ap_location_label`、`::test_aps_below_minus_85_excluded` |
+| Cooldown + rearm 防止重复事件 | (gap — 没有专门的 cooldown / rearm 测试；行为在 fusion-confidence 测试里间接覆盖) |
+| 校准从文件加载 | `test_environment.py::test_calibration_overrides_adaptive_baseline`、`::test_calibration_round_trip`、`::test_load_calibration_returns_empty_dict_on_missing_file` |
+| 措辞：相关性，不是「有人」 | (review-enforced — `i18n.py` 没有任何字符串断言 "person" / "motion" / "presence") |
+
+### `event-log`
+
+| Requirement | 测试 |
+|---|---|
+| `--log` 与 `wifiscope monitor` 输出字节相等 | `test_event_log.py::test_to_path_writes_appendable_jsonl`、`::test_unicode_user_strings_survive_readable`（共享 writer 类） |
+| 每个事件后强制 flush | `test_event_log.py::test_line_buffered_writes_are_visible_before_close` |
+| atexit 钩子优雅关闭 writer | (gap — 没有专门的测试；行为在 `test_line_buffered_writes_are_visible_before_close` 里间接覆盖) |
+| JSONL 键不随 UI 语言变 | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
+| 时间戳本地时区 ISO-8601 带偏移 | `test_event_log.py::test_timestamps_are_iso_utc`、`::test_naive_datetime_treated_as_local_not_utc` |
+| writer 接受 `None` 作 no-op | `test_event_log.py::test_disabled_logger_is_a_no_op` |
+| `connection_update` 只进日志，不入 EventRing | `test_event_log.py::test_connection_update_emits_associated_on_first_poll`、`::test_connection_update_silent_when_first_poll_is_disassociated`、`::test_connection_update_emits_disassociate_on_drop`、`::test_connection_update_does_not_emit_on_bssid_to_bssid_change` |
+
+### `events`
+
+| Requirement | 测试 |
+|---|---|
+| 五事件共享 schema 与 ring | `test_event_log.py::test_emit_roam_includes_kind_when_supplied`、`::test_emit_latency_spike_carries_target_and_rtt`、`::test_emit_loss_burst_carries_lost_in_window`、`::test_emit_link_state_dataclass_passthrough`、`::test_emit_network_change_carries_router_ip_transition` |
+| 每个事件是 frozen dataclass + timestamp | (compiler / dataclass 层强制；构造该事件的测试间接验证) |
+| EventRing 有限大小、单线程 async | (gap — 没有 EventRing 限长的直接测试；ring 在产环境由 App 持有) |
+| JSONL 用英文键 | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
+| 时间戳本地 TZ ISO-8601 带偏移 | `test_event_log.py::test_timestamps_are_iso_utc`、`::test_naive_datetime_treated_as_local_not_utc` |
+| `NetworkChangeEvent` 是控制信号，用户不可见 | `test_event_log.py::test_emit_network_change_carries_router_ip_transition`（writer 接受它）；不进 user-visible-ring 是 review-enforced |
+
+### `i18n`
+
+| Requirement | 测试 |
+|---|---|
+| 启动时一次性解析语言 | `test_i18n.py::test_detect_explicit_wifiscope_lang_wins_over_locale`、`::test_detect_zh_from_lang_env`、`::test_detect_zh_from_lc_all_overrides_lang`、`::test_detect_falls_back_to_english`、`::test_detect_ignores_invalid_wifiscope_lang_value`、`::test_resolve_cli_override_wins_over_env`、`::test_resolve_no_override_uses_env`、`::test_resolve_rejects_unknown_cli_value`、`::test_set_lang_rejects_unknown_value` |
+| 用户字串走 `t()` | `test_i18n.py::test_t_returns_english_when_lang_is_english`、`::test_t_falls_back_to_english_when_zh_key_missing`、`::test_t_substitutes_placeholders`、`::test_t_substitutes_in_english_too`（`t()` 行为）；"无硬编码字串"覆盖是 review-enforced |
+| 列对齐 widget 用 `pad_cells` / `fit_cells` | `test_i18n.py::test_pad_cells_pads_ascii_to_target_width`、`::test_pad_cells_treats_cjk_as_two_cells_each`、`::test_pad_cells_returns_unchanged_if_already_wide`、`::test_pad_cells_handles_mixed_ascii_and_cjk`（注：`fit_cells` 本身没有专门测试 — gap） |
+| ZH UI 的 JSONL 键依然英文 | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
+| 缩写（SSID/BSSID/RSSI 等）不译 | (review-enforced — 目录约定) |
+| 目录里 `{placeholder}` 同步保留 | (review-enforced — 缺失会在渲染时 KeyError) |
+
+### `inventory`
+
+| Requirement | 测试 |
+|---|---|
+| 4 步 AP 归属链 | `test_network.py::test_radio_overrides_win_over_rule_match`、`::test_radio_overrides_case_insensitive`、`::test_resolve_primary_rule`、`::test_resolve_secondary_rule_cross_oui`、`::test_resolve_three_aps_in_one_oui_do_not_collapse`、`::test_resolve_outside_window_returns_none`、`::test_cluster_label_groups_chip`（fallback） |
+| `aps.yaml` 可选，缺失工具仍能跑 | `test_network.py::test_load_inventory_missing_file_returns_empty` |
+| Inventory 同时承载 Wi-Fi OUI 厂商表 | `test_network.py::test_lookup_ap_vendor_known_oui_returns_name`、`::test_lookup_ap_vendor_unknown_oui_returns_none`、`::test_lookup_ap_vendor_invalid_input_returns_none`、`::test_lookup_ap_vendor_accepts_custom_map`、`::test_load_wifi_ouis_ships_xiaomi`、`test_ble.py::test_load_ouis_ships_apple_magic_keyboard_oui` |
+| Cluster label 跨会话稳定 | `test_network.py::test_cluster_label_groups_chip`、`::test_cluster_label_separates_unrelated`、`::test_cluster_label_none_or_malformed` |
+| BSSID 格式归一（小写、冒号分隔） | `test_network.py::test_format_bssid_known_with_band`、`::test_format_bssid_unknown_passthrough`、`::test_format_bssid_none`、`test_ble.py::test_lookup_oui_vendor_dash_separated_mac`、`::test_lookup_oui_vendor_colon_separated_mac` |
+
+### `link-health`
+
+| Requirement | 测试 |
+|---|---|
+| 网关 ICMP，WAN 走 TCP/53 | `test_latency.py::test_ping_once_records_rtt`、`::test_parse_ping_time_ms_decimal`、`::test_parse_ping_time_ms_integer`（ICMP）；`::test_tcp_probe_records_rtt_on_successful_connect`、`::test_tcp_probe_loss_on_timeout`、`::test_tcp_probe_loss_on_connection_refused`（TCP） |
+| 60s 滚动窗口、单调时钟剪枝 | `test_latency.py::test_aggregate_yields_median_loss_and_jitter`、`::test_aggregate_window_actually_drops_old_samples`、`::test_aggregate_loss_pct_in_zero_to_hundred_range`、`::test_aggregate_empty_returns_none_fields` |
+| 网络切换 → probe 重置 | (gap — `NetworkChangeEvent` 已透出；reset 行为通过 DNS-refresh 测试 `test_dns_refresh_runs_on_cadence` 间接观察) |
+| Loss-burst + latency-spike 事件 | `test_latency.py::test_detect_latency_spike_requires_both_thresholds`、`::test_detect_loss_burst_three_of_last_five`、`::test_detect_loss_burst_one_loss_does_not_fire` |
+| WAN-only 故障与全断区分 | `test_latency.py::test_wan_skipped_reason_dns_eq_gateway`、`::test_wan_skipped_reason_no_dns` |
+
+### `macos-helper`
+
+| Requirement | 测试 |
+|---|---|
+| Helper 是 `.app`，cdhash 锚 TCC 授权 | (人工 — bundle 构建路径；用户安装时验证) |
+| Helper 暴露离散子命令为唯一集成点 | `test_helper.py::test_has_ble_scan_subcommand_true_when_help_lists_it`、`::test_has_ble_scan_subcommand_false_for_pre_0_5_helper`、`::test_has_bluetooth_permission_true_on_zero_exit`、`::test_has_bluetooth_permission_false_on_unauthorized` |
+| Wi-Fi 扫描 JSON 带显式 `schema` 整数 | `test_helper.py::test_scan_v2_returns_networks_and_iface_meta`、`::test_scan_v1_iface_string_yields_empty_meta`、`::test_scan_v3_parses_bss_load_and_station_count`、`::test_scan_v3_parses_802_11r_capability_flag` |
+| BLE 扫描每条广播一行 JSON | `test_ble.py::test_malformed_line_skipped_subsequent_parsed`、`::test_mixed_stream_routes_each_line_to_correct_bucket` |
+| 广播对象透传 CoreBluetooth 字段 | `test_ble.py::test_schema_4_raw_passthrough_fields_populate` |
+| 已连接快照来自 IOBluetoothDevice（不是 CoreBluetooth） | `test_ble.py::test_connected_line_routes_to_connected_dict_only`、`::test_ble_scan_update_propagates_connected_through_poller` |
+| Python 端可自动发现 helper | `test_helper.py::test_find_helper_env_override_wins`、`::test_find_helper_env_override_can_point_at_binary`、`::test_find_helper_returns_none_when_nothing_present`、`::test_bundle_path_extracts_app_dir`、`::test_bundle_path_none_for_loose_binary` |
+| TCC 拒绝时 helper exit 3 + stderr "bluetooth unauthorized" | `test_ble.py::test_permission_denied_via_subprocess_exit_code`、`test_helper.py::test_has_bluetooth_permission_false_on_unauthorized` |
+
+### `roam-detection`
+
+| Requirement | 测试 |
+|---|---|
+| 0–100 链路评分附理由 | `test_tui_helpers.py::test_link_score_rewards_stronger_cleaner_candidate` |
+| 同名 SSID 候选必须 ≥ +10 dB 才浮出 | `test_tui_helpers.py::test_best_same_ssid_candidate_requires_meaningful_delta` |
+| 浮出的候选带评分 + 按 c 提示 | `test_tui_helpers.py::test_score_line_reports_better_same_ssid_candidate` |
+| 按 c 切换 Wi-Fi 关再开 | (人工 — `force_reroam()` 是 backend 特定的) |
+| `_health_line` 与 `_link_score` 词汇一致 | (review-enforced — 约定；这条要拦的 bug 之前出过一次) |
+
+### `tui-shell`
+
+| Requirement | 测试 |
+|---|---|
+| 四个垂直堆叠面板，固定顺序 | `test_tui_smoke.py::test_app_boots_and_quits`（App composes；面板存在隐含验证） |
+| Diagnostics 内容跟随激活视图 | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`、`::test_diagnostics_renders_link_line_when_latency_data_available` |
+| 模态压栈、Esc/同字母关 | `test_tui_smoke.py::test_help_modal_open_and_close`、`::test_help_modal_h_to_close`、`::test_help_modal_renders_through_pilot_query`、`::test_events_modal_open_and_close`；`tui_snapshot.py::events_modal`、`::help_modal`、`::basics_modal`、`::ble_detail_decoded`（regression） |
+| Footer 是单一 GroupedFooter 三段 | (gap — 没有 footer 分组的单元测试；regression 捕获里可见) |
+| 隐藏 binding 为高级用户存在 | `test_tui_smoke.py::test_pause_and_resume`、`::test_force_rescan_does_not_crash`、`::test_cycle_sort_modes`（绑定能触发）；footer 不显示隐藏 binding 是 review-enforced |
+| Header 显示 title + 时钟；subtitle 反映实时状态 | (gap — 没有 subtitle 的 pytest 断言；regression 捕获里可见) |
+
+### `wifi-scanning`
+
+| Requirement | 测试 |
+|---|---|
+| 扫描行带 RSSI / 信道 / 频段 / 加密 / BSSID | `test_helper.py::test_scan_v2_returns_networks_and_iface_meta`、`::test_scan_lowercases_bssid`、`::test_scan_zero_noise_and_zero_rssi_become_none` |
+| 遮蔽扫描显示 `(redacted)` 占位符，不沉默 | `tui_snapshot.py::wifi_redacted`（regression-only）；`test_helper.py::test_scan_redacted_row_keeps_bssid_none`（数据通路） |
+| Beacon IE 字段可选、可加 | `test_helper.py::test_scan_v2_keeps_ie_fields_none`、`::test_scan_v3_parses_bss_load_and_station_count`、`::test_scan_v3_parses_802_11r_capability_flag`、`::test_scan_v3_rejects_malformed_ie_values` |
+| 尊重 CoreWLAN 限流（≥ 7s） | (gap — poller cadence 是配置项，没单测) |
+| 哨兵 RSSI 行在到 panel 之前过滤 | `test_ble.py::test_rssi_unavailable_sentinel_filtered`、`::test_rssi_zero_or_positive_dbm_treated_as_invalid`（BLE 侧；`test_helper.py::test_scan_zero_noise_and_zero_rssi_become_none` Wi-Fi 侧） |
+| CoreWLAN 漏掉的当前 BSSID 由 poller 合并进结果 | `test_tui_helpers.py::test_merge_current_prepends_when_scan_omits_associated_ap`、`::test_merge_current_replaces_when_scan_already_has_ap`、`::test_merge_current_no_op_when_disconnected`、`::test_merge_current_no_op_when_connection_has_no_bssid`、`::test_merge_current_case_insensitive_match` |
 
 ---
 
