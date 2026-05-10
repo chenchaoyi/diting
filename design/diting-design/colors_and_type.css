@@ -116,6 +116,26 @@
 }
 
 /* ----------------------------------------------------------------
+ * Note on Textual-derived intermediate shades.
+ *
+ * The TUI is rendered by Textual's Rich-backed pipeline, which
+ * composites the canonical palette above against per-cell
+ * lighten / darken modifiers (signal-bar gradients, semantic-state
+ * backgrounds, dim-text variants) and falls back to the host
+ * terminal's xterm-256 colour table for any Rich named-colour that
+ * doesn't have an exact match. The result is that exported SVG
+ * snapshots (`docs/preview*.svg`) bake in a longer list of distinct
+ * hex values than the canonical palette declares.
+ *
+ * These derived shades are *out of scope* for the canonical
+ * palette. They are reproducible from the tokens above plus the
+ * Textual rendering rules, not authored by us. A reviewer auditing
+ * a PR for off-palette hex values should focus on whether the PR
+ * introduces a NEW source-level hex literal or a NEW Textual
+ * `$variable` — emergent SVG output is fine.
+ * ---------------------------------------------------------------- */
+
+/* ----------------------------------------------------------------
  * Semantic type styles — apply to plain HTML elements so any page
  * that includes this stylesheet picks up the diting voice.
  * ---------------------------------------------------------------- */
