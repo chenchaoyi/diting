@@ -412,12 +412,12 @@ def _help_content() -> tuple[Text, Text]:
     ))
 
     section(t("Panels"))
-    line("Conn.", t("current AP, signal bar, link / IP / radio details"))
-    line("Scan",  t("every BSSID in range, grouped by physical AP"))
-    line("Diag.", t("Link (gateway / WAN latency, loss, jitter) and"))
+    line(t("Conn."), t("current AP, signal bar, link / IP / radio details"))
+    line(t("Scan"),  t("every BSSID in range, grouped by physical AP"))
+    line(t("Diag."), t("Link (gateway / WAN latency, loss, jitter) and"))
     body.append(" " * 8 + t("Environment (RSSI σ across nearby APs)\n"))
     line(t("Nearby"), t("BSSIDs near you, or the BLE device list (toggle: n)"))
-    line("Events", t("strip at the bottom; full browser via m"))
+    line(t("Events"), t("strip at the bottom; full browser via m"))
 
     section(t("Bindings"))
     line("q", t("quit"))
@@ -1961,7 +1961,10 @@ def _ble_categories_line(devices: list[BLEDevice]) -> Text:
     # Pass each category through t() so 'Audio' becomes '音频' in zh
     # while 'iBeacon' stays English — matches the established service
     # category translation policy.
-    parts: list[str] = [f"{t(c)} {n}" for c, n in common]
+    # Count-first format ("8 iPhone") not name-first ("iPhone 8") to
+    # avoid reading like a model number ("iPhone 8") in either UI
+    # language, and to match the trailing `{n} other` pattern below.
+    parts: list[str] = [f"{n} {t(c)}" for c, n in common]
     if no_category:
         parts.append(t("{n} other", n=no_category))
     line.append("  ·  ".join(parts) if parts else t("(none)"), style="white")
@@ -2751,7 +2754,10 @@ def _ble_connected_row_line(d: BLEDevice) -> Text:
     label_style = "white" if (d.type or d.device_class) else "dim"
     line.append(fit_cells(label_text, _COL_BLE_SERVICES) + "  ",
                 style=label_style)
-    line.append(fit_cells(dash, _COL_BLE_AGO) + "  ", style="dim")
+    # Connected peripherals have no advertisement timestamp, but they
+    # ARE live by definition — render the AGO column as "online" rather
+    # than the same em-dash used for genuinely-missing values.
+    line.append(fit_cells(t("online"), _COL_BLE_AGO) + "  ", style="dim")
     line.append(f"{id_short:<{_COL_BLE_ID}}", style="dim")
     return line
 
