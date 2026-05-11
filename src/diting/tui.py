@@ -1492,8 +1492,12 @@ def _format_rf_stir_event(event: RFStirEvent) -> Text:
     style = "bold yellow" if event.confidence == "high" else "yellow"
     line.append(t("[STIR]") + "  ", style=style)
     line.append(t("RF stir at {location}", location=event.location), style="white")
+    # Confidence is an enum ("high" / "medium" / "low") that previously
+    # rendered raw English even under DITING_LANG=zh — surfaced by the
+    # 2026-05-11 tui-audit. Catalog now carries 高 / 中 / 低; t() picks
+    # the right side per active language.
     line.append(
-        f"  σ {event.magnitude_db:.1f} dB  ·  {event.confidence}",
+        f"  σ {event.magnitude_db:.1f} dB  ·  {t(event.confidence)}",
         style="dim",
     )
     return line
