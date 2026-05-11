@@ -1917,6 +1917,16 @@ def _ble_vendors_line(devices: list[BLEDevice]) -> Text:
     if unknown:
         parts.append(t("? {n}", n=unknown))
     line.append("  ·  ".join(parts), style="white")
+    # Annotate how many raw advertisement identifiers got folded into
+    # the visible rows by merge_for_display. Without this the user
+    # reads "Anhui Huami 20" as 20 separate physical devices when
+    # really N of them were RPA-rotation duplicates the merger
+    # collapsed; the suffix says "the 20 you see is post-merge, with
+    # F rotations folded out".
+    folded = sum(max(0, d.merged_count - 1) for d in devices)
+    if folded:
+        line.append("  ·  ", style="white")
+        line.append(t("(+{n} folded)", n=folded), style="dim")
     return line
 
 

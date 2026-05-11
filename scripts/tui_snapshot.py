@@ -397,6 +397,41 @@ def _inspect_ble_no_name_no_type(app: "Any", *_args) -> list[Finding]:
                 "/ similar small-vendor schemas)."
             ),
         ))
+    # Dense same-vendor anonymous cluster — many rows from one vendor,
+    # all of them name-less. The user's question "are these the same
+    # device?" generalises: when a vendor has 8+ name-less rows post-
+    # merge, it's either (a) genuinely many physical devices of the
+    # same kind nearby (Mi Bands in a CN tech office, AirPods Pro
+    # cases in a coffee shop), or (b) one device whose RPA-rotation
+    # outpaces the merge's RSSI cluster window. Either way it's
+    # surface-worthy because the diagnostic line `Vendor N` reads
+    # alarming without explaining post-merge accounting.
+    from collections import Counter
+    vendor_anonymous: Counter[str] = Counter()
+    for d in devices:
+        if d.vendor and not d.name and not d.type and not d.device_class:
+            vendor_anonymous[d.vendor] += 1
+    for vendor, count in vendor_anonymous.most_common(3):
+        if count >= 8:
+            out.append(Finding(
+                severity="info",
+                message=(
+                    f"{count} post-merge rows under vendor {vendor!r} — "
+                    f"all name-less. Either {count}+ physical devices "
+                    f"of this kind in range (likely at high office "
+                    f"density), or RPA-rotation slipping the merge's "
+                    f"±10 dBm cluster window."
+                ),
+                suggestion=(
+                    "Verify by re-capturing in a low-density "
+                    "environment (home / weekend). If the count drops "
+                    "to 1-3 it was real device density; if it stays "
+                    "high there's a decoder opportunity to extract a "
+                    "vendor-specific device ID from the manufacturer-"
+                    "data body so merge_for_display can fold across "
+                    "RSSI spreads."
+                ),
+            ))
     return out
 
 

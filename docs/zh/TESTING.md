@@ -84,7 +84,7 @@
 | Decoder 是 `@register` 装饰过的函数 | `test_decoders.py::test_registry_has_built_in_decoders` |
 | Decoder 永不在格式不对时抛 | `test_decoders.py::test_decode_all_swallows_decoder_exceptions`；每个协议另有 `test_*_skips_truncated_*`、`test_*_skips_when_too_short` |
 | 输出键带协议命名空间前缀 | (review-enforced — 代码 review 时确认；canonical-decode 测试断言带前缀的键) |
-| 内置 decoder 覆盖公开 spec 协议 | iBeacon: `test_ibeacon_canonical_decode`；Eddystone: `test_eddystone_url_canonical_decode`、`::test_eddystone_uid_decode`、`::test_eddystone_tlm_decode`、`::test_eddystone_eid_frame_recognised_but_not_decoded`；Apple Continuity: `test_nearby_info_canonical_short_form`、`::test_find_my_short_form_minimum_payload`、`::test_handoff_canonical_decode`、`::test_handoff_chained_with_nearby_info_decodes_both`；MS CDP: `test_ms_device_beacon_real_capture`、`::test_swift_pair_decodes_utf8_model_name`；Ruuvi: `test_ruuvi_format5_canonical_decode` |
+| 内置 decoder 覆盖公开 spec 协议 | iBeacon: `test_ibeacon_canonical_decode`；Eddystone: `test_eddystone_url_canonical_decode`、`::test_eddystone_uid_decode`、`::test_eddystone_tlm_decode`、`::test_eddystone_eid_frame_recognised_but_not_decoded`；Apple Continuity: `test_nearby_info_canonical_short_form`、`::test_find_my_short_form_minimum_payload`、`::test_handoff_canonical_decode`、`::test_handoff_chained_with_nearby_info_decodes_both`；MS CDP: `test_ms_device_beacon_real_capture`、`::test_swift_pair_decodes_utf8_model_name`；Ruuvi: `test_ruuvi_format5_canonical_decode`；小米 / 华米: `test_xiaomi_canonical_decode_with_body`、`::test_xiaomi_short_frame_decodes_just_frame_byte`、`::test_xiaomi_skips_non_xiaomi_cid` |
 | 不为含义未稳定的 bit 编造语义 | (review-enforced — 内置 decoder 都只暴露 byte hex) |
 | Decoder 用识别字节做 gate | `test_decoders.py::test_ibeacon_skips_non_apple_cid`、`::test_nearby_info_skips_non_apple_cid`、`::test_eddystone_skips_non_feaa_service_data`、`::test_ms_device_beacon_skips_when_subtype_is_swift_pair`、`::test_ruuvi_skips_non_ruuvi_cid` |
 
@@ -114,6 +114,7 @@
 | Schema-4 raw 字段透传到 BLEDevice | `test_ble.py::test_schema_4_raw_passthrough_fields_populate`、`::test_schema_4_fields_default_when_helper_omits`、`::test_schema_4_fields_carry_forward_on_scan_response` |
 | BLE history 限长 + 剪枝 | `test_ble.py::test_history_records_and_returns_samples_in_order`、`::test_history_drops_none_rssi`、`::test_history_caps_at_maxlen`、`::test_history_get_unknown_device_returns_empty`、`::test_history_expire_drops_devices_not_in_set` |
 | Categories 诊断行排除协议工具类 GATT 服务 | `test_ble.py::test_service_category_category_only_excludes_protocol_services` |
+| Vendors 诊断行标注 RPA 轮换折叠数 | `test_tui_helpers.py::test_ble_vendors_line_annotates_folded_rotation_count`、`::test_ble_vendors_line_skips_annotation_when_nothing_folded` |
 
 ### `cli`
 
