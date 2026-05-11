@@ -124,6 +124,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | BLE history capped + pruned | `test_ble.py::test_history_records_and_returns_samples_in_order`, `::test_history_drops_none_rssi`, `::test_history_caps_at_maxlen`, `::test_history_get_unknown_device_returns_empty`, `::test_history_expire_drops_devices_not_in_set` |
 | Categories diagnostic excludes protocol-utility GATT services | `test_ble.py::test_service_category_category_only_excludes_protocol_services` |
 | Vendors diagnostic annotates folded-RPA-rotation count | `test_tui_helpers.py::test_ble_vendors_line_annotates_folded_rotation_count`, `::test_ble_vendors_line_skips_annotation_when_nothing_folded` |
+| BLE row Name column cascades through `type` and `device_class` before falling back to `(unknown)`; Services column shows service-category only (no longer duplicates `type` / `device_class`) | `test_tui_helpers.py::test_ble_row_line_name_uses_helper_name_when_present`, `::test_ble_row_line_name_falls_back_to_type`, `::test_ble_row_line_name_falls_back_to_device_class`, `::test_ble_row_line_name_unknown_when_no_signal`, `::test_ble_label_summary_services_only` |
 
 ### `cli`
 
