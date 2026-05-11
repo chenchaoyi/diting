@@ -477,7 +477,7 @@ def _fix_cjk_textlength(svg: str, cell_width_px: float = 12.2) -> str:
 # Textual's screenshot pipeline writes the small title-bar text
 # ("diting") into a `.terminal-XXX-title` CSS class with
 # `font-family: arial;` baked in. The design system at
-# `design/diting-design/` mandates Fira Code / JetBrains Mono on
+# `docs/design/diting-design/` mandates Fira Code / JetBrains Mono on
 # any mono surface, including the snapshot title bar. Rewrite the
 # baked CSS so the rendered title matches the rest of the chrome.
 def _replace_title_font(svg: str) -> str:
