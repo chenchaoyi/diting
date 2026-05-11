@@ -1510,8 +1510,13 @@ def _format_latency_spike_event(event: LatencySpikeEvent) -> Text:
         style="red",
     )
     if event.loss_pct:
+        # The "% loss" suffix used to render raw English under
+        # DITING_LANG=zh because it sat in a bare f-string. Catalog
+        # already has "{loss}% loss" → "丢包 {loss}%" used by the
+        # diagnostic Link row; re-use that key here.
         line.append(
-            f"  ·  {int(round(event.loss_pct))}% loss",
+            "  ·  " + t("{loss}% loss",
+                        loss=int(round(event.loss_pct))),
             style="dim",
         )
     return line
