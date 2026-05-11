@@ -10,7 +10,8 @@ top of a small Swift helper bundle that owns the macOS TCC permissions
 src/diting/        ← Python TUI + analyzers + decoders
 helper/Sources/       ← Swift helper bundle (CoreWLAN + CoreBluetooth)
 openspec/             ← Spec-driven development (SDD) — see below
-docs/                 ← Workflow guide, screenshots, translations
+docs/                 ← Workflow guide, screenshots, translations,
+                       design system (`docs/design/diting-design/`)
 scripts/              ← engineering tooling (snapshot capture, surveys)
 tests/                ← pytest unit + Textual smoke tests
 ```
@@ -94,13 +95,13 @@ user reports a real-environment UX issue.
 
 ## Design
 
-This repo has a design system at `design/diting-design/`. Whenever
+This repo has a design system at `docs/design/diting-design/`. Whenever
 you generate UI, marketing copy, README sections, snapshot mocks,
 slides, or any visual artifact for diting:
 
-- Read `design/diting-design/README.md` first.
-- Use `design/diting-design/colors_and_type.css` for any HTML.
-- Copy assets out of `design/diting-design/assets/` rather than
+- Read `docs/design/diting-design/README.md` first.
+- Use `docs/design/diting-design/colors_and_type.css` for any HTML.
+- Copy assets out of `docs/design/diting-design/assets/` rather than
   drawing your own SVGs or generating images.
 - Follow the voice rules: lowercase `diting`, you-not-we, no
   emoji, parenthesised italic empty states.

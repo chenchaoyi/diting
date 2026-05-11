@@ -98,16 +98,16 @@ the user changes a relevant flag.
 - **THEN** the subtitle updates from `view: wifi · scan 7s` to `view: wifi · scan 7s · PAUSED` immediately
 
 ### Requirement: TUI visual language SHALL conform to the design system
-The diting TUI and any UI-adjacent surface (README, marketing snapshots, modals, slide decks, docs site) SHALL conform to the design system at `design/diting-design/`. That directory (`README.md`, `colors_and_type.css`, `SKILL.md`, `assets/`) is the single source of truth for visual language and copy voice. Reviewers MAY block any PR that introduces:
+The diting TUI and any UI-adjacent surface (README, marketing snapshots, modals, slide decks, docs site) SHALL conform to the design system at `docs/design/diting-design/`. That directory (`README.md`, `colors_and_type.css`, `SKILL.md`, `assets/`) is the single source of truth for visual language and copy voice. Reviewers MAY block any PR that introduces:
 
 - a hex value not declared as a CSS custom property in
-  `design/diting-design/colors_and_type.css`
+  `docs/design/diting-design/colors_and_type.css`
 - a font face other than Fira Code or JetBrains Mono on a mono
   surface (TUI, snapshot title bars, code blocks)
 - emoji in user-visible strings (Unicode glyphs like `σ`, `↔`,
   `⚠`, `▁▂▃▄▅▆▇█`, `→` ARE NOT emoji and ARE allowed)
 - imports of icon libraries (Lucide, Heroicons, Material
-  Symbols, etc.); the only mark is `design/diting-design/assets/logo-mark.svg`
+  Symbols, etc.); the only mark is `docs/design/diting-design/assets/logo-mark.svg`
   (or the wordmark `logo.svg`)
 - copy that capitalises the brand (`Diting`, `DITING`, `Wifiscope`)
   outside of shell env vars (`DITING_*`) where uppercase is
@@ -120,13 +120,13 @@ The diting TUI and any UI-adjacent surface (README, marketing snapshots, modals,
   drop shadows other than `--shadow-window` / `--shadow-modal`,
   or borders other than the heavy 1px orange box-drawing frame
 
-The Requirement points at `design/diting-design/` rather than
+The Requirement points at `docs/design/diting-design/` rather than
 embedding hex values inline so future palette adjustments don't
 require a spec amendment — the canonical file is the contract.
 
 #### Scenario: A new PR adds an off-palette hex value to the TUI theme
 - **WHEN** a PR introduces `color: "#3a92e8"` in `src/diting/tui.py`
-- **AND** `#3a92e8` is not present anywhere in `design/diting-design/colors_and_type.css`
+- **AND** `#3a92e8` is not present anywhere in `docs/design/diting-design/colors_and_type.css`
 - **THEN** the reviewer SHALL block the PR with a citation to this Requirement
 - **AND** the contributor SHALL substitute a CSS custom property already declared in the design system or surface a real new-token request before merging
 
@@ -138,5 +138,5 @@ require a spec amendment — the canonical file is the contract.
 #### Scenario: A new PR introduces a Lucide icon import to a Textual widget
 - **WHEN** a PR adds `from textual_lucide import Icon` (or any equivalent icon library) anywhere under `src/diting/`
 - **THEN** the reviewer SHALL block the PR with a citation to this Requirement
-- **AND** the contributor SHALL either drop the icon or, if the surface genuinely needs a mark, use `design/diting-design/assets/logo-mark.svg` for brand placement only
+- **AND** the contributor SHALL either drop the icon or, if the surface genuinely needs a mark, use `docs/design/diting-design/assets/logo-mark.svg` for brand placement only
 
