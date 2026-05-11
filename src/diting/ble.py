@@ -560,6 +560,19 @@ def lookup_member_vendor(
     return None
 
 
+# Protocol-utility GATT services advertised by virtually every BLE
+# peripheral with bonding. They are legitimate per-row "Services"
+# labels but pollute the aggregate Categories diagnostic — see
+# bluetooth-scanning spec § "Categories diagnostic SHALL exclude
+# protocol-utility GATT services" (caught by the 2026-05-11 audit
+# run when "Device Information 20" led the office BLE Categories row).
+_PROTOCOL_UTILITY_SERVICES = frozenset({
+    "1800",  # Generic Access
+    "1801",  # Generic Attribute
+    "180A",  # Device Information
+})
+
+
 def service_category(
     uuid: str,
     *,
@@ -573,7 +586,12 @@ def service_category(
       1. Hand-curated ``_SERVICE_CATEGORY`` (project-specific friendly
          names like "HID" instead of "Human Interface Device").
       2. ``gatt`` (full SIG 16-bit GATT services list — Battery,
-         Device Information, Environmental Sensing, etc.).
+         Device Information, Environmental Sensing, etc.). When
+         ``category_only`` is True, the three protocol-utility
+         services in ``_PROTOCOL_UTILITY_SERVICES`` (Generic Access,
+         Generic Attribute, Device Information) are filtered out —
+         they aren't device kinds, so the Categories breakdown
+         shouldn't count them.
       3. ``member`` (SIG-assigned member UUIDs — FDAA → Xiaomi,
          FD2A → Sony Corporation, etc.). Skipped when
          ``category_only`` is True; the member layer surfaces a
@@ -597,6 +615,8 @@ def service_category(
         gatt = load_gatt_services()
     hit = gatt.get(short)
     if hit is not None:
+        if category_only and short in _PROTOCOL_UTILITY_SERVICES:
+            return None
         return hit
     if category_only:
         # Strict mode for the Categories breakdown: vendor names

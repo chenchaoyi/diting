@@ -10,6 +10,15 @@
 
 ## [Unreleased]
 
+### 修复
+- **BLE Categories 诊断行** 不再把协议工具类 GATT 服务（`1800`
+  Generic Access、`1801` Generic Attribute、`180A` Device
+  Information）算成设备类型。这三个服务几乎每个支持配对的 BLE 外
+  设都会广播，把它们计入 Categories 汇总会让一个本应回答"周围有
+  什么类型的设备"的行被一个高数字的"协议占位"打头，反而失去信息
+  量。每行单独显示的 Services 列仍然会渲染这些名字 —— 在单设备
+  视角下它们是有用的信息。2026-05-11 `/tui-audit` 真机巡检捕获。
+
 ## [0.8.0] — 2026-05-10
 
 「谛听」版本。项目从 `wifiscope` 改名为 **谛听 (Diting)**，README

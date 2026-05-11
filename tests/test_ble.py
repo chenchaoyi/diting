@@ -898,6 +898,28 @@ def test_service_category_falls_through_to_gatt_services():
     assert service_category("180A") == "Device Information"
 
 
+def test_service_category_category_only_excludes_protocol_services():
+    """The aggregate Categories diagnostic uses ``category_only=True``;
+    it must not count protocol-utility GATT services as device kinds —
+    those are advertised by virtually every BLE peripheral with
+    bonding and drown out actually-meaningful categories. Per-row
+    service rendering (default ``category_only=False``) must still
+    resolve them to their friendly GATT labels. Heart Rate (0x180D)
+    is a real device-class service and stays counted under both flags."""
+    # Aggregate Categories: the three protocol-utility services drop out
+    assert service_category("180A", category_only=True) is None  # Device Information
+    assert service_category("1800", category_only=True) is None  # GAP
+    assert service_category("1801", category_only=True) is None  # GATT
+    # Per-row Services column: default behaviour unchanged — these
+    # labels come from the bundled SIG GATT-services table.
+    assert service_category("180A") == "Device Information"
+    assert service_category("1800") == "GAP"
+    assert service_category("1801") == "GATT"
+    # Sanity: a real device-class GATT service (Heart Rate) is unaffected
+    assert service_category("180D", category_only=True) == "Heart Rate"
+    assert service_category("180D") == "Heart Rate"
+
+
 def test_service_category_falls_through_to_member_uuids():
     """16-bit member-assigned UUIDs (FDAA → Xiaomi, FD2A → Sony) are
     the last fallback before passing through the raw UUID. Resolves
