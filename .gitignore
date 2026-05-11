@@ -59,3 +59,7 @@ snapshot-output/
 
 # NOTE: do NOT ignore uv.lock or .python-version — both are committed for
 # reproducible installs (uv treats this as an application, not a library).
+
+# Personal/meeting notes — never commit. Keep these out of the public repo.
+会议纪要_*.md
+/会议纪要*.md
