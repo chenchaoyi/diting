@@ -2691,15 +2691,33 @@ def _ble_row_line(d: BLEDevice, now: datetime) -> Text:
         # (file an OUI / cid gap); the first is a physical-data limit.
         placeholder = "(anonymous)" if is_silent_device(d) else "(unknown)"
         vendor_cell = pad_cells(t(placeholder), _COL_BLE_VENDOR)
-    name_text = d.name or t("(unknown)")
-    name_style = "white" if d.name else "dim italic"
+    # Name column cascade: helper-provided name → schema-3 `type`
+    # (Find My target / MS device beacon / Apple Proximity / iBeacon /
+    # AirTag …) → Apple Nearby Info `device_class` (iPhone / Mac /
+    # Apple Watch) → (unknown). The cascade promotes data that USED
+    # to live only in the Services column, so a row whose helper
+    # tagged it `Find My target` no longer reads as "(unknown) /
+    # Find My target · Find My" — it reads "Find My target /
+    # Find My", with the Name column doing real work.
+    if d.name:
+        name_text = d.name
+        name_style = "white"
+    elif d.type:
+        name_text = t(d.type)
+        name_style = "dim"
+    elif d.device_class:
+        name_text = t(d.device_class)
+        name_style = "dim"
+    else:
+        name_text = t("(unknown)")
+        name_style = "dim italic"
     label_text = _ble_label_summary(d)
     age_text = _ble_age_text(d, now)
     id_short = d.identifier[:8]
-    # Type / device_class get a brighter colour than the dim service
-    # categories — they are usually the answer to "what kind of device
-    # is this", which the user reads first.
-    label_style = "white" if (d.type or d.device_class) else "dim"
+    # `_ble_label_summary` is now service-category-only (the type /
+    # device_class branch moved to the Name column above), so the
+    # column never carries the deep-ID highlight; dim throughout.
+    label_style = "dim"
 
     line = Text()
     # Selection star reserved for future use; no devices are "current"
@@ -2809,24 +2827,21 @@ def _ble_services_summary(services: tuple[str, ...]) -> str:
 
 
 def _ble_label_summary(d: BLEDevice) -> str:
-    """Combined deep-ID + service-category label for the row's
-    rightmost-but-one column. Schema-3 ``type`` (iBeacon, AirTag,
-    Eddystone-URL, …) takes priority — those are the actionable
-    answers to "what kind of device is this" — followed by Apple
-    Nearby Info ``device_class`` for Apple peripherals, followed by
-    the service-UUID category as a fallback. The two halves combine
-    with " · " when both are present and non-overlapping; identical
-    halves collapse so we never render "Heart Rate · Heart Rate".
+    """Service-category summary for the row's Services column.
+
+    Returns the translated, deduplicated list of service-UUID
+    categories (Audio / HID / Heart Rate / …), capped at three.
+    Empty string when the device advertises no recognised services.
+
+    Schema-3 ``type`` (Find My target / MS device beacon / iBeacon /
+    AirTag) and Apple Nearby Info ``device_class`` are NOT
+    surfaced here — they moved one column to the left into the Name
+    column's cascade in :func:`_ble_row_line`. Keeping the Services
+    column purely service-UUID-derived eliminates the
+    "(unknown) / Find My target · Find My" redundancy where the same
+    fact rendered in two columns.
     """
-    head: str | None = None
-    if d.type:
-        head = t(d.type)
-    elif d.device_class:
-        head = t(d.device_class)
-    tail = _ble_services_summary(d.services)
-    if head and tail and head != tail:
-        return f"{head} · {tail}"
-    return head or tail
+    return _ble_services_summary(d.services)
 
 
 def _ble_age_text(d: BLEDevice, now: datetime) -> str:

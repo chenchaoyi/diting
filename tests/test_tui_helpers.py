@@ -521,32 +521,86 @@ def test_ble_categories_line_includes_deep_id_types():
     assert "1 iPhone" in text
 
 
-def test_ble_label_summary_prefers_type_over_service_category():
-    """A device tagged AirTag with FD5A service shows 'AirTag · Find My'
-    rather than just 'Find My' or just 'AirTag' — the type answers
-    'what is this' first, the category gives extra context. Identical
-    halves collapse so we don't render 'Heart Rate · Heart Rate'."""
+def test_ble_label_summary_services_only():
+    """`_ble_label_summary` is now purely service-category-derived.
+    Schema-3 `type` and Apple Nearby Info `device_class` no longer
+    appear in this column — they moved to the Name column's cascade
+    so the same fact doesn't render in two columns.
+    """
+    # type=AirTag + FD5A service: Services column shows only the
+    # service-category (Find My), NOT 'AirTag · Find My'.
     airtag = _ble_dev(services=("FD5A",), type="AirTag")
-    summary = _ble_label_summary(airtag)
-    assert "AirTag" in summary
-    assert "Find My" in summary
-    assert summary == "AirTag · Find My"
-
-
-def test_ble_label_summary_falls_back_to_service_category_when_no_type():
-    """No type / device_class → label is just the service category,
-    matching the v0.5.0 'services' column behaviour exactly. This is
-    the path most non-Apple, non-Find-My devices take."""
-    plain = _ble_dev(services=("180D",))  # Heart Rate only
+    assert _ble_label_summary(airtag) == "Find My"
+    # No services and only a device_class → empty Services column.
+    iphone_via_nearby = _ble_dev(services=(), device_class="iPhone")
+    assert _ble_label_summary(iphone_via_nearby) == ""
+    # No type / device_class, only a service → service-category only.
+    plain = _ble_dev(services=("180D",))  # Heart Rate
     assert _ble_label_summary(plain) == "Heart Rate"
 
 
-def test_ble_label_summary_uses_device_class_when_no_type():
-    """Apple Nearby Info gives device_class but no type. The summary
-    surfaces 'iPhone' / 'Mac' / 'Apple Watch' so the user can tell a
-    laptop from a watch among the rotating Apple beacons."""
-    iphone = _ble_dev(services=(), device_class="iPhone")
-    assert _ble_label_summary(iphone) == "iPhone"
+# --- Name column cascade ---------------------------------------------
+
+def _row_text(d) -> str:
+    """Render `_ble_row_line` and return its `.plain` for substring
+    assertions. Uses a fixed `now` so the age column is deterministic."""
+    from diting.tui import _ble_row_line
+    now = datetime(2026, 5, 11, 18, 0, 0)
+    return _ble_row_line(d, now).plain
+
+
+def test_ble_row_line_name_uses_helper_name_when_present():
+    """When the helper supplies a broadcast name, the Name column
+    shows it verbatim — no synthesis, no fallback."""
+    d = _ble_dev(name="ccy iPhone")
+    text = _row_text(d)
+    assert "ccy iPhone" in text
+    assert "(unknown)" not in text
+
+
+def test_ble_row_line_name_falls_back_to_type():
+    """No helper-provided name but schema-3 `type` set: Name column
+    shows the (translated) type rather than '(unknown)'. This is the
+    fix for the audit finding that ~17% of visible rows showed
+    '(unknown)' alongside a perfectly good type in the Services column."""
+    d = _ble_dev(name=None, type="Find My target")
+    text = _row_text(d)
+    assert "Find My target" in text
+    # No '(unknown)' placeholder when we have something to show.
+    assert "(unknown)" not in text
+
+
+def test_ble_row_line_name_falls_back_to_device_class():
+    """No name and no type, but Apple Nearby Info supplied a
+    device_class: cascade picks device_class as the next-best name."""
+    d = _ble_dev(name=None, type=None, device_class="iPhone")
+    text = _row_text(d)
+    assert "iPhone" in text
+    assert "(unknown)" not in text
+
+
+def test_ble_row_line_name_unknown_when_no_signal():
+    """No name, no type, no device_class → fall through to the
+    `(unknown)` placeholder. The cascade adds no new data, only
+    surfaces what was already there."""
+    d = _ble_dev(name=None, type=None, device_class=None)
+    text = _row_text(d)
+    assert "(unknown)" in text
+
+
+def test_ble_row_line_services_no_longer_duplicates_type():
+    """End-to-end check: a row with type='AirTag' and the FD5A service
+    no longer renders 'AirTag · Find My' in the Services column
+    (which was duplicating the type one column to the right of where
+    it now lives). 'AirTag' appears exactly once — in the Name column."""
+    d = _ble_dev(name=None, services=("FD5A",), type="AirTag")
+    text = _row_text(d)
+    # AirTag appears (it's the Name column value now).
+    assert "AirTag" in text
+    # And only once — not duplicated in Services.
+    assert text.count("AirTag") == 1
+    # Services column still shows the service-category.
+    assert "Find My" in text
 
 
 # --- v0.7.0 Link / Environment / Events ----------------------------
