@@ -274,6 +274,7 @@ _ZH: dict[str, str] = {
     "(none)": "(无)",
     "(anonymous)": "(匿名)",
     "? {n}": "? {n}",
+    "(+{n} folded)": "(已折叠 {n})",
     "{n} other": "{n} 其他",
     # Service-category labels for ble.py.service_category() return values
     # are already translated below in the BLE table area; nothing extra

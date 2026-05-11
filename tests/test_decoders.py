@@ -556,3 +556,49 @@ def test_ruuvi_skips_truncated_frame():
     d = _dev(vendor_id=0x0499, manufacturer_hex="9904" "05" + "00" * 10)
     out = decode_all(d)
     assert "ruuvi.format" not in out
+
+
+# ----------------------------------------------------------------------
+# Xiaomi / Anhui Huami
+# ----------------------------------------------------------------------
+
+def test_xiaomi_canonical_decode_with_body():
+    """A real Xiaomi Mi Band-class advertisement captured in the field
+    (cid 0x038F, frame byte 0x2a, 19 body bytes). The decoder should
+    recognise the frame, surface the frame counter byte, and return
+    the body bytes verbatim as hex so the user can compare across
+    captures by hand."""
+    raw = "8f03" "2a" "113461476f103041a20115262954bd57010302"
+    d = _dev(vendor_id=0x038F, manufacturer_hex=raw)
+    out = decode_all(d)
+    assert out["xiaomi.cid"] == "0x038f"
+    assert out["xiaomi.frame_seq"] == 0x2a
+    assert out["xiaomi.body_hex"] == "113461476f103041a20115262954bd57010302"
+    assert out["xiaomi.body_len"] == 19
+
+
+def test_xiaomi_short_frame_decodes_just_frame_byte():
+    """The ``8f03`` header-only advertisement (common after RPA
+    rotations) decodes to an empty body without raising."""
+    d = _dev(vendor_id=0x038F, manufacturer_hex="8f03")
+    out = decode_all(d)
+    assert out["xiaomi.cid"] == "0x038f"
+    assert out["xiaomi.body_hex"] == ""
+    assert out["xiaomi.body_len"] == 0
+    # No frame_seq when the byte isn't there.
+    assert "xiaomi.frame_seq" not in out
+
+
+def test_xiaomi_skips_non_xiaomi_cid():
+    """An advertisement on a different cid that happens to start with
+    the same byte prefix must not be misread as Xiaomi."""
+    d = _dev(vendor_id=76, manufacturer_hex="4c00" "8f03" + "2a")
+    out = decode_all(d)
+    assert "xiaomi.cid" not in out
+
+
+def test_xiaomi_skips_malformed_hex():
+    """A non-hex manufacturer string abstains (graceful, not raise)."""
+    d = _dev(vendor_id=0x038F, manufacturer_hex="not-hex-bytes")
+    out = decode_all(d)
+    assert "xiaomi.cid" not in out

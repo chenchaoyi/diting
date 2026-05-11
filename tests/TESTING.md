@@ -93,7 +93,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Decoders are `@register`-decorated functions | `test_decoders.py::test_registry_has_built_in_decoders` |
 | Decoders never raise on malformed input | `test_decoders.py::test_decode_all_swallows_decoder_exceptions`; per-protocol `test_*_skips_truncated_*`, `test_*_skips_when_too_short` |
 | Output keys protocol-namespaced | (review-enforced — convention checked in code review; canonical-decode tests assert namespaced keys) |
-| Bundled decoders cover the public-spec protocols | iBeacon: `test_ibeacon_canonical_decode`; Eddystone: `test_eddystone_url_canonical_decode`, `::test_eddystone_uid_decode`, `::test_eddystone_tlm_decode`, `::test_eddystone_eid_frame_recognised_but_not_decoded`; Apple Continuity: `test_nearby_info_canonical_short_form`, `::test_find_my_short_form_minimum_payload`, `::test_handoff_canonical_decode`, `::test_handoff_chained_with_nearby_info_decodes_both`; MS CDP: `test_ms_device_beacon_real_capture`, `::test_swift_pair_decodes_utf8_model_name`; Ruuvi: `test_ruuvi_format5_canonical_decode` |
+| Bundled decoders cover the public-spec protocols | iBeacon: `test_ibeacon_canonical_decode`; Eddystone: `test_eddystone_url_canonical_decode`, `::test_eddystone_uid_decode`, `::test_eddystone_tlm_decode`, `::test_eddystone_eid_frame_recognised_but_not_decoded`; Apple Continuity: `test_nearby_info_canonical_short_form`, `::test_find_my_short_form_minimum_payload`, `::test_handoff_canonical_decode`, `::test_handoff_chained_with_nearby_info_decodes_both`; MS CDP: `test_ms_device_beacon_real_capture`, `::test_swift_pair_decodes_utf8_model_name`; Ruuvi: `test_ruuvi_format5_canonical_decode`; Xiaomi / Huami: `test_xiaomi_canonical_decode_with_body`, `::test_xiaomi_short_frame_decodes_just_frame_byte`, `::test_xiaomi_skips_non_xiaomi_cid` |
 | No semantic claims for unstable bits | (review-enforced — bundled decoders surface raw byte hex, no flag interpretations) |
 | Decoders gate on identifying bytes | `test_decoders.py::test_ibeacon_skips_non_apple_cid`, `::test_nearby_info_skips_non_apple_cid`, `::test_eddystone_skips_non_feaa_service_data`, `::test_ms_device_beacon_skips_when_subtype_is_swift_pair`, `::test_ruuvi_skips_non_ruuvi_cid` |
 
@@ -123,6 +123,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Schema-4 raw fields plumbed onto BLEDevice | `test_ble.py::test_schema_4_raw_passthrough_fields_populate`, `::test_schema_4_fields_default_when_helper_omits`, `::test_schema_4_fields_carry_forward_on_scan_response` |
 | BLE history capped + pruned | `test_ble.py::test_history_records_and_returns_samples_in_order`, `::test_history_drops_none_rssi`, `::test_history_caps_at_maxlen`, `::test_history_get_unknown_device_returns_empty`, `::test_history_expire_drops_devices_not_in_set` |
 | Categories diagnostic excludes protocol-utility GATT services | `test_ble.py::test_service_category_category_only_excludes_protocol_services` |
+| Vendors diagnostic annotates folded-RPA-rotation count | `test_tui_helpers.py::test_ble_vendors_line_annotates_folded_rotation_count`, `::test_ble_vendors_line_skips_annotation_when_nothing_folded` |
 
 ### `cli`
 

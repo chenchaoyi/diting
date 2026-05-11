@@ -396,6 +396,44 @@ def test_ble_vendors_line_top_four_plus_unknown():
     assert "? 3" in text
 
 
+def test_ble_vendors_line_annotates_folded_rotation_count():
+    """When merge_for_display has folded RPA rotations, the diagnostic
+    line surfaces the total folded count so the user reads the row
+    counts as post-merge, not raw."""
+    devices = [
+        # Two Anhui Huami rows; the first row folded 4 extra rotations
+        # (merged_count=5 means 5 raw identifiers collapsed into 1
+        # display row), the second folded 2.
+        _ble_dev(identifier="ah1", vendor="Anhui Huami", vendor_id=911,
+                 merged_count=5),
+        _ble_dev(identifier="ah2", vendor="Anhui Huami", vendor_id=911,
+                 merged_count=3),
+        # One Apple row with no folding.
+        _ble_dev(identifier="a1", vendor="Apple, Inc.", vendor_id=76,
+                 merged_count=1),
+    ]
+    text = _ble_vendors_line(devices).plain
+    # Vendor counts use the post-merge row count (not raw).
+    assert "Anhui Huami 2" in text
+    assert "Apple, Inc. 1" in text
+    # Folded annotation totals (merged_count - 1) across all rows:
+    # (5-1) + (3-1) + (1-1) = 6.
+    assert "(+6 folded)" in text
+
+
+def test_ble_vendors_line_skips_annotation_when_nothing_folded():
+    """No folding → no annotation; the line stays clean for the common
+    case where every visible row corresponds to a single raw
+    advertisement."""
+    devices = [
+        _ble_dev(identifier="a1", vendor="Apple, Inc.", vendor_id=76),
+        _ble_dev(identifier="a2", vendor="Apple, Inc.", vendor_id=76),
+    ]
+    text = _ble_vendors_line(devices).plain
+    assert "Apple, Inc. 2" in text
+    assert "folded" not in text
+
+
 def test_ble_categories_line_groups_by_service_category():
     # Apple Watch advertises both HID (1812) and Heart Rate (180D),
     # which should each contribute one to its bucket — never two.

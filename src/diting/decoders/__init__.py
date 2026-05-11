@@ -80,3 +80,4 @@ from . import eddystone as _eddystone  # noqa: E402, F401
 from . import apple_continuity as _apple_continuity  # noqa: E402, F401
 from . import microsoft_cdp as _microsoft_cdp  # noqa: E402, F401
 from . import ruuvi as _ruuvi  # noqa: E402, F401
+from . import xiaomi as _xiaomi  # noqa: E402, F401
