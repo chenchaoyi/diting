@@ -114,6 +114,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | RSSI smoothing for stable sort order | `test_ble.py::test_rssi_smooth_seeds_from_first_sample`, `::test_rssi_smooth_dampens_packet_jitter`, `::test_merge_sort_key_uses_smoothed_rssi` |
 | Schema-4 raw fields plumbed onto BLEDevice | `test_ble.py::test_schema_4_raw_passthrough_fields_populate`, `::test_schema_4_fields_default_when_helper_omits`, `::test_schema_4_fields_carry_forward_on_scan_response` |
 | BLE history capped + pruned | `test_ble.py::test_history_records_and_returns_samples_in_order`, `::test_history_drops_none_rssi`, `::test_history_caps_at_maxlen`, `::test_history_get_unknown_device_returns_empty`, `::test_history_expire_drops_devices_not_in_set` |
+| Categories diagnostic excludes protocol-utility GATT services | `test_ble.py::test_service_category_category_only_excludes_protocol_services` |
 
 ### `cli`
 

@@ -11,6 +11,18 @@ behaviours between releases.
 
 ## [Unreleased]
 
+### Fixed
+- **BLE Categories diagnostic** no longer counts protocol-utility
+  GATT services (`1800` Generic Access, `1801` Generic Attribute,
+  `180A` Device Information) as device kinds. Those services are
+  advertised by virtually every BLE peripheral with bonding, so
+  including them in the aggregate Categories breakdown inflated a
+  top-of-list count that read like a device class but contained no
+  actual information about what kinds of devices were nearby. The
+  per-row "Services" column still renders them — they're useful
+  detail in a single device's row. Caught by the 2026-05-11
+  `/tui-audit` run.
+
 ## [0.8.0] — 2026-05-10
 
 The "diting" release. Project renamed from `wifiscope` to **谛听
