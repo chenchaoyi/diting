@@ -320,6 +320,84 @@ def test_unified_events_panel_renders_roam_and_stir_interleaved():
     asyncio.run(go())
 
 
+def test_app_with_notify_calls_watchdog_on_event(monkeypatch):
+    """`DitingApp(notify=True)` constructs watchdog state and routes
+    events through it. We patch the real `osascript` notifier with a
+    recording stub so the test never spawns a subprocess, then drive
+    one anomaly payload through `_maybe_notify` and assert the stub
+    was called exactly once with the expected message body."""
+    import asyncio
+
+    import diting._watchdog as wd
+
+    calls: list[tuple[str, str]] = []
+
+    async def fake_notifier(*, title: str, message: str) -> None:
+        calls.append((title, message))
+
+    monkeypatch.setattr(wd, "_macos_notify", fake_notifier)
+
+    async def go():
+        app = DitingApp(
+            _FakeBackend(), _INVENTORY,
+            enable_latency=False, enable_environment=False,
+            notify=True,
+        )
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            assert app._notify_enabled is True
+            assert app._watchdog_cfg is not None
+            assert app._silence_clock is not None
+            await app._maybe_notify(
+                {"type": "latency_spike", "target": "gw", "rtt_ms": 240.5},
+                target="gw",
+            )
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+    assert len(calls) == 1
+    title, message = calls[0]
+    assert title == "diting"
+    assert "Latency spike on gw" in message
+    assert "240.5" in message
+
+
+def test_app_without_notify_does_not_call_watchdog(monkeypatch):
+    """`DitingApp()` with the default `notify=False` keeps the
+    notification side-effect inert — `_maybe_notify` is a no-op."""
+    import asyncio
+
+    import diting._watchdog as wd
+
+    calls: list[tuple[str, str]] = []
+
+    async def fake_notifier(*, title: str, message: str) -> None:
+        calls.append((title, message))
+
+    monkeypatch.setattr(wd, "_macos_notify", fake_notifier)
+
+    async def go():
+        app = DitingApp(
+            _FakeBackend(), _INVENTORY,
+            enable_latency=False, enable_environment=False,
+        )
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            assert app._notify_enabled is False
+            assert app._watchdog_cfg is None
+            assert app._silence_clock is None
+            await app._maybe_notify(
+                {"type": "latency_spike", "target": "gw", "rtt_ms": 240.5},
+                target="gw",
+            )
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+    assert calls == []
+
+
 def test_ble_panel_renders_both_connected_and_advertising_sections():
     """Seed both the advertising buffer and the connected buffer, then
     press `n` to enter the BLE view. The BLEPanel body must contain

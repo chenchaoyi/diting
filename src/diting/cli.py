@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import i18n
+from ._watchdog import SilenceClock, WatchdogConfig, maybe_notify
 from .event_log import EventLogger
 from .environment import (
     EnvironmentMonitor,
@@ -288,15 +289,20 @@ async def _run_monitor(args: list[str]) -> None:
         "gateway_override": gateway_override,
     }
 
-    async def maybe_notify(payload: dict) -> None:
-        """Raise a macOS Notification Centre alert for high-confidence
-        events. The logger handles the log line itself; this is the
-        side-effect monitor adds on top."""
-        if notify and payload.get("confidence") == "high":
-            await _macos_notify(
-                title="diting",
-                message=_notify_message(payload),
-            )
+    watchdog_cfg = WatchdogConfig.from_env() if notify else None
+    silence_clock = (
+        SilenceClock(watchdog_cfg.silence_window_s) if notify else None
+    )
+
+    async def _notify(payload: dict, target: str) -> None:
+        if not notify:
+            return
+        await maybe_notify(
+            payload,
+            target=target,
+            clock=silence_clock,
+            config=watchdog_cfg,
+        )
 
     last_ssid: dict[str, str | None] = {"value": None}
 
@@ -334,22 +340,28 @@ async def _run_monitor(args: list[str]) -> None:
                     monitor.ingest(conn.bssid, conn.rssi_dbm, now)
                     for stir in monitor.fire_events(now):
                         logger.emit_rf_stir(stir)
-                        await maybe_notify({
-                            "type": "rf_stir",
-                            "confidence": stir.confidence,
-                            "location": stir.location,
-                        })
+                        await _notify(
+                            {
+                                "type": "rf_stir",
+                                "confidence": stir.confidence,
+                                "location": stir.location,
+                            },
+                            target=stir.location,
+                        )
             elif isinstance(event, ScanUpdate):
                 for r in event.results:
                     if r.bssid is not None and r.rssi_dbm is not None:
                         monitor.ingest(r.bssid, r.rssi_dbm, now)
                 for stir in monitor.fire_events(now):
                     logger.emit_rf_stir(stir)
-                    await maybe_notify({
-                        "type": "rf_stir",
-                        "confidence": stir.confidence,
-                        "location": stir.location,
-                    })
+                    await _notify(
+                        {
+                            "type": "rf_stir",
+                            "confidence": stir.confidence,
+                            "location": stir.location,
+                        },
+                        target=stir.location,
+                    )
             elif isinstance(event, RoamEvent):
                 kind = (
                     "band_switch"
@@ -382,23 +394,41 @@ async def _run_monitor(args: list[str]) -> None:
             if spike is not None and sample is spike:
                 if should_fire("latency_spike", sample.target):
                     agg = lp.aggregate(sample.target)
+                    rtt_ms = round(sample.rtt_ms or 0.0, 1)
                     logger.emit_latency_spike(LatencySpikeEvent(
                         timestamp=sample.ts,
                         target=sample.target,
                         target_ip=sample.target_ip,
-                        rtt_ms=round(sample.rtt_ms or 0.0, 1),
+                        rtt_ms=rtt_ms,
                         loss_pct=round(agg.loss_pct or 0.0, 1),
                     ))
+                    await _notify(
+                        {
+                            "type": "latency_spike",
+                            "target": sample.target,
+                            "rtt_ms": rtt_ms,
+                        },
+                        target=sample.target,
+                    )
             if sample.lost and detect_loss_burst(history):
                 if should_fire("loss_burst", sample.target):
                     agg = lp.aggregate(sample.target)
+                    loss_pct = round(agg.loss_pct or 0.0, 1)
                     logger.emit_loss_burst(LossBurstEvent(
                         timestamp=sample.ts,
                         target=sample.target,
                         target_ip=sample.target_ip,
-                        loss_pct=round(agg.loss_pct or 0.0, 1),
+                        loss_pct=loss_pct,
                         lost_in_window=sum(1 for s in history[-5:] if s.lost),
                     ))
+                    await _notify(
+                        {
+                            "type": "loss_burst",
+                            "target": sample.target,
+                            "loss_pct": loss_pct,
+                        },
+                        target=sample.target,
+                    )
 
     try:
         await wifi_consumer()
@@ -410,41 +440,6 @@ def _iso(ts: datetime) -> str:
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=timezone.utc)
     return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _notify_message(payload: dict) -> str:
-    """Compose a short macOS notification body from an event dict."""
-    kind = payload.get("type")
-    if kind == "rf_stir":
-        return (
-            f"RF stir at {payload.get('location', '?')} — "
-            f"σ {payload.get('magnitude_db', '?')} dB"
-        )
-    if kind == "latency_spike":
-        return (
-            f"Latency spike on {payload.get('target', '?')}: "
-            f"{payload.get('rtt_ms', '?')} ms"
-        )
-    if kind == "loss_burst":
-        return (
-            f"Loss burst on {payload.get('target', '?')}: "
-            f"{payload.get('loss_pct', '?')}%"
-        )
-    return f"event {kind}"
-
-
-async def _macos_notify(*, title: str, message: str) -> None:
-    """Fire ``osascript -e 'display notification ...'`` non-blocking."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "/usr/bin/osascript", "-e",
-            f'display notification "{message}" with title "{title}"',
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await proc.wait()
-    except (FileNotFoundError, OSError):
-        pass
 
 
 def _arg_value(args: list[str], flag: str) -> str | None:
@@ -571,7 +566,8 @@ def _usage() -> str:
     return t(
         "usage: diting [--lang en|zh] [--log [PATH]] [SUBCOMMAND]\n"
         "\n"
-        "  (no args)   launch the TUI dashboard (default)\n"
+        "  (no args)   launch the TUI dashboard (default; pass --notify to\n"
+        "              raise OS banners on anomaly events while TUI runs)\n"
         "  once        print the current connection and exit\n"
         "  watch       stream events as plain text until Ctrl+C\n"
         "  monitor     headless JSONL events (long-runs / Home Assistant)\n"
@@ -710,7 +706,26 @@ def _resolve_log_path(cli_value: str | object | None) -> str | None:
     return env
 
 
-def _run_tui(*, log_path: str | None = None) -> None:
+def _extract_notify_arg(argv: list[str]) -> bool:
+    """Pop ``--notify`` from ``argv`` in place; return True if present.
+
+    Boolean flag; takes no value. Recognised on the default TUI
+    subcommand (where this is called from main()) and on the
+    ``monitor`` subcommand (parsed inside ``_run_monitor`` via the
+    legacy ``"--notify" in args`` pattern, which keeps working
+    because we only strip the flag from the default-subcommand
+    path).
+    """
+    for i, arg in enumerate(argv):
+        if arg == "--notify":
+            del argv[i]
+            return True
+    return False
+
+
+def _run_tui(
+    *, log_path: str | None = None, notify: bool = False,
+) -> None:
     # Imported lazily so `diting once` and `diting watch` do not
     # pull in textual / rich on every invocation.
     from .tui import DitingApp
@@ -736,6 +751,7 @@ def _run_tui(*, log_path: str | None = None) -> None:
         scan_interval=_scan_interval(),
         ble_helper_path=ble_binary,
         event_log_path=log_path,
+        notify=notify,
     ).run()
     # Post-exit hint pointing at the analyze command. Prints AFTER
     # the alt-screen tears down so the user sees it on the same
@@ -932,8 +948,15 @@ def main() -> None:
     cli_log = _extract_log_arg(args)
     i18n.set_lang(i18n.resolve_lang(cli_lang))
     log_path = _resolve_log_path(cli_log)
+    # `--notify` on the default TUI subcommand: strip the flag here so
+    # an otherwise-empty argv falls into the default branch. We only
+    # strip when no known subcommand follows — if the user wrote
+    # `diting monitor --notify`, leave it in args for `_run_monitor`
+    # to parse.
+    has_subcommand = any(a in _KNOWN_SUBCOMMANDS for a in args)
+    tui_notify = _extract_notify_arg(args) if not has_subcommand else False
     if not args:
-        _run_tui(log_path=log_path)
+        _run_tui(log_path=log_path, notify=tui_notify)
         return
     cmd = args[0]
     if cmd == "once":

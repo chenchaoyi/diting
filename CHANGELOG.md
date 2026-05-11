@@ -11,6 +11,25 @@ behaviours between releases.
 
 ## [Unreleased]
 
+### Added
+- **Anomaly watchdog mode.** `--notify` now raises a macOS
+  Notification Centre banner for all three anomaly event types
+  (`rf_stir`, `latency_spike`, `loss_burst`) and is valid on both
+  `diting monitor --notify` (headless) and the default TUI
+  subcommand (`diting --notify`). A per-(event-type, target)
+  silence window debounces sustained anomalies so the banner cadence
+  is one per minute per affected target, not one per detector tick.
+  Two env vars tune behaviour without a recompile:
+  `DITING_NOTIFY_SILENCE_S` (3–3600, default 60) overrides the
+  silence window; `DITING_NOTIFY_STIR_CONFIDENCE` (`high` /
+  `medium` / `all`, default `high`) loosens the `rf_stir` severity
+  gate. Invalid values fall back to the default with a one-line
+  stderr warning. Silence-window state is in-memory only and resets
+  on restart. JSONL event streams are NOT debounced — only the OS
+  notification side-effect is. Plain `diting` and plain
+  `diting monitor` continue to fire NO notifications, matching
+  pre-0.8.0 behaviour byte-for-byte.
+
 ### Fixed
 - **BLE Categories diagnostic** no longer counts protocol-utility
   GATT services (`1800` Generic Access, `1801` Generic Attribute,

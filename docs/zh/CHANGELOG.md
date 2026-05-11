@@ -10,6 +10,21 @@
 
 ## [Unreleased]
 
+### 新增
+- **异常守望模式（anomaly watchdog）。** `--notify` 现在会对三种异常
+  事件（`rf_stir` / `latency_spike` / `loss_burst`）都触发 macOS 通知
+  中心横幅，并且同时在 `diting monitor --notify`（无头）和默认 TUI 子
+  命令（`diting --notify`）下生效。按 (event-type, target) 维度做
+  静默窗口，持续告警每个 target 每分钟最多弹一次横幅，而不是每个探测
+  tick 都弹一次。两个环境变量可在不重编的情况下调参：
+  `DITING_NOTIFY_SILENCE_S`（3-3600，默认 60）覆盖静默窗口；
+  `DITING_NOTIFY_STIR_CONFIDENCE`（`high` / `medium` / `all`，默认
+  `high`）放宽 `rf_stir` 置信度阈值。非法值会落回默认并在 stderr
+  打印一行 warning。静默窗口状态仅存在内存，重启即清零。JSONL 事件
+  流不做去重 —— 静默窗口只针对 OS 通知这一副作用。无 `--notify` 的
+  `diting` 与 `diting monitor` 行为保持与 0.8.0 完全一致，不会触发
+  任何通知。
+
 ### 修复
 - **BLE Categories 诊断行** 不再把协议工具类 GATT 服务（`1800`
   Generic Access、`1801` Generic Attribute、`180A` Device
