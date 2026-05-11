@@ -563,10 +563,21 @@ def render(report: Report) -> str:
     # Time span
     if report.span_start and report.span_end:
         delta = report.span_end - report.span_start
+        local_start = report.span_start.astimezone()
+        local_end = report.span_end.astimezone()
+        # Drop the end date when it matches the start date (most logs
+        # are single-session, short enough that repeating the date
+        # reads as noise). Re-include it for multi-day spans where
+        # `22:04:21 → 13:01:33` reads ambiguously as same-day even
+        # though the duration says 14h 57m.
+        end_fmt = (
+            "%H:%M:%S" if local_start.date() == local_end.date()
+            else "%Y-%m-%d %H:%M:%S"
+        )
         lines.append(t(
             "Time range: {start} → {end}  ({duration})",
-            start=report.span_start.astimezone().strftime("%Y-%m-%d %H:%M:%S"),
-            end=report.span_end.astimezone().strftime("%H:%M:%S"),
+            start=local_start.strftime("%Y-%m-%d %H:%M:%S"),
+            end=local_end.strftime(end_fmt),
             duration=_format_duration(delta.total_seconds()),
         ))
     lines.append(t("Total events: {n}", n=report.total_events))
