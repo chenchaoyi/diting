@@ -137,7 +137,12 @@ class ConnectionPanel(Static):
             (t("PHY / Sec"), f"{_fmt(conn.phy_mode)}   {_fmt(conn.security)}"),
             (
                 t("Tx / Max"),
-                t("{tx}  /  {max} max",
+                # No trailing 'max' suffix on the second value - the
+                # row label is already 'Tx / Max', so '286.0 Mbps /
+                # 379 Mbps max' duplicates the word the user just
+                # read on the left. Slash convention makes the order
+                # unambiguous.
+                t("{tx}  /  {max}",
                   tx=_fmt(conn.tx_rate_mbps, " Mbps"),
                   max=_fmt(conn.max_link_speed_mbps, " Mbps")),
             ),

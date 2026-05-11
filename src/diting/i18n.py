@@ -193,7 +193,7 @@ _ZH: dict[str, str] = {
     "Channel": "信道",
     "PHY / Sec": "PHY / 加密",
     "Tx / Max": "Tx / Max",
-    "{tx}  /  {max} max": "{tx}  /  {max} 最大",
+    "{tx}  /  {max}": "{tx}  /  {max}",
     "MCS / NSS": "MCS / NSS",
     "{mcs}  ·  {nss}": "{mcs}  ·  {nss}",
     " streams": " 空间流",
