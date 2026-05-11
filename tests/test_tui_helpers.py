@@ -405,9 +405,9 @@ def test_ble_categories_line_groups_by_service_category():
     text = _ble_categories_line(
         [apple_watch, airpods, nameless]
     ).plain
-    assert "Heart Rate 1" in text
-    assert "HID 1" in text
-    assert "Audio 1" in text
+    assert "1 Heart Rate" in text
+    assert "1 HID" in text
+    assert "1 Audio" in text
     # Devices without any categorised service show up as "N other".
     assert "1 other" in text
 
@@ -478,9 +478,9 @@ def test_ble_categories_line_includes_deep_id_types():
         _ble_dev(identifier="ip1", services=(), device_class="iPhone"),
     ]
     text = _ble_categories_line(devices).plain
-    assert "iBeacon 2" in text
-    assert "AirTag 1" in text
-    assert "iPhone 1" in text
+    assert "2 iBeacon" in text
+    assert "1 AirTag" in text
+    assert "1 iPhone" in text
 
 
 def test_ble_label_summary_prefers_type_over_service_category():
