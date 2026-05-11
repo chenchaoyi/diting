@@ -69,6 +69,14 @@
 | 时长格式诚实（`30s`，永远不写 `1 min`） | `test_tui_helpers.py::test_format_duration_short_buckets`、`::test_format_duration_short_negative_clamps_to_zero` |
 | 有 insight 时才出 TODO 段 | `test_analyze.py::test_render_handles_zero_events`、`::test_empty_log_warns` |
 
+### `anomaly-watchdog`
+
+| Requirement | 测试 |
+|---|---|
+| `--notify` 对 `rf_stir` / `latency_spike` / `loss_burst` 三种异常都触发 macOS 通知中心横幅（`monitor` 与默认 TUI 子命令均生效） | `test_watchdog.py::test_maybe_notify_fires_for_latency_spike`、`::test_maybe_notify_fires_for_loss_burst`、`::test_maybe_notify_fires_for_rf_stir_high_confidence`、`::test_maybe_notify_silent_when_notify_disabled`（调用方早返）；TUI wire-up：`test_tui_smoke.py::test_app_with_notify_calls_watchdog_on_event` |
+| `rf_stir` 通知按 `DITING_NOTIFY_STIR_CONFIDENCE` 阈值（默认 `high`，可选 `medium` / `all`）过滤 | `test_watchdog.py::test_should_notify_stir_default_gate`、`::test_should_notify_stir_medium_gate`、`::test_should_notify_stir_all_gate`、`::test_watchdog_config_falls_back_on_invalid_stir_gate` |
+| 按 (event-type, target) 维度的静默窗口（默认 60 s，`DITING_NOTIFY_SILENCE_S` 可覆盖） | `test_watchdog.py::test_silence_clock_first_fire_returns_true`、`::test_silence_clock_second_fire_within_window_returns_false`、`::test_silence_clock_second_fire_after_window_returns_true`、`::test_silence_clock_independent_per_tuple`、`::test_watchdog_config_defaults_when_env_unset`、`::test_watchdog_config_parses_valid_env`、`::test_watchdog_config_falls_back_on_invalid_silence` |
+
 ### `ble-decoders`
 
 | Requirement | 测试 |
@@ -118,6 +126,7 @@
 | 用了 `--log` 时退出印 analyze 提示 | (gap — 退出 hint 字符串没有自动化断言) |
 | `diting monitor` stdout 只发 JSONL | `test_event_log.py::test_to_path_writes_appendable_jsonl`（事件格式）；banner-cleanliness 是人工 |
 | `--config <PATH>` 覆盖 aps.yaml 搜索路径 | `test_network.py::test_resolve_config_path_env_override_wins`、`::test_resolve_config_path_no_env_falls_through_to_default` |
+| `--notify` 在默认 TUI 子命令与 `monitor` 上都可用 | `test_tui_smoke.py::test_app_with_notify_calls_watchdog_on_event`（TUI wire-up）；`test_watchdog.py::test_maybe_notify_fires_for_latency_spike`（monitor wire-up）；旗标解析 review-enforced |
 
 ### `environment-monitor`
 

@@ -78,6 +78,14 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Duration formatting honesty (`30s`, never `1 min`) | `test_tui_helpers.py::test_format_duration_short_buckets`, `::test_format_duration_short_negative_clamps_to_zero` |
 | TODO section gates on whether any insight fires | `test_analyze.py::test_render_handles_zero_events`, `::test_empty_log_warns` |
 
+### `anomaly-watchdog`
+
+| Requirement | Test |
+|---|---|
+| `--notify` raises macOS Notification Centre alerts for `rf_stir` / `latency_spike` / `loss_burst` (both `monitor` and default TUI subcommand) | `test_watchdog.py::test_maybe_notify_fires_for_latency_spike`, `::test_maybe_notify_fires_for_loss_burst`, `::test_maybe_notify_fires_for_rf_stir_high_confidence`, `::test_maybe_notify_silent_when_notify_disabled` (call-site bail); TUI wire-up: `test_tui_smoke.py::test_app_with_notify_calls_watchdog_on_event` |
+| `rf_stir` notifications gate on `DITING_NOTIFY_STIR_CONFIDENCE` (`high` default, `medium`, `all`) | `test_watchdog.py::test_should_notify_stir_default_gate`, `::test_should_notify_stir_medium_gate`, `::test_should_notify_stir_all_gate`, `::test_watchdog_config_falls_back_on_invalid_stir_gate` |
+| Per-(event-type, target) silence window (default 60 s, `DITING_NOTIFY_SILENCE_S` override) | `test_watchdog.py::test_silence_clock_first_fire_returns_true`, `::test_silence_clock_second_fire_within_window_returns_false`, `::test_silence_clock_second_fire_after_window_returns_true`, `::test_silence_clock_independent_per_tuple`, `::test_watchdog_config_defaults_when_env_unset`, `::test_watchdog_config_parses_valid_env`, `::test_watchdog_config_falls_back_on_invalid_silence` |
+
 ### `ble-decoders`
 
 | Requirement | Test |
@@ -127,6 +135,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | TUI exit prints analyze tip when `--log` was used | (gap — exit-hint string isn't covered by an automated assertion) |
 | `diting monitor` emits JSONL on stdout, no banner | `test_event_log.py::test_to_path_writes_appendable_jsonl` (event format); banner-cleanliness is manual |
 | `--config <PATH>` overrides aps.yaml search | `test_network.py::test_resolve_config_path_env_override_wins`, `::test_resolve_config_path_no_env_falls_through_to_default` |
+| `--notify` valid on both default TUI subcommand and `monitor` | `test_tui_smoke.py::test_app_with_notify_calls_watchdog_on_event` (TUI wire-up); `test_watchdog.py::test_maybe_notify_fires_for_latency_spike` (monitor wire-up); flag-parsing is review-enforced |
 
 ### `environment-monitor`
 

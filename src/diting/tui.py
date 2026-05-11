@@ -39,6 +39,7 @@ from .ble import (
     is_silent_device,
     service_category,
 )
+from ._watchdog import SilenceClock, WatchdogConfig, maybe_notify
 from .environment import (
     APBaseline,
     DEFAULT_SPIKE_MIN_DB,
@@ -535,9 +536,13 @@ def _help_content() -> tuple[Text, Text]:
         "  Flags:\n"
         "    --out FILE    append JSONL to FILE (line-buffered) instead\n"
         "                  of stdout. Survives session disconnects.\n"
-        "    --notify      raise a macOS Notification Centre alert for\n"
-        "                  any event with confidence='high' (only stir\n"
-        "                  events carry confidence today).\n"
+        "    --notify      raise a macOS Notification Centre alert when an\n"
+        "                  anomaly fires (rf_stir / latency_spike /\n"
+        "                  loss_burst). Per-(event-type, target) silence\n"
+        "                  window (default 60 s; DITING_NOTIFY_SILENCE_S).\n"
+        "                  rf_stir gated by DITING_NOTIFY_STIR_CONFIDENCE\n"
+        "                  (high|medium|all, default high). Also valid on\n"
+        "                  the default TUI subcommand: `diting --notify`.\n"
         "    --gateway IP  override gateway probe target. Default: the\n"
         "                  router IP from the active connection.\n"
         "    --wan IP      override WAN probe target. Default: the\n"
@@ -3323,6 +3328,7 @@ class DitingApp(App):
         enable_environment: bool = True,
         calibration_path: str | None = None,
         event_log_path: str | None = None,
+        notify: bool = False,
     ) -> None:
         super().__init__()
         self._backend = backend
@@ -3331,6 +3337,14 @@ class DitingApp(App):
         self._enable_latency = enable_latency
         self._enable_environment = enable_environment
         self._calibration_path = calibration_path
+        self._notify_enabled = notify
+        self._watchdog_cfg: WatchdogConfig | None = (
+            WatchdogConfig.from_env() if notify else None
+        )
+        self._silence_clock: SilenceClock | None = (
+            SilenceClock(self._watchdog_cfg.silence_window_s)
+            if self._watchdog_cfg is not None else None
+        )
         # JSONL event log shared with `diting monitor`. None ⇒
         # disabled; opt in via --log PATH or DITING_LOG=PATH so
         # users do not get surprised by silent disk writes.
@@ -3516,7 +3530,7 @@ class DitingApp(App):
                         event.connection.rssi_dbm,
                         event.connection.timestamp,
                     )
-                    self._collect_environment_events(event.connection.timestamp)
+                    await self._collect_environment_events(event.connection.timestamp)
                 # Refresh the scan panel too so the synthesised row for
                 # the current AP picks up live RSSI / channel changes
                 # between scans (1 Hz vs 7 Hz).
@@ -3535,7 +3549,7 @@ class DitingApp(App):
                             self._environment_monitor.ingest(
                                 r.bssid, r.rssi_dbm, r.timestamp,
                             )
-                    self._collect_environment_events(now)
+                    await self._collect_environment_events(now)
                 self._refresh_scan_panel()
             elif isinstance(event, RoamEvent):
                 self._events_ring.push(event)
@@ -3565,7 +3579,7 @@ class DitingApp(App):
                     new_vendor=lookup_ap_vendor(event.new_bssid),
                 )
 
-    def _collect_environment_events(self, now: datetime) -> None:
+    async def _collect_environment_events(self, now: datetime) -> None:
         """Fire any pending stir events into the ring buffer + panel.
 
         Called on every connection/scan update; the monitor itself
@@ -3581,6 +3595,15 @@ class DitingApp(App):
             self._events_ring.push(ev)
             panel.append_event(ev, self._inv)
             self._event_logger.emit_rf_stir(ev)
+            await self._maybe_notify(
+                {
+                    "type": "rf_stir",
+                    "confidence": ev.confidence,
+                    "location": ev.location,
+                    "magnitude_db": round(ev.magnitude_db, 1),
+                },
+                target=ev.location,
+            )
             # Stir events bypass the throttle — they are by definition
             # the data points users care most about preserving on the
             # sparkline. Burst events still respect the 1-h prune below.
@@ -3710,6 +3733,14 @@ class DitingApp(App):
                             self._events_ring.push(ev)
                             panel.append_event(ev, self._inv)
                             self._event_logger.emit_latency_spike(ev)
+                            await self._maybe_notify(
+                                {
+                                    "type": "latency_spike",
+                                    "target": ev.target,
+                                    "rtt_ms": round(ev.rtt_ms, 1),
+                                },
+                                target=ev.target,
+                            )
                     if sample.lost and detect_loss_burst(history):
                         if self._should_fire_throttled(
                             "loss_burst", sample.target,
@@ -3729,6 +3760,14 @@ class DitingApp(App):
                             self._events_ring.push(ev)
                             panel.append_event(ev, self._inv)
                             self._event_logger.emit_loss_burst(ev)
+                            await self._maybe_notify(
+                                {
+                                    "type": "loss_burst",
+                                    "target": ev.target,
+                                    "loss_pct": round(ev.loss_pct, 1),
+                                },
+                                target=ev.target,
+                            )
                     self._refresh_environment_panel()
             except Exception:
                 # Same pattern as the BLE consumer — a poller
@@ -3758,6 +3797,18 @@ class DitingApp(App):
             return False
         self._last_event_at[(event_type, target)] = now
         return True
+
+    async def _maybe_notify(self, payload: dict, *, target: str) -> None:
+        if not self._notify_enabled:
+            return
+        assert self._silence_clock is not None
+        assert self._watchdog_cfg is not None
+        await maybe_notify(
+            payload,
+            target=target,
+            clock=self._silence_clock,
+            config=self._watchdog_cfg,
+        )
 
     def _fire_network_change(
         self, *, previous_router_ip: str | None, new_router_ip: str | None,
