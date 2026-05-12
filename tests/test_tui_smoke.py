@@ -156,11 +156,11 @@ def test_custom_scan_interval_threads_through():
 
 
 def test_toggle_view_swaps_third_panel():
-    """Press `n` to toggle from the Wi-Fi scan view to the BLE view,
-    then `n` again to return. Both panels stay mounted; only display
-    flips, so the swap is instant and consumer state is preserved."""
+    """Press `n` to advance through the wifi → ble → mdns → wifi cycle.
+    All three panels stay mounted; only display flips, so each swap
+    is instant and consumer state is preserved."""
     import asyncio
-    from diting.tui import BLEPanel
+    from diting.tui import BLEPanel, BonjourPanel
 
     async def go():
         app = DitingApp(_FakeBackend(), _INVENTORY)
@@ -168,19 +168,77 @@ def test_toggle_view_swaps_third_panel():
             await pilot.pause(0.5)
             scan = app.query_one("#scan")
             ble = app.query_one("#ble", BLEPanel)
+            mdns = app.query_one("#mdns", BonjourPanel)
             assert scan.display is True
             assert ble.display is False
+            assert mdns.display is False
             assert app._view_mode == "wifi"
+            # wifi → ble
             await pilot.press("n")
             await pilot.pause(0.2)
             assert app._view_mode == "ble"
             assert scan.display is False
             assert ble.display is True
+            assert mdns.display is False
+            # ble → mdns
+            await pilot.press("n")
+            await pilot.pause(0.2)
+            assert app._view_mode == "mdns"
+            assert scan.display is False
+            assert ble.display is False
+            assert mdns.display is True
+            # mdns → wifi (cycle wraps)
             await pilot.press("n")
             await pilot.pause(0.2)
             assert app._view_mode == "wifi"
             assert scan.display is True
             assert ble.display is False
+            assert mdns.display is False
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_view_toggle_cycles_wifi_ble_mdns_wifi():
+    """Alias of test_toggle_view_swaps_third_panel — kept under the
+    name referenced by the TESTING.md row so future readers can find
+    the citation directly. Three presses return to wifi."""
+    import asyncio
+    from diting.tui import BLEPanel, BonjourPanel
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            assert app._view_mode == "wifi"
+            for expected in ("ble", "mdns", "wifi"):
+                await pilot.press("n")
+                await pilot.pause(0.2)
+                assert app._view_mode == expected
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_app_constructs_bonjour_panel_lazily():
+    """The `BonjourPoller` is instantiated only when the user first
+    transitions into the mDNS view. Before that, `_mdns_poller` is
+    None and `zeroconf` may not even be imported."""
+    import asyncio
+    from diting.tui import BonjourPanel
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            assert app._mdns_poller is None
+            # Cycle wifi → ble → mdns. After the third press the
+            # poller should be instantiated.
+            await pilot.press("n")
+            await pilot.press("n")
+            await pilot.pause(0.3)
+            assert app._mdns_poller is not None
+            assert app._view_mode == "mdns"
             await pilot.press("q")
 
     asyncio.run(go())

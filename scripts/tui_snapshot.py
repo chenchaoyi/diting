@@ -857,6 +857,18 @@ def _explore_scenarios() -> list[Scenario]:
         await pilot.press("b")
         await pilot.pause(0.3)
 
+    async def _switch_to_mdns(pilot):
+        # Cycle wifi → ble → mdns. The poller is lazy-instantiated on
+        # the third press; pause to let zeroconf collect announces
+        # from the local link before capture. mDNS announce intervals
+        # are typically 1-15 s; 20 s on a typical floor catches
+        # several rounds of AirPlay / Bonjour / printer announces.
+        await pilot.pause(3.0)
+        await pilot.press("n")  # wifi → ble
+        await pilot.pause(0.3)
+        await pilot.press("n")  # ble → mdns
+        await pilot.pause(20.0)  # let Bonjour announces accumulate
+
     async def _pause_polling(pilot):
         await pilot.pause(15.0)
         await pilot.press("p")
@@ -945,6 +957,15 @@ def _explore_scenarios() -> list[Scenario]:
             lang="auto",
             setup=_build_live,
             after_mount=_pause_polling,
+            assertions=(),
+            inspectors=(),
+        ),
+        Scenario(
+            id="live_mdns",
+            description="Live mDNS / Bonjour view (passive announce-listen).",
+            lang="auto",
+            setup=_build_live,
+            after_mount=_switch_to_mdns,
             assertions=(),
             inspectors=(),
         ),

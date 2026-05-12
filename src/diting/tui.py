@@ -20,7 +20,7 @@ import os
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from rich.console import Group
 from rich.text import Text
@@ -326,6 +326,19 @@ class EnvironmentPanel(Static):
             ))
             return
         self.update(Group(*_ble_diagnostic_lines(devices, connected)))
+
+    def update_environment_mdns(self, devices: list) -> None:
+        """Render mDNS / Bonjour-side diagnostics. Used while the user
+        is on the mDNS view.
+        """
+        self.border_title = t("Diagnostics")
+        if not devices:
+            self.update(Text(
+                t("(no Bonjour devices yet — scanning...)"),
+                style="dim italic",
+            ))
+            return
+        self.update(Group(*_bonjour_diagnostic_lines(devices)))
 
 
 class HelpScreen(ModalScreen):
@@ -1404,6 +1417,56 @@ class BLEPanel(VerticalScroll):
         else:  # 'unknown' or any future state
             body.update(Text(t("(BLE state unknown — waiting for helper)"),
                              style="dim italic"))
+
+
+class BonjourPanel(VerticalScroll):
+    """Nearby mDNS / Bonjour devices, swapped into the third panel
+    slot when the user toggles to the mDNS view via the `n` binding
+    (third position in the wifi → ble → mdns cycle).
+
+    Simpler than `BLEPanel`: no RSSI / signal-bar column (mDNS
+    doesn't carry signal strength), no connected-vs-advertising
+    split (one flat list), no per-device history sparkline (mDNS
+    state is a snapshot, not a numeric series).
+    """
+
+    DEFAULT_CSS = """
+    BonjourPanel {
+        height: 1fr;
+        border: heavy $accent;
+        padding: 0 1;
+    }
+    BonjourPanel > #mdns-body {
+        height: auto;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            Text(t("(no Bonjour devices yet — scanning...)"),
+                 style="dim italic"),
+            id="mdns-body",
+        )
+
+    def on_mount(self) -> None:
+        self.border_title = t("Nearby Bonjour devices")
+
+    def update_devices(self, devices: list) -> None:
+        body = self.query_one("#mdns-body", Static)
+        base_title = t("Nearby Bonjour devices")
+        if not devices:
+            self.border_title = base_title
+            body.update(Text(
+                t("(no Bonjour devices yet — scanning...)"),
+                style="dim italic",
+            ))
+            return
+        self.border_title = base_title + f" ({len(devices)})"
+        now = datetime.now(timezone.utc)
+        lines: list[Text] = [_bonjour_header_line()]
+        for d in devices:
+            lines.append(_bonjour_row_line(d, now))
+        body.update(Group(*lines))
 
 
 class EventsPanel(RichLog):
@@ -2821,6 +2884,111 @@ def _ble_age_text(d: BLEDevice, now: datetime) -> str:
     return t("{n}s", n=int(delta))
 
 
+# ---------- Bonjour / mDNS table rendering ----------
+# Column widths mirror the BLE table where the data type aligns, and
+# add a wider host column where it doesn't (mDNS service-instance
+# names are typically longer than BLE local names).
+
+_COL_MDNS_VENDOR = 18
+_COL_MDNS_NAME = 26
+_COL_MDNS_SERVICES = 14
+_COL_MDNS_AGE = 8
+_COL_MDNS_HOST = 18
+
+
+def _bonjour_header_line() -> Text:
+    h = Text(style="bold dim")
+    h.append(
+        f"  {pad_cells(t('vendor'), _COL_MDNS_VENDOR)}  "
+        f"{pad_cells(t('name'), _COL_MDNS_NAME)}  "
+        f"{pad_cells(t('services'), _COL_MDNS_SERVICES)}  "
+        f"{pad_cells(t('last seen'), _COL_MDNS_AGE)}  "
+        f"{pad_cells(t('host'), _COL_MDNS_HOST)}"
+    )
+    return h
+
+
+def _bonjour_row_line(d, now: datetime) -> Text:
+    # Vendor cell.
+    if d.vendor:
+        vendor_cell = fit_cells(d.vendor, _COL_MDNS_VENDOR)
+        vendor_style = "cyan"
+    else:
+        vendor_cell = pad_cells(t("(unknown)"), _COL_MDNS_VENDOR)
+        vendor_style = "dim"
+    name_text = d.name if d.name else t("(unknown)")
+    name_style = "white" if d.name else "dim italic"
+    category = t(d.category) if d.category else ""
+    age_text = _bonjour_age_text(d, now)
+    # Host cell — strip the trailing dot for readability.
+    host = (d.host or "").rstrip(".") or "—"
+
+    line = Text()
+    line.append("  ")
+    line.append(vendor_cell + "  ", style=vendor_style)
+    line.append(fit_cells(name_text, _COL_MDNS_NAME) + "  ", style=name_style)
+    line.append(fit_cells(category, _COL_MDNS_SERVICES) + "  ", style="dim")
+    line.append(fit_cells(age_text, _COL_MDNS_AGE) + "  ", style="dim")
+    line.append(fit_cells(host, _COL_MDNS_HOST), style="dim")
+    return line
+
+
+def _bonjour_age_text(d, now: datetime) -> str:
+    delta = (now - d.last_seen).total_seconds()
+    if delta < 1:
+        return t("now")
+    return t("{n}s", n=int(delta))
+
+
+def _bonjour_diagnostic_lines(devices) -> list[Text]:
+    """Three-row mDNS-side diagnostic summary for the Diagnostics
+    panel when the active view is `mdns`.
+    """
+    from collections import Counter
+    n = len(devices)
+    services: Counter[str] = Counter()
+    vendors: Counter[str] = Counter()
+    unknown_vendor = 0
+    for d in devices:
+        if d.category:
+            services[d.category] += 1
+        if d.vendor:
+            vendors[d.vendor] += 1
+        else:
+            unknown_vendor += 1
+
+    rows: list[Text] = []
+    # Row 1: visible total + service-type count.
+    line = Text()
+    line.append(t("Visible Bonjour  "), style="bold dim")
+    line.append(t("{n} total", n=n), style="white")
+    if services:
+        line.append(t("  ·  {n} service types", n=len(services)),
+                    style="dim")
+    rows.append(line)
+
+    # Row 2: top services.
+    if services:
+        top = services.most_common(3)
+        parts = [f"{n} {t(cat)}" for cat, n in top]
+        line = Text()
+        line.append(t("Top services  "), style="bold dim")
+        line.append("  ·  ".join(parts), style="white")
+        rows.append(line)
+
+    # Row 3: top vendors.
+    if vendors or unknown_vendor:
+        top = vendors.most_common(3)
+        parts = [f"{n} {v}" for v, n in top]
+        if unknown_vendor:
+            parts.append(t("? {n}", n=unknown_vendor))
+        line = Text()
+        line.append(t("Top vendors  "), style="bold dim")
+        line.append("  ·  ".join(parts), style="white")
+        rows.append(line)
+    return rows
+
+
 def _format_duration_short(seconds: float) -> str:
     """Compact human duration: ``35s``, ``4m 12s``, ``1h 03m``."""
     s = int(seconds)
@@ -3250,7 +3418,14 @@ class GroupedFooter(Static):
 
     def refresh_layout(self) -> None:
         view_mode = getattr(self.app, "_view_mode", "wifi")
-        next_view = "BLE" if view_mode == "wifi" else "Wi-Fi"
+        # Cycle: wifi → ble → mdns → wifi. The label shows the
+        # target the user lands on after pressing `n`.
+        _NEXT_LABEL = {
+            "wifi": "BLE",
+            "ble": "Bonjour",
+            "mdns": "Wi-Fi",
+        }
+        next_view = _NEXT_LABEL.get(view_mode, "next")
 
         groups: list[list[tuple[str, str]]] = [
             [("q", t("Quit")), ("p", t("Pause"))],
@@ -3299,7 +3474,7 @@ class DitingApp(App):
         Binding("p", "toggle_pause", t("Pause")),
         Binding("r", "rescan", t("Rescan")),
         Binding("s", "cycle_sort", t("Sort")),
-        Binding("n", "toggle_view", t("Toggle Wi-Fi / BLE view")),
+        Binding("n", "toggle_view", t("Toggle Wi-Fi / BLE / Bonjour view")),
         Binding("c", "reroam", t("Re-roam")),
         Binding("m", "show_events", t("Events")),
         Binding("h", "show_help", t("Help")),
@@ -3415,11 +3590,17 @@ class DitingApp(App):
         # itself does not consume it (the smoothed-EMA RSSI on
         # BLEDevice already covers row-sort stability).
         self._ble_history: BLEHistory = BLEHistory()
-        # 'wifi' (default) or 'ble' — toggled by `n`. Both panels are
-        # mounted; we flip widget.display rather than mount/unmount so
-        # the widget tree stays stable for tests and the swap is
-        # instantaneous on key press.
+        # View mode cycles through 'wifi' → 'ble' → 'mdns' via `n`.
+        # All three panels are mounted; we flip widget.display rather
+        # than mount/unmount so the widget tree stays stable for tests
+        # and the swap is instantaneous on key press.
         self._view_mode: str = "wifi"
+        # mDNS / Bonjour discovery is lazy — the poller is instantiated
+        # on first transition into the mDNS view, not at mount time.
+        # Users who never press `n` past BLE never pay the import or
+        # background-thread cost.
+        self._mdns_poller = None  # set in _ensure_mdns_poller()
+        self._latest_mdns: list = []
         self._paused = False
         # Cache the most recent *non-empty* scan. CoreWLAN's throttle
         # produces empty results periodically; replacing the panel with
@@ -3448,14 +3629,16 @@ class DitingApp(App):
         yield EnvironmentPanel(id="env")
         yield ScanPanel(id="scan")
         yield BLEPanel(id="ble")
+        yield BonjourPanel(id="mdns")
         yield EventsPanel(id="roam")
         yield GroupedFooter(id="footer")
 
     async def on_mount(self) -> None:
-        # The BLE panel sits in the same vertical slot as the Wi-Fi
-        # scan panel; only one is visible at a time. Hide it on mount
-        # so the default 'wifi' view shows the scan panel.
+        # The BLE / mDNS panels share the same vertical slot as the
+        # Wi-Fi scan panel; only one is visible at a time. Hide both
+        # on mount so the default 'wifi' view shows the scan panel.
         self.query_one("#ble", BLEPanel).display = False
+        self.query_one("#mdns", BonjourPanel).display = False
         # EnvironmentMonitor: instantiated on mount so tests can opt
         # out via enable_environment=False (preview captures, smoke
         # tests). Calibration is loaded lazily from the configured
@@ -3489,6 +3672,10 @@ class DitingApp(App):
         # when logging is disabled (close() on a no-op logger is
         # idempotent).
         self._event_logger.close()
+        # Close the Bonjour browser if it was started. Joins the
+        # zeroconf background threads so the process exits cleanly.
+        if self._mdns_poller is not None:
+            self._mdns_poller.stop()
 
     async def _consume_events(self) -> None:
         async for event in self._poller.events():
@@ -3891,6 +4078,51 @@ class DitingApp(App):
             # Don't let a poller hiccup tear down the whole TUI.
             pass
 
+    def _ensure_mdns_poller(self) -> None:
+        """Lazy-instantiate the BonjourPoller and its consumer task.
+
+        Called the first time the user toggles into the mDNS view.
+        Subsequent calls are no-ops — the existing poller and task
+        keep going. Imports `diting.mdns` here (not at module load)
+        so the `zeroconf` dep is paid only by users who want it.
+        """
+        if self._mdns_poller is not None:
+            return
+        from .mdns import BonjourPoller
+        self._mdns_poller = BonjourPoller()
+        self.run_worker(
+            self._consume_mdns_events(),
+            exclusive=False, name="mdns-poller",
+        )
+
+    async def _consume_mdns_events(self) -> None:
+        """Drain BonjourPoller snapshots into the panel."""
+        if self._mdns_poller is None:
+            return
+        try:
+            async for snap in self._mdns_poller.events():
+                if self._paused:
+                    continue
+                self._latest_mdns = snap.devices
+                if self._view_mode == "mdns":
+                    self._refresh_mdns_panel()
+        except (asyncio.CancelledError, GeneratorExit):
+            raise
+        except Exception:
+            # Any unexpected stream error: stop. The TUI keeps going;
+            # the mDNS view will just show its last snapshot until
+            # the user restarts.
+            pass
+
+    def _refresh_mdns_panel(self) -> None:
+        try:
+            panel = self.query_one("#mdns", BonjourPanel)
+        except Exception:
+            return
+        panel.update_devices(self._latest_mdns)
+        if self._view_mode == "mdns":
+            self._refresh_environment_panel()
+
     def _refresh_ble_panel(self) -> None:
         try:
             panel = self.query_one("#ble", BLEPanel)
@@ -3949,6 +4181,8 @@ class DitingApp(App):
                 self._ble_permission_state,
                 self._latest_ble_connected,
             )
+        elif self._view_mode == "mdns":
+            panel.update_environment_mdns(self._latest_mdns)
         else:
             merged = _merge_current(
                 self._cached_scan, self._latest_connection,
@@ -3994,24 +4228,29 @@ class DitingApp(App):
         self._refresh_scan_panel()
 
     def action_toggle_view(self) -> None:
-        """Swap the third panel slot between Wi-Fi scan and BLE list.
+        """Cycle the third panel slot through Wi-Fi → BLE → mDNS → Wi-Fi.
 
-        Both pollers keep running in the background; only the visible
-        widget changes. The BLE panel is rendered with the latest
-        snapshot on swap so the user does not see a stale "scanning..."
-        placeholder for a brief moment.
+        All three pollers keep running in the background once started;
+        only the visible widget changes. The mDNS poller is lazy: the
+        first cycle into `mdns` instantiates `BonjourPoller` and
+        starts its consumer task. Subsequent cycles reuse it.
         """
-        self._view_mode = "ble" if self._view_mode == "wifi" else "wifi"
+        cycle = ("wifi", "ble", "mdns")
+        i = cycle.index(self._view_mode) if self._view_mode in cycle else 0
+        self._view_mode = cycle[(i + 1) % len(cycle)]
         scan = self.query_one("#scan", ScanPanel)
         ble = self.query_one("#ble", BLEPanel)
-        if self._view_mode == "ble":
-            scan.display = False
-            ble.display = True
-            self._refresh_ble_panel()
-        else:
-            ble.display = False
-            scan.display = True
+        mdns = self.query_one("#mdns", BonjourPanel)
+        scan.display = self._view_mode == "wifi"
+        ble.display = self._view_mode == "ble"
+        mdns.display = self._view_mode == "mdns"
+        if self._view_mode == "wifi":
             self._refresh_scan_panel()
+        elif self._view_mode == "ble":
+            self._refresh_ble_panel()
+        else:  # mdns
+            self._ensure_mdns_poller()
+            self._refresh_mdns_panel()
         # Diagnostics panel content has to follow the view too, even
         # on the snapshot the toggle does not trigger a poller event
         # for. Calling the dispatcher unconditionally is cheap and
@@ -4019,10 +4258,7 @@ class DitingApp(App):
         # (the original UX wart that motivated this whole feature).
         self._refresh_environment_panel()
         self.sub_title = self._build_subtitle()
-        # Refresh the footer so n's "→ BLE" / "→ Wi-Fi" label flips to
-        # match the new view. Done after sub_title so any work that
-        # the toggle triggers is visible before the user's eye drops
-        # to confirm where they are.
+        # Refresh the footer so n's label flips to match the new view.
         self.query_one("#footer", GroupedFooter).refresh_layout()
 
     def action_show_help(self) -> None:

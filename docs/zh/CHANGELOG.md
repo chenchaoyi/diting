@@ -11,6 +11,15 @@
 ## [Unreleased]
 
 ### 新增
+- **mDNS / Bonjour 发现** 作为 TUI 的第三块面板加入，与 Wi-Fi、BLE
+  并列。按 `n` 在 Wi-Fi → BLE → mDNS → Wi-Fi 三态间循环切换。新面板
+  列出本地链路上的 Bonjour 服务宣告（AirPlay、Chromecast、Sonos、
+  打印机、NAS、HomeKit、Mac 工作站等），列：厂商 / 名称 / 服务类别 /
+  最近见到 / 主机。完全被动监听，基于 `zeroconf` 库，只订阅白名单内
+  的常见服务类型（不会发起 meta-discovery 洪水广播）。Poller 是惰
+  性的——用户不切到 mDNS 视图就既不会 import zeroconf 也不会启动
+  后台线程。服务类别会按 i18n 规则翻译。新增能力 `mdns-scanning`；
+  `tui-shell` 调整为三态切换。新依赖：`zeroconf >= 0.130`。
 - **异常守望模式（anomaly watchdog）。** `--notify` 现在会对三种异常
   事件（`rf_stir` / `latency_spike` / `loss_burst`）都触发 macOS 通知
   中心横幅，并且同时在 `diting monitor --notify`（无头）和默认 TUI 子

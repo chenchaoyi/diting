@@ -217,6 +217,19 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Helper auto-detectable from Python | `test_helper.py::test_find_helper_env_override_wins`, `::test_find_helper_env_override_can_point_at_binary`, `::test_find_helper_returns_none_when_nothing_present`, `::test_bundle_path_extracts_app_dir`, `::test_bundle_path_none_for_loose_binary` |
 | Helper exits 3 + writes "bluetooth unauthorized" on TCC denial | `test_ble.py::test_permission_denied_via_subprocess_exit_code`, `test_helper.py::test_has_bluetooth_permission_false_on_unauthorized` |
 
+### `mdns-scanning`
+
+| Requirement | Test |
+|---|---|
+| `BonjourPoller` passively browses the curated service-type list, never the meta-discovery type | `test_mdns.py::test_service_category_known_type_returns_friendly_name`, `::test_service_category_unknown_type_returns_none`, `::test_poller_subscribes_only_to_curated_list` |
+| `BonjourDevice` carries the announce-derived fields (service_type, name, host, port, addresses, txt, vendor, category, first/last_seen) | `test_mdns.py::test_poller_emits_snapshot_after_first_announce`, `::test_txt_decode_drops_non_utf8_values` |
+| Vendor resolved via 5-step chain (TXT vendor → OUI → hostname pattern → service-type hint → abstain) | `test_mdns.py::test_resolve_vendor_txt_field_wins`, `::test_resolve_vendor_hostname_pattern_falls_through_to_apple`, `::test_resolve_vendor_service_hint_catches_chromecast`, `::test_resolve_vendor_all_steps_abstain_returns_none` |
+| State map expires on `remove_service` AND falls back to TTL | `test_mdns.py::test_poller_removes_on_remove_service_callback`, `::test_poller_ttl_fallback_when_no_remove_observed` |
+| `BonjourPanel` renders vendor / name / services / age / id columns (no RSSI / signal-bar / connected split) | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi`, `tui_snapshot.py` (regression via explore mode; rendering shape) |
+| Diagnostics panel renders mDNS-side rows when view is `mdns` | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
+| `BonjourPoller.stop()` cleanly joins zeroconf background threads | `test_mdns.py::test_poller_stop_joins_background_thread` |
+| `zeroconf` import is lazy — never imported unless mDNS view is activated | `test_tui_smoke.py::test_app_constructs_bonjour_panel_lazily` |
+
 ### `roam-detection`
 
 | Requirement | Test |
@@ -231,8 +244,8 @@ When a new Requirement lands in any spec, an entry MUST be added here
 
 | Requirement | Test |
 |---|---|
-| Four stacked panels in fixed order | `test_tui_smoke.py::test_app_boots_and_quits` (App composes; panel presence implicit) |
-| Diagnostics content follows active view | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`, `::test_diagnostics_renders_link_line_when_latency_data_available` |
+| Four stacked panels in fixed order; third slot swaps wifi/ble/mdns | `test_tui_smoke.py::test_app_boots_and_quits` (App composes; panel presence implicit), `::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
+| Diagnostics content follows active view | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`, `::test_view_toggle_cycles_wifi_ble_mdns_wifi`, `::test_diagnostics_renders_link_line_when_latency_data_available` |
 | Modals push onto stack, Esc/letter closes | `test_tui_smoke.py::test_help_modal_open_and_close`, `::test_help_modal_h_to_close`, `::test_help_modal_renders_through_pilot_query`, `::test_events_modal_open_and_close`; `tui_snapshot.py::events_modal`, `::help_modal`, `::basics_modal`, `::ble_detail_decoded` (regression) |
 | Footer is one GroupedFooter with three semantic groups | (gap — no footer-grouping unit test; visible in regression captures) |
 | Hidden bindings exist for power-user navigation | `test_tui_smoke.py::test_pause_and_resume`, `::test_force_rescan_does_not_crash`, `::test_cycle_sort_modes` (binding firing); footer omission of hidden bindings is review-enforced |

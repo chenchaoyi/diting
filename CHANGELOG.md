@@ -12,6 +12,18 @@ behaviours between releases.
 ## [Unreleased]
 
 ### Added
+- **mDNS / Bonjour discovery** as a third TUI panel alongside Wi-Fi
+  and BLE. Press `n` to cycle the view through Wi-Fi → BLE → mDNS
+  → Wi-Fi. The new panel lists service-instance announces on the
+  local link (AirPlay, Chromecast, Sonos, printers, NAS, HomeKit,
+  Bonjour workstations, etc.) with vendor / name / service category
+  / age / host columns. Passive listen-only via the `zeroconf`
+  library; subscribes to a curated set of well-known service types
+  (no meta-discovery flood). The poller is lazy — users who never
+  cycle past BLE pay neither the import nor the background-thread
+  cost. Categories translate to ZH like the rest of the TUI. New
+  capability `mdns-scanning`; `tui-shell` updated for the 3-way
+  toggle. Dependency: `zeroconf >= 0.130`.
 - **Anomaly watchdog mode.** `--notify` now raises a macOS
   Notification Centre banner for all three anomaly event types
   (`rf_stir`, `latency_spike`, `loss_burst`) and is valid on both
