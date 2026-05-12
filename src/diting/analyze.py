@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .i18n import t
+from .i18n import pad_cells, t
 
 
 # ---------- parsing ----------
@@ -609,8 +609,11 @@ def render(report: Report) -> str:
         confs = ", ".join(
             f"{k}={v}" for k, v in sorted(report.stir_confidences.items())
         )
-        lines.append(f"  modes:       {modes}")
-        lines.append(f"  confidence:  {confs}")
+        # Label width 13 matches the EN baseline ("confidence:  ")
+        # so values still left-align in a cell-aware way after the
+        # ZH catalog substitutes "模式：" / "置信度：" / "位置：".
+        lines.append("  " + pad_cells(t("modes:"), 13) + modes)
+        lines.append("  " + pad_cells(t("confidence:"), 13) + confs)
         if report.stir_sigma_min is not None:
             lines.append(t(
                 "  σ range:     {lo} – {hi} dB  (median {p50})",
@@ -624,7 +627,7 @@ def render(report: Report) -> str:
                 key=lambda kv: kv[1], reverse=True,
             )[:3]
             joined = ", ".join(f"{k}({v})" for k, v in top)
-            lines.append(f"  locations:   {joined}")
+            lines.append("  " + pad_cells(t("locations:"), 13) + joined)
         lines.append("")
 
     # Latency / loss

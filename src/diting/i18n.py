@@ -1135,6 +1135,12 @@ _ZH: dict[str, str] = {
     "diting analyse {path}": "diting 分析 {path}",
     "Time range: {start} → {end}  ({duration})":
         "时间范围：{start} → {end}  （{duration}）",
+    # Inline labels in the RF-stir aggregates block. Trailing spacing
+    # padding is left to the caller's f-string so the colon-spacing
+    # stays consistent with the catalog key.
+    "modes:": "模式：",
+    "confidence:": "置信度：",
+    "locations:": "位置：",
     "{n} min": "{n} 分钟",
     "{h}h {m}m": "{h}小时{m}分",
     "Total events: {n}": "事件总数：{n}",
