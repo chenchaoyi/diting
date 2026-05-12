@@ -29,7 +29,7 @@
 <p align="center">
   <img src="docs/preview-ble.svg" alt="diting TUI – BLE view" width="100%">
   <br>
-  <sub><i>BLE view (press <code>n</code> to toggle) — Connected peripherals on top, Advertising devices below, each labelled with its public-format identification.</i></sub>
+  <sub><i>BLE view (press <code>n</code> to cycle through Wi-Fi / BLE / Bonjour) — Connected peripherals on top, Advertising devices below, each labelled with its public-format identification.</i></sub>
 </p>
 
 <p align="center">
@@ -152,7 +152,7 @@ With no override, `diting` autodetects the system locale —
 | `p` | pause / resume polling |
 | `r` | force a rescan now (CoreWLAN ~5 s throttle still applies) |
 | `s` | cycle scan sort: by AP ↔ by signal |
-| `n` | toggle Nearby view: Wi-Fi BSSIDs ↔ BLE devices |
+| `n` | cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour |
 | `c` | force re-roam — cycle Wi-Fi off/on so macOS re-picks the strongest BSSID |
 | `m` | open / close the Events modal — last 100 roam / stir / latency / loss / link events |
 | `h` | open / close the in-app help screen |

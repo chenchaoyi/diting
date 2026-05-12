@@ -25,6 +25,14 @@
   `._<service-type>.local.` 后缀（服务类型在隔壁「服务」列已经
   显示）。例如 `ccy MBP2024 M4 Office._airplay._tcp.local.` 现在
   显示为 `ccy MBP2024 M4 Office`，每行多出 ~12 格可读空间。
+  RAOP 行额外去掉 `<MAC-as-hex>@` 前缀，让同一个设备的 AirPlay /
+  RAOP 兄弟行对齐。
+- **Bonjour 行「主机」列** 渲染时去掉所有 Bonjour 主机都带的
+  `.local` 后缀（mDNS 本来就是 link-local），列宽从 18 扩到 26 格，
+  `ccy-MBP2024-M4-Office` 这类典型工作站名不再截断。
+- **帮助面板和 README** 描述 `n` 键为三态循环
+  （`Wi-Fi BSSID → BLE → Bonjour`）—— PR #30 / #31 合入后这两处
+  文档没跟上，仍是 2 视图描述。
 
 ### 修复
 - **`service types` 中文 leak**。`DITING_LANG=zh` 下，mDNS 诊断行

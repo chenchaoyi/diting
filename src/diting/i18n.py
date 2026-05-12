@@ -635,8 +635,8 @@ _ZH: dict[str, str] = {
         "链路（网关 / WAN 延迟、丢包、抖动）与",
     "Environment (RSSI σ across nearby APs)\n":
         "环境（附近各 AP 的 RSSI σ）\n",
-    "BSSIDs near you, or the BLE device list (toggle: n)":
-        "附近的 BSSID，或 BLE 设备列表（按 n 切换）",
+    "BSSIDs near you, BLE devices, or Bonjour services (cycle: n)":
+        "附近的 BSSID、BLE 设备或 Bonjour 服务（按 n 循环）",
     "strip at the bottom; full browser via m":
         "底部窗格；按 m 打开完整查看器",
     "current AP, signal bar, link / IP / radio details":
@@ -657,8 +657,8 @@ _ZH: dict[str, str] = {
     "strongest BSSID — fixes sticky associations)\n":
         "最强 BSSID —— 解决卡死在弱 AP 的问题）\n",
     "toggle this help": "切换帮助",
-    "toggle Nearby view: Wi-Fi BSSIDs ↔ BLE devices":
-        "切换附近视图：Wi-Fi BSSID ↔ BLE 设备",
+    "cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour":
+        "切换附近视图：Wi-Fi BSSID → BLE → Bonjour",
     "open Wi-Fi basics for SSID, BSSID, channel, band, security":
         "打开 Wi-Fi 基础知识：SSID / BSSID / 信道 / 频段 / 加密",
     "open Wi-Fi / BLE basics glossary":
