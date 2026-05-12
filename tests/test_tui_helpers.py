@@ -726,6 +726,21 @@ def test_event_format_line_rf_stir():
     assert "high" in text
 
 
+def test_event_format_line_rf_stir_confidence_translates_to_chinese():
+    """The confidence enum (high / medium / low) renders translated
+    under DITING_LANG=zh. Previously rendered raw English even in ZH
+    mode — surfaced by the 2026-05-11 tui-audit."""
+    from diting import i18n
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("zh")
+        text = _event_format_line(_stir_event(), NetworkInventory()).plain
+        assert "高" in text  # confidence='high' → '高'
+        assert "high" not in text
+    finally:
+        i18n.set_lang(saved)
+
+
 def test_event_format_line_latency_spike():
     text = _event_format_line(_spike_event(), NetworkInventory()).plain
     assert "[LATENCY]" in text

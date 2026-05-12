@@ -1066,6 +1066,11 @@ _ZH: dict[str, str] = {
     "stable": "稳定",
     "active": "活跃",
     "quiet": "安静",
+    # RFStirEvent confidence enum — rendered after σ in the events modal
+    # (`σ 13.9 dB · medium` → `σ 13.9 dB · 中`). Surfaced by tui-audit.
+    "high": "高",
+    "medium": "中",
+    "low": "低",
     "σ {db} dB / {n}s": "σ {db} dB / {n}s",
     "{loss}% loss": "丢包 {loss}%",
     "WAN {ms} ms": "WAN {ms} ms",
