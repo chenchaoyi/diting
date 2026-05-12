@@ -2143,50 +2143,6 @@ def _channel_hint(label: str, channel: int, results: list[ScanResult]) -> Text:
     return text
 
 
-def _environment_line(results: list[ScanResult], current: Connection | None) -> Text:
-    """Compact Wireless-Diagnostics-style summary of the visible RF scene."""
-    counts = _band_counts(results)
-    hidden = sum(1 for r in results if not r.ssid and not (r.ssid is None and r.bssid is None))
-    redacted = sum(1 for r in results if r.ssid is None and r.bssid is None)
-    open_count = sum(1 for r in results if r.security == "Open")
-    ht40_2g = sum(
-        1 for r in results
-        if _band_bucket(r) == "2.4G" and (r.channel_width_mhz or 0) >= 40
-    )
-    countries = _country_codes(results)
-    rec_2g = _recommended_channel(results, "2.4G")
-    rec_5g = _recommended_channel(results, "5G")
-    country_part = "CC " + (
-        "/".join(countries) if countries else "?"
-    )
-    current_load = _current_channel_load(results, current)
-
-    line = Text()
-    line.append("Env  ", style="bold dim")
-    line.append(
-        f"{len(results)} BSSIDs  "
-        f"2.4G {counts['2.4G']}  5G {counts['5G']}  6G {counts['6G']}  "
-        f"hidden in this scan: {hidden}",
-        style="white",
-    )
-    if redacted:
-        line.append(f"  redacted {redacted}", style="dim italic")
-    if open_count:
-        line.append(f"  open {open_count}", style="yellow")
-    if ht40_2g:
-        line.append(f"  2.4G HT40 {ht40_2g}", style="yellow")
-    line.append(f"  {country_part}", style="yellow" if len(countries) > 1 else "dim")
-    if current_load is not None:
-        line.append(f"  current ch peers {current_load}", style="dim")
-    if rec_2g is not None or rec_5g is not None:
-        line.append("  best", style="dim")
-        if rec_2g is not None:
-            line.append(f" 2.4G ch{rec_2g}", style="cyan")
-        if rec_5g is not None:
-            line.append(f" 5G ch{rec_5g}", style="cyan")
-    return line
-
-
 def _health_line(results: list[ScanResult], current: Connection | None) -> Text:
     """Explain the current association in terms a human can act on.
 
