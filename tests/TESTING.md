@@ -110,6 +110,17 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Modal close (Esc / `i` / `q`) doesn't mutate selection | (manual; modal binding is declarative) |
 | Distance estimate labelled "rough free-space" | `test_tui_helpers.py::test_free_space_distance_m_at_one_meter_returns_one`, `::test_free_space_distance_m_doubles_at_minus_six_db`, `::test_free_space_distance_m_zero_rssi_returns_none` |
 
+### `bonjour-detail-modal`
+
+| Requirement | Test |
+|---|---|
+| Bonjour rows selectable by service-instance FQDN, stable across snapshots | `test_tui_smoke.py::test_bonjour_selection_keyed_by_fqdn_survives_resort`, `::test_bonjour_selection_clears_when_target_drops_out` |
+| Keyboard `up` / `down` / `enter` / `i` priority bindings (no-op outside Bonjour view) | `test_tui_smoke.py::test_bonjour_inspect_opens_modal_on_first_press` |
+| Mouse click → select-and-inspect | (manual; mouse path is the same `_bonjour_set_selected(inspect=True)` entry as the keyboard `i`) |
+| Modal renders every `BonjourDevice` field, with TXT folding for long values | `test_tui_helpers.py::test_bonjour_detail_renders_identity_network_txt_activity_sections`, `::test_bonjour_detail_folds_long_txt_values`, `::test_bonjour_detail_omits_txt_section_when_empty` |
+| Service-category lookup via i18n | `test_tui_helpers.py::test_bonjour_detail_renders_translated_category_when_known`, `::test_bonjour_detail_omits_category_row_when_unknown` |
+| Modal close (Esc / `i` / `q`) doesn't mutate selection | (review-enforced; binding is declarative) |
+
 ### `bluetooth-scanning`
 
 | Requirement | Test |
@@ -251,6 +262,19 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Footer is one GroupedFooter with three semantic groups | (gap — no footer-grouping unit test; visible in regression captures) |
 | Hidden bindings exist for power-user navigation | `test_tui_smoke.py::test_pause_and_resume`, `::test_force_rescan_does_not_crash`, `::test_cycle_sort_modes` (binding firing); footer omission of hidden bindings is review-enforced |
 | Header shows title + clock; subtitle reflects live state | (gap — no subtitle assertion in pytest; visible in regression captures) |
+| Every list-style view panel shares the same row-select + inspect gesture (`up` / `down`, `i` / `enter`, mouse-click-to-inspect; modal close `Esc` / `i` / `q` does not mutate selection); deviations require modifying this Requirement | `test_tui_smoke.py::test_wifi_inspect_opens_modal_on_first_press`, `::test_bonjour_inspect_opens_modal_on_first_press` (alongside existing BLE coverage in `tui_snapshot.py::ble_detail_decoded`) |
+
+### `wifi-detail-modal`
+
+| Requirement | Test |
+|---|---|
+| Wi-Fi rows selectable by BSSID with `(ssid, channel)` fallback for redacted scans | `test_tui_smoke.py::test_wifi_selection_keyed_by_bssid_survives_resort`, `::test_wifi_selection_clears_when_target_drops_out`, `test_tui_helpers.py::test_scan_row_key_uses_bssid_when_available`, `::test_scan_row_key_falls_back_to_ssid_and_channel`, `::test_scan_row_key_handles_hidden_ssid` |
+| Keyboard `up` / `down` / `enter` / `i` priority bindings (no-op outside Wi-Fi view) | `test_tui_smoke.py::test_wifi_inspect_opens_modal_on_first_press` |
+| Mouse click → select-and-inspect | (manual; mouse path is the same `_wifi_set_selected(inspect=True)` entry as the keyboard `i`) |
+| Modal renders every `ScanResult` field, grouped into Identity / Radio / Signal / Beacon IE / Activity | `test_tui_helpers.py::test_wifi_detail_renders_identity_radio_signal_activity_sections`, `::test_wifi_detail_renders_beacon_ie_when_present`, `::test_wifi_detail_omits_beacon_ie_when_all_fields_absent` |
+| BSSID redaction surfaces a TCC hint rather than going silent | `test_tui_helpers.py::test_wifi_detail_redacted_bssid_renders_tcc_hint_and_omits_vendor` |
+| AP-name pulled from `aps.yaml` only; absent when no entry matches | `test_tui_helpers.py::test_wifi_detail_renders_ap_name_when_inventory_matches`, `::test_wifi_detail_omits_ap_name_row_when_inventory_misses` |
+| Modal close (Esc / `i` / `q`) doesn't mutate selection | (review-enforced; binding is declarative) |
 
 ### `wifi-scanning`
 

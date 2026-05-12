@@ -350,6 +350,38 @@ _ZH: dict[str, str] = {
     "Decoded payload": "解码后内容",
     "Service data": "服务数据",
     "(uncategorised)": "(未分类)",
+    # ---- Wi-Fi detail modal (`i` / `enter` on a scan row) ----
+    "Wi-Fi access point": "Wi-Fi 接入点",
+    "Radio": "射频",
+    "Beacon IE": "Beacon IE",
+    "AP name": "AP 名称",
+    "channel width": "信道带宽",
+    "PHY mode": "PHY 模式",
+    "noise": "噪声",
+    "SNR": "SNR",
+    "BSS load": "BSS 负载",
+    "BSS station count": "BSS 终端数",
+    "802.11r": "802.11r",
+    "802.11k": "802.11k",
+    "802.11v": "802.11v",
+    "yes": "是",
+    "no": "否",
+    "country code": "区码",
+    "(associated)": "(当前连接)",
+    "(redacted by TCC — grant Location Services for full data)":
+        "(TCC 已遮蔽 —— 授予定位服务后才能看到完整数据)",
+    # ---- Bonjour detail modal (`i` / `enter` on a service row) ----
+    "Bonjour service": "Bonjour 服务",
+    "Network": "网络",
+    "TXT records": "TXT 记录",
+    "instance": "实例",
+    "service type": "服务类型",
+    "category": "类别",
+    "port": "端口",
+    "addresses": "地址",
+    "<{n}-byte payload>": "<{n} 字节载荷>",
+    "hex": "16 进制",
+    "(empty)": "(空)",
     # Service categories — translation matches the spec list. Anything
     # not in this catalog (raw 16-bit UUIDs etc.) passes through as-is.
     "Audio": "音频",
@@ -663,10 +695,10 @@ _ZH: dict[str, str] = {
         "打开 Wi-Fi 基础知识：SSID / BSSID / 信道 / 频段 / 加密",
     "open Wi-Fi / BLE basics glossary":
         "打开 Wi-Fi / BLE 术语表",
-    "BLE list cursor — move selection up / down (BLE view only)":
-        "BLE 列表光标——上下移动选中行（仅 BLE 视图）",
-    "inspect the selected BLE row (open detail modal)":
-        "查看选中的 BLE 行（打开详情）",
+    "list cursor — move selection up / down (Wi-Fi / BLE / Bonjour)":
+        "列表光标——上下移动选中行（Wi-Fi / BLE / Bonjour 三个视图）",
+    "inspect the selected row (open detail modal)":
+        "查看选中的行（打开详情）",
     "open the Events browser (filterable list, per-AP σ":
         "打开事件查看器（可过滤列表、各 AP σ",
     "baseline, last-hour σ sparkline)\n":
