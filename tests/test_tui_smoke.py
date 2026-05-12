@@ -220,6 +220,69 @@ def test_view_toggle_cycles_wifi_ble_mdns_wifi():
     asyncio.run(go())
 
 
+def test_panel_border_title_carries_tab_indicator():
+    """Every view's active third-slot panel renders all three view
+    labels in its `border_title`. The user can discover that three
+    views exist from any single screen — that's the whole point of
+    the always-visible tab indicator (PR three-view-tabs)."""
+    import asyncio
+    from diting.tui import BLEPanel, BonjourPanel, ScanPanel
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.5)
+            # Wi-Fi active: ScanPanel's border_title carries the tabs.
+            scan = app.query_one("#scan", ScanPanel)
+            assert "Wi-Fi" in scan.border_title
+            assert "BLE" in scan.border_title
+            assert "Bonjour" in scan.border_title
+            # Subtitle still carries the panel-specific detail.
+            assert "BSSIDs" in (scan.border_subtitle or "")
+
+            # BLE active: BLEPanel's border_title carries the tabs.
+            await pilot.press("n")
+            await pilot.pause(0.3)
+            ble = app.query_one("#ble", BLEPanel)
+            assert "Wi-Fi" in ble.border_title
+            assert "BLE" in ble.border_title
+            assert "Bonjour" in ble.border_title
+
+            # mDNS active: BonjourPanel's border_title carries the tabs.
+            await pilot.press("n")
+            await pilot.pause(0.3)
+            mdns = app.query_one("#mdns", BonjourPanel)
+            assert "Wi-Fi" in mdns.border_title
+            assert "BLE" in mdns.border_title
+            assert "Bonjour" in mdns.border_title
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_subtitle_uses_display_name_not_internal_token():
+    """Header subtitle reads `view: Bonjour`, not `view: mdns`. The
+    internal mode token stays `mdns` everywhere in code; only the
+    user-facing label changes."""
+    import asyncio
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            # Cycle to mDNS.
+            await pilot.press("n")
+            await pilot.press("n")
+            await pilot.pause(0.3)
+            assert app._view_mode == "mdns"
+            # Subtitle carries the display name, not the token.
+            assert "Bonjour" in app.sub_title
+            assert "mdns" not in app.sub_title
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
 def test_app_constructs_bonjour_panel_lazily():
     """The `BonjourPoller` is instantiated only when the user first
     transitions into the mDNS view. Before that, `_mdns_poller` is

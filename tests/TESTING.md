@@ -245,6 +245,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Requirement | Test |
 |---|---|
 | Four stacked panels in fixed order; third slot swaps wifi/ble/mdns | `test_tui_smoke.py::test_app_boots_and_quits` (App composes; panel presence implicit), `::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
+| Third-slot panel border_title carries an always-visible tab indicator listing all three views; detail content moves to border_subtitle | `test_tui_helpers.py::test_view_tabs_border_title_lists_all_three_views`, `::test_view_display_name_maps_internal_tokens_to_user_names`; `test_tui_smoke.py::test_panel_border_title_carries_tab_indicator` |
 | Diagnostics content follows active view | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`, `::test_view_toggle_cycles_wifi_ble_mdns_wifi`, `::test_diagnostics_renders_link_line_when_latency_data_available` |
 | Modals push onto stack, Esc/letter closes | `test_tui_smoke.py::test_help_modal_open_and_close`, `::test_help_modal_h_to_close`, `::test_help_modal_renders_through_pilot_query`, `::test_events_modal_open_and_close`; `tui_snapshot.py::events_modal`, `::help_modal`, `::basics_modal`, `::ble_detail_decoded` (regression) |
 | Footer is one GroupedFooter with three semantic groups | (gap — no footer-grouping unit test; visible in regression captures) |

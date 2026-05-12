@@ -48,6 +48,9 @@ from diting.tui import (
     _scan_line,
     _security_badge,
     _sigma_sparkline,
+    _strip_service_suffix,
+    _view_display_name,
+    _view_tabs_border_title,
 )
 
 
@@ -1024,3 +1027,109 @@ def test_rssi_sparkline_renders_one_char_per_sample():
     samples = [(_t(i), -60 + i * 3) for i in range(7)]
     out = _rssi_sparkline(samples)
     assert len(out) == 7
+
+
+# --- view-mode display + tab indicator helpers ----------------------
+
+def test_view_display_name_maps_internal_tokens_to_user_names():
+    """Internal mode tokens (wifi/ble/mdns) map to user-facing display
+    names (Wi-Fi/BLE/Bonjour) for the header subtitle and tab labels.
+    """
+    assert _view_display_name("wifi") == "Wi-Fi"
+    assert _view_display_name("ble") == "BLE"
+    assert _view_display_name("mdns") == "Bonjour"
+    # Unknown mode falls through unchanged (defensive for future views).
+    assert _view_display_name("future-view") == "future-view"
+
+
+def test_view_tabs_border_title_lists_all_three_views():
+    """The composed Rich markup mentions every view name regardless of
+    which one is active — that's the whole point of the always-visible
+    tab indicator."""
+    for active in ("wifi", "ble", "mdns"):
+        markup = _view_tabs_border_title(active)
+        assert "Wi-Fi" in markup
+        assert "BLE" in markup
+        assert "Bonjour" in markup
+
+
+def test_view_tabs_border_title_styles_active_distinctly():
+    """The active view is bold-cyan; the two inactive views are dim.
+    Verified by the Rich-markup tag the helper produces."""
+    markup = _view_tabs_border_title("ble")
+    # Active label is wrapped in [bold cyan] ... [/].
+    assert "[bold cyan]BLE[/]" in markup
+    # Inactive labels are wrapped in [dim] ... [/].
+    assert "[dim]Wi-Fi[/]" in markup
+    assert "[dim]Bonjour[/]" in markup
+
+
+def test_view_tabs_border_title_preserves_cycle_order():
+    """Tab order matches the `n` cycle order (wifi → ble → mdns) so
+    the user can visually predict which view a press lands on."""
+    markup = _view_tabs_border_title("wifi")
+    # Wi-Fi appears before BLE, which appears before Bonjour.
+    assert markup.index("Wi-Fi") < markup.index("BLE")
+    assert markup.index("BLE") < markup.index("Bonjour")
+
+
+# --- Bonjour service-suffix strip -----------------------------------
+
+def test_strip_service_suffix_strips_known_suffix():
+    """The redundant ``.<service-type>.local.`` suffix is removed from
+    the display name. Tests every shape zeroconf produces."""
+    # Most common: name ends with ``.<full-type>``.
+    assert _strip_service_suffix(
+        "ccy MBP2024 M4 Office._airplay._tcp.local.",
+        "_airplay._tcp.local.",
+    ) == "ccy MBP2024 M4 Office"
+    # Service type with no trailing dot.
+    assert _strip_service_suffix(
+        "Printer-X._ipp._tcp.local",
+        "_ipp._tcp.local",
+    ) == "Printer-X"
+
+
+def test_strip_service_suffix_leaves_other_names_unchanged():
+    """A name that doesn't end with the service suffix passes through
+    untouched (defensive for non-standard announce shapes)."""
+    assert _strip_service_suffix(
+        "Living-Room",
+        "_airplay._tcp.local.",
+    ) == "Living-Room"
+    assert _strip_service_suffix("", "_airplay._tcp.local.") == ""
+    assert _strip_service_suffix("Living-Room", "") == "Living-Room"
+
+
+# --- service-types i18n leak (post-merge polish) --------------------
+
+def test_bonjour_diagnostic_service_types_translated_in_zh():
+    """The "{n} service types" suffix on the visible-bonjour
+    diagnostic line translated correctly under DITING_LANG=zh.
+    Previously leaked raw English due to a catalog-key whitespace
+    mismatch (call-site used "  ·  {n} service types"; catalog
+    key was "{n} service types")."""
+    from datetime import datetime, timezone
+    from diting import i18n
+    from diting.tui import _bonjour_diagnostic_lines
+
+    class _D:
+        def __init__(self, vendor, category):
+            self.vendor = vendor
+            self.category = category
+
+    devices = [
+        _D("Apple, Inc.", "AirPlay"),
+        _D("Apple, Inc.", "AirPlay audio"),
+        _D("Apple, Inc.", "Apple Companion"),
+    ]
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("zh")
+        rows = _bonjour_diagnostic_lines(devices)
+        joined = "".join(r.plain for r in rows)
+        assert "种服务" in joined
+        # The English source phrase must not appear.
+        assert "service types" not in joined
+    finally:
+        i18n.set_lang(saved)
