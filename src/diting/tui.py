@@ -261,6 +261,37 @@ class ScanPanel(VerticalScroll):
         # / sort / scan-age) lands in the subtitle once update_scan runs.
         self.border_title = _view_tabs_border_title("wifi")
         self.border_subtitle = t("Nearby BSSIDs")
+        # Per-line mapping populated on every update_scan() call. Mirrors
+        # BLEPanel._y_to_id — index into ``_y_to_key`` by body line, get
+        # back the scan-row identifier (or None for header / group /
+        # spacer rows where a click is a no-op).
+        self._y_to_key: list[str | None] = []
+
+    def on_click(self, event) -> None:
+        """Click-to-select-and-inspect for Wi-Fi scan rows.
+
+        Same gesture pattern as BLEPanel.on_click — turns a click into
+        a (line → key) lookup via the mapping built during render, then
+        delegates to the App's `_wifi_set_selected(key, inspect=True)`.
+        Clicks on header / group-summary / spacer rows land on None and
+        no-op.
+        """
+        try:
+            body = self.query_one("#scan-body", Static)
+        except Exception:
+            return
+        offset = event.get_content_offset(body)
+        if offset is None:
+            return
+        line = offset.y
+        if line < 0 or line >= len(self._y_to_key):
+            return
+        key = self._y_to_key[line]
+        if key is None:
+            return
+        app = self.app
+        if hasattr(app, "_wifi_set_selected"):
+            app._wifi_set_selected(key, inspect=True)
 
     def update_scan(
         self,
@@ -270,6 +301,8 @@ class ScanPanel(VerticalScroll):
         scanned_at: float | None,
         inv: NetworkInventory,
         sort_mode: str = "signal",
+        *,
+        selected_key: str | None = None,
     ) -> None:
         ago = "" if scanned_at is None else t(
             "  · scanned {n}s ago", n=int(time.monotonic() - scanned_at)
@@ -292,9 +325,22 @@ class ScanPanel(VerticalScroll):
                 Text(t("(no APs from last scan — likely throttle, retrying)"),
                      style="dim italic")
             )
+            self._y_to_key = []
             return
 
         lines: list[Text] = [_header_line()]
+        # Per-line key map parallel to ``lines``. Header / group-summary
+        # / spacer rows hold None so a click translates to "no-op".
+        y_map: list[str | None] = [None]
+
+        def _append_row(r: ScanResult) -> None:
+            row = _scan_line(r, current_bssid, inv)
+            key = _scan_row_key(r)
+            if selected_key is not None and key == selected_key:
+                row.stylize("reverse")
+            lines.append(row)
+            y_map.append(key)
+
         if sort_mode == "ap":
             # Group by physical AP (inventory name or cluster_label),
             # sort within each group by RSSI desc, sort groups by best
@@ -302,8 +348,9 @@ class ScanPanel(VerticalScroll):
             # 0. Each group gets a 1-line summary header above its rows.
             for group in _group_by_ap(results, current_bssid, inv):
                 lines.append(_group_header(group, inv))
+                y_map.append(None)
                 for r in group.rows:
-                    lines.append(_scan_line(r, current_bssid, inv))
+                    _append_row(r)
         else:
             # Default 'signal' mode. Pin the currently associated AP at
             # the top, sort everything else by RSSI desc — without the
@@ -317,8 +364,9 @@ class ScanPanel(VerticalScroll):
                 reverse=True,
             )
             for r in current_rows + other_rows:
-                lines.append(_scan_line(r, current_bssid, inv))
+                _append_row(r)
         self.query_one("#scan-body", Static).update(Group(*lines))
+        self._y_to_key = y_map
 
 
 class EnvironmentPanel(Static):
@@ -509,11 +557,13 @@ def _help_content() -> tuple[Text, Text]:
     body.append(" " * 8 + t("baseline, last-hour σ sparkline)\n"))
     line("h", t("toggle this help"))
     line("b", t("open Wi-Fi / BLE basics glossary"))
-    # BLE-view-only navigation. These bindings fire only in the BLE
-    # view; in Wi-Fi view they're no-ops. Listed here because they
-    # don't show in the footer (priority + show=False).
-    line("↑/↓", t("BLE list cursor — move selection up / down (BLE view only)"))
-    line("enter / i", t("inspect the selected BLE row (open detail modal)"))
+    # Cross-view list-row navigation. The bindings fire in Wi-Fi, BLE,
+    # and Bonjour views — each action no-ops outside its panel, so the
+    # same physical keys are safe to surface here as a single hint.
+    # Listed in this help block because they don't show in the footer
+    # (priority + show=False).
+    line("↑/↓", t("list cursor — move selection up / down (Wi-Fi / BLE / Bonjour)"))
+    line("enter / i", t("inspect the selected row (open detail modal)"))
 
     section(t("Events modal (m)"))
     body.append(t(
@@ -1519,8 +1569,32 @@ class BonjourPanel(VerticalScroll):
         # Tab indicator in title; panel-specific detail in subtitle.
         self.border_title = _view_tabs_border_title("mdns")
         self.border_subtitle = t("Nearby Bonjour devices")
+        # Per-line mapping populated on every update_devices() call —
+        # mirrors BLEPanel._y_to_id / ScanPanel._y_to_key. Used by
+        # on_click to turn a click into a selection.
+        self._y_to_key: list[str | None] = []
 
-    def update_devices(self, devices: list) -> None:
+    def on_click(self, event) -> None:
+        try:
+            body = self.query_one("#mdns-body", Static)
+        except Exception:
+            return
+        offset = event.get_content_offset(body)
+        if offset is None:
+            return
+        line = offset.y
+        if line < 0 or line >= len(self._y_to_key):
+            return
+        key = self._y_to_key[line]
+        if key is None:
+            return
+        app = self.app
+        if hasattr(app, "_bonjour_set_selected"):
+            app._bonjour_set_selected(key, inspect=True)
+
+    def update_devices(
+        self, devices: list, *, selected_key: str | None = None,
+    ) -> None:
         body = self.query_one("#mdns-body", Static)
         base_title = t("Nearby Bonjour devices")
         self.border_title = _view_tabs_border_title("mdns")
@@ -1530,13 +1604,21 @@ class BonjourPanel(VerticalScroll):
                 t("(no Bonjour devices yet — scanning...)"),
                 style="dim italic",
             ))
+            self._y_to_key = []
             return
         self.border_subtitle = base_title + f" ({len(devices)})"
         now = datetime.now(timezone.utc)
         lines: list[Text] = [_bonjour_header_line()]
+        y_map: list[str | None] = [None]
         for d in devices:
-            lines.append(_bonjour_row_line(d, now))
+            row = _bonjour_row_line(d, now)
+            key = _bonjour_row_key(d)
+            if selected_key is not None and key == selected_key:
+                row.stylize("reverse")
+            lines.append(row)
+            y_map.append(key)
         body.update(Group(*lines))
+        self._y_to_key = y_map
 
 
 class EventsPanel(RichLog):
@@ -3273,6 +3355,9 @@ class BLEDetailScreen(ModalScreen):
         )
 
     def on_mount(self) -> None:
+        self._update_title()
+
+    def _update_title(self) -> None:
         d = self._device
         head = d.name or d.vendor or (
             t("(anonymous)") if is_silent_device(d) else t("(unknown)")
@@ -3281,6 +3366,32 @@ class BLEDetailScreen(ModalScreen):
             t("BLE device")
             + "  ·  " + head
         )
+
+    # ------------------------------------------------------------------
+    # Live navigation
+    #
+    # Same UX as Wi-Fi and Bonjour detail modals — the App's
+    # ``action_select_prev`` / ``action_select_next`` calls
+    # ``sync_to_app_selection`` here after advancing the cursor.
+    # History is re-fetched per device so the sparkline updates as
+    # the user walks the list.
+    # ------------------------------------------------------------------
+
+    def sync_to_app_selection(self) -> None:
+        ident = getattr(self.app, "_ble_selected_id", None)
+        if ident is None:
+            return
+        new_device = self.app._ble_lookup(ident)
+        if new_device is None:
+            return
+        self._device = new_device
+        self._history = list(self.app._ble_history.get(ident) or [])
+        try:
+            body = self.query_one("#ble-detail-content", Static)
+        except Exception:
+            return
+        body.update(self._render_body())
+        self._update_title()
 
     # ------------------------------------------------------------------
     # Rendering
@@ -3508,6 +3619,444 @@ class BLEDetailScreen(ModalScreen):
                 out.append(f"    {line}\n", style="dim")
 
 
+# ---------- Wi-Fi / Bonjour detail-modal scaffolding ----------
+
+def _scan_row_key(r: ScanResult) -> str:
+    """Return a stable selection key for a Wi-Fi scan row.
+
+    Prefers the normalised BSSID (lowercase, separators stripped) so
+    sort + churn never moves the cursor off the selected AP. When
+    BSSID is redacted by TCC the key falls back to ``ssid#channel``
+    (or ``#channel`` for hidden SSIDs) — this keeps selection working
+    for users who haven't granted Location Services, at the cost of
+    collisions when the same SSID broadcasts on multiple physical APs
+    on the same channel (rare; documented as a limitation in the
+    capability spec).
+    """
+    if r.bssid:
+        return r.bssid.lower().replace(":", "").replace("-", "")
+    ssid = r.ssid or ""
+    ch = r.channel if r.channel is not None else "?"
+    return f"{ssid}#{ch}"
+
+
+def _bonjour_row_key(d) -> str:
+    """Return a stable selection key for a Bonjour service-instance.
+
+    Uses the RFC 6763 ``<instance>.<service-type>`` form, which is
+    unique on the local link by definition.
+    """
+    return f"{d.name}.{d.service_type}"
+
+
+class WifiDetailScreen(ModalScreen):
+    """Detail view for a single Wi-Fi scan row.
+
+    Renders every ``ScanResult`` field grouped into Identity / Radio /
+    Signal / Beacon IE / Activity sections. Sections whose fields are
+    all absent are omitted entirely so a row with no schema-3 beacon
+    IE data doesn't get an empty header.
+
+    Live navigation: ``up`` / ``down`` move the underlying panel's
+    selection AND re-render the modal body so the user can walk a
+    list of APs without closing and reopening the modal each time.
+    The arrow-key binding lives on the App (so the same physical
+    keys still drive the list when no modal is open); the App calls
+    back into ``sync_to_app_selection`` after advancing the cursor.
+    """
+
+    BINDINGS = [
+        Binding("escape,i,q", "app.pop_screen", t("Close")),
+    ]
+
+    DEFAULT_CSS = """
+    WifiDetailScreen {
+        align: center middle;
+    }
+    WifiDetailScreen > #wifi-detail-box {
+        width: 100;
+        height: 90%;
+        border: heavy $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+    WifiDetailScreen #wifi-detail-scroll {
+        height: 1fr;
+    }
+    WifiDetailScreen #wifi-detail-content {
+        height: auto;
+    }
+    WifiDetailScreen #wifi-detail-footer {
+        height: auto;
+    }
+    """
+
+    def __init__(
+        self,
+        *,
+        scan: ScanResult,
+        connection: Connection | None,
+        inv: NetworkInventory,
+    ) -> None:
+        super().__init__()
+        self._scan = scan
+        self._conn = connection
+        self._inv = inv
+
+    def compose(self) -> ComposeResult:
+        body = Static(self._render_body(), id="wifi-detail-content")
+        footer = Static(
+            Text(t("Esc / i to close"), style="dim"),
+            id="wifi-detail-footer",
+        )
+        yield Vertical(
+            VerticalScroll(body, id="wifi-detail-scroll"),
+            footer,
+            id="wifi-detail-box",
+        )
+
+    def on_mount(self) -> None:
+        self._update_title()
+
+    def _update_title(self) -> None:
+        head = self._scan.ssid or t("(hidden)")
+        self.query_one("#wifi-detail-box").border_title = (
+            t("Wi-Fi access point") + "  ·  " + head
+        )
+
+    # ------------------------------------------------------------------
+    # Live navigation
+    #
+    # Called by ``DitingApp.action_select_prev/next`` after the App
+    # advances the Wi-Fi selection. Re-renders the body to track the
+    # new selection so the user can walk the list without closing +
+    # reopening the modal.
+    # ------------------------------------------------------------------
+
+    def sync_to_app_selection(self) -> None:
+        key = getattr(self.app, "_wifi_selected_key", None)
+        if key is None:
+            return
+        new_scan = self.app._wifi_lookup(key)
+        if new_scan is None:
+            return
+        self._scan = new_scan
+        self._conn = self.app._latest_connection
+        try:
+            body = self.query_one("#wifi-detail-content", Static)
+        except Exception:
+            return
+        body.update(self._render_body())
+        self._update_title()
+
+    # ------------------------------------------------------------------
+    # Rendering
+    # ------------------------------------------------------------------
+
+    def _render_body(self) -> Text:
+        out = Text()
+        self._section_identity(out)
+        out.append("\n")
+        self._section_radio(out)
+        out.append("\n")
+        self._section_signal(out)
+        if self._beacon_ie_has_data():
+            out.append("\n")
+            self._section_beacon_ie(out)
+        out.append("\n")
+        self._section_activity(out)
+        return out
+
+    def _label(self, out: Text, name: str, value: str | None,
+               *, label_w: int = 16) -> None:
+        out.append("  " + pad_cells(name, label_w), style="dim")
+        if value is None or value == "":
+            out.append(t("—") + "\n", style="dim italic")
+        elif value in {t("(unknown)"), t("(hidden)"), "—"}:
+            out.append(value + "\n", style="dim")
+        else:
+            out.append(value + "\n", style="white")
+
+    def _heading(self, out: Text, label: str) -> None:
+        out.append(label + "\n", style="bold cyan")
+
+    def _section_identity(self, out: Text) -> None:
+        r = self._scan
+        head_label = t("Identity")
+        is_associated = (
+            self._conn is not None
+            and self._conn.bssid is not None
+            and r.bssid is not None
+            and self._conn.bssid.lower() == r.bssid.lower()
+        )
+        if is_associated:
+            head_label += "  ·  " + t("(associated)")
+        self._heading(out, head_label)
+        # SSID
+        if r.ssid:
+            self._label(out, t("SSID"), r.ssid)
+        else:
+            self._label(out, t("SSID"), t("(hidden)"))
+        # BSSID — when redacted by TCC, surface an actionable hint.
+        if r.bssid:
+            self._label(out, t("BSSID"), r.bssid)
+            vendor = lookup_ap_vendor(r.bssid)
+            if vendor:
+                self._label(out, t("vendor"), vendor)
+        else:
+            self._label(
+                out, t("BSSID"),
+                t("(redacted by TCC — grant Location Services for full data)"),
+            )
+        # AP name from aps.yaml inventory only (no external lookup).
+        ap_name = self._inv.resolve(r.bssid) if r.bssid else None
+        if ap_name:
+            self._label(out, t("AP name"), ap_name)
+
+    def _section_radio(self, out: Text) -> None:
+        r = self._scan
+        self._heading(out, t("Radio"))
+        self._label(out, t("channel"),
+                    str(r.channel) if r.channel is not None else None)
+        band = band_label(r.channel)
+        self._label(out, t("band"), band)
+        self._label(out, t("channel width"),
+                    f"{r.channel_width_mhz} MHz"
+                    if r.channel_width_mhz is not None else None)
+        self._label(out, t("PHY mode"), r.phy_mode)
+        self._label(out, t("security"), r.security)
+
+    def _section_signal(self, out: Text) -> None:
+        r = self._scan
+        self._heading(out, t("Signal"))
+        self._label(out, t("RSSI"),
+                    f"{r.rssi_dbm} dBm" if r.rssi_dbm is not None else None)
+        self._label(out, t("noise"),
+                    f"{r.noise_dbm} dBm" if r.noise_dbm is not None else None)
+        if r.rssi_dbm is not None and r.noise_dbm is not None:
+            self._label(out, t("SNR"), f"{r.rssi_dbm - r.noise_dbm} dB")
+
+    def _beacon_ie_has_data(self) -> bool:
+        r = self._scan
+        return (
+            r.bss_load_pct is not None
+            or r.bss_station_count is not None
+            or r.supports_802_11r is not None
+            or r.supports_802_11k is not None
+            or r.supports_802_11v is not None
+        )
+
+    def _section_beacon_ie(self, out: Text) -> None:
+        r = self._scan
+        self._heading(out, t("Beacon IE"))
+        if r.bss_load_pct is not None:
+            self._label(out, t("BSS load"), f"{r.bss_load_pct}%")
+        if r.bss_station_count is not None:
+            self._label(out, t("BSS station count"), str(r.bss_station_count))
+        # Render each 802.11r/k/v flag only when the helper surfaced
+        # a Boolean for it. Older helpers omit the field entirely; we
+        # do not show `—` for those, since the absence is "helper too
+        # old", not "AP doesn't support it".
+        for label_key, value in (
+            ("802.11r", r.supports_802_11r),
+            ("802.11k", r.supports_802_11k),
+            ("802.11v", r.supports_802_11v),
+        ):
+            if value is not None:
+                self._label(out, t(label_key), t("yes") if value else t("no"))
+
+    def _section_activity(self, out: Text) -> None:
+        r = self._scan
+        self._heading(out, t("Activity"))
+        if r.country_code:
+            self._label(out, t("country code"), r.country_code)
+        now = datetime.now(r.timestamp.tzinfo)
+        last_ago = (now - r.timestamp).total_seconds()
+        self._label(out, t("last seen"),
+                    f"{_format_duration_short(last_ago)} {t('ago')}")
+
+
+class BonjourDetailScreen(ModalScreen):
+    """Detail view for a single Bonjour service-instance.
+
+    Renders every ``BonjourDevice`` field. The TXT-records section
+    folds values longer than 60 characters to a ``<N-byte payload>``
+    placeholder + a one-line hex preview so AirPlay receivers with
+    30+ TXT keys don't blow out the modal height.
+
+    Live navigation: ``up`` / ``down`` move the underlying panel's
+    selection and re-render the modal body. The arrow-key binding
+    lives on the App; the App calls back into ``sync_to_app_selection``
+    after advancing the cursor.
+    """
+
+    BINDINGS = [
+        Binding("escape,i,q", "app.pop_screen", t("Close")),
+    ]
+
+    DEFAULT_CSS = """
+    BonjourDetailScreen {
+        align: center middle;
+    }
+    BonjourDetailScreen > #bonjour-detail-box {
+        width: 100;
+        height: 90%;
+        border: heavy $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+    BonjourDetailScreen #bonjour-detail-scroll {
+        height: 1fr;
+    }
+    BonjourDetailScreen #bonjour-detail-content {
+        height: auto;
+    }
+    BonjourDetailScreen #bonjour-detail-footer {
+        height: auto;
+    }
+    """
+
+    def __init__(self, *, device) -> None:
+        super().__init__()
+        self._device = device
+
+    def compose(self) -> ComposeResult:
+        body = Static(self._render_body(), id="bonjour-detail-content")
+        footer = Static(
+            Text(t("Esc / i to close"), style="dim"),
+            id="bonjour-detail-footer",
+        )
+        yield Vertical(
+            VerticalScroll(body, id="bonjour-detail-scroll"),
+            footer,
+            id="bonjour-detail-box",
+        )
+
+    def on_mount(self) -> None:
+        self._update_title()
+
+    def _update_title(self) -> None:
+        d = self._device
+        head = _strip_service_suffix(d.name or "", d.service_type) or d.name
+        self.query_one("#bonjour-detail-box").border_title = (
+            t("Bonjour service") + "  ·  " + (head or t("(unknown)"))
+        )
+
+    # ------------------------------------------------------------------
+    # Live navigation
+    # ------------------------------------------------------------------
+
+    def sync_to_app_selection(self) -> None:
+        key = getattr(self.app, "_bonjour_selected_key", None)
+        if key is None:
+            return
+        new_device = self.app._bonjour_lookup(key)
+        if new_device is None:
+            return
+        self._device = new_device
+        try:
+            body = self.query_one("#bonjour-detail-content", Static)
+        except Exception:
+            return
+        body.update(self._render_body())
+        self._update_title()
+
+    # ------------------------------------------------------------------
+    # Rendering
+    # ------------------------------------------------------------------
+
+    def _render_body(self) -> Text:
+        out = Text()
+        self._section_identity(out)
+        out.append("\n")
+        self._section_network(out)
+        if self._device.txt:
+            out.append("\n")
+            self._section_txt(out)
+        out.append("\n")
+        self._section_activity(out)
+        return out
+
+    def _label(self, out: Text, name: str, value: str | None,
+               *, label_w: int = 16) -> None:
+        out.append("  " + pad_cells(name, label_w), style="dim")
+        if value is None or value == "":
+            out.append(t("—") + "\n", style="dim italic")
+        else:
+            out.append(value + "\n", style="white")
+
+    def _heading(self, out: Text, label: str) -> None:
+        out.append(label + "\n", style="bold cyan")
+
+    def _section_identity(self, out: Text) -> None:
+        d = self._device
+        self._heading(out, t("Identity"))
+        instance = _strip_service_suffix(d.name or "", d.service_type)
+        self._label(out, t("instance"), instance or d.name)
+        self._label(out, t("service type"), d.service_type)
+        if d.category:
+            # service_category() already returns a translation-key-friendly
+            # string (e.g. "AirPlay audio"); pass through t() so the ZH
+            # catalog maps it. Falls through to the raw category when no
+            # translation exists.
+            self._label(out, t("category"), t(d.category))
+        self._label(out, t("vendor"), d.vendor)
+
+    def _section_network(self, out: Text) -> None:
+        d = self._device
+        self._heading(out, t("Network"))
+        # Show host with explicit `.local` suffix when it's there — the
+        # list view strips it for density, but in the modal the user is
+        # reading detail, so spelling it out is the right call.
+        host = (d.host or "").rstrip(".")
+        self._label(out, t("host"), host or None)
+        self._label(out, t("port"),
+                    str(d.port) if d.port is not None else None)
+        if d.addresses:
+            # Sort IPv4 before IPv6 — IPv4 colons-vs-dots are easier
+            # for users to skim at a glance.
+            ipv4 = [a for a in d.addresses if ":" not in a]
+            ipv6 = [a for a in d.addresses if ":" in a]
+            first = True
+            for addr in ipv4 + ipv6:
+                self._label(
+                    out, t("addresses") if first else "", addr,
+                )
+                first = False
+        else:
+            self._label(out, t("addresses"), None)
+
+    def _section_txt(self, out: Text) -> None:
+        d = self._device
+        self._heading(out, t("TXT records") + f"  ({len(d.txt)})")
+        for k in sorted(d.txt.keys()):
+            v = d.txt[k]
+            if len(v) > 60:
+                # Fold opaque blob values to keep the modal scannable.
+                # The hex preview gives a forensic anchor without
+                # printing 256 chars of base64-looking goo.
+                payload_bytes = len(v.encode("utf-8", errors="replace"))
+                hex_preview = v.encode("utf-8", errors="replace")[:16].hex()
+                rendered = (
+                    t("<{n}-byte payload>", n=payload_bytes)
+                    + f"  {hex_preview}… ({t('hex')})"
+                )
+            else:
+                rendered = v or t("(empty)")
+            self._label(out, k, rendered, label_w=20)
+
+    def _section_activity(self, out: Text) -> None:
+        d = self._device
+        self._heading(out, t("Activity"))
+        now = datetime.now(d.last_seen.tzinfo)
+        first_ago = (now - d.first_seen).total_seconds()
+        last_ago = (now - d.last_seen).total_seconds()
+        self._label(out, t("first seen"),
+                    f"{_format_duration_short(first_ago)} {t('ago')}")
+        self._label(out, t("last seen"),
+                    f"{_format_duration_short(last_ago)} {t('ago')}")
+
+
 # ---------- app ----------
 
 class GroupedFooter(Static):
@@ -3611,18 +4160,17 @@ class DitingApp(App):
         Binding("m", "show_events", t("Events")),
         Binding("h", "show_help", t("Help")),
         Binding("b", "show_basics", t("Basics")),
-        # BLE-row navigation. Hidden from the footer (show=False) so the
-        # main grouped footer stays single-line; the keys are listed in
-        # the help modal alongside the existing arrow-key conventions.
-        # ``priority=True`` is required because BLEPanel inherits from
+        # Row-select / inspect bindings — shared by all three list views.
+        # Hidden from the footer (show=False) so the grouped footer stays
+        # single-line; the keys are listed in the help modal. ``priority=
+        # True`` is required because every list panel inherits from
         # VerticalScroll, which binds up / down / enter to its own
-        # scroll-the-content handlers. Without priority those handlers
-        # consume the key before our action ever fires. The action
-        # itself is a no-op outside the BLE view, so making it priority
-        # globally does not steal arrows from Wi-Fi-mode users.
-        Binding("up", "ble_select_prev", show=False, priority=True),
-        Binding("down", "ble_select_next", show=False, priority=True),
-        Binding("enter,i", "ble_inspect", show=False, priority=True),
+        # scroll-the-content handlers. The single ``select_prev`` /
+        # ``select_next`` / ``inspect_selected`` actions dispatch on the
+        # active view, so the binding is safe across views.
+        Binding("up", "select_prev", show=False, priority=True),
+        Binding("down", "select_next", show=False, priority=True),
+        Binding("enter,i", "inspect_selected", show=False, priority=True),
     ]
 
     def __init__(
@@ -3717,6 +4265,16 @@ class DitingApp(App):
         # selection inspects the strongest-signal advertising row as a
         # convenience default.
         self._ble_selected_id: str | None = None
+        # Selection cursor for the Wi-Fi scan list. Keyed by the value
+        # _scan_row_key() returns (lowercase-stripped BSSID, falling back
+        # to ssid#channel when BSSID is TCC-redacted). Same tracking
+        # discipline as ``_ble_selected_id``: keep selection stable
+        # across re-sort, clear when the target leaves the snapshot.
+        self._wifi_selected_key: str | None = None
+        # Selection cursor for the Bonjour service list. Keyed by
+        # _bonjour_row_key() (the RFC 6763 ``<instance>.<service-type>``
+        # form, unique on the local link).
+        self._bonjour_selected_key: str | None = None
         # Per-device RSSI history, fed once per BLE snapshot. The
         # detail modal pulls it for the sparkline; the BLE table
         # itself does not consume it (the smoothed-EMA RSSI on
@@ -4251,7 +4809,14 @@ class DitingApp(App):
             panel = self.query_one("#mdns", BonjourPanel)
         except Exception:
             return
-        panel.update_devices(self._latest_mdns)
+        # Prune stale selection same as Wi-Fi / BLE.
+        if self._bonjour_selected_key is not None:
+            keys = {_bonjour_row_key(d) for d in self._latest_mdns}
+            if self._bonjour_selected_key not in keys:
+                self._bonjour_selected_key = None
+        panel.update_devices(
+            self._latest_mdns, selected_key=self._bonjour_selected_key,
+        )
         if self._view_mode == "mdns":
             self._refresh_environment_panel()
 
@@ -4280,6 +4845,13 @@ class DitingApp(App):
 
     def _refresh_scan_panel(self) -> None:
         merged = _merge_current(self._cached_scan, self._latest_connection)
+        # Prune a selection whose target dropped out of the snapshot.
+        # Keeps the cursor pointing at something real instead of a
+        # ghost BSSID the user can no longer see.
+        if self._wifi_selected_key is not None:
+            keys = {_scan_row_key(r) for r in merged}
+            if self._wifi_selected_key not in keys:
+                self._wifi_selected_key = None
         self.query_one("#scan", ScanPanel).update_scan(
             merged,
             self._latest_connection,
@@ -4287,6 +4859,7 @@ class DitingApp(App):
             self._last_successful_scan_at,
             self._inv,
             self._sort_mode,
+            selected_key=self._wifi_selected_key,
         )
         # Diagnostics goes through the dispatcher so it follows the
         # active view rather than always showing Wi-Fi data.
@@ -4511,6 +5084,234 @@ class DitingApp(App):
             device=device,
             history=self._ble_history.get(ident),
         ))
+
+    # ------------------------------------------------------------------
+    # Wi-Fi / Bonjour row navigation + inspect
+    #
+    # Same selection-by-identifier discipline as BLE: the cursor tracks
+    # the BSSID (or `(ssid, channel)` fallback when redacted) for Wi-Fi
+    # and the service-instance FQDN for Bonjour, NOT the row index, so
+    # re-sort and churn don't yank the cursor onto a different target.
+    # ------------------------------------------------------------------
+
+    def _wifi_ordered_keys(self) -> list[str]:
+        """Order of selection keys for the Wi-Fi scan list, as the
+        ``ScanPanel`` would render them right now.
+
+        The list view itself walks the same ``_merge_current`` result;
+        we recompute it here once per navigation so the order matches
+        what the user sees (current AP pinned first in 'signal' mode,
+        or group-by-AP order in 'ap' mode).
+        """
+        merged = _merge_current(self._cached_scan, self._latest_connection)
+        if self._sort_mode == "ap":
+            order: list[str] = []
+            for group in _group_by_ap(merged, self._latest_bssid, self._inv):
+                for r in group.rows:
+                    order.append(_scan_row_key(r))
+            return order
+        # Signal mode: associated AP pinned, then RSSI desc.
+        cur = (self._latest_bssid or "").lower()
+        current_rows = [r for r in merged if r.bssid and r.bssid.lower() == cur]
+        other_rows = [r for r in merged if not (r.bssid and r.bssid.lower() == cur)]
+        other_rows.sort(
+            key=lambda r: r.rssi_dbm if r.rssi_dbm is not None else -200,
+            reverse=True,
+        )
+        return [_scan_row_key(r) for r in current_rows + other_rows]
+
+    def _wifi_lookup(self, key: str) -> ScanResult | None:
+        merged = _merge_current(self._cached_scan, self._latest_connection)
+        for r in merged:
+            if _scan_row_key(r) == key:
+                return r
+        return None
+
+    def _wifi_set_selected(self, key: str, *, inspect: bool = False) -> None:
+        """Public hook for ScanPanel.on_click and the keyboard
+        dispatcher — request a selection change, optionally opening
+        the detail modal in the same call.
+        """
+        if key not in self._wifi_ordered_keys():
+            return
+        self._wifi_selected_key = key
+        self._refresh_scan_panel()
+        if inspect:
+            scan = self._wifi_lookup(key)
+            if scan is not None:
+                self.push_screen(WifiDetailScreen(
+                    scan=scan,
+                    connection=self._latest_connection,
+                    inv=self._inv,
+                ))
+
+    def action_wifi_select_prev(self) -> None:
+        if self._view_mode != "wifi":
+            return
+        order = self._wifi_ordered_keys()
+        if not order:
+            return
+        if (
+            self._wifi_selected_key is None
+            or self._wifi_selected_key not in order
+        ):
+            self._wifi_selected_key = order[0]
+        else:
+            i = order.index(self._wifi_selected_key)
+            self._wifi_selected_key = order[max(0, i - 1)]
+        self._refresh_scan_panel()
+
+    def action_wifi_select_next(self) -> None:
+        if self._view_mode != "wifi":
+            return
+        order = self._wifi_ordered_keys()
+        if not order:
+            return
+        if (
+            self._wifi_selected_key is None
+            or self._wifi_selected_key not in order
+        ):
+            self._wifi_selected_key = order[0]
+        else:
+            i = order.index(self._wifi_selected_key)
+            self._wifi_selected_key = order[min(len(order) - 1, i + 1)]
+        self._refresh_scan_panel()
+
+    def action_wifi_inspect(self) -> None:
+        if self._view_mode != "wifi":
+            return
+        order = self._wifi_ordered_keys()
+        if not order:
+            return
+        key = (
+            self._wifi_selected_key
+            if self._wifi_selected_key in order
+            else order[0]
+        )
+        scan = self._wifi_lookup(key)
+        if scan is None:
+            return
+        self._wifi_selected_key = key
+        self._refresh_scan_panel()
+        self.push_screen(WifiDetailScreen(
+            scan=scan,
+            connection=self._latest_connection,
+            inv=self._inv,
+        ))
+
+    def _bonjour_ordered_keys(self) -> list[str]:
+        return [_bonjour_row_key(d) for d in self._latest_mdns]
+
+    def _bonjour_lookup(self, key: str):
+        for d in self._latest_mdns:
+            if _bonjour_row_key(d) == key:
+                return d
+        return None
+
+    def _bonjour_set_selected(
+        self, key: str, *, inspect: bool = False,
+    ) -> None:
+        if key not in self._bonjour_ordered_keys():
+            return
+        self._bonjour_selected_key = key
+        self._refresh_mdns_panel()
+        if inspect:
+            device = self._bonjour_lookup(key)
+            if device is not None:
+                self.push_screen(BonjourDetailScreen(device=device))
+
+    def action_bonjour_select_prev(self) -> None:
+        if self._view_mode != "mdns":
+            return
+        order = self._bonjour_ordered_keys()
+        if not order:
+            return
+        if (
+            self._bonjour_selected_key is None
+            or self._bonjour_selected_key not in order
+        ):
+            self._bonjour_selected_key = order[0]
+        else:
+            i = order.index(self._bonjour_selected_key)
+            self._bonjour_selected_key = order[max(0, i - 1)]
+        self._refresh_mdns_panel()
+
+    def action_bonjour_select_next(self) -> None:
+        if self._view_mode != "mdns":
+            return
+        order = self._bonjour_ordered_keys()
+        if not order:
+            return
+        if (
+            self._bonjour_selected_key is None
+            or self._bonjour_selected_key not in order
+        ):
+            self._bonjour_selected_key = order[0]
+        else:
+            i = order.index(self._bonjour_selected_key)
+            self._bonjour_selected_key = order[min(len(order) - 1, i + 1)]
+        self._refresh_mdns_panel()
+
+    def action_bonjour_inspect(self) -> None:
+        if self._view_mode != "mdns":
+            return
+        order = self._bonjour_ordered_keys()
+        if not order:
+            return
+        key = (
+            self._bonjour_selected_key
+            if self._bonjour_selected_key in order
+            else order[0]
+        )
+        device = self._bonjour_lookup(key)
+        if device is None:
+            return
+        self._bonjour_selected_key = key
+        self._refresh_mdns_panel()
+        self.push_screen(BonjourDetailScreen(device=device))
+
+    # ------------------------------------------------------------------
+    # View-dispatching select / inspect actions
+    #
+    # The `up` / `down` / `enter` / `i` bindings route to a single
+    # action that branches on the active view. Each per-view action is
+    # already view-gated (no-op when the active view doesn't match), so
+    # the dispatcher just calls all three and lets the gates filter.
+    # That keeps the binding table flat (one Binding per key) while
+    # preserving the per-view contract pinned in the tui-shell spec.
+    #
+    # After advancing the selection we also sync any open detail
+    # modal so arrow keys "walk" through the list with the modal
+    # tracking — without the modal having to register its own
+    # priority binding (which would conflict with the App-level one).
+    # ------------------------------------------------------------------
+
+    def action_select_prev(self) -> None:
+        self.action_wifi_select_prev()
+        self.action_ble_select_prev()
+        self.action_bonjour_select_prev()
+        self._sync_open_detail_modal()
+
+    def action_select_next(self) -> None:
+        self.action_wifi_select_next()
+        self.action_ble_select_next()
+        self.action_bonjour_select_next()
+        self._sync_open_detail_modal()
+
+    def action_inspect_selected(self) -> None:
+        self.action_wifi_inspect()
+        self.action_ble_inspect()
+        self.action_bonjour_inspect()
+
+    def _sync_open_detail_modal(self) -> None:
+        """If a detail modal is currently on the screen stack, ask it
+        to re-render against the App's latest selection. Walks the
+        stack rather than peeking only at the top so future stacked
+        modals don't break the contract."""
+        for screen in self.screen_stack:
+            sync = getattr(screen, "sync_to_app_selection", None)
+            if callable(sync):
+                sync()
 
     def action_reroam(self) -> None:
         """Force a fresh association so the OS reselects the best BSSID.

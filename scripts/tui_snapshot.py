@@ -630,6 +630,67 @@ def _regression_scenarios() -> list[Scenario]:
         await pilot.press("p")
         await pilot.pause(0.3)
 
+    async def _open_wifi_detail(pilot):
+        """Open WifiDetailScreen on the currently-associated AP.
+
+        Default-row inspect (no prior up/down) lands on the first row,
+        which under the AP-grouped sort is the user's own AP — exactly
+        the row whose detail modal is the most common reader path.
+        """
+        await _seed_link_and_events(pilot)
+        await pilot.press("i")
+        await pilot.pause(0.3)
+
+    async def _open_bonjour_detail(pilot):
+        """Cycle to Bonjour view, inject a few representative
+        services, then open the detail modal on the first row."""
+        from datetime import datetime, timezone
+        from diting.mdns import BonjourDevice
+        from diting.tui import BonjourPanel
+        await _seed_link_and_events(pilot)
+        await pilot.press("n")  # wifi → ble
+        await pilot.pause(0.1)
+        await pilot.press("n")  # ble → mdns
+        await pilot.pause(0.2)
+        now = datetime.now(timezone.utc)
+        # An AirPlay receiver with a long TXT value to exercise the
+        # folding path the modal advertises in its design.
+        devices = [
+            BonjourDevice(
+                service_type="_raop._tcp.local.",
+                name="LivingRoom-HomePod._raop._tcp.local.",
+                host="LivingRoom-HomePod.local.",
+                port=7000,
+                addresses=("192.168.1.42", "fe80::1"),
+                txt={
+                    "md": "AppleTV5,3",
+                    "am": "AppleTV5,3",
+                    "pk": "a" * 200,  # > 60 chars → folded
+                },
+                vendor="Apple, Inc.",
+                category="AirPlay audio",
+                first_seen=now,
+                last_seen=now,
+            ),
+            BonjourDevice(
+                service_type="_googlecast._tcp.local.",
+                name="Office Display._googlecast._tcp.local.",
+                host="office-display.local.",
+                port=8009,
+                addresses=("192.168.1.55",),
+                txt={"id": "abc123", "md": "Chromecast"},
+                vendor="Google",
+                category="Chromecast",
+                first_seen=now,
+                last_seen=now,
+            ),
+        ]
+        pilot.app._latest_mdns = devices
+        pilot.app._refresh_mdns_panel()
+        await pilot.pause(0.2)
+        await pilot.press("i")
+        await pilot.pause(0.3)
+
     return [
         Scenario(
             id="wifi_main_en",
@@ -717,6 +778,43 @@ def _regression_scenarios() -> list[Scenario]:
                  lambda t: "550e8400-e29b-41d4" in t),
                 ("iBeacon major+minor",
                  lambda t: "major" in t and "minor" in t),
+            ),
+            inspectors=(),
+        ),
+        Scenario(
+            id="wifi_detail_modal",
+            description="Wi-Fi detail modal on the associated AP.",
+            lang="en",
+            setup=lambda: _build_good(lang="en"),
+            after_mount=_open_wifi_detail,
+            assertions=(
+                ("Identity section header", lambda t: "Identity" in t),
+                ("Radio section header", lambda t: "Radio" in t),
+                ("Signal section header", lambda t: "Signal" in t),
+                ("Activity section header", lambda t: "Activity" in t),
+                ("Associated annotation",
+                 lambda t: "associated" in t.lower()),
+                ("AP name from inventory",
+                 lambda t: "1F-bedroom" in t),
+                ("Close hint visible", lambda t: "Esc" in t),
+            ),
+            inspectors=(),
+        ),
+        Scenario(
+            id="bonjour_detail_modal",
+            description="Bonjour detail modal on an AirPlay receiver.",
+            lang="en",
+            setup=lambda: _build_good(lang="en"),
+            after_mount=_open_bonjour_detail,
+            assertions=(
+                ("Identity section header", lambda t: "Identity" in t),
+                ("Network section header", lambda t: "Network" in t),
+                ("TXT records section header",
+                 lambda t: "TXT records" in t),
+                ("Activity section header", lambda t: "Activity" in t),
+                ("Long TXT folded to payload placeholder",
+                 lambda t: "200-byte payload" in t),
+                ("Close hint visible", lambda t: "Esc" in t),
             ),
             inspectors=(),
         ),

@@ -63,9 +63,10 @@ TUI on top of the same APIs Apple uses internally:
   scanners), and *Advertising* devices broadcasting nearby —
   identified as `AirTag`, `iBeacon`, `Eddystone-URL`, `Tile`,
   `SmartTag`, `iPhone`, `Mac`, `Apple Watch`, `HomePod` instead of
-  the "Apple, Inc. (anonymous) Find My" wall. Press `i` on any row
-  for a detail view: full identifier, decoded payload, RSSI history
-  sparkline, distance estimate.
+  the "Apple, Inc. (anonymous) Find My" wall. Press `i` (or click a
+  row) on any list view — Wi-Fi, BLE, or Bonjour — for a detail
+  modal: every field the snapshot carries, decoded payloads, RSSI
+  history sparklines and distance estimates where the data permits.
 - **Link health.** Continuous gateway + WAN probes. The `Link` row
   reads `gw 12 ms · 0% · WAN 18 ms · 0% · jitter 3 ms` so a -55 dBm
   AP that *looks* fine reads correctly as bad when upstream is

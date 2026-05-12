@@ -101,6 +101,17 @@
 | Esc / `i` / `q` 关闭 modal 不动选择 | (人工；模态 binding 是声明式的) |
 | 距离估算标 "rough free-space" | `test_tui_helpers.py::test_free_space_distance_m_at_one_meter_returns_one`、`::test_free_space_distance_m_doubles_at_minus_six_db`、`::test_free_space_distance_m_zero_rssi_returns_none` |
 
+### `bonjour-detail-modal`
+
+| Requirement | 测试 |
+|---|---|
+| Bonjour 行按 service-instance FQDN 选中，re-sort + churn 不丢 | `test_tui_smoke.py::test_bonjour_selection_keyed_by_fqdn_survives_resort`、`::test_bonjour_selection_clears_when_target_drops_out` |
+| 键盘 `up` / `down` / `enter` / `i` priority binding（Bonjour 视图外 no-op） | `test_tui_smoke.py::test_bonjour_inspect_opens_modal_on_first_press` |
+| 鼠标点击 → 一手选中+打开 modal | （人工；鼠标路径与键盘 `i` 共用 `_bonjour_set_selected(inspect=True)` 入口） |
+| Modal 渲染每个 `BonjourDevice` 字段，过长 TXT 值做折叠 | `test_tui_helpers.py::test_bonjour_detail_renders_identity_network_txt_activity_sections`、`::test_bonjour_detail_folds_long_txt_values`、`::test_bonjour_detail_omits_txt_section_when_empty` |
+| 服务类别走 i18n 翻译 | `test_tui_helpers.py::test_bonjour_detail_renders_translated_category_when_known`、`::test_bonjour_detail_omits_category_row_when_unknown` |
+| Esc / `i` / `q` 关闭 modal 不动选择 | （review-enforced；binding 是声明式的） |
+
 ### `bluetooth-scanning`
 
 | Requirement | 测试 |
@@ -242,6 +253,19 @@
 | Footer 是单一 GroupedFooter 三段 | (gap — 没有 footer 分组的单元测试；regression 捕获里可见) |
 | 隐藏 binding 为高级用户存在 | `test_tui_smoke.py::test_pause_and_resume`、`::test_force_rescan_does_not_crash`、`::test_cycle_sort_modes`（绑定能触发）；footer 不显示隐藏 binding 是 review-enforced |
 | Header 显示 title + 时钟；subtitle 反映实时状态 | (gap — 没有 subtitle 的 pytest 断言；regression 捕获里可见) |
+| 所有 list-style 视图面板共享同一套行选中 + 查看手势（`up` / `down`、`i` / `enter`、鼠标点击即查看；Esc / `i` / `q` 关 modal 不动选择）；如需偏离该手势必须改本 Requirement | `test_tui_smoke.py::test_wifi_inspect_opens_modal_on_first_press`、`::test_bonjour_inspect_opens_modal_on_first_press`（与既有的 BLE 覆盖 `tui_snapshot.py::ble_detail_decoded` 并列） |
+
+### `wifi-detail-modal`
+
+| Requirement | 测试 |
+|---|---|
+| Wi-Fi 行按 BSSID 选中；BSSID 被 TCC 屏蔽时回退到 `(ssid, channel)` 合成 key | `test_tui_smoke.py::test_wifi_selection_keyed_by_bssid_survives_resort`、`::test_wifi_selection_clears_when_target_drops_out`、`test_tui_helpers.py::test_scan_row_key_uses_bssid_when_available`、`::test_scan_row_key_falls_back_to_ssid_and_channel`、`::test_scan_row_key_handles_hidden_ssid` |
+| 键盘 `up` / `down` / `enter` / `i` priority binding（Wi-Fi 视图外 no-op） | `test_tui_smoke.py::test_wifi_inspect_opens_modal_on_first_press` |
+| 鼠标点击 → 一手选中+打开 modal | （人工；鼠标路径与键盘 `i` 共用 `_wifi_set_selected(inspect=True)` 入口） |
+| Modal 渲染每个 `ScanResult` 字段，分成 Identity / Radio / Signal / Beacon IE / Activity 五段 | `test_tui_helpers.py::test_wifi_detail_renders_identity_radio_signal_activity_sections`、`::test_wifi_detail_renders_beacon_ie_when_present`、`::test_wifi_detail_omits_beacon_ie_when_all_fields_absent` |
+| BSSID 被 TCC 屏蔽时给出可读 hint 而不是静默 | `test_tui_helpers.py::test_wifi_detail_redacted_bssid_renders_tcc_hint_and_omits_vendor` |
+| AP 名只来自 `aps.yaml`；无匹配时不出现 | `test_tui_helpers.py::test_wifi_detail_renders_ap_name_when_inventory_matches`、`::test_wifi_detail_omits_ap_name_row_when_inventory_misses` |
+| Esc / `i` / `q` 关闭 modal 不动选择 | （review-enforced；binding 是声明式的） |
 
 ### `wifi-scanning`
 

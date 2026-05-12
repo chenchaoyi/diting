@@ -21,6 +21,8 @@ from diting.models import Connection, ScanResult
 from diting.network import APEntry, NetworkInventory
 from diting.poller import RoamEvent
 from diting.tui import (
+    BonjourDetailScreen,
+    WifiDetailScreen,
     _aggregate_baselines,
     _baseline_table,
     _best_same_ssid_candidate,
@@ -31,6 +33,7 @@ from diting.tui import (
     _ble_label_summary,
     _ble_vendors_line,
     _ble_visible_line,
+    _bonjour_row_key,
     _format_duration_short,
     _free_space_distance_m,
     _hex_dump,
@@ -43,6 +46,7 @@ from diting.tui import (
     _link_diagnostic_line,
     _link_score,
     _merge_current,
+    _scan_row_key,
     _score_line,
     _recommended_channel,
     _scan_line,
@@ -1168,3 +1172,261 @@ def test_bonjour_diagnostic_service_types_translated_in_zh():
         assert "service types" not in joined
     finally:
         i18n.set_lang(saved)
+
+
+# --- _scan_row_key / _bonjour_row_key -------------------------------
+
+def test_scan_row_key_uses_bssid_when_available():
+    """Lowercase, separator-stripped BSSID is the canonical key —
+    sort + churn never moves the cursor off the selected AP."""
+    r = _scan("40:Fe:95:89:c7:e3")
+    assert _scan_row_key(r) == "40fe9589c7e3"
+
+
+def test_scan_row_key_falls_back_to_ssid_and_channel():
+    """When TCC redacts BSSID, the synthetic key uses (ssid, channel)
+    so users without Location Services can still navigate."""
+    r = _scan(None, ssid="eduroam", channel=36)
+    assert _scan_row_key(r) == "eduroam#36"
+
+
+def test_scan_row_key_handles_hidden_ssid():
+    """Empty SSID broadcast (the 802.11 'hidden' bit) with redacted
+    BSSID falls back to ``#channel`` — collisions stay rare since
+    hidden networks usually only have one BSSID per channel."""
+    r = ScanResult(
+        ssid=None, bssid=None, rssi_dbm=-70, noise_dbm=-94,
+        channel=48, channel_width_mhz=20, channel_band="5 GHz",
+        phy_mode=None, security=None, timestamp=datetime.now(),
+    )
+    assert _scan_row_key(r) == "#48"
+
+
+def test_bonjour_row_key_combines_name_and_service_type():
+    class _D:
+        name = "Office HomePod"
+        service_type = "_raop._tcp.local."
+    assert _bonjour_row_key(_D()) == "Office HomePod._raop._tcp.local."
+
+
+# --- WifiDetailScreen rendering -------------------------------------
+
+def _wifi_detail_text(scan, *, connection=None, inv=None):
+    """Construct a WifiDetailScreen and return the rendered body as a
+    plain string. The modal's section helpers append to a Rich Text;
+    we read ``.plain`` so tests can substring-match without dealing
+    with style spans."""
+    screen = WifiDetailScreen(
+        scan=scan,
+        connection=connection,
+        inv=inv if inv is not None else NetworkInventory(aps=()),
+    )
+    return screen._render_body().plain
+
+
+def test_wifi_detail_renders_identity_radio_signal_activity_sections():
+    """Every always-on section (Identity / Radio / Signal / Activity)
+    appears in the rendered body. Beacon IE is opt-in (see its own
+    test) so it doesn't have to show up here."""
+    r = ScanResult(
+        ssid="testnet", bssid="40:fe:95:89:c7:e3",
+        rssi_dbm=-58, noise_dbm=-94, channel=48,
+        channel_width_mhz=80, channel_band="5 GHz",
+        phy_mode="802.11ax", security="WPA2 Personal",
+        timestamp=datetime.now(timezone.utc),
+    )
+    body = _wifi_detail_text(r)
+    assert "Identity" in body
+    assert "Radio" in body
+    assert "Signal" in body
+    assert "Activity" in body
+    # Core fields render.
+    assert "testnet" in body
+    assert "40:fe:95:89:c7:e3" in body
+    assert "-58 dBm" in body
+    assert "WPA2 Personal" in body
+
+
+def test_wifi_detail_renders_beacon_ie_when_present():
+    """Schema-3+ helpers populate `bss_load_pct` / `bss_station_count`
+    / 802.11r/k/v Booleans. The modal surfaces the section under a
+    "Beacon IE" heading with each populated field labelled."""
+    r = ScanResult(
+        ssid="x", bssid="aa:bb:cc:dd:ee:01",
+        rssi_dbm=-65, noise_dbm=-94, channel=36,
+        channel_width_mhz=80, channel_band="5 GHz",
+        phy_mode=None, security=None,
+        timestamp=datetime.now(timezone.utc),
+        bss_load_pct=42, bss_station_count=11,
+        supports_802_11r=True, supports_802_11k=True,
+        supports_802_11v=False,
+    )
+    body = _wifi_detail_text(r)
+    assert "Beacon IE" in body
+    assert "42%" in body
+    assert "BSS station count" in body
+    assert "802.11r" in body
+    assert "802.11v" in body
+
+
+def test_wifi_detail_omits_beacon_ie_when_all_fields_absent():
+    """Older helpers (schema < 3) ship neither beacon-IE load nor
+    roam-capability flags. The modal MUST omit the entire Beacon IE
+    section rather than render a heading with no rows under it."""
+    r = ScanResult(
+        ssid="x", bssid="aa:bb:cc:dd:ee:01",
+        rssi_dbm=-65, noise_dbm=-94, channel=36,
+        channel_width_mhz=80, channel_band="5 GHz",
+        phy_mode=None, security=None,
+        timestamp=datetime.now(timezone.utc),
+    )
+    body = _wifi_detail_text(r)
+    assert "Beacon IE" not in body
+
+
+def test_wifi_detail_redacted_bssid_renders_tcc_hint_and_omits_vendor():
+    """When BSSID is None (CoreWLAN TCC-redacted scan), the Identity
+    section shows the user-facing hint instead of going silent, and
+    the OUI-derived vendor row is absent (no BSSID = no OUI)."""
+    r = ScanResult(
+        ssid="testnet", bssid=None,
+        rssi_dbm=-58, noise_dbm=-94, channel=48,
+        channel_width_mhz=80, channel_band="5 GHz",
+        phy_mode=None, security=None,
+        timestamp=datetime.now(timezone.utc),
+    )
+    body = _wifi_detail_text(r)
+    assert "redacted by TCC" in body
+    assert "Location Services" in body
+    # No vendor row, because we don't have an OUI to look up.
+    # The Identity heading appears; the literal "vendor" label
+    # MUST NOT (we use a single ``  vendor`` field row).
+    assert "  vendor" not in body
+
+
+def test_wifi_detail_renders_ap_name_when_inventory_matches():
+    """A BSSID listed in aps.yaml surfaces as an "AP name" row in the
+    Identity section. The modal is the user's most likely path to
+    re-attach a label to a row they recognise."""
+    bssid = "40:fe:95:89:c7:e3"
+    inv = NetworkInventory(aps=(
+        APEntry(name="kitchen ceiling", mgmt_mac=bssid),
+    ))
+    r = ScanResult(
+        ssid="x", bssid=bssid,
+        rssi_dbm=-58, noise_dbm=-94, channel=48,
+        channel_width_mhz=80, channel_band="5 GHz",
+        phy_mode=None, security=None,
+        timestamp=datetime.now(timezone.utc),
+    )
+    body = _wifi_detail_text(r, inv=inv)
+    assert "AP name" in body
+    assert "kitchen ceiling" in body
+
+
+def test_wifi_detail_omits_ap_name_row_when_inventory_misses():
+    """No aps.yaml entry → the row is absent entirely, not "—". This
+    keeps the Identity section a tight summary instead of advertising
+    that a field exists but is empty."""
+    r = ScanResult(
+        ssid="x", bssid="40:fe:95:89:c7:e3",
+        rssi_dbm=-58, noise_dbm=-94, channel=48,
+        channel_width_mhz=80, channel_band="5 GHz",
+        phy_mode=None, security=None,
+        timestamp=datetime.now(timezone.utc),
+    )
+    body = _wifi_detail_text(r)
+    assert "AP name" not in body
+
+
+# --- BonjourDetailScreen rendering ----------------------------------
+
+class _BD:
+    """Lightweight stand-in for BonjourDevice. We don't construct the
+    real dataclass to avoid coupling these tests to the mdns module's
+    import surface; the modal only reads attribute names."""
+
+    def __init__(
+        self, *, name="Office HomePod._raop._tcp.local.",
+        service_type="_raop._tcp.local.",
+        host="HomePod-Office.local.",
+        port=7000, addresses=("192.168.1.42",),
+        txt=None, vendor="Apple, Inc.", category="AirPlay audio",
+    ):
+        self.name = name
+        self.service_type = service_type
+        self.host = host
+        self.port = port
+        self.addresses = addresses
+        self.txt = txt or {}
+        self.vendor = vendor
+        self.category = category
+        now = datetime.now(timezone.utc)
+        self.first_seen = now - timedelta(minutes=12)
+        self.last_seen = now - timedelta(seconds=3)
+
+
+def _bonjour_detail_text(device):
+    screen = BonjourDetailScreen(device=device)
+    return screen._render_body().plain
+
+
+def test_bonjour_detail_renders_identity_network_txt_activity_sections():
+    """Every section renders, with TXT records present when the
+    device carries them."""
+    d = _BD(txt={"md": "AppleTV5,3", "am": "AppleTV5,3"})
+    body = _bonjour_detail_text(d)
+    assert "Identity" in body
+    assert "Network" in body
+    assert "TXT records" in body
+    assert "Activity" in body
+    # Core fields render.
+    assert "Office HomePod" in body
+    assert "192.168.1.42" in body
+    assert "AppleTV5,3" in body
+
+
+def test_bonjour_detail_folds_long_txt_values():
+    """Opaque blob values (AirPlay `pk`, HomeKit pairing IDs) are
+    folded to a `<N-byte payload>` placeholder + a one-line hex
+    preview so 30-key receivers don't blow out the modal height."""
+    long_value = "a" * 200  # > 60-char threshold
+    d = _BD(txt={"pk": long_value})
+    body = _bonjour_detail_text(d)
+    assert "<200-byte payload>" in body
+    # First 16 bytes of "aaaa…" → 16 × 0x61.
+    assert "61616161" in body
+
+
+def test_bonjour_detail_omits_txt_section_when_empty():
+    """A service with no TXT (rare but valid) gets no TXT section —
+    same omit-when-empty discipline as Beacon IE."""
+    d = _BD(txt={})
+    body = _bonjour_detail_text(d)
+    assert "TXT records" not in body
+
+
+def test_bonjour_detail_renders_translated_category_when_known():
+    """Categories with an i18n catalog entry render via t() so the
+    user sees the localised label, not the internal English string."""
+    from diting import i18n
+    d = _BD(category="AirPlay audio")
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("zh")
+        body = _bonjour_detail_text(d)
+        assert "AirPlay 音频" in body
+    finally:
+        i18n.set_lang(saved)
+
+
+def test_bonjour_detail_omits_category_row_when_unknown():
+    """A service with no recognised category renders just the raw
+    service-type token; the ``category`` label row is absent. Same
+    omit-when-empty discipline as Beacon IE."""
+    d = _BD(category=None)
+    body = _bonjour_detail_text(d)
+    # `_label`'s row is two-space-indented then padded; matching the
+    # exact field-label prefix avoids a false positive from a section
+    # header that happens to contain "category" in some future revision.
+    assert "  category" not in body
