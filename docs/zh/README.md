@@ -29,7 +29,7 @@
 <p align="center">
   <img src="../preview-ble.zh.svg" alt="diting TUI – BLE 视图" width="100%">
   <br>
-  <sub><i>BLE 视图（按 <code>n</code> 切换）—— 上方是「已连接」外设，下方是「正在广播」设备，每行都给出公开格式识别出的标签。</i></sub>
+  <sub><i>BLE 视图（按 <code>n</code> 在 Wi-Fi / BLE / Bonjour 三个视图间循环）—— 上方是「已连接」外设，下方是「正在广播」设备，每行都给出公开格式识别出的标签。</i></sub>
 </p>
 
 <p align="center">
@@ -131,7 +131,7 @@ DITING_LANG=zh uv run diting   # 用环境变量
 | `p` | 暂停 / 恢复轮询 |
 | `r` | 立即重扫（CoreWLAN ~5 秒限流仍然会生效） |
 | `s` | 扫描排序切换：按 AP ↔ 按信号 |
-| `n` | 切换附近视图：Wi-Fi BSSID ↔ BLE 设备 |
+| `n` | 切换附近视图：Wi-Fi BSSID → BLE → Bonjour |
 | `c` | 断开重连 —— 关再开 Wi-Fi，让系统重新挑选最强的 BSSID |
 | `m` | 打开 / 关闭事件浏览器 —— 最近 100 条 漫游 / 扰动 / 延迟 / 丢包 / 链路 |
 | `h` | 打开 / 关闭应用内帮助页 |

@@ -1101,6 +1101,41 @@ def test_strip_service_suffix_leaves_other_names_unchanged():
     assert _strip_service_suffix("Living-Room", "") == "Living-Room"
 
 
+def test_strip_service_suffix_drops_raop_mac_prefix():
+    """RAOP (AirPlay audio) instance names use a
+    ``<MAC-as-12-hex>@<friendly>`` format. The MAC prefix is machine-
+    only clutter — the friendly half matches the AirPlay sibling row
+    for the same speaker, so stripping aligns the two rows."""
+    # Full RAOP shape: suffix stripped, then MAC@ stripped.
+    assert _strip_service_suffix(
+        "0A588A3EBF21@ccy MBP2024 M4 Office._raop._tcp.local.",
+        "_raop._tcp.local.",
+    ) == "ccy MBP2024 M4 Office"
+    # Bare MAC@friendly (no suffix to strip first) also handled.
+    assert _strip_service_suffix(
+        "00A1B2C3D4E5@Living-Room-Speaker",
+        "_raop._tcp.local.",
+    ) == "Living-Room-Speaker"
+
+
+def test_strip_service_suffix_keeps_at_signs_outside_raop():
+    """Non-RAOP service types must not lose ``user@host`` style names —
+    the MAC strip is gated on both service_type prefix AND a 12-hex
+    MAC shape so user-named services pass through."""
+    # AirPlay row with an @ in its name (not RAOP, not a MAC pattern)
+    # — passes through.
+    assert _strip_service_suffix(
+        "shared@office._airplay._tcp.local.",
+        "_airplay._tcp.local.",
+    ) == "shared@office"
+    # RAOP service type but the part before @ isn't a 12-hex MAC —
+    # leave it alone rather than guessing wrong.
+    assert _strip_service_suffix(
+        "not-a-mac@Living-Room",
+        "_raop._tcp.local.",
+    ) == "not-a-mac@Living-Room"
+
+
 # --- service-types i18n leak (post-merge polish) --------------------
 
 def test_bonjour_diagnostic_service_types_translated_in_zh():

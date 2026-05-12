@@ -494,7 +494,7 @@ def _help_content() -> tuple[Text, Text]:
     line(t("Scan"),  t("every BSSID in range, grouped by physical AP"))
     line(t("Diag."), t("Link (gateway / WAN latency, loss, jitter) and"))
     body.append(" " * 8 + t("Environment (RSSI σ across nearby APs)\n"))
-    line(t("Nearby"), t("BSSIDs near you, or the BLE device list (toggle: n)"))
+    line(t("Nearby"), t("BSSIDs near you, BLE devices, or Bonjour services (cycle: n)"))
     line(t("Events"), t("strip at the bottom; full browser via m"))
 
     section(t("Bindings"))
@@ -504,7 +504,7 @@ def _help_content() -> tuple[Text, Text]:
     line("s", t("cycle scan sort:  by AP  ↔  by signal"))
     line("c", t("force re-roam (cycle Wi-Fi off/on so the OS re-picks the"))
     body.append(" " * 8 + t("strongest BSSID — fixes sticky associations)\n"))
-    line("n", t("toggle Nearby view: Wi-Fi BSSIDs ↔ BLE devices"))
+    line("n", t("cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour"))
     line("m", t("open the Events browser (filterable list, per-AP σ"))
     body.append(" " * 8 + t("baseline, last-hour σ sparkline)\n"))
     line("h", t("toggle this help"))
@@ -2963,7 +2963,12 @@ _COL_MDNS_VENDOR = 18
 _COL_MDNS_NAME = 26
 _COL_MDNS_SERVICES = 14
 _COL_MDNS_AGE = 8
-_COL_MDNS_HOST = 18
+# Hostname column was 18, truncating real-world hostnames like
+# ``ccy-MBP2024-M4-Office.local.`` mid-word (the trailing ``.local.``
+# strip + 18-cell fit produced ``ccy-MBP2024-M4-Off``). Widened to 26
+# so typical workstation / device names render in full at terminal
+# widths >= 140 cells.
+_COL_MDNS_HOST = 26
 
 
 def _bonjour_header_line() -> Text:
@@ -3000,7 +3005,22 @@ def _strip_service_suffix(name: str, service_type: str) -> str:
     ]
     for suffix in candidates:
         if suffix and name.endswith(suffix):
-            return name[: -len(suffix)]
+            name = name[: -len(suffix)]
+            break
+    # RAOP (AirPlay audio) instance names use a `<MAC-as-hex>@<friendly>`
+    # format that's machine-only clutter. The friendly half matches
+    # the AirPlay sibling row's name, so stripping the prefix makes
+    # the two rows for the same speaker line up.
+    if service_type.startswith("_raop.") and "@" in name:
+        mac_part, sep, rest = name.partition("@")
+        # Be defensive: only strip when the prefix really looks like
+        # a 12-hex-digit MAC. Other `@` uses (e.g. user@host) should
+        # pass through unchanged.
+        if (
+            len(mac_part) == 12
+            and all(c in "0123456789abcdefABCDEF" for c in mac_part)
+        ):
+            name = rest
     return name
 
 
@@ -3021,7 +3041,14 @@ def _bonjour_row_line(d, now: datetime) -> Text:
     category = t(d.category) if d.category else ""
     age_text = _bonjour_age_text(d, now)
     # Host cell — strip the trailing dot for readability.
-    host = (d.host or "").rstrip(".") or "—"
+    # Strip trailing dot then the universal ``.local`` suffix that
+    # every Bonjour host carries — recovers six cells on every row
+    # without losing information (mDNS is link-local by definition).
+    host = (d.host or "").rstrip(".")
+    if host.endswith(".local"):
+        host = host[: -len(".local")]
+    if not host:
+        host = "—"
 
     line = Text()
     line.append("  ")

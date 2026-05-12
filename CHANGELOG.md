@@ -27,6 +27,15 @@ behaviours between releases.
   `._<service-type>.local.` suffix during render — the service type
   is already shown one column over, so `ccy MBP2024 M4 Office._airplay._tcp.local.`
   now reads `ccy MBP2024 M4 Office`, recovering ~12 cells per row.
+  RAOP rows additionally drop the `<MAC-as-hex>@` machine prefix so
+  AirPlay / RAOP sibling rows for the same speaker line up.
+- **Bonjour row Host column** drops the universal `.local` suffix
+  in the display (mDNS is link-local by definition) and the column
+  width grew from 18 → 26 cells so typical workstation names like
+  `ccy-MBP2024-M4-Office` no longer truncate mid-word.
+- **Help modal + READMEs** describe `n` as the 3-way cycle
+  (`Wi-Fi BSSIDs → BLE → Bonjour`) — was stale 2-way text post-PRs
+  #30 / #31.
 
 ### Fixed
 - **`service types` i18n leak** in the mDNS diagnostic row. Under
