@@ -37,7 +37,6 @@ from diting.tui import (
     _rssi_sparkline,
     _channel_hint,
     _environment_diagnostic_line,
-    _environment_line,
     _event_format_line,
     _group_by_ap,
     _health_line,
@@ -243,26 +242,6 @@ def test_channel_hint_explains_channel_absent_from_scan_list():
     rows = [_scan("aa:aa:aa:aa:aa:01", channel=36, rssi=-45)]
     assert "(no AP heard)" in _channel_hint("5 GHz", 44, rows).plain
     assert "(no AP heard)" not in _channel_hint("5 GHz", 36, rows).plain
-
-
-def test_environment_line_surfaces_scan_diagnostics():
-    conn = _conn(channel=36)
-    rows = [
-        _scan("aa:aa:aa:aa:aa:01", ssid="x", channel=1, width=40,
-              security="Open", country_code="CN"),
-        _scan("aa:aa:aa:aa:aa:02", ssid="", channel=6, width=20,
-              country_code="US"),
-        _scan("aa:aa:aa:aa:aa:03", ssid="y", channel=36,
-              country_code="CN"),
-    ]
-    text = _environment_line(rows, conn).plain
-    assert "3 BSSIDs" in text
-    assert "2.4G 2" in text
-    assert "hidden in this scan: 1" in text
-    assert "open 1" in text
-    assert "2.4G HT40 1" in text
-    assert "CC CN/US" in text
-    assert "current ch peers 1" in text
 
 
 def test_health_line_explains_weak_signal_and_better_ap():
