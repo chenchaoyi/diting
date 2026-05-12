@@ -208,6 +208,19 @@
 | Python 端可自动发现 helper | `test_helper.py::test_find_helper_env_override_wins`、`::test_find_helper_env_override_can_point_at_binary`、`::test_find_helper_returns_none_when_nothing_present`、`::test_bundle_path_extracts_app_dir`、`::test_bundle_path_none_for_loose_binary` |
 | TCC 拒绝时 helper exit 3 + stderr "bluetooth unauthorized" | `test_ble.py::test_permission_denied_via_subprocess_exit_code`、`test_helper.py::test_has_bluetooth_permission_false_on_unauthorized` |
 
+### `mdns-scanning`
+
+| Requirement | 测试 |
+|---|---|
+| `BonjourPoller` 只订阅白名单内的服务类型，绝不订阅 meta 类型 | `test_mdns.py::test_service_category_known_type_returns_friendly_name`、`::test_service_category_unknown_type_returns_none`、`::test_poller_subscribes_only_to_curated_list` |
+| `BonjourDevice` 携带广播解析后的所有字段（service_type、name、host、port、addresses、txt、vendor、category、first/last_seen） | `test_mdns.py::test_poller_emits_snapshot_after_first_announce`、`::test_txt_decode_drops_non_utf8_values` |
+| 厂商解析走 5 步链（TXT vendor → OUI → 主机名模式 → 服务类型 hint → 放弃） | `test_mdns.py::test_resolve_vendor_txt_field_wins`、`::test_resolve_vendor_hostname_pattern_falls_through_to_apple`、`::test_resolve_vendor_service_hint_catches_chromecast`、`::test_resolve_vendor_all_steps_abstain_returns_none` |
+| 状态表在 `remove_service` 回调时清理，并以 TTL 兜底 | `test_mdns.py::test_poller_removes_on_remove_service_callback`、`::test_poller_ttl_fallback_when_no_remove_observed` |
+| `BonjourPanel` 渲染 vendor / name / services / age / id 列（无 RSSI / 信号条 / connected 分割） | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi`、`tui_snapshot.py`（explore 模式真机回归） |
+| 诊断面板在 mDNS 视图下渲染 Bonjour 侧汇总 | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
+| `BonjourPoller.stop()` 会清理 zeroconf 后台线程 | `test_mdns.py::test_poller_stop_joins_background_thread` |
+| `zeroconf` 懒加载——不进 mDNS 视图就不 import | `test_tui_smoke.py::test_app_constructs_bonjour_panel_lazily` |
+
 ### `roam-detection`
 
 | Requirement | 测试 |
@@ -222,8 +235,8 @@
 
 | Requirement | 测试 |
 |---|---|
-| 四个垂直堆叠面板，固定顺序 | `test_tui_smoke.py::test_app_boots_and_quits`（App composes；面板存在隐含验证） |
-| Diagnostics 内容跟随激活视图 | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`、`::test_diagnostics_renders_link_line_when_latency_data_available` |
+| 四个垂直堆叠面板，固定顺序；第三槽 wifi/ble/mdns 三态切换 | `test_tui_smoke.py::test_app_boots_and_quits`（App composes；面板存在隐含验证）、`::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
+| Diagnostics 内容跟随激活视图 | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`、`::test_view_toggle_cycles_wifi_ble_mdns_wifi`、`::test_diagnostics_renders_link_line_when_latency_data_available` |
 | 模态压栈、Esc/同字母关 | `test_tui_smoke.py::test_help_modal_open_and_close`、`::test_help_modal_h_to_close`、`::test_help_modal_renders_through_pilot_query`、`::test_events_modal_open_and_close`；`tui_snapshot.py::events_modal`、`::help_modal`、`::basics_modal`、`::ble_detail_decoded`（regression） |
 | Footer 是单一 GroupedFooter 三段 | (gap — 没有 footer 分组的单元测试；regression 捕获里可见) |
 | 隐藏 binding 为高级用户存在 | `test_tui_smoke.py::test_pause_and_resume`、`::test_force_rescan_does_not_crash`、`::test_cycle_sort_modes`（绑定能触发）；footer 不显示隐藏 binding 是 review-enforced |

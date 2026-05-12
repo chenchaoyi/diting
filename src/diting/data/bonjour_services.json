@@ -1,0 +1,21 @@
+{
+  "_airplay._tcp.local.": "AirPlay",
+  "_raop._tcp.local.": "AirPlay audio",
+  "_googlecast._tcp.local.": "Chromecast",
+  "_sonos._tcp.local.": "Sonos",
+  "_ipp._tcp.local.": "Printer",
+  "_ipps._tcp.local.": "Printer",
+  "_printer._tcp.local.": "Printer",
+  "_smb._tcp.local.": "File share",
+  "_afpovertcp._tcp.local.": "File share",
+  "_workstation._tcp.local.": "Mac",
+  "_hap._tcp.local.": "HomeKit",
+  "_homekit._tcp.local.": "HomeKit",
+  "_companion-link._tcp.local.": "Apple Companion",
+  "_rfb._tcp.local.": "Screen sharing",
+  "_ssh._tcp.local.": "SSH",
+  "_http._tcp.local.": "HTTP",
+  "_https._tcp.local.": "HTTP",
+  "_meshcop._udp.local.": "Thread",
+  "_matter._tcp.local.": "Matter"
+}
