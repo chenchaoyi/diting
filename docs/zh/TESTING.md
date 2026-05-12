@@ -236,6 +236,7 @@
 | Requirement | 测试 |
 |---|---|
 | 四个垂直堆叠面板，固定顺序；第三槽 wifi/ble/mdns 三态切换 | `test_tui_smoke.py::test_app_boots_and_quits`（App composes；面板存在隐含验证）、`::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
+| 第三槽面板 border_title 始终显示三视图标签页，详情内容移到 border_subtitle | `test_tui_helpers.py::test_view_tabs_border_title_lists_all_three_views`、`::test_view_display_name_maps_internal_tokens_to_user_names`；`test_tui_smoke.py::test_panel_border_title_carries_tab_indicator` |
 | Diagnostics 内容跟随激活视图 | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`、`::test_view_toggle_cycles_wifi_ble_mdns_wifi`、`::test_diagnostics_renders_link_line_when_latency_data_available` |
 | 模态压栈、Esc/同字母关 | `test_tui_smoke.py::test_help_modal_open_and_close`、`::test_help_modal_h_to_close`、`::test_help_modal_renders_through_pilot_query`、`::test_events_modal_open_and_close`；`tui_snapshot.py::events_modal`、`::help_modal`、`::basics_modal`、`::ble_detail_decoded`（regression） |
 | Footer 是单一 GroupedFooter 三段 | (gap — 没有 footer 分组的单元测试；regression 捕获里可见) |

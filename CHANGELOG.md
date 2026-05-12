@@ -11,6 +11,29 @@ behaviours between releases.
 
 ## [Unreleased]
 
+### Changed
+- **Always-visible tab indicator** in the third-slot panel's border
+  title. Every view shows `Wi-Fi · BLE · Bonjour` with the active
+  view styled bold-cyan and the other two dimmed, so a user
+  discovers from any single screen that three views exist and which
+  one is active. Panel-specific detail (`Nearby BSSIDs (N) · sort:
+  AP`, etc.) moves to the panel's `border_subtitle` (bottom of
+  frame). Closes the discoverability gap surfaced by the post-merge
+  audit of the mDNS panel.
+- **Header subtitle** uses the user-facing view name (`view: Wi-Fi`
+  / `view: BLE` / `view: Bonjour`) instead of the internal mode
+  token (`view: mdns` previously leaked through).
+- **Bonjour row Name column** strips the redundant
+  `._<service-type>.local.` suffix during render — the service type
+  is already shown one column over, so `ccy MBP2024 M4 Office._airplay._tcp.local.`
+  now reads `ccy MBP2024 M4 Office`, recovering ~12 cells per row.
+
+### Fixed
+- **`service types` i18n leak** in the mDNS diagnostic row. Under
+  `DITING_LANG=zh` the row used to read `共 3 个 · 3 service types`;
+  now reads `共 3 个 · 3 种服务`. Catalog key matched a call site
+  whose leading separator was already in the f-string.
+
 ### Added
 - **mDNS / Bonjour discovery** as a third TUI panel alongside Wi-Fi
   and BLE. Press `n` to cycle the view through Wi-Fi → BLE → mDNS

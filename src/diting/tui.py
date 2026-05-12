@@ -70,6 +70,58 @@ from .poller import (
 )
 
 
+# ---------- view-mode display ----------
+
+# Cycle order for the `n` toggle. Lives next to the display map so
+# the order is documented in one place. Kept as a tuple so callers
+# can `list(VIEW_CYCLE).index(mode)` for "next mode" math.
+VIEW_CYCLE: tuple[str, ...] = ("wifi", "ble", "mdns")
+
+# Internal mode tokens → user-facing display names. The internal
+# tokens (`wifi`, `ble`, `mdns`) stay everywhere in code for grep-
+# ability and stability; the display map exists so the user sees
+# `Bonjour` instead of `mdns` and `Wi-Fi` instead of `wifi`. Used
+# by the header subtitle, the third-slot panel's border-title tab
+# indicator, and the GroupedFooter's `n  → <next>` label.
+_VIEW_DISPLAY_NAMES: dict[str, str] = {
+    "wifi": "Wi-Fi",
+    "ble": "BLE",
+    "mdns": "Bonjour",
+}
+
+
+def _view_display_name(mode: str) -> str:
+    """Map an internal view-mode token to its user-facing name.
+
+    Returns the input unchanged for unknown modes so future modes
+    don't crash existing renderers.
+    """
+    return _VIEW_DISPLAY_NAMES.get(mode, mode)
+
+
+def _view_tabs_border_title(active: str) -> str:
+    """Compose the always-visible 3-segment tab indicator that lives
+    in the third-slot panel's `border_title`.
+
+    Renders as Rich markup so per-segment styling lands when Textual
+    paints the border. The active view is bold-cyan; the other two
+    are dimmed. The user can see from any single screen that three
+    views exist and which one is active.
+
+    Example outputs:
+    - active="wifi":  "[bold cyan]Wi-Fi[/]  ·  [dim]BLE[/]  ·  [dim]Bonjour[/]"
+    - active="mdns":  "[dim]Wi-Fi[/]  ·  [dim]BLE[/]  ·  [bold cyan]Bonjour[/]"
+    """
+    parts: list[str] = []
+    for mode in VIEW_CYCLE:
+        label = _view_display_name(mode)
+        if mode == active:
+            parts.append(f"[bold cyan]{label}[/]")
+        else:
+            parts.append(f"[dim]{label}[/]")
+    return "  ·  ".join(parts)
+
+
 # ---------- panels ----------
 
 class ConnectionPanel(Static):
@@ -205,7 +257,10 @@ class ScanPanel(VerticalScroll):
         yield Static(Text(t("(scanning...)"), style="dim italic"), id="scan-body")
 
     def on_mount(self) -> None:
-        self.border_title = t("Nearby BSSIDs")
+        # Tab indicator goes in the title; panel-specific detail (count
+        # / sort / scan-age) lands in the subtitle once update_scan runs.
+        self.border_title = _view_tabs_border_title("wifi")
+        self.border_subtitle = t("Nearby BSSIDs")
 
     def update_scan(
         self,
@@ -224,7 +279,12 @@ class ScanPanel(VerticalScroll):
         )
         identity = t("  · identity TCC-redacted") if all_redacted else ""
         sort_label = t("  · sort: {mode}", mode=t(sort_mode))
-        self.border_title = (
+        # Border title carries the cross-view tab indicator so the
+        # user can see from any screen that three views exist.
+        self.border_title = _view_tabs_border_title("wifi")
+        # Detail (count + scan age + sort) moves to the subtitle so
+        # it's still visible without crowding the tab list.
+        self.border_subtitle = (
             t("Nearby BSSIDs") + f" ({len(results)}){ago}{identity}{sort_label}"
         )
         if not results:
@@ -1286,7 +1346,10 @@ class BLEPanel(VerticalScroll):
         )
 
     def on_mount(self) -> None:
-        self.border_title = t("Nearby BLE devices")
+        # Tab indicator in the title; panel-specific detail (count
+        # / state placeholder) lands in the subtitle.
+        self.border_title = _view_tabs_border_title("ble")
+        self.border_subtitle = t("Nearby BLE devices")
         # Per-line mapping populated on every update_devices() call.
         # ``_y_to_id[i]`` is the identifier rendered at body line i, or
         # None for header / spacer rows. Used by ``on_click`` to turn a
@@ -1342,9 +1405,12 @@ class BLEPanel(VerticalScroll):
         base_title = t("Nearby BLE devices")
         body = self.query_one("#ble-body", Static)
 
+        # Border title always carries the cross-view tab indicator.
+        # Detail (count / state) goes in the border subtitle.
+        self.border_title = _view_tabs_border_title("ble")
         if permission_state == "granted":
             total = len(devices) + len(connected)
-            self.border_title = base_title + f" ({total})"
+            self.border_subtitle = base_title + f" ({total})"
             if not devices and not connected:
                 body.update(Text(t("(no BLE devices yet — scanning...)"),
                                  style="dim italic"))
@@ -1393,8 +1459,9 @@ class BLEPanel(VerticalScroll):
             return
 
         # Non-granted: drop the count, show a state-specific message.
-        # No clickable rows in any of these states.
-        self.border_title = base_title
+        # No clickable rows in any of these states. Border title is
+        # already the tab indicator; subtitle is just the panel name.
+        self.border_subtitle = base_title
         self._y_to_id = []
         if permission_state == "denied":
             body.update(Text(t("(BLE permission required)"),
@@ -1449,19 +1516,22 @@ class BonjourPanel(VerticalScroll):
         )
 
     def on_mount(self) -> None:
-        self.border_title = t("Nearby Bonjour devices")
+        # Tab indicator in title; panel-specific detail in subtitle.
+        self.border_title = _view_tabs_border_title("mdns")
+        self.border_subtitle = t("Nearby Bonjour devices")
 
     def update_devices(self, devices: list) -> None:
         body = self.query_one("#mdns-body", Static)
         base_title = t("Nearby Bonjour devices")
+        self.border_title = _view_tabs_border_title("mdns")
         if not devices:
-            self.border_title = base_title
+            self.border_subtitle = base_title
             body.update(Text(
                 t("(no Bonjour devices yet — scanning...)"),
                 style="dim italic",
             ))
             return
-        self.border_title = base_title + f" ({len(devices)})"
+        self.border_subtitle = base_title + f" ({len(devices)})"
         now = datetime.now(timezone.utc)
         lines: list[Text] = [_bonjour_header_line()]
         for d in devices:
@@ -2908,6 +2978,32 @@ def _bonjour_header_line() -> Text:
     return h
 
 
+def _strip_service_suffix(name: str, service_type: str) -> str:
+    """Strip the redundant ``.<service-type>.local.`` suffix from a
+    Bonjour service-instance name.
+
+    RFC 6763 names are of the form ``<friendly>.<service-type>.local.``,
+    so the trailing service-type is already shown one column over.
+    Stripping it during render recovers ~12 cells per row without
+    losing information. Falls through cleanly if the suffix isn't
+    present (defensive for non-standard announce shapes).
+    """
+    if not name or not service_type:
+        return name
+    # Service types from zeroconf typically end with `.local.`; the
+    # name embeds them dot-prefixed. Try both with and without the
+    # trailing dot so we tolerate either shape.
+    candidates = [
+        "." + service_type.rstrip("."),
+        "." + service_type.rstrip(".") + ".",
+        "." + service_type,
+    ]
+    for suffix in candidates:
+        if suffix and name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
 def _bonjour_row_line(d, now: datetime) -> Text:
     # Vendor cell.
     if d.vendor:
@@ -2916,8 +3012,12 @@ def _bonjour_row_line(d, now: datetime) -> Text:
     else:
         vendor_cell = pad_cells(t("(unknown)"), _COL_MDNS_VENDOR)
         vendor_style = "dim"
-    name_text = d.name if d.name else t("(unknown)")
-    name_style = "white" if d.name else "dim italic"
+    # Strip the redundant ``._airplay._tcp.local.`` suffix from the
+    # service-instance name — the service type is already shown in
+    # the Services column one cell to the right.
+    raw_name = _strip_service_suffix(d.name or "", d.service_type)
+    name_text = raw_name if raw_name else t("(unknown)")
+    name_style = "white" if raw_name else "dim italic"
     category = t(d.category) if d.category else ""
     age_text = _bonjour_age_text(d, now)
     # Host cell — strip the trailing dot for readability.
@@ -2963,8 +3063,12 @@ def _bonjour_diagnostic_lines(devices) -> list[Text]:
     line.append(t("Visible Bonjour  "), style="bold dim")
     line.append(t("{n} total", n=n), style="white")
     if services:
-        line.append(t("  ·  {n} service types", n=len(services)),
-                    style="dim")
+        # The "  ·  " separator is composed locally so the catalog key
+        # is just the translated phrase ("{n} service types" / "{n} 种服务"),
+        # not the phrase-plus-leading-separator combo. Same pattern the
+        # other diagnostic rows use.
+        line.append("  ·  ", style="dim")
+        line.append(t("{n} service types", n=len(services)), style="dim")
     rows.append(line)
 
     # Row 2: top services.
@@ -3418,14 +3522,15 @@ class GroupedFooter(Static):
 
     def refresh_layout(self) -> None:
         view_mode = getattr(self.app, "_view_mode", "wifi")
-        # Cycle: wifi → ble → mdns → wifi. The label shows the
-        # target the user lands on after pressing `n`.
-        _NEXT_LABEL = {
-            "wifi": "BLE",
-            "ble": "Bonjour",
-            "mdns": "Wi-Fi",
-        }
-        next_view = _NEXT_LABEL.get(view_mode, "next")
+        # The label shows the literal name of the NEXT view in the
+        # cycle (wifi → ble → mdns → wifi). Sourced from the shared
+        # _VIEW_DISPLAY_NAMES map so adding a fourth view in the
+        # future only requires updating one place.
+        try:
+            i = VIEW_CYCLE.index(view_mode)
+        except ValueError:
+            i = 0
+        next_view = _view_display_name(VIEW_CYCLE[(i + 1) % len(VIEW_CYCLE)])
 
         groups: list[list[tuple[str, str]]] = [
             [("q", t("Quit")), ("p", t("Pause"))],
@@ -4404,7 +4509,9 @@ class DitingApp(App):
         # echoed in the Nearby BSSIDs panel's border title (· sort: ap)
         # so duplicating it in the header was just clutter.
         scan_s = int(getattr(self._poller, "_scan_interval", 0))
-        bits = [t("view: {mode}", mode=t(self._view_mode))]
+        bits = [
+            t("view: {mode}", mode=_view_display_name(self._view_mode))
+        ]
         if scan_s:
             bits.append(t("scan {n}s", n=scan_s))
         if self._paused:

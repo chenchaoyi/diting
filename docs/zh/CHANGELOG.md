@@ -10,6 +10,28 @@
 
 ## [Unreleased]
 
+### 变更
+- **第三槽面板新增「视图 Tab」指示**，无论用户在 Wi-Fi / BLE / Bonjour
+  哪个视图，面板边框上沿都显示 `Wi-Fi · BLE · Bonjour` 三选项，
+  当前激活的那一项用 cyan 加粗，另外两项 dim 灰，用户在任意一屏
+  就能发现三视图存在以及当前位置。原来在 border_title 上的面板
+  详情（`附近 BSSID (N) · 排序：AP` 等）移到 `border_subtitle`
+  （边框下沿），信息没丢。修复 mDNS 面板合入后审计发现的「三视图
+  不可发现」问题。
+- **Header 副标题** 使用用户友好的视图名（`视图：Wi-Fi` / `视图：BLE` /
+  `视图：Bonjour`）而非内部 token（之前 mDNS 视图渲染为
+  `视图：mdns`）。
+- **Bonjour 列表的「名称」列** 渲染时去掉冗余的
+  `._<service-type>.local.` 后缀（服务类型在隔壁「服务」列已经
+  显示）。例如 `ccy MBP2024 M4 Office._airplay._tcp.local.` 现在
+  显示为 `ccy MBP2024 M4 Office`，每行多出 ~12 格可读空间。
+
+### 修复
+- **`service types` 中文 leak**。`DITING_LANG=zh` 下，mDNS 诊断行
+  以前显示 `共 3 个 · 3 service types`；现在正确显示
+  `共 3 个 · 3 种服务`。问题原因：调用方在 t() 的 key 上多带了
+  `"  ·  "` 分隔符，与 catalog key 不匹配。
+
 ### 新增
 - **mDNS / Bonjour 发现** 作为 TUI 的第三块面板加入，与 Wi-Fi、BLE
   并列。按 `n` 在 Wi-Fi → BLE → mDNS → Wi-Fi 三态间循环切换。新面板
