@@ -20,9 +20,22 @@ their `display` attribute, never mount/unmount, so the widget tree
 stays stable for tests.
 
 The `n` key binding cycles the view across `wifi` → `ble` → `mdns`
-→ `wifi`, in that order. The footer label for `n` SHALL be
-`next view` / `下个视图` to reflect the cyclic nature; the literal
-`→ BLE` from the prior 2-way design is removed.
+→ `wifi`, in that order.
+
+The active third-slot panel's `border_title` SHALL render an
+always-visible three-segment tab indicator listing every view name
+in cycle order: `Wi-Fi · BLE · Bonjour`. The active view's label
+SHALL be styled bold-cyan and the two inactive labels SHALL be
+dimmed, so the user can see from any single screen that three
+views exist and which one is active. The panel-specific status
+detail (count, sort hint, last-scan timestamp) SHALL move to the
+panel's `border_subtitle` (bottom of frame) so no information is
+lost.
+
+The footer label for `n` SHALL continue to read the literal name of
+the NEXT view in the cycle (e.g., `→ BLE` while in Wi-Fi, `→ Bonjour`
+while in BLE, `→ Wi-Fi` while in mDNS) so the user knows where the
+next press lands.
 
 #### Scenario: User toggles from Wi-Fi to BLE
 - **WHEN** the user is in `wifi` view and presses `n`
@@ -39,6 +52,16 @@ The `n` key binding cycles the view across `wifi` → `ble` → `mdns`
 #### Scenario: All three panels mounted at launch
 - **WHEN** the App composes its widget tree
 - **THEN** ScanPanel, BLEPanel, and BonjourPanel are all present in the tree (no widgets are mounted or unmounted during view toggles)
+
+#### Scenario: Tab indicator visible in every view
+- **WHEN** the user is in any of `wifi` / `ble` / `mdns` view
+- **THEN** the active third-slot panel's `border_title` contains all three view labels (`Wi-Fi`, `BLE`, `Bonjour`) separated by `·`
+- **AND** the label matching the active mode is styled distinctly (bold-cyan) while the other two are dimmed
+
+#### Scenario: Panel detail moves to the border subtitle
+- **WHEN** the user is in `wifi` view
+- **THEN** the panel's `border_subtitle` carries the Wi-Fi-specific detail (`Nearby BSSIDs (N) · sort: AP` or equivalent) and the `border_title` carries the tab indicator
+- **AND** the equivalent split applies in BLE view (`border_subtitle` shows `Nearby BLE devices (N)`) and mDNS view (`Nearby Bonjour (N)`)
 
 ### Requirement: Diagnostics panel content SHALL follow the active view
 `_refresh_environment_panel()` SHALL render Wi-Fi-side diagnostic
