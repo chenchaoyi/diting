@@ -208,11 +208,27 @@ openspec view                                              # dashboard
 
 ## CHANGELOG + bilingual docs
 
-`CHANGELOG.md` keeps user-facing release notes (English). Each
-merged change that ships a user-visible behaviour gets a line under
-`[Unreleased]`. The entry references the change name so readers can
-drill into the archive. The Chinese mirror at
-`docs/zh/CHANGELOG.md` SHALL be updated in the same PR.
+`CHANGELOG.md` keeps user-facing release notes (English). As of
+**v0.9.0** this file is maintained **at release time only**, not
+per-PR — the OpenSpec archive under `openspec/changes/archive/`
+already captures the per-change "what / why / how", so the
+CHANGELOG's job narrows to a release-notes derivative:
+
+- During development, **do NOT add `[Unreleased]` bullets in your
+  PR.** The OpenSpec proposal's `## What Changes` section is the
+  canonical record of what the PR ships.
+- When cutting a version (`chore/release-vX.Y.Z` branch), the
+  release PR converts the proposals archived since the last tag
+  into a single grouped section (`### Added` / `### Changed` /
+  `### Fixed` / `### Removed`). Title the section with the version
+  number + date.
+- The Chinese mirror at `docs/zh/CHANGELOG.md` SHALL be updated in
+  the **release PR**, not earlier.
+
+Why the change: per-PR CHANGELOG updates were duplicating the
+OpenSpec proposal narrative, with the maintenance cost falling on
+every contributor for every PR. The single source of truth is the
+archive; CHANGELOG is its release-time projection.
 
 ### Bilingual rule (EN ↔ ZH parity)
 
@@ -222,7 +238,9 @@ change that drops Chinese coverage is incomplete. In a single PR:
 - Every `i18n.py` EN-key edit MUST update the matching ZH value.
 - Every `docs/<file>.md` edit MUST land with a matching
   `docs/zh/<file>.md` edit (existing files: `README.md`, `TESTING.md`,
-  `HELPER.md`, `CHANGELOG.md`, `workflow.md`, …).
+  `HELPER.md`, `workflow.md`, …). **`CHANGELOG.md` is no longer in
+  this list** as of v0.9.0 — see the section above for the
+  release-only policy.
 - Every README user-visible section change MUST land with a matching
   `docs/zh/README.md` edit.
 - New help/basics modal copy MUST be added to BOTH `_ZH` and the

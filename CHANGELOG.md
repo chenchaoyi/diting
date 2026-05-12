@@ -9,39 +9,21 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
-## [Unreleased]
+## [0.9.0] — 2026-05-12
 
-### Changed
-- **Always-visible tab indicator** in the third-slot panel's border
-  title. Every view shows `Wi-Fi · BLE · Bonjour` with the active
-  view styled bold-cyan and the other two dimmed, so a user
-  discovers from any single screen that three views exist and which
-  one is active. Panel-specific detail (`Nearby BSSIDs (N) · sort:
-  AP`, etc.) moves to the panel's `border_subtitle` (bottom of
-  frame). Closes the discoverability gap surfaced by the post-merge
-  audit of the mDNS panel.
-- **Header subtitle** uses the user-facing view name (`view: Wi-Fi`
-  / `view: BLE` / `view: Bonjour`) instead of the internal mode
-  token (`view: mdns` previously leaked through).
-- **Bonjour row Name column** strips the redundant
-  `._<service-type>.local.` suffix during render — the service type
-  is already shown one column over, so `ccy MBP2024 M4 Office._airplay._tcp.local.`
-  now reads `ccy MBP2024 M4 Office`, recovering ~12 cells per row.
-  RAOP rows additionally drop the `<MAC-as-hex>@` machine prefix so
-  AirPlay / RAOP sibling rows for the same speaker line up.
-- **Bonjour row Host column** drops the universal `.local` suffix
-  in the display (mDNS is link-local by definition) and the column
-  width grew from 18 → 26 cells so typical workstation names like
-  `ccy-MBP2024-M4-Office` no longer truncate mid-word.
-- **Help modal + READMEs** describe `n` as the 3-way cycle
-  (`Wi-Fi BSSIDs → BLE → Bonjour`) — was stale 2-way text post-PRs
-  #30 / #31.
+The **Bonjour release.** diting grows a third TUI panel — mDNS /
+Bonjour service discovery — alongside Wi-Fi and BLE, and adopts an
+always-visible 3-view tab indicator so the user discovers from any
+single screen that three views exist. `--notify` finally covers all
+three anomaly event types with per-target debouncing. Plus a long
+list of i18n polish, BLE Categories cleanup, and analyze CLI fixes
+surfaced by the autonomous `/tui-audit` cycles between 2026-05-11
+and 2026-05-12.
 
-### Fixed
-- **`service types` i18n leak** in the mDNS diagnostic row. Under
-  `DITING_LANG=zh` the row used to read `共 3 个 · 3 service types`;
-  now reads `共 3 个 · 3 种服务`. Catalog key matched a call site
-  whose leading separator was already in the f-string.
+CHANGELOG bookkeeping note: with the OpenSpec-archive-as-history
+workflow now stable, this file is **maintained at release time
+only** (not per-PR). For the granular per-change rationale, see
+`openspec/changes/archive/`.
 
 ### Added
 - **mDNS / Bonjour discovery** as a third TUI panel alongside Wi-Fi
@@ -73,18 +55,84 @@ behaviours between releases.
   notification side-effect is. Plain `diting` and plain
   `diting monitor` continue to fire NO notifications, matching
   pre-0.8.0 behaviour byte-for-byte.
+- **Xiaomi / Anhui Huami manufacturer-data decoder** under
+  `src/diting/decoders/xiaomi.py`. Conservative: recognises the
+  frame, surfaces `xiaomi.cid` / `xiaomi.frame_seq` /
+  `xiaomi.body_hex` / `xiaomi.body_len`, doesn't invent semantic
+  field names (Xiaomi hasn't published a spec). Plus a
+  vendors-line fold annotation summing `merged_count - 1` so the
+  user reads "20 Anhui Huami devices · (+8 folded)" instead of
+  worrying that RPA rotations are inflating the count.
+
+### Changed
+- **Always-visible tab indicator** in the third-slot panel's border
+  title. Every view shows `Wi-Fi · BLE · Bonjour` with the active
+  view styled bold-cyan and the other two dimmed. Panel-specific
+  detail (`Nearby BSSIDs (N) · sort: AP`, etc.) moves to the
+  panel's `border_subtitle` (bottom of frame). Closes the
+  discoverability gap surfaced by the post-merge audit of the
+  mDNS panel.
+- **Header subtitle** uses the user-facing view name (`view: Wi-Fi`
+  / `view: BLE` / `view: Bonjour`) instead of the internal mode
+  token.
+- **Help modal + READMEs** describe `n` as the 3-way cycle
+  (`Wi-Fi BSSIDs → BLE → Bonjour`).
+- **BLE Name column cascade** — `d.name → d.type → d.device_class →
+  (unknown)`. Rows whose helper tagged them `Find My target` /
+  `MS device beacon` / `Apple Proximity` etc. now render the type
+  name instead of `(unknown)`. Services column simplifies to just
+  the service-UUID category (no more `Find My target · Find My`
+  duplication across two columns).
+- **Bonjour row rendering polish**: Name column strips the
+  redundant `._<service-type>.local.` suffix and RAOP rows drop
+  their `<MAC-as-hex>@` machine prefix. Host column widened from
+  18 → 26 cells and the universal `.local` suffix stripped — typical
+  workstation names like `ccy-MBP2024-M4-Office` no longer truncate
+  mid-word.
+- **`Tx / Max` row** drops the redundant trailing `max` / `最大`
+  suffix (the row label already says Max).
+- **`analyze` time-range** renders the end date when the session
+  crosses midnight. Previously `2026-05-10 22:04 → 13:01 (14h 57m)`
+  forced the reader to mentally subtract the duration; now end
+  carries `YYYY-MM-DD` when the local date differs from the start.
 
 ### Fixed
+- **44 ZH catalog gaps closed** including the entire `BLEDetailScreen`
+  modal (Identity / Activity / Services section headings, every
+  field label, the inline annotations, the `Esc / i 关闭` close
+  hint). Help modal `r` key whitespace bug fixed
+  (`~5s` ↔ `~5 s` catalog/call-site mismatch). Panel short-names
+  in the help modal now properly translate.
+- **RF-stir confidence enum** (`medium` / `high` / `low`) renders
+  translated (`中` / `高` / `低`) in the events modal under ZH —
+  previously leaked raw English from a bare f-string.
+- **`% loss` suffix** on latency-spike events translates to `丢包`
+  under ZH (was bare English).
+- **Analyze stir-aggregates labels** (`modes:` / `confidence:` /
+  `locations:`) translate properly.
+- **`service types` i18n leak** in the mDNS diagnostic row
+  (catalog-key whitespace mismatch).
 - **BLE Categories diagnostic** no longer counts protocol-utility
   GATT services (`1800` Generic Access, `1801` Generic Attribute,
-  `180A` Device Information) as device kinds. Those services are
-  advertised by virtually every BLE peripheral with bonding, so
-  including them in the aggregate Categories breakdown inflated a
-  top-of-list count that read like a device class but contained no
-  actual information about what kinds of devices were nearby. The
-  per-row "Services" column still renders them — they're useful
-  detail in a single device's row. Caught by the 2026-05-11
-  `/tui-audit` run.
+  `180A` Device Information) as device kinds. Per-row Services
+  column still renders them.
+- **Connected BLE rows** display `online` / `在线` instead of `—`
+  in the last-seen column (connected by definition means live).
+- **BLE diagnostic Categories** reorders to count-first format
+  (`8 iPhone` not `iPhone 8`) so it doesn't read as a model
+  number.
+
+### Removed
+- Dead `_environment_line` helper in `src/diting/tui.py` — had no
+  production callers (only one unit test exercised it), shadowed
+  the still-used `_environment_lines`. Cleanup.
+
+### Bookkeeping
+- **CHANGELOG policy change**: as of 0.9.0, this file is maintained
+  at release time only. Per-PR changes are captured by their
+  OpenSpec proposal under `openspec/changes/`; on release, the
+  archived proposals since the last tag get summarised here. See
+  `docs/workflow.md` for the updated policy.
 
 ## [0.8.0] — 2026-05-10
 

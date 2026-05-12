@@ -24,7 +24,7 @@ Tick what applies; strike through (~~text~~) what doesn't.
 
 - [ ] README updated if a user-facing surface changed
 - [ ] EN ↔ ZH parity preserved: any string change in `i18n.py` keeps both sides aligned, any `docs/*.md` edit has a matching `docs/zh/*.md` update
-- [ ] CHANGELOG.md `[Unreleased]` entry added (EN + ZH)
+- [ ] OpenSpec proposal's `## What Changes` accurately describes the PR (this is the source of truth for future release notes — `CHANGELOG.md` is updated only at release time, not per PR)
 
 ## Archive (post-merge)
 

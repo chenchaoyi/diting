@@ -8,37 +8,18 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
-## [Unreleased]
+## [0.9.0] — 2026-05-12
 
-### 变更
-- **第三槽面板新增「视图 Tab」指示**，无论用户在 Wi-Fi / BLE / Bonjour
-  哪个视图，面板边框上沿都显示 `Wi-Fi · BLE · Bonjour` 三选项，
-  当前激活的那一项用 cyan 加粗，另外两项 dim 灰，用户在任意一屏
-  就能发现三视图存在以及当前位置。原来在 border_title 上的面板
-  详情（`附近 BSSID (N) · 排序：AP` 等）移到 `border_subtitle`
-  （边框下沿），信息没丢。修复 mDNS 面板合入后审计发现的「三视图
-  不可发现」问题。
-- **Header 副标题** 使用用户友好的视图名（`视图：Wi-Fi` / `视图：BLE` /
-  `视图：Bonjour`）而非内部 token（之前 mDNS 视图渲染为
-  `视图：mdns`）。
-- **Bonjour 列表的「名称」列** 渲染时去掉冗余的
-  `._<service-type>.local.` 后缀（服务类型在隔壁「服务」列已经
-  显示）。例如 `ccy MBP2024 M4 Office._airplay._tcp.local.` 现在
-  显示为 `ccy MBP2024 M4 Office`，每行多出 ~12 格可读空间。
-  RAOP 行额外去掉 `<MAC-as-hex>@` 前缀，让同一个设备的 AirPlay /
-  RAOP 兄弟行对齐。
-- **Bonjour 行「主机」列** 渲染时去掉所有 Bonjour 主机都带的
-  `.local` 后缀（mDNS 本来就是 link-local），列宽从 18 扩到 26 格，
-  `ccy-MBP2024-M4-Office` 这类典型工作站名不再截断。
-- **帮助面板和 README** 描述 `n` 键为三态循环
-  （`Wi-Fi BSSID → BLE → Bonjour`）—— PR #30 / #31 合入后这两处
-  文档没跟上，仍是 2 视图描述。
+**「Bonjour 版」**。TUI 第三块面板从「Wi-Fi / BLE 二选」扩展为
+「Wi-Fi / BLE / Bonjour 三循环」，并加入始终可见的视图 tab 指示，
+任意一屏都能看出三视图存在。`--notify` 终于覆盖三种异常事件，
+并按 target 做静默窗口去重。加上 2026-05-11 ~ 2026-05-12 期间
+自动化 `/tui-audit` 跑出的一长串 i18n 打磨、BLE Categories 清理、
+analyze 命令修复。
 
-### 修复
-- **`service types` 中文 leak**。`DITING_LANG=zh` 下，mDNS 诊断行
-  以前显示 `共 3 个 · 3 service types`；现在正确显示
-  `共 3 个 · 3 种服务`。问题原因：调用方在 t() 的 key 上多带了
-  `"  ·  "` 分隔符，与 catalog key 不匹配。
+CHANGELOG 维护策略变更：随着 OpenSpec archive 作为变更履历的工作
+流稳定下来，本文件**只在 cut 版本时维护**（不再每个 PR 都更新）。
+细粒度的「为什么这么改」请直接看 `openspec/changes/archive/`。
 
 ### 新增
 - **mDNS / Bonjour 发现** 作为 TUI 的第三块面板加入，与 Wi-Fi、BLE
@@ -54,24 +35,78 @@
   事件（`rf_stir` / `latency_spike` / `loss_burst`）都触发 macOS 通知
   中心横幅，并且同时在 `diting monitor --notify`（无头）和默认 TUI 子
   命令（`diting --notify`）下生效。按 (event-type, target) 维度做
-  静默窗口，持续告警每个 target 每分钟最多弹一次横幅，而不是每个探测
-  tick 都弹一次。两个环境变量可在不重编的情况下调参：
-  `DITING_NOTIFY_SILENCE_S`（3-3600，默认 60）覆盖静默窗口；
+  静默窗口，持续告警每个 target 每分钟最多弹一次横幅。两个环境变量
+  可调参：`DITING_NOTIFY_SILENCE_S`（3-3600，默认 60）覆盖静默窗口；
   `DITING_NOTIFY_STIR_CONFIDENCE`（`high` / `medium` / `all`，默认
   `high`）放宽 `rf_stir` 置信度阈值。非法值会落回默认并在 stderr
   打印一行 warning。静默窗口状态仅存在内存，重启即清零。JSONL 事件
   流不做去重 —— 静默窗口只针对 OS 通知这一副作用。无 `--notify` 的
-  `diting` 与 `diting monitor` 行为保持与 0.8.0 完全一致，不会触发
-  任何通知。
+  `diting` 与 `diting monitor` 行为保持与 0.8.0 完全一致。
+- **小米 / 华米厂商数据 decoder**：`src/diting/decoders/xiaomi.py`，
+  识别 cid 0x038F 的广播帧，surface `xiaomi.cid` / `xiaomi.frame_seq` /
+  `xiaomi.body_hex` / `xiaomi.body_len`，但不臆造语义字段（小米
+  没公开规范）。配套 vendors 行新增「折叠数」标注，把
+  `merged_count - 1` 加总，让用户读到「Anhui Huami 20 个 · 折叠
+  8 条 RPA」，而不是怀疑 RPA 轮换在虚增计数。
+
+### 变更
+- **第三槽面板新增「视图 Tab」指示**，无论用户在 Wi-Fi / BLE / Bonjour
+  哪个视图，面板边框上沿都显示 `Wi-Fi · BLE · Bonjour` 三选项，
+  当前激活的那一项 cyan 加粗，另外两项 dim 灰。原来在 border_title
+  上的面板详情（`附近 BSSID (N) · 排序：AP` 等）移到 `border_subtitle`
+  （边框下沿），信息没丢。修复 mDNS 面板合入后审计发现的「三视图
+  不可发现」问题。
+- **Header 副标题** 使用用户友好的视图名（`视图：Wi-Fi` / `视图：BLE` /
+  `视图：Bonjour`）而非内部 token。
+- **帮助面板和 README** 描述 `n` 键为三态循环
+  （`Wi-Fi BSSID → BLE → Bonjour`）。
+- **BLE Name 列回退链**：`d.name → d.type → d.device_class →
+  (未知)`。helper 已经识别为 `Find My target` / `MS device beacon` /
+  `Apple Proximity` 等的行，现在 Name 列直接显示 type 名，不再是
+  `(未知)`。Services 列简化为纯服务-UUID 类别，不再重复 type /
+  device_class。
+- **Bonjour 行渲染打磨**：名称列去掉冗余的 `._<service-type>.local.`
+  后缀，RAOP 行额外去掉 `<MAC-as-hex>@` 机器前缀。主机列从 18 扩到
+  26 格，统一去掉所有 Bonjour 主机的 `.local` 后缀，
+  `ccy-MBP2024-M4-Office` 这类工作站名不再截断。
+- **`Tx / Max` 行** 去掉冗余的 `max` / `最大` 尾缀（行 label 已经
+  说了 Max）。
+- **`analyze` 时间范围** 跨午夜时给 end 也带上日期。以前
+  `2026-05-10 22:04 → 13:01 (14h 57m)` 让读者要靠 duration 倒推
+  end 是哪天；现在跨日时 end 也带 `YYYY-MM-DD`。
 
 ### 修复
+- **关闭 44 处 ZH catalog gap**，包括整个 `BLEDetailScreen` 模态
+  （身份 / 活动 / 服务 节标题、所有字段标签、内联注解、`Esc / i
+  关闭` 关闭提示）。帮助面板 `r` 键的空格 bug（`~5s` ↔ `~5 s`
+  catalog/调用方不一致）也修复了。帮助面板里的 panel 短名也按
+  i18n 规则翻译。
+- **RF 扰动事件 confidence 枚举**（`medium` / `high` / `low`）在
+  事件 modal 中渲染翻译值（`中` / `高` / `低`），ZH 下不再漏 EN。
+- **延迟尖峰的 `% loss` 后缀** 在 ZH 下翻译为「丢包」（之前是
+  bare EN）。
+- **analyze 命令的 RF stir 汇总标签**（`modes:` / `confidence:` /
+  `locations:`）也按 i18n 翻译了。
+- **`service types` 中文 leak**（catalog key 空格不匹配）。
 - **BLE Categories 诊断行** 不再把协议工具类 GATT 服务（`1800`
   Generic Access、`1801` Generic Attribute、`180A` Device
-  Information）算成设备类型。这三个服务几乎每个支持配对的 BLE 外
-  设都会广播，把它们计入 Categories 汇总会让一个本应回答"周围有
-  什么类型的设备"的行被一个高数字的"协议占位"打头，反而失去信息
-  量。每行单独显示的 Services 列仍然会渲染这些名字 —— 在单设备
-  视角下它们是有用的信息。2026-05-11 `/tui-audit` 真机巡检捕获。
+  Information）算成设备类型。每行单独显示的 Services 列仍然
+  会渲染这些名字。
+- **已连接 BLE 行** 在 last-seen 列显示 `online` / `在线`，
+  不再是 `—`（已连接就意味着在线，不是缺数据）。
+- **BLE Categories 诊断行** 改为「数字在前」格式（`8 iPhone`
+  而非 `iPhone 8`），不会被误读为机型号。
+
+### 移除
+- 死代码 `_environment_line` helper（`src/diting/tui.py`）—— 没
+  任何生产调用方（只有一个 unit test 覆盖它），名字还跟正在使用
+  的 `_environment_lines` 撞车。清理掉。
+
+### 维护备注
+- **CHANGELOG 策略变更**：自 0.9.0 起，本文件**只在 release 时维护**。
+  每个 PR 的变更由其 OpenSpec proposal 记录在 `openspec/changes/`
+  下；release 时把上次 tag 以来归档的 proposals 总结进来。详见
+  `docs/workflow.md`。
 
 ## [0.8.0] — 2026-05-10
 
