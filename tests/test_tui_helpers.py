@@ -748,6 +748,23 @@ def test_event_format_line_latency_spike():
     assert "412" in text
 
 
+def test_event_format_line_latency_spike_loss_suffix_translates_to_chinese():
+    """The "% loss" suffix on latency-spike events used to render raw
+    English under DITING_LANG=zh because it was a bare f-string. Wrap
+    in t() so it follows the same translation as the diagnostic Link
+    row's "{loss}% loss" → "丢包 {loss}%". Surfaced by tui-audit."""
+    from diting import i18n
+    # _spike_event() has loss_pct=25.0 so the suffix renders.
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("zh")
+        text = _event_format_line(_spike_event(), NetworkInventory()).plain
+        assert "丢包" in text
+        assert "% loss" not in text
+    finally:
+        i18n.set_lang(saved)
+
+
 def test_event_format_line_loss_burst():
     text = _event_format_line(_loss_event(), NetworkInventory()).plain
     assert "[LOSS]" in text
