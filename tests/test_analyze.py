@@ -270,3 +270,56 @@ def test_render_handles_zero_events():
     out = render(r)
     assert "/tmp/empty.jsonl" in out
     assert "[!]" in out  # the empty-log warning
+
+
+def test_render_time_range_omits_end_date_when_same_day():
+    """Single-day logs read cleaner without the date repeated on the
+    end of the time range — `09:00 → 09:05` is enough context."""
+    events = [
+        _ev("link_state", "2026-05-07T09:00:00+00:00",
+            state="associated", bssid="aa:bb:cc:11:22:33", ssid="x"),
+        _ev("link_state", "2026-05-07T09:05:00+00:00",
+            state="disassociated"),
+    ]
+    out = render(analyze(events, source_path="/tmp/x.jsonl"))
+    # Find the Time range line (allow EN or ZH catalog).
+    line = next(
+        (l for l in out.splitlines()
+         if "Time range" in l or "时间范围" in l),
+        "",
+    )
+    assert line  # the row exists
+    # Same day → end shown as bare HH:MM:SS, no second YYYY-MM-DD.
+    # The arrow separator splits start (with date) from end (without).
+    _, _, after = line.partition("→")
+    assert "2026-05-" not in after
+
+
+def test_render_time_range_includes_end_date_when_cross_day():
+    """A log spanning past midnight previously rendered as
+    `22:04:21 → 13:01:33 (14h 57m)` — the end's date is missing so
+    the user has to do mental arithmetic against the duration to
+    figure out what day '13:01:33' refers to. Now the end keeps its
+    YYYY-MM-DD when it differs from the start.
+
+    Uses a ≥ 25-hour span so the local dates differ in every
+    timezone, keeping the assertion robust under any CI tz config.
+    """
+    events = [
+        _ev("link_state", "2026-05-07T00:00:00+00:00",
+            state="associated", bssid="aa:bb:cc:11:22:33", ssid="x"),
+        _ev("link_state", "2026-05-08T02:00:00+00:00",
+            state="disassociated"),
+    ]
+    out = render(analyze(events, source_path="/tmp/x.jsonl"))
+    line = next(
+        (l for l in out.splitlines()
+         if "Time range" in l or "时间范围" in l),
+        "",
+    )
+    assert line
+    _, _, after = line.partition("→")
+    import re
+    assert re.search(r"\b2026-\d\d-\d\d\b", after), (
+        f"expected YYYY-MM-DD in end portion, got: {after!r}"
+    )
