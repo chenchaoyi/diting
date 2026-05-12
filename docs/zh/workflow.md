@@ -219,9 +219,8 @@ PR 模板（`.github/pull_request_template.md`）会自动填上结构。
 - [ ] README 与 `docs/zh/README.md` 同步更新（如果用户面变了）
 - [ ] EN ↔ ZH parity 守住：`i18n.py` 改字串两边都改；
   `docs/*.md` 改了就改 `docs/zh/*.md`
-- [ ] `CHANGELOG.md` 与 `docs/zh/CHANGELOG.md` `[Unreleased]` 段都
-  更新
-- [ ] merge 后已 `/opsx:archive <name>`
+- [ ] merge 后已 `/opsx:archive <name>`（CHANGELOG 不再每 PR 更新，
+  见上面的 release-only 策略）
 
 ## 合并策略
 
@@ -231,10 +230,23 @@ PR 模板（`.github/pull_request_template.md`）会自动填上结构。
 
 ## CHANGELOG + 中英文双语文档
 
-`CHANGELOG.md` 保留面向用户的发布说明（英文）。每个会发布用户
-可见行为的 change 在 `[Unreleased]` 段加一行，引用 change 名供
-读者 drill into archive。中文镜像 `docs/zh/CHANGELOG.md` 必须在
-同一个 PR 里同步。
+`CHANGELOG.md` 保留面向用户的发布说明（英文）。**自 v0.9.0 起，
+本文件只在 cut 版本时维护**，不再每个 PR 都更新——
+`openspec/changes/archive/` 已经记录了每个 change 的「what / why /
+how」，CHANGELOG 的工作收窄为「release notes 派生稿」：
+
+- 平时开发中，**不要在你的 PR 里加 `[Unreleased]` bullet**。
+  OpenSpec proposal 的 `## What Changes` 段已经是该 PR 的标准记录。
+- cut 版本时（`chore/release-vX.Y.Z` 分支），release PR 把上次
+  tag 以来归档的 proposals 合并整理成单一 release 段
+  （`### 新增` / `### 变更` / `### 修复` / `### 移除`），段标题
+  写版本号 + 日期。
+- 中文镜像 `docs/zh/CHANGELOG.md` 在 **release PR** 里同步（不是
+  每个普通 PR）。
+
+为什么这么改：以前每个 PR 都同步 CHANGELOG，跟 OpenSpec proposal
+重复，维护成本叠加到每个 contributor 的每个 PR 上。Single source
+of truth 是 archive；CHANGELOG 是它在 release 时刻的投影。
 
 ### 中英文双语规则（EN ↔ ZH parity）
 
@@ -244,7 +256,8 @@ PR 模板（`.github/pull_request_template.md`）会自动填上结构。
 - `i18n.py` 每改一个 EN 键，必须同时改对应的 ZH 值。
 - `docs/<file>.md` 每改一次都要带 `docs/zh/<file>.md` 的对应改动
   （现有文件：`README.md`、`TESTING.md`、`HELPER.md`、
-  `CHANGELOG.md`、`workflow.md`、…）。
+  `workflow.md`、…）。**自 v0.9.0 起 `CHANGELOG.md` 不在此列**——
+  见上一节的「只在 release 时维护」策略。
 - README 用户面 section 改动时，要同步改 `docs/zh/README.md`。
 - 新加 help/basics 模态文案，必须 EN 源 + `_ZH` 同行落。文件结构
   让这一步很自然。
