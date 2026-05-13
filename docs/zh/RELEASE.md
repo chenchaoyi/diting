@@ -96,3 +96,22 @@ bash scripts/package_release.sh 0.10.0-rc1
   到那时要么把 x86_64 构建迁到当时最新的 x86_64 runner，要么
   直接放弃 x86_64（截止 2026 年 Apple Silicon 在新 Mac 中占比已
   >70%）。
+
+- **curl 装的 `diting` 卡在「需要以下权限：定位服务」而
+  `uv run diting` 正常**。这就是 v1.0.7 修过的 macOS 26
+  TCC-vs-LaunchServices 不对称问题。如果哪天回退（比如把 helper 的
+  `scan` 子命令简化回单一直接 exec subprocess），这个症状会复发。
+  验证修复仍在的脚本：
+  ```bash
+  rm -rf ~/Library/Application\ Support/diting/diting-tianer.app
+  cp -R helper/diting-tianer.app ~/Library/Application\ Support/diting/diting-tianer.app
+  pkill -f diting-tianer; sleep 10
+  ~/Library/Application\ Support/diting/diting-tianer.app/Contents/MacOS/diting-tianer scan \
+    | python3 -c "import sys,json;n=json.load(sys.stdin)['networks'];print(f'with_bssid={sum(1 for r in n if r.get(\"bssid\"))}')"
+  ```
+  必须打印 `with_bssid=>0`。若打印 `with_bssid=0`，说明
+  `helper/Sources/diting-tianer/main.swift:runScanAndDumpJSON` 里的
+  LaunchServices outer/inner 拆分被破坏了。完整背景见函数顶部注释
+  —— macOS 26 上 direct-exec subprocess 不继承 bundle 的 Location
+  TCC 授权，必须通过 `/usr/bin/open` 重启自己才能被
+  LaunchServices 正确归属。

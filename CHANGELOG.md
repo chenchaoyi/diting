@@ -9,6 +9,80 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.7] — 2026-05-13
+
+The macOS 26 install hang that survived v1.0.3 → v1.0.5 had a deeper
+root cause than every prior fix attempted: **direct-exec subprocesses
+of an ad-hoc-signed bundle's binary don't inherit the bundle's
+Location TCC grant on macOS 26**. CoreLocation's TCC check requires
+the process to be LaunchServices-attributed; CoreBluetooth's doesn't
+(which is why `bluetooth-status` worked the whole time).
+
+User surfaced the asymmetry: `uv run diting` worked because they'd
+been repeatedly `open`-ing the in-repo bundle this session, keeping
+locationd warm-cached for that cdhash at that path; `diting`
+(curl-installed) hung indefinitely because the install path's bundle
+was cold and the direct-exec scan subprocess saw
+`CLLocationManager.authorizationStatus = .notDetermined` regardless
+of whatever run-loop pump / NSApp.run / disclaim trick was layered
+on top.
+
+### Fixed
+- **`scan` subcommand re-launches itself via LaunchServices.** Two
+  halves of the same function, switched on `DITING_SCAN_VIA_LAUNCH`
+  env var:
+  - **Outer half** (no env var): spawns
+    `/usr/bin/open -W -g -a <bundle> --env DITING_SCAN_VIA_LAUNCH=1
+    --env DITING_SCAN_OUT=<tempfile> --args scan`. Waits for the
+    LaunchServices'd child, reads the JSON it wrote, relays to
+    stdout, exits. Python's `subprocess.run([binary, "scan"])` sees
+    this as if the original subprocess produced the output directly
+    — no Python-side protocol change.
+  - **Inner half** (`DITING_SCAN_VIA_LAUNCH=1`): runs as the
+    LaunchServices-launched bundle instance. `NSApplication.shared.
+    setActivationPolicy(.prohibited)` keeps it out of the Dock and
+    prevents focus theft. `ScanWorker : CLLocationManagerDelegate`
+    initialises `CLLocationManager`, calls
+    `requestWhenInUseAuthorization` + `startUpdatingLocation`, then
+    runs a scan-with-retry loop (up to 6 attempts × 500 ms apart)
+    until any returned row has a `bssid` — or denied / restricted
+    cuts the loop short. `NSApp.run()` pumps both the run loop and
+    the libdispatch main queue. JSON is written to `$DITING_SCAN_OUT`
+    via atomic file write; `exit(0)` ends the inner process.
+- **`ble-scan` and `bluetooth-status` are unchanged.** They keep
+  using disclaim + direct-exec; CBCentralManager's TCC honours
+  cdhash directly so no LaunchServices hop is needed there.
+
+### Empirical timings (cold subprocess scan, user's macOS 26 machine)
+
+| Run | Time | Result |
+|---|---|---|
+| 1 (cold) | 1.56 s | 116 / 116 unredacted |
+| 2 (locationd cached after run 1) | 0.29 s | 139 / 139 unredacted |
+| 3 (cold again) | 1.84 s | 103 / 103 unredacted |
+
+LaunchServices launch dominates the latency budget on cold runs
+(~500 ms – 1 s). Acceptable for the one-time `has_permission` probe
+at startup. Continuous-scan latency could be lowered further by
+running the bundle as a long-lived background daemon and using
+socket IPC for scan requests; deferred until it actually matters.
+
+### Why prior attempts failed (for future-us / future debuggers)
+
+| Version | Approach | Why it didn't work |
+|---|---|---|
+| v1.0.3 | disclaim + `Thread.sleep(0.3)` | Thread.sleep doesn't pump run loop AND direct exec doesn't get bundle TCC |
+| v1.0.6 | disclaim + `RunLoop.current.run(mode:.default, before:)` | Same — pumping the run loop doesn't change the TCC attribution |
+| (interim) | disclaim + `dispatchMain()` + 6-retry loop | Worked when locationd had a warm cache for the cdhash at that path; failed cold |
+| (interim) | NSApp.run() in direct-exec subprocess | NSApp doesn't change the kernel's TCC subject; still `.notDetermined` |
+| **v1.0.7** | LaunchServices re-launch via `open --args scan` | First version that gets bundle-attributed TCC reliably from cold |
+
+The diagnostic that nailed it: write
+`CLLocationManager.authorizationStatus().rawValue` to stderr at the
+start of the disclaimed scan path. On macOS 26 it prints `0`
+(`.notDetermined`) — proving the bundle's grant simply isn't reaching
+this process, no matter how the in-process code is structured.
+
 ## [1.0.6] — 2026-05-13
 
 The v1.0.3 → v1.0.5 chain attempted to fix CoreWLAN scan

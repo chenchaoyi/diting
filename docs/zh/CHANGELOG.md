@@ -8,6 +8,70 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.7] — 2026-05-13
+
+v1.0.3 → v1.0.5 都没解开的 macOS 26 安装卡死，根因比之前所有
+attempt 都更深一层：**ad-hoc 签名的 bundle 通过直接 exec 启动的子
+进程，在 macOS 26 上拿不到 bundle 的 Location TCC 授权**。
+CoreLocation 的 TCC 检查要求进程必须是 LaunchServices 启动的；
+CoreBluetooth 不要求（所以 `bluetooth-status` 一直能用）。
+
+用户的对比定位了这个不对称：`uv run diting` 能用，因为这个 session
+反复 `open` in-repo bundle 让 locationd 缓存了那个 cdhash + path；
+curl 装的 `diting` 死锁，因为 install 路径的 bundle 是冷的，直接
+exec 的 scan subprocess 看到 `CLLocationManager.authorizationStatus
+= .notDetermined` —— 无论怎么 pump 运行环、怎么 NSApp.run、怎么
+disclaim 都没用。
+
+### 修复
+- **`scan` 子命令通过 LaunchServices 重新启动自己**。同一函数拆成
+  两半，由 `DITING_SCAN_VIA_LAUNCH` 环境变量切换：
+  - **外层**（无该 env var）：fork 出
+    `/usr/bin/open -W -g -a <bundle> --env DITING_SCAN_VIA_LAUNCH=1
+    --env DITING_SCAN_OUT=<tempfile> --args scan`。等
+    LaunchServices 启动的内层子进程写完 JSON，把内容透传到 stdout，
+    退出。Python 的 `subprocess.run([binary, "scan"])` 完全感知不
+    到——协议没变。
+  - **内层**（`DITING_SCAN_VIA_LAUNCH=1`）：作为 LaunchServices 启
+    动的 bundle 实例运行。`NSApplication.shared.setActivationPolicy
+    (.prohibited)` 让它不出现在 Dock、不抢焦点。`ScanWorker :
+    CLLocationManagerDelegate` 初始化 `CLLocationManager`，
+    `requestWhenInUseAuthorization` + `startUpdatingLocation` 之
+    后开始 scan-with-retry 循环（最多 6 次 × 500 ms 间隔），任意
+    一行带 `bssid` 就 emit；`.denied` / `.restricted` 短路退出。
+    `NSApp.run()` 同时 pump 运行环和 libdispatch 主队列。JSON 以
+    atomic 写入 `$DITING_SCAN_OUT`，`exit(0)` 结束内层进程。
+- **`ble-scan` 和 `bluetooth-status` 不动**，继续走 disclaim +
+  direct-exec；CBCentralManager 的 TCC 直接认 cdhash，不需要
+  LaunchServices 重启。
+
+### 用户机器实测时延
+
+| 跑次 | 时间 | 结果 |
+|---|---|---|
+| 1（冷） | 1.56 秒 | 116 / 116 全部未屏蔽 |
+| 2（locationd 已缓存） | 0.29 秒 | 139 / 139 全部未屏蔽 |
+| 3（重新冷） | 1.84 秒 | 103 / 103 全部未屏蔽 |
+
+LaunchServices 启动是冷路径耗时大头（~500 ms – 1 s）。对一次性的
+`has_permission` 探针够用；如果持续扫描的延迟真成为瓶颈，下一步
+是把 bundle 起成后台常驻 daemon，扫描请求走 socket IPC。
+
+### 之前几个 attempt 为什么不行（给未来调试的自己）
+
+| 版本 | 思路 | 为什么不行 |
+|---|---|---|
+| v1.0.3 | disclaim + `Thread.sleep(0.3)` | Thread.sleep 不 pump 运行环；direct exec 也拿不到 bundle TCC |
+| v1.0.6 | disclaim + `RunLoop.current.run(mode:.default, before:)` | 同上 —— pump 运行环不改变 TCC 归属 |
+| （中间） | disclaim + `dispatchMain()` + 6 次重试 | locationd 对该 path+cdhash 还有缓存时能用，冷状态就漏 |
+| （中间） | direct-exec 里跑 NSApp.run() | NSApp 不改变 kernel 看到的 TCC 主体；还是 `.notDetermined` |
+| **v1.0.7** | `open --args scan` 重新走 LaunchServices | 第一个真在冷状态下拿到 bundle 归属的 TCC 的版本 |
+
+定位线索：在 disclaim 完之后的 scan 子进程开头把
+`CLLocationManager.authorizationStatus().rawValue` 写到 stderr。
+macOS 26 上打印 `0`（`.notDetermined`）—— 证明 bundle 的授权根本
+没到这个进程里来，怎么改进程内部代码都没用。
+
 ## [1.0.6] — 2026-05-13
 
 v1.0.3 → v1.0.5 一路上想修 install.sh 安装路径下 CoreWLAN scan 数据
