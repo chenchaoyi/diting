@@ -8,6 +8,21 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.5] — 2026-05-13
+
+macOS 26 用户走一行 installer 装 v1.0.4 之后，helper bundle 的
+TCC 授权一直没真正落下来 —— `tccutil reset` 都报「Failed to
+reset」，因为这个 bundle id 在 TCC 里根本没记录。弹窗瞬间出现又
+被关掉，宿主窗口连同 macOS 弹的两个授权 dialog 一起消失，用户
+来不及点 Allow。
+
+### 修复
+- **install.sh 改用前台 `open`，不再用 `open -g`（后台）**。
+  macOS 26 上原本的 `open -g` 把 bundle 拉起来又秒收，授权
+  dialog 还没等用户反应就一起没了。改成普通 `open`：helper 状态
+  窗口出现在前台，macOS 的授权弹窗叠在上面，用户有时间点完
+  Allow 再让自动关闭计时器触发。
+
 ## [1.0.4] — 2026-05-13
 
 用户反馈 macOS TCC 权限弹窗不一致：定位权限弹窗显示「谛听 · 天耳」

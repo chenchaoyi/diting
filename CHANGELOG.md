@@ -9,6 +9,24 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.5] — 2026-05-13
+
+User on macOS 26 installed v1.0.4 via the one-liner and ended up
+with a helper bundle whose TCC grants never landed — `tccutil
+reset` even reported "Failed to reset" because the bundle id had
+no TCC entry at all. The popup window had fired and auto-closed
+before the user saw it, and the macOS permission prompts went
+with it.
+
+### Fixed
+- **install.sh launches the helper foreground, not `open -g`
+  (background).** macOS 26 was firing the bundle, showing prompts
+  briefly, and tearing them down before the user could click
+  Allow on either dialog. install.sh now does plain `open` so
+  the helper's status window appears on top, the macOS prompts
+  layer over it, and the user has time to actually grant the
+  permissions before the auto-close timer kicks in.
+
 ## [1.0.4] — 2026-05-13
 
 User reported macOS's TCC permission prompts were inconsistent:
