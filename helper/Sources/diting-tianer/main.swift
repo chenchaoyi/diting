@@ -53,43 +53,101 @@ import IOBluetooth
 // CLI mode: scan
 // ---------------------------------------------------------------------
 
+/// Probe-only CLLocationManager delegate used by `runScanAndDumpJSON`
+/// to wait until the location authorization state has been determined
+/// (i.e. CoreLocation's TCC handshake with `locationd` has run and
+/// landed) before we let CoreWLAN run its redaction check. Without
+/// waiting on the delegate, CoreWLAN sees a CLLocationManager that
+/// has only been `startUpdatingLocation`'d but never received a
+/// state callback — and treats the process as having no active
+/// location session, which is what macOS 26 uses to gate
+/// CWNetwork.ssid / .bssid.
+final class LocationAuthProbe: NSObject, CLLocationManagerDelegate {
+    private(set) var statusResolved = false
+    private(set) var lastStatus: CLAuthorizationStatus = .notDetermined
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        lastStatus = manager.authorizationStatus
+        if manager.authorizationStatus != .notDetermined {
+            statusResolved = true
+        }
+    }
+
+    // Pre-Catalina spelling — kept for completeness; macOS calls one of
+    // these two depending on SDK target.
+    func locationManager(_ manager: CLLocationManager,
+                         didChangeAuthorization status: CLAuthorizationStatus) {
+        lastStatus = status
+        if status != .notDetermined {
+            statusResolved = true
+        }
+    }
+}
+
 func runScanAndDumpJSON() -> Never {
-    // macOS 14.4+ gates CWNetwork.ssid / .bssid behind Location Services
-    // at the calling process level — having the bundle's TCC grant on
-    // disk is not enough. Two things have to be true at scanForNetworks
-    // time:
+    // macOS 14.4+ (and tighter on 26) gates CWNetwork.ssid / .bssid
+    // behind Location Services at the calling process level. Having
+    // the bundle's TCC grant on disk is not enough on its own — three
+    // things have to be true at scanForNetworks time:
     //
-    //   1. The TCC subject seen by macOS is the helper bundle (not the
-    //      terminal that launched us). Inherited responsibility from
-    //      Terminal → diting → diting-tianer breaks this on macOS 26 —
-    //      tccd attributes the request to Terminal, which has no
-    //      NSLocationUsageDescription, and CWNetwork redacts ssid /
-    //      bssid silently. The fix is to disclaim our parent so we
-    //      become our own responsible process, same hop the ble-scan
-    //      subcommand has done since v0.5.0.
+    //   1. The TCC subject seen by macOS is the helper bundle (not
+    //      the terminal that launched us). Inherited responsibility
+    //      from Terminal → diting → diting-tianer breaks this on
+    //      macOS 26 — tccd attributes the request to Terminal, which
+    //      has no NSLocationUsageDescription, and CWNetwork redacts
+    //      ssid / bssid silently. The fix is to disclaim our parent
+    //      so we become our own responsible process, same hop the
+    //      ble-scan subcommand has done since v0.5.0.
     //
-    //   2. A CLLocationManager has called startUpdatingLocation() in
-    //      this process. The bundle grant alone isn't enough; CoreWLAN
-    //      checks for an active location signal at the moment of
-    //      scanForNetworks(). We init the manager, kick it, hold a
-    //      reference for the lifetime of the function so the runtime
-    //      can't release it before the scan call hits CoreWLAN.
+    //   2. A CLLocationManager exists in this process AND has had
+    //      its authorization status callback fire. This is the
+    //      subtle bit: macOS treats a CLLocationManager that has
+    //      only been `startUpdatingLocation`'d (no delegate
+    //      callback yet) as "not yet a location-services consumer"
+    //      and CoreWLAN still redacts. The fix is to pump the run
+    //      loop until `locationManagerDidChangeAuthorization` fires,
+    //      which means CoreLocation has done its TCC handshake with
+    //      locationd and the process is now a recognised consumer.
     //
-    // The earlier code comment claiming CoreLocation was "more lenient"
-    // than CoreBluetooth was wrong; CoreWLAN on macOS 26 enforces both.
+    //   3. The CLLocationManager reference stays alive across the
+    //      scanForNetworks() call so the runtime doesn't drop the
+    //      consumer registration mid-scan.
+    //
+    // The earlier code comment claiming CoreLocation was "more
+    // lenient" than CoreBluetooth was wrong; CoreWLAN on macOS 26
+    // enforces all three. The v1.0.3 fix attempted only (1) + (3) +
+    // a Thread.sleep — but Thread.sleep doesn't pump the run loop,
+    // so (2) was missed and the scan still came back redacted on
+    // freshly-installed bundles. Mirror the existing bluetooth-status
+    // pattern: real run-loop pump, real delegate callback wait.
     if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
         reExecWithDisclaimedResponsibility()
     }
 
     let locationManager = CLLocationManager()
+    let probe = LocationAuthProbe()
+    locationManager.delegate = probe
     locationManager.requestWhenInUseAuthorization()
     locationManager.startUpdatingLocation()
-    // Brief settle so CoreLocation's TCC registration lands before
-    // CoreWLAN inspects it. Empirically ~50ms is enough on M-series
-    // Macs; 300ms gives headroom on slower hardware without making
-    // the user wait an obvious extra beat.
-    Thread.sleep(forTimeInterval: 0.3)
-    _ = locationManager  // hold the reference until the scan returns
+
+    // Pump the run loop until the authorization callback fires or a
+    // 2-second timeout elapses. The callback only fires after
+    // CoreLocation has fully registered with locationd, which is what
+    // CoreWLAN's redaction gate checks for. Each `run(until:)` slice
+    // returns control briefly so we can re-check the probe flag and
+    // exit early once authorization is resolved — usually within ~50ms
+    // when the grant is already in TCC.db.
+    let deadline = Date(timeIntervalSinceNow: 2.0)
+    while !probe.statusResolved && Date() < deadline {
+        RunLoop.current.run(mode: .default,
+                            before: Date(timeIntervalSinceNow: 0.05))
+    }
+    // Proceed regardless of probe outcome. If authorization is still
+    // .notDetermined after 2 s (TCC grant genuinely missing), the
+    // scan will return redacted rows — same end state as before, just
+    // not slower than necessary. Hold the manager reference past the
+    // scan call so the consumer registration doesn't get released.
+    _ = locationManager
 
     let client = CWWiFiClient.shared()
     guard let iface = client.interface() else {
