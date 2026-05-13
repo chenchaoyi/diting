@@ -196,6 +196,19 @@
 | Cluster label 跨会话稳定 | `test_network.py::test_cluster_label_groups_chip`、`::test_cluster_label_separates_unrelated`、`::test_cluster_label_none_or_malformed` |
 | BSSID 格式归一（小写、冒号分隔） | `test_network.py::test_format_bssid_known_with_band`、`::test_format_bssid_unknown_passthrough`、`::test_format_bssid_none`、`test_ble.py::test_lookup_oui_vendor_dash_separated_mac`、`::test_lookup_oui_vendor_colon_separated_mac` |
 
+### `installation`
+
+| Requirement | 测试 |
+|---|---|
+| 一行 installer 在 macOS 上落地可用的 `diting`，无需 Python / uv / Xcode | （人工 — 在干净账号上端到端安装；下面单测覆盖 install.sh 各分支） |
+| 在非 macOS 主机上拒绝并给出明确错误 | `test_install.py::test_install_script_refuses_linux`、`::test_install_script_refuses_unknown_uname` |
+| Tarball SHA256 对 `SHASUMS256.txt` 校验，不一致即 abort | `test_install.py::test_install_script_aborts_on_sha_mismatch`、`::test_install_script_accepts_matching_sha` |
+| Tarball 解压到 `~/.local/share/diting/`，symlink 落 `~/.local/bin/diting`；不要求 sudo | `test_install.py::test_install_script_lays_out_user_local_paths_in_dry_run` |
+| Helper bundle 拷贝到 `~/Library/Application Support/diting/`，剥离 quarantine xattr，`open` 触发 TCC | `test_install.py::test_install_script_primes_application_support_helper_in_dry_run` |
+| `~/.local/bin` 不在 PATH 时输出对应 shell 的 PATH 更新提示（zsh / bash / fish 三种） | `test_install.py::test_install_script_emits_zsh_path_hint`、`::test_install_script_silent_when_already_on_path` |
+| `DITING_VERSION=vX.Y.Z` 环境变量锁版本 | `test_install.py::test_install_script_uses_diting_version_override` |
+| 冻结二进制与 `uv run diting` 开发流共存 | （review-enforced — 搜索路径优先级把 in-repo 开发构建排在前；通过 `test_helper.py::test_find_helper_repo_dev_build_shadows_application_support` 验证） |
+
 ### `link-health`
 
 | Requirement | 测试 |
@@ -217,6 +230,7 @@
 | 广播对象透传 CoreBluetooth 字段 | `test_ble.py::test_schema_4_raw_passthrough_fields_populate` |
 | 已连接快照来自 IOBluetoothDevice（不是 CoreBluetooth） | `test_ble.py::test_connected_line_routes_to_connected_dict_only`、`::test_ble_scan_update_propagates_connected_through_poller` |
 | Python 端可自动发现 helper | `test_helper.py::test_find_helper_env_override_wins`、`::test_find_helper_env_override_can_point_at_binary`、`::test_find_helper_returns_none_when_nothing_present`、`::test_bundle_path_extracts_app_dir`、`::test_bundle_path_none_for_loose_binary` |
+| `find_helper()` 也能发现一行 installer 安装到 `~/Library/Application Support/diting/diting-tianer.app` 的 bundle；in-repo 开发构建优先级仍最高 | `test_helper.py::test_find_helper_picks_up_application_support_bundle`、`::test_find_helper_repo_dev_build_shadows_application_support` |
 | TCC 拒绝时 helper exit 3 + stderr "bluetooth unauthorized" | `test_ble.py::test_permission_denied_via_subprocess_exit_code`、`test_helper.py::test_has_bluetooth_permission_false_on_unauthorized` |
 
 ### `mdns-scanning`

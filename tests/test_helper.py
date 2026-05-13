@@ -356,6 +356,67 @@ def test_find_helper_returns_none_when_nothing_present(tmp_path, monkeypatch):
     assert _helper.find_helper() is None
 
 
+def _redirect_search_locations(tmp_path, monkeypatch):
+    """Steer `find_helper()` away from the real repo + the user's
+    real `/Applications` so we can assert resolution against a
+    controlled tmp directory.
+
+    The function builds its candidate list from two roots:
+    - `Path(_helper.__file__).resolve().parents[2]` for the in-repo
+      dev build — we re-point `_helper.__file__` at a tmp location
+      so that walk resolves into `tmp_path/fake_repo/`.
+    - `Path("~/...")` expansions for `~/Applications` and
+      `~/Library/Application Support/diting/` — we override HOME.
+
+    `/Applications/diting-tianer.app` is the one path we can't
+    redirect — but in CI / contributor environments that path is
+    almost never present, and even if it is, the in-repo dev path
+    is checked first, so a bundle in the tmp "repo" root shadows
+    it. Callers create only the bundles they want present in the
+    locations they want to test.
+    """
+    monkeypatch.delenv("DITING_HELPER", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fake_repo = tmp_path / "fake_repo"
+    (fake_repo / "src" / "diting").mkdir(parents=True)
+    fake_helper_py = fake_repo / "src" / "diting" / "_helper.py"
+    fake_helper_py.write_text("")
+    monkeypatch.setattr(_helper, "__file__", str(fake_helper_py))
+    return fake_repo
+
+
+def test_find_helper_picks_up_application_support_bundle(tmp_path, monkeypatch):
+    """The curl-bash one-line installer drops the helper at
+    ~/Library/Application Support/diting/diting-tianer.app.
+    find_helper() walks to that path when no other candidate
+    location holds a bundle."""
+    _redirect_search_locations(tmp_path, monkeypatch)
+    app_support_dir = tmp_path / "Library" / "Application Support" / "diting"
+    binary = _make_bundle(app_support_dir)
+    assert _helper.find_helper() == str(binary)
+
+
+def test_find_helper_repo_dev_build_shadows_application_support(
+    tmp_path, monkeypatch,
+):
+    """A contributor with both the in-repo dev build AND the
+    one-line installer's drop in Application Support MUST see the
+    in-repo bundle resolved — the dev path is pinned first in the
+    search order so a freshly-`make helper`ed bundle always wins."""
+    fake_repo = _redirect_search_locations(tmp_path, monkeypatch)
+    repo_helper_dir = fake_repo / "helper"
+    dev_binary = _make_bundle(repo_helper_dir)
+    # Also create a bundle in Application Support — without the
+    # priority pin both candidates would match, and we'd be relying
+    # on dict-iteration order. The assertion below verifies the
+    # contract: the repo dev build wins.
+    app_support_dir = tmp_path / "Library" / "Application Support" / "diting"
+    _make_bundle(app_support_dir)
+    resolved = _helper.find_helper()
+    assert resolved == str(dev_binary)
+    assert "Library/Application Support" not in resolved
+
+
 # --- schema-3 IE fields (v0.7.0) ------------------------------------
 
 def test_scan_v3_parses_bss_load_and_station_count():

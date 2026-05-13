@@ -11,10 +11,15 @@ Search order for the bundle:
 
 1. ``DITING_HELPER`` env var — full path to either the bundle or
    the binary inside it
-2. ``/Applications/diting-tianer.app``
-3. ``~/Applications/diting-tianer.app``
-4. ``<repo>/helper/diting-tianer.app`` — picks up a developer build
-   without copying anywhere
+2. ``<repo>/helper/diting-tianer.app`` — picks up a developer build
+   without copying anywhere (pinned first so contributors running
+   ``uv run diting`` from a checkout always pick up their freshly-
+   ``make helper``ed bundle, even if they also have the one-line
+   installer's copy in place)
+3. ``/Applications/diting-tianer.app``
+4. ``~/Applications/diting-tianer.app``
+5. ``~/Library/Application Support/diting/diting-tianer.app`` —
+   where the curl-bash one-line installer drops the bundle
 """
 
 from __future__ import annotations
@@ -57,12 +62,22 @@ def find_helper() -> str | None:
         # tree; ``build.sh`` produces the bundle here, the user grants
         # once with ``open helper/diting-tianer.app``, and we pick
         # it up automatically. Listed first so an old leftover bundle
-        # in /Applications cannot shadow a freshly-rebuilt local one.
+        # in /Applications cannot shadow a freshly-rebuilt local one,
+        # and so a contributor with both a repo checkout and the
+        # one-line installer's drop in Application Support always
+        # picks up the local rebuild.
         Path(__file__).resolve().parents[2] / "helper" / "diting-tianer.app",
         # Back-compat for users who moved the bundle into /Applications
         # before the in-place flow was recommended; still works.
         Path("/Applications/diting-tianer.app"),
         Path("~/Applications/diting-tianer.app").expanduser(),
+        # Where the curl-bash one-line installer (``install.sh`` at
+        # the repo root) drops the bundle. Last in the list so a dev
+        # build always shadows the installer copy on contributor
+        # machines that happen to have both.
+        Path(
+            "~/Library/Application Support/diting/diting-tianer.app"
+        ).expanduser(),
     ]
     for c in candidates:
         resolved = _resolve(c)
