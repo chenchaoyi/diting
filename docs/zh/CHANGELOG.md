@@ -10,45 +10,67 @@
 
 ## [1.0.7] — 2026-05-13
 
-v1.0.6 本来该是 macOS 26 scan-redaction 的最终修复，但没有真正在冷
-状态下验证。v1.0.6 用 `RunLoop.current.run` 来 pump 的方式实际上靠
-的是 locationd 的 warm cache，而不是自己跑完 dispatch 握手——离最近
-一次授权超过 30 分钟（locationd 缓存冷）的子进程 scan 还是返回被屏
-蔽的行。用户的差异化验证暴露了这一点：`uv run diting` 能用（in-repo
-bundle 整个 session 被反复 open，locationd 保持 warm），但 curl 装的
-`diting`（冷状态 bundle）依然卡在「需要以下权限：定位服务」。
+v1.0.3 → v1.0.5 都没解开的 macOS 26 安装卡死，根因比之前所有
+attempt 都更深一层：**ad-hoc 签名的 bundle 通过直接 exec 启动的子
+进程，在 macOS 26 上拿不到 bundle 的 Location TCC 授权**。
+CoreLocation 的 TCC 检查要求进程必须是 LaunchServices 启动的；
+CoreBluetooth 不要求（所以 `bluetooth-status` 一直能用）。
+
+用户的对比定位了这个不对称：`uv run diting` 能用，因为这个 session
+反复 `open` in-repo bundle 让 locationd 缓存了那个 cdhash + path；
+curl 装的 `diting` 死锁，因为 install 路径的 bundle 是冷的，直接
+exec 的 scan subprocess 看到 `CLLocationManager.authorizationStatus
+= .notDetermined` —— 无论怎么 pump 运行环、怎么 NSApp.run、怎么
+disclaim 都没用。
 
 ### 修复
-- **`scan` 子命令改成 `dispatchMain()` + scan-with-retry 循环**。
-  dispatch 部分跟工作正常的 `bluetooth-status` 探针走同一模式，外加
-  自适应重试以容忍 locationd 冷启动延迟。
-  - 新增 `ScanWorker : CLLocationManagerDelegate` 类，在 libdispatch
-    主队列上下文里驱动 location 握手。全局 `g_scanWorker` 把 worker
-    （含其 `CLLocationManager`）pin 到进程整个生命周期，避免扫描中
-    途消费者注册被释放。
-  - `start()` 调 `requestWhenInUseAuthorization` /
-    `startUpdatingLocation`，立刻触发第一次 `attemptScan(0)`，不再
-    等固定时间。
-  - 每次 `attemptScan(n)` 调 `scanForNetworks`；若至少一行带
-    `bssid` → 未屏蔽，emit JSON 并 exit。若全部被屏蔽且 scan 非空，
-    通过 `DispatchQueue.main.asyncAfter` 排 500 ms 后的
-    `attemptScan(n+1)`。最多 6 次 ≈ 5 秒上限。重试期间 dispatchMain
-    持续 pump，locationd 注册在后台并行完成。
-  - `locationManagerDidChangeAuthorization` 只在
-    `.denied` / `.restricted` 时短路 —— 再等下去也是被屏蔽。
-- **为什么用重试而不是固定等待**：auth 回调在 TCC.db 有授权时 ~100
-  ms 就触发，但 CoreLocation 跟 locationd 的注册落地是非确定性的：
-  暖机器最近用过这个 cdhash → ~200 ms；冷机器全新 cdhash → ~3 秒。
-  固定等待要么让暖路径白等，要么冷路径漏掉。重试能自适应。
-- **用户机器实测时延**：
-  - 暖（locationd 缓存还在）：~90 毫秒。
-  - 冷（进程退出 5 秒后）：1.7–1.9 秒，1–2 次重试。
-  - 真冷（最近一段时间没碰 bundle）：~4 秒。
-- **测试中发现**：macOS 会把「系统设置 → 定位服务」里的授权状态从
-  原 cdhash 扩展到同一 bundle id 的新 rebuild 上 —— 至少 ad-hoc 签
-  名的 bundle 是这样。新 cdhash 不再弹窗就能继承授权，对
-  install.sh-then-tarball-update 流程很友好，本地迭代时也免去 prompt
-  rate-limit 问题。
+- **`scan` 子命令通过 LaunchServices 重新启动自己**。同一函数拆成
+  两半，由 `DITING_SCAN_VIA_LAUNCH` 环境变量切换：
+  - **外层**（无该 env var）：fork 出
+    `/usr/bin/open -W -g -a <bundle> --env DITING_SCAN_VIA_LAUNCH=1
+    --env DITING_SCAN_OUT=<tempfile> --args scan`。等
+    LaunchServices 启动的内层子进程写完 JSON，把内容透传到 stdout，
+    退出。Python 的 `subprocess.run([binary, "scan"])` 完全感知不
+    到——协议没变。
+  - **内层**（`DITING_SCAN_VIA_LAUNCH=1`）：作为 LaunchServices 启
+    动的 bundle 实例运行。`NSApplication.shared.setActivationPolicy
+    (.prohibited)` 让它不出现在 Dock、不抢焦点。`ScanWorker :
+    CLLocationManagerDelegate` 初始化 `CLLocationManager`，
+    `requestWhenInUseAuthorization` + `startUpdatingLocation` 之
+    后开始 scan-with-retry 循环（最多 6 次 × 500 ms 间隔），任意
+    一行带 `bssid` 就 emit；`.denied` / `.restricted` 短路退出。
+    `NSApp.run()` 同时 pump 运行环和 libdispatch 主队列。JSON 以
+    atomic 写入 `$DITING_SCAN_OUT`，`exit(0)` 结束内层进程。
+- **`ble-scan` 和 `bluetooth-status` 不动**，继续走 disclaim +
+  direct-exec；CBCentralManager 的 TCC 直接认 cdhash，不需要
+  LaunchServices 重启。
+
+### 用户机器实测时延
+
+| 跑次 | 时间 | 结果 |
+|---|---|---|
+| 1（冷） | 1.56 秒 | 116 / 116 全部未屏蔽 |
+| 2（locationd 已缓存） | 0.29 秒 | 139 / 139 全部未屏蔽 |
+| 3（重新冷） | 1.84 秒 | 103 / 103 全部未屏蔽 |
+
+LaunchServices 启动是冷路径耗时大头（~500 ms – 1 s）。对一次性的
+`has_permission` 探针够用；如果持续扫描的延迟真成为瓶颈，下一步
+是把 bundle 起成后台常驻 daemon，扫描请求走 socket IPC。
+
+### 之前几个 attempt 为什么不行（给未来调试的自己）
+
+| 版本 | 思路 | 为什么不行 |
+|---|---|---|
+| v1.0.3 | disclaim + `Thread.sleep(0.3)` | Thread.sleep 不 pump 运行环；direct exec 也拿不到 bundle TCC |
+| v1.0.6 | disclaim + `RunLoop.current.run(mode:.default, before:)` | 同上 —— pump 运行环不改变 TCC 归属 |
+| （中间） | disclaim + `dispatchMain()` + 6 次重试 | locationd 对该 path+cdhash 还有缓存时能用，冷状态就漏 |
+| （中间） | direct-exec 里跑 NSApp.run() | NSApp 不改变 kernel 看到的 TCC 主体；还是 `.notDetermined` |
+| **v1.0.7** | `open --args scan` 重新走 LaunchServices | 第一个真在冷状态下拿到 bundle 归属的 TCC 的版本 |
+
+定位线索：在 disclaim 完之后的 scan 子进程开头把
+`CLLocationManager.authorizationStatus().rawValue` 写到 stderr。
+macOS 26 上打印 `0`（`.notDetermined`）—— 证明 bundle 的授权根本
+没到这个进程里来，怎么改进程内部代码都没用。
 
 ## [1.0.6] — 2026-05-13
 

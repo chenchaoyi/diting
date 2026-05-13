@@ -99,3 +99,24 @@ bash scripts/package_release.sh 0.10.0-rc1
   the Intel hosted runners. When that happens we either move
   x86_64 builds to whatever the latest x86_64 runner is, or drop
   x86_64 (Apple Silicon adoption is >70% of new Macs as of 2026).
+
+- **`diting` (installed) hangs at "需要以下权限：定位服务" while
+  `uv run diting` works.** This is the macOS 26 TCC-vs-LaunchServices
+  asymmetry — pinned by the v1.0.7 fix. If you regress it (e.g. by
+  simplifying the helper's `scan` subcommand back to a single
+  direct-exec subprocess), the symptom returns. Recipe to verify the
+  fix is intact:
+  ```bash
+  rm -rf ~/Library/Application\ Support/diting/diting-tianer.app
+  cp -R helper/diting-tianer.app ~/Library/Application\ Support/diting/diting-tianer.app
+  pkill -f diting-tianer; sleep 10
+  ~/Library/Application\ Support/diting/diting-tianer.app/Contents/MacOS/diting-tianer scan \
+    | python3 -c "import sys,json;n=json.load(sys.stdin)['networks'];print(f'with_bssid={sum(1 for r in n if r.get(\"bssid\"))}')"
+  ```
+  Must print `with_bssid=>0`. If it prints `with_bssid=0`, the
+  LaunchServices outer/inner split in
+  `helper/Sources/diting-tianer/main.swift:runScanAndDumpJSON` has
+  been broken. See the function's leading comment for the full
+  background — direct-exec subprocesses don't inherit the bundle's
+  Location TCC grant on macOS 26, so the helper has to re-launch
+  itself via `/usr/bin/open` to be LaunchServices-attributed.

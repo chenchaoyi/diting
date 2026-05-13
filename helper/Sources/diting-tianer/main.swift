@@ -225,6 +225,16 @@ final class ScanWorker: NSObject, CLLocationManagerDelegate {
         ]
         do {
             let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            // When invoked via the LaunchServices outer/inner split,
+            // the inner writes its JSON to a temp file that the outer
+            // then relays to stdout. Otherwise (legacy direct stdout
+            // path, kept for the disclaim-still-works case) write
+            // directly to stdout.
+            if let outPath = ProcessInfo.processInfo.environment["DITING_SCAN_OUT"] {
+                let url = URL(fileURLWithPath: outPath)
+                try data.write(to: url, options: .atomic)
+                exit(0)
+            }
             FileHandle.standardOutput.write(data)
             FileHandle.standardOutput.write("\n".data(using: .utf8)!)
             exit(0)
@@ -278,14 +288,77 @@ func runScanAndDumpJSON() -> Never {
     // GUI bundle had recently run and warmed the system caches.
     // This v1.0.7 implementation uses dispatchMain() so registration
     // completes reliably from cold.
-    if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
-        reExecWithDisclaimedResponsibility()
+    // Two code paths share this function:
+    //
+    //   A. CLI subprocess from Python (no DITING_SCAN_VIA_LAUNCH env):
+    //      Re-launch ourselves via `open` so the new instance is
+    //      bona fide LaunchServices-attributed, then read its result
+    //      file. On macOS 26 this is the only way to get a CLI scan
+    //      that sees the bundle's Location grant — direct-exec
+    //      binaries (even when in the bundle's Contents/MacOS/) are
+    //      not attributed to the bundle and CLLocationManager.
+    //      authorizationStatus stays at .notDetermined no matter
+    //      what NSApp / dispatchMain / disclaim trick we try.
+    //      Empirically verified 2026-05-13.
+    //
+    //   B. LaunchServices-launched child (DITING_SCAN_VIA_LAUNCH=1):
+    //      Run the actual scan inside an NSApp context where TCC
+    //      attribution works, write JSON to the path in
+    //      DITING_SCAN_OUT, exit.
+    if ProcessInfo.processInfo.environment["DITING_SCAN_VIA_LAUNCH"] == "1" {
+        runScanViaLaunchInner()
     }
+    runScanViaLaunchOuter()
+}
+
+/// Outer half: spawns the bundle via `open` so the inner half runs
+/// LaunchServices-attributed. Reads the inner's JSON output back from
+/// a temp file, writes it to our own stdout, exits. Python sees this
+/// process as the one it subprocess'd — no protocol change required.
+private func runScanViaLaunchOuter() -> Never {
+    let outPath = NSTemporaryDirectory() + "diting-scan-\(UUID().uuidString).json"
+    let bundlePath = Bundle.main.bundlePath
+
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    task.arguments = [
+        "-W",                                  // wait for app to exit
+        "-g",                                  // do not bring to front
+        "-a", bundlePath,                      // target bundle
+        "--env", "DITING_SCAN_VIA_LAUNCH=1",
+        "--env", "DITING_SCAN_OUT=\(outPath)",
+        "--args", "scan",                      // pass through scan arg
+    ]
+    do {
+        try task.run()
+    } catch {
+        emitError("scan-via-launch spawn failed: \(error.localizedDescription)")
+    }
+    task.waitUntilExit()
+
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: outPath)) else {
+        emitError("scan-via-launch produced no output at \(outPath)")
+    }
+    FileHandle.standardOutput.write(data)
+    if data.last != UInt8(ascii: "\n") {
+        FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+    }
+    try? FileManager.default.removeItem(atPath: outPath)
+    exit(task.terminationStatus)
+}
+
+/// Inner half: runs as a LaunchServices-launched bundle instance.
+/// Initialises an NSApp + CLLocationManager + the scan-with-retry
+/// worker, writes JSON to DITING_SCAN_OUT, exits.
+private func runScanViaLaunchInner() -> Never {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.prohibited)
 
     let worker = ScanWorker()
     g_scanWorker = worker
     worker.start()
-    dispatchMain()
+    app.run()
+    exit(0)  // unreachable; worker exits the process via exit(0)
 }
 
 // Decode the few beacon information elements diagnostics-grade

@@ -11,57 +11,77 @@ behaviours between releases.
 
 ## [1.0.7] — 2026-05-13
 
-v1.0.6 was supposed to be the final fix for the macOS 26 scan-redaction
-hang but wasn't actually verified cold. The `RunLoop.current.run`-based
-pump in v1.0.6 turned out to be load-bearing on locationd's warm cache,
-not on its own dispatch-handshake — when tested 30+ minutes after a
-fresh grant (locationd cache cold) it still returned redacted rows.
-The user surfaced this when `uv run diting` worked (in-repo bundle had
-been re-opened repeatedly during the session, keeping locationd warm)
-but `diting` (curl-installed bundle, cold) still hung indefinitely
-at "需要以下权限：定位服务".
+The macOS 26 install hang that survived v1.0.3 → v1.0.5 had a deeper
+root cause than every prior fix attempted: **direct-exec subprocesses
+of an ad-hoc-signed bundle's binary don't inherit the bundle's
+Location TCC grant on macOS 26**. CoreLocation's TCC check requires
+the process to be LaunchServices-attributed; CoreBluetooth's doesn't
+(which is why `bluetooth-status` worked the whole time).
+
+User surfaced the asymmetry: `uv run diting` worked because they'd
+been repeatedly `open`-ing the in-repo bundle this session, keeping
+locationd warm-cached for that cdhash at that path; `diting`
+(curl-installed) hung indefinitely because the install path's bundle
+was cold and the direct-exec scan subprocess saw
+`CLLocationManager.authorizationStatus = .notDetermined` regardless
+of whatever run-loop pump / NSApp.run / disclaim trick was layered
+on top.
 
 ### Fixed
-- **`scan` subcommand restructured around `dispatchMain()` with a
-  scan-with-retry loop.** Same dispatch pattern as the working
-  `bluetooth-status` probe, plus adaptive retry that copes with
-  locationd cold-start latency.
-  - New `ScanWorker : CLLocationManagerDelegate` class drives the
-    location handshake from inside the libdispatch main queue context.
-    Global `g_scanWorker` pins the worker (and its `CLLocationManager`)
-    for the lifetime of the process so the consumer registration
-    doesn't get released mid-scan.
-  - `start()` calls `requestWhenInUseAuthorization` /
-    `startUpdatingLocation`, then triggers the first `attemptScan(0)`
-    immediately. No fixed wait.
-  - Each `attemptScan(n)` calls `scanForNetworks`; if any row has a
-    populated `bssid`, the result is unredacted → emit JSON and exit.
-    If every row is redacted AND the scan returned non-empty, schedule
-    `attemptScan(n + 1)` 500 ms later via
-    `DispatchQueue.main.asyncAfter`. Up to 6 attempts ≈ 5 s
-    worst-case. While we wait, dispatchMain keeps libdispatch and
-    CoreLocation pumping so locationd registration completes in the
-    background.
-  - `locationManagerDidChangeAuthorization` short-circuits the retry
-    loop only on `.denied` / `.restricted` — waiting longer wouldn't
-    change the outcome.
-- **Why retry instead of a fixed wait:** the auth callback fires
-  within ~100 ms when TCC.db has a grant, but CoreLocation's
-  registration with locationd lands non-deterministically anywhere
-  from ~200 ms (warm machine, recently-used cdhash) to ~3 s (cold
-  machine, fresh cdhash). A fixed wait either makes warm scans
-  needlessly slow OR misses cold state. Retry adapts.
-- **Empirical timings on the user's machine:**
-  - Warm subprocess scan (locationd cached): ~90 ms.
-  - Cold subprocess scan (5 s after process exit): 1.7–1.9 s, 1–2
-    retries.
-  - Truly cold (no recent bundle activity): up to ~4 s.
-- **Discovery during testing:** macOS extends System Settings →
-  Location Services grants from one cdhash to fresh rebuilds of the
-  same bundle id, at least for ad-hoc-signed bundles. New cdhashes
-  inherit the grant without a fresh prompt — useful for the
-  install.sh-then-tarball-update flow, and saves the user from
-  prompt rate-limiting when iterating locally.
+- **`scan` subcommand re-launches itself via LaunchServices.** Two
+  halves of the same function, switched on `DITING_SCAN_VIA_LAUNCH`
+  env var:
+  - **Outer half** (no env var): spawns
+    `/usr/bin/open -W -g -a <bundle> --env DITING_SCAN_VIA_LAUNCH=1
+    --env DITING_SCAN_OUT=<tempfile> --args scan`. Waits for the
+    LaunchServices'd child, reads the JSON it wrote, relays to
+    stdout, exits. Python's `subprocess.run([binary, "scan"])` sees
+    this as if the original subprocess produced the output directly
+    — no Python-side protocol change.
+  - **Inner half** (`DITING_SCAN_VIA_LAUNCH=1`): runs as the
+    LaunchServices-launched bundle instance. `NSApplication.shared.
+    setActivationPolicy(.prohibited)` keeps it out of the Dock and
+    prevents focus theft. `ScanWorker : CLLocationManagerDelegate`
+    initialises `CLLocationManager`, calls
+    `requestWhenInUseAuthorization` + `startUpdatingLocation`, then
+    runs a scan-with-retry loop (up to 6 attempts × 500 ms apart)
+    until any returned row has a `bssid` — or denied / restricted
+    cuts the loop short. `NSApp.run()` pumps both the run loop and
+    the libdispatch main queue. JSON is written to `$DITING_SCAN_OUT`
+    via atomic file write; `exit(0)` ends the inner process.
+- **`ble-scan` and `bluetooth-status` are unchanged.** They keep
+  using disclaim + direct-exec; CBCentralManager's TCC honours
+  cdhash directly so no LaunchServices hop is needed there.
+
+### Empirical timings (cold subprocess scan, user's macOS 26 machine)
+
+| Run | Time | Result |
+|---|---|---|
+| 1 (cold) | 1.56 s | 116 / 116 unredacted |
+| 2 (locationd cached after run 1) | 0.29 s | 139 / 139 unredacted |
+| 3 (cold again) | 1.84 s | 103 / 103 unredacted |
+
+LaunchServices launch dominates the latency budget on cold runs
+(~500 ms – 1 s). Acceptable for the one-time `has_permission` probe
+at startup. Continuous-scan latency could be lowered further by
+running the bundle as a long-lived background daemon and using
+socket IPC for scan requests; deferred until it actually matters.
+
+### Why prior attempts failed (for future-us / future debuggers)
+
+| Version | Approach | Why it didn't work |
+|---|---|---|
+| v1.0.3 | disclaim + `Thread.sleep(0.3)` | Thread.sleep doesn't pump run loop AND direct exec doesn't get bundle TCC |
+| v1.0.6 | disclaim + `RunLoop.current.run(mode:.default, before:)` | Same — pumping the run loop doesn't change the TCC attribution |
+| (interim) | disclaim + `dispatchMain()` + 6-retry loop | Worked when locationd had a warm cache for the cdhash at that path; failed cold |
+| (interim) | NSApp.run() in direct-exec subprocess | NSApp doesn't change the kernel's TCC subject; still `.notDetermined` |
+| **v1.0.7** | LaunchServices re-launch via `open --args scan` | First version that gets bundle-attributed TCC reliably from cold |
+
+The diagnostic that nailed it: write
+`CLLocationManager.authorizationStatus().rawValue` to stderr at the
+start of the disclaimed scan path. On macOS 26 it prints `0`
+(`.notDetermined`) — proving the bundle's grant simply isn't reaching
+this process, no matter how the in-process code is structured.
 
 ## [1.0.6] — 2026-05-13
 
