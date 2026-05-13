@@ -8,6 +8,22 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.1] — 2026-05-13
+
+v1.0.0 发布流水线的热修复。Swift helper 源码里一个函数调用参数列表的
+尾随逗号是 Swift 6.1 才支持的语法，本机较新的 Xcode 接受，但托管
+`macos-14` runner 上的旧 Swift 工具链拒绝。v1.0.0 的 release workflow
+卡在 `Build Swift helper` 这一步，没产出 tarball，GitHub Release 上
+没有 asset，curl-bash 一行就 404。
+
+v1.0.0 没有可消费的发布产物；终端用户应该安装 v1.0.1。`install.sh`
+默认解析最新 tag，所以 `curl … | bash` 会自动取 v1.0.1，不用加参数。
+
+### 修复
+- **Swift helper 在托管 CI runner 上能正常构建**。删掉
+  `helper/Sources/diting-tianer/main.swift` 里 Find My / AirTag 检
+  测分支的尾随逗号，helper 在 Swift 5.x 与 6.x 上都能编译。
+
 ## [1.0.0] — 2026-05-13
 
 **「直接 diting 就能用」版**。安装门槛从「clone 仓库、装 uv、编 Swift

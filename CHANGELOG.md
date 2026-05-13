@@ -9,6 +9,27 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.1] — 2026-05-13
+
+Hot-fix for the v1.0.0 release pipeline. The Swift helper source
+had a trailing comma in a function-call argument list — a
+Swift 6.1 feature accepted by newer local Xcode but rejected by
+the hosted `macos-14` runner's older Swift toolchain. v1.0.0's
+release workflow died on `Build Swift helper` before producing
+any artefacts, so the GitHub Release had no tarballs and the
+curl-bash one-liner returned 404.
+
+v1.0.0 carried no consumable assets; v1.0.1 is what end users
+should install. `install.sh` resolves the latest tag by default,
+so `curl … | bash` automatically picks v1.0.1 with no flag
+needed.
+
+### Fixed
+- **Swift helper builds on hosted CI runners.** Removed the
+  trailing comma in `helper/Sources/diting-tianer/main.swift`
+  Find My / AirTag detection branch so the helper compiles on
+  Swift 5.x as well as 6.x.
+
 ## [1.0.0] — 2026-05-13
 
 **The "just diting" release.** The install ceiling drops from "clone
