@@ -175,13 +175,18 @@ else
   # in via curl. Without this Gatekeeper would block first launch.
   # Same trick Homebrew uses for unsigned casks.
   xattr -dr com.apple.quarantine "$DST_BUNDLE" 2>/dev/null || true
-  # Open the bundle once in the background so macOS surfaces the
-  # Location Services + Bluetooth TCC prompts to the user. The
-  # bundle exits cleanly when no subcommand is given, so this is
-  # harmless beyond firing TCC.
-  open -g "$DST_BUNDLE" 2>/dev/null || true
+  # Open the bundle foreground so macOS surfaces the Location
+  # Services + Bluetooth TCC prompts ON TOP — and so the helper's
+  # own status window is visible long enough for the user to see
+  # what's being requested. Earlier versions used `open -g`
+  # (background); on at least one user's macOS 26 install the
+  # prompts fired briefly and vanished before the user could
+  # interact, leaving the bundle un-granted while the install
+  # script reported success.
+  open "$DST_BUNDLE" 2>/dev/null || true
   note "helper bundle primed at ${DST_BUNDLE}"
-  note "macOS may prompt for Location Services + Bluetooth on first use"
+  note "macOS will prompt for Location Services + Bluetooth — click Allow on both"
+  note "the helper window auto-closes ~4s after both grants land"
 fi
 
 # ---- PATH hint ----

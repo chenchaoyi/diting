@@ -900,7 +900,7 @@ def _ensure_helper_ready() -> str | None:
         # Swift HelperAppDelegate's HelperStrings struct picks the
         # right localisation. The bundle falls back to
         # `Locale.preferredLanguages` if we don't set this, which
-        # covers install.sh's first-launch `open -g` call (no Python
+        # covers install.sh's first-launch `open` call (no Python
         # in the chain to know about --lang yet).
         open_argv = [
             "/usr/bin/open",
