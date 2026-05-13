@@ -53,166 +53,239 @@ import IOBluetooth
 // CLI mode: scan
 // ---------------------------------------------------------------------
 
-/// Probe-only CLLocationManager delegate used by `runScanAndDumpJSON`
-/// to wait until the location authorization state has been determined
-/// (i.e. CoreLocation's TCC handshake with `locationd` has run and
-/// landed) before we let CoreWLAN run its redaction check. Without
-/// waiting on the delegate, CoreWLAN sees a CLLocationManager that
-/// has only been `startUpdatingLocation`'d but never received a
-/// state callback — and treats the process as having no active
-/// location session, which is what macOS 26 uses to gate
-/// CWNetwork.ssid / .bssid.
-final class LocationAuthProbe: NSObject, CLLocationManagerDelegate {
-    private(set) var statusResolved = false
-    private(set) var lastStatus: CLAuthorizationStatus = .notDetermined
+/// Drives the location-authorization handshake and performs the
+/// CoreWLAN scan inside the libdispatch main queue context. macOS 14.4+
+/// (and tighter on 26) gates CWNetwork.ssid / .bssid behind being a
+/// *registered* CoreLocation consumer, not just an *authorized* one.
+/// Registration only completes after `locationd` calls back via the
+/// main dispatch queue — meaning we need a running dispatch main loop
+/// (not just a one-shot `Thread.sleep` or `RunLoop.run(mode:before:)`,
+/// both of which leave libdispatch callbacks un-pumped on a short-lived
+/// CLI subprocess).
+///
+/// Same pattern as `runBluetoothStatusProbe`: hand control to
+/// `dispatchMain()`, do real work inside the delegate callback, exit
+/// when done. Anything that needs to happen after registration
+/// completes runs inside `performScanAndExit()`, which is invoked
+/// either from `locationManagerDidChangeAuthorization` (the fast path
+/// when TCC.db already has a grant) or from a 2-second fallback timer
+/// (so a hard-denied or missing grant still produces an exit and not
+/// a hang).
+final class ScanWorker: NSObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private var done = false
+
+    func start() {
+        manager.delegate = self
+        manager.requestWhenInUseAuthorization()
+        manager.startUpdatingLocation()
+        // Don't wait a fixed time — try the scan immediately, and if
+        // it comes back redacted (CoreLocation registration not yet
+        // complete), retry after 500 ms. Up to 6 attempts ≈ 5 s
+        // worst-case. dispatchMain keeps the libdispatch + CoreLocation
+        // machinery alive across retries, so registration eventually
+        // lands; we use the *first* unredacted scan we get as the
+        // result. Warm state returns on attempt 0 in ~0.2 s; cold
+        // state typically takes 3-4 attempts (~2 s wall-clock).
+        attemptScan(attempt: 0)
+    }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        lastStatus = manager.authorizationStatus
-        if manager.authorizationStatus != .notDetermined {
-            statusResolved = true
+        // Cut the retry loop short on explicit denial / restriction —
+        // the scan will return redacted no matter how many times we
+        // ask, so don't make the user wait the full 6 s.
+        switch manager.authorizationStatus {
+        case .denied, .restricted:
+            emitCurrentScan(force: true)
+        default:
+            break
         }
     }
 
-    // Pre-Catalina spelling — kept for completeness; macOS calls one of
-    // these two depending on SDK target.
+    // Pre-Catalina spelling — macOS picks one of the two delegate
+    // entry points based on SDK target.
     func locationManager(_ manager: CLLocationManager,
                          didChangeAuthorization status: CLAuthorizationStatus) {
-        lastStatus = status
-        if status != .notDetermined {
-            statusResolved = true
+        switch status {
+        case .denied, .restricted:
+            emitCurrentScan(force: true)
+        default:
+            break
+        }
+    }
+
+    private func attemptScan(attempt: Int) {
+        guard !done else { return }
+        if attempt >= 6 {
+            // Out of retries; emit whatever the last scan returned
+            // even if redacted. Caller can then surface a "permission
+            // missing" hint rather than hanging forever.
+            emitCurrentScan(force: true)
+            return
+        }
+
+        let client = CWWiFiClient.shared()
+        guard let iface = client.interface() else {
+            done = true
+            emitError("no Wi-Fi interface")
+        }
+        let networks: Set<CWNetwork>
+        do {
+            networks = try iface.scanForNetworks(withName: nil)
+        } catch {
+            done = true
+            emitError("scan failed: \(error.localizedDescription)")
+        }
+        latestScan = networks
+        latestIface = iface
+        // Count rows with bssid populated. Any non-zero count means
+        // CoreLocation registration completed and CoreWLAN unredacted
+        // — we can ship this result immediately. Zero unredacted rows
+        // with a non-empty scan means we got the scan but Location is
+        // still gated; retry after a short delay to let registration
+        // catch up.
+        let unredactedCount = networks.filter { $0.bssid != nil }.count
+        if unredactedCount > 0 || networks.isEmpty {
+            // Empty networks also short-circuits — there's nothing to
+            // unredact anyway (e.g. radio off), and retrying won't
+            // change that.
+            emitCurrentScan(force: false)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.attemptScan(attempt: attempt + 1)
+        }
+    }
+
+    private var latestScan: Set<CWNetwork> = []
+    private var latestIface: CWInterface?
+
+    private func emitCurrentScan(force: Bool) {
+        guard !done else { return }
+        done = true
+
+        // If the early-exit (denied / restricted) path got here
+        // before any scan ran, do one last scan attempt so the
+        // caller still gets a structured response (with redacted
+        // rows). Saves a special-case error code at the caller.
+        if latestIface == nil {
+            let client = CWWiFiClient.shared()
+            guard let iface = client.interface() else {
+                emitError("no Wi-Fi interface")
+            }
+            do {
+                latestScan = try iface.scanForNetworks(withName: nil)
+            } catch {
+                emitError("scan failed: \(error.localizedDescription)")
+            }
+            latestIface = iface
+        }
+        _ = force  // suppressed-unused for future plumbing
+
+        guard let iface = latestIface else {
+            emitError("no Wi-Fi interface")
+        }
+
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        var out: [[String: Any]] = []
+        for net in latestScan {
+            var row: [String: Any] = [:]
+            if let s = net.ssid { row["ssid"] = s }
+            if let b = net.bssid { row["bssid"] = b }
+            if let cc = net.countryCode { row["country_code"] = cc }
+            row["rssi_dbm"] = net.rssiValue
+            row["noise_dbm"] = net.noiseMeasurement
+            if let ch = net.wlanChannel {
+                row["channel"] = ch.channelNumber
+                row["channel_width_raw"] = ch.channelWidth.rawValue
+                row["channel_band_raw"] = ch.channelBand.rawValue
+            }
+            row["security_raw"] = sampleSecurity(net)
+            // Schema-3 (v0.7.0+) IE parsing. CoreWLAN exposes the raw
+            // beacon information-element data via informationElementData;
+            // we walk the Element ID / length tuples to surface the few
+            // bits diagnostics actually want. Each field is emitted only
+            // when the corresponding IE is present, so v2 consumers (or
+            // a partial scan with no IEs) keep the existing keyset.
+            if let ieData = net.informationElementData {
+                decodeBeaconIEs(ieData, into: &row)
+            }
+            out.append(row)
+        }
+
+        var ifaceMeta: [String: Any] = ["name": iface.interfaceName ?? "?"]
+        if let cc = iface.countryCode() { ifaceMeta["country_code"] = cc }
+        if let hw = iface.hardwareAddress() { ifaceMeta["hardware_address"] = hw }
+
+        let payload: [String: Any] = [
+            "schema": 3,
+            "interface": ifaceMeta,
+            "timestamp": timestamp,
+            "networks": out,
+        ]
+        do {
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+            exit(0)
+        } catch {
+            emitError("json encode failed: \(error.localizedDescription)")
         }
     }
 }
 
+// Global reference: dispatchMain() never returns, but we need the
+// worker (and its CLLocationManager) to outlive the call site. A
+// global keeps it pinned for the lifetime of the process.
+private var g_scanWorker: ScanWorker?
+
 func runScanAndDumpJSON() -> Never {
     // macOS 14.4+ (and tighter on 26) gates CWNetwork.ssid / .bssid
-    // behind Location Services at the calling process level. Having
-    // the bundle's TCC grant on disk is not enough on its own — three
+    // behind Location Services at the calling process level. Three
     // things have to be true at scanForNetworks time:
     //
     //   1. The TCC subject seen by macOS is the helper bundle (not
     //      the terminal that launched us). Inherited responsibility
     //      from Terminal → diting → diting-tianer breaks this on
-    //      macOS 26 — tccd attributes the request to Terminal, which
-    //      has no NSLocationUsageDescription, and CWNetwork redacts
-    //      ssid / bssid silently. The fix is to disclaim our parent
-    //      so we become our own responsible process, same hop the
+    //      macOS 26 — tccd attributes the request to Terminal,
+    //      which has no NSLocationUsageDescription, and CWNetwork
+    //      redacts ssid / bssid silently. Fix: disclaim our parent
+    //      so we become our own responsible process. Same hop the
     //      ble-scan subcommand has done since v0.5.0.
     //
-    //   2. A CLLocationManager exists in this process AND has had
-    //      its authorization status callback fire. This is the
-    //      subtle bit: macOS treats a CLLocationManager that has
-    //      only been `startUpdatingLocation`'d (no delegate
-    //      callback yet) as "not yet a location-services consumer"
-    //      and CoreWLAN still redacts. The fix is to pump the run
-    //      loop until `locationManagerDidChangeAuthorization` fires,
-    //      which means CoreLocation has done its TCC handshake with
-    //      locationd and the process is now a recognised consumer.
+    //   2. The process is a *registered* CoreLocation consumer at
+    //      the moment scanForNetworks runs — meaning a
+    //      CLLocationManager exists AND its delegate has received
+    //      `didChangeAuthorization` from locationd. The earlier
+    //      v1.0.3 / v1.0.6 attempts used `Thread.sleep` then
+    //      `RunLoop.run(mode:before:)` — neither reliably pumps the
+    //      libdispatch main queue the delegate callback rides on
+    //      inside a short-lived CLI subprocess. The fix is to drive
+    //      everything from inside `dispatchMain()` — same pattern
+    //      as the bluetooth-status probe — so libdispatch's main
+    //      queue is fully active during the auth handshake AND the
+    //      scan call.
     //
     //   3. The CLLocationManager reference stays alive across the
-    //      scanForNetworks() call so the runtime doesn't drop the
-    //      consumer registration mid-scan.
+    //      scanForNetworks call. The global g_scanWorker pins it
+    //      for the lifetime of the process.
     //
     // The earlier code comment claiming CoreLocation was "more
     // lenient" than CoreBluetooth was wrong; CoreWLAN on macOS 26
-    // enforces all three. The v1.0.3 fix attempted only (1) + (3) +
-    // a Thread.sleep — but Thread.sleep doesn't pump the run loop,
-    // so (2) was missed and the scan still came back redacted on
-    // freshly-installed bundles. Mirror the existing bluetooth-status
-    // pattern: real run-loop pump, real delegate callback wait.
+    // enforces all three. v1.0.6 implemented (1) and partially (2)
+    // but the run-loop pump it used didn't actually drive the
+    // libdispatch handshake — scans only appeared to work when a
+    // GUI bundle had recently run and warmed the system caches.
+    // This v1.0.7 implementation uses dispatchMain() so registration
+    // completes reliably from cold.
     if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
         reExecWithDisclaimedResponsibility()
     }
 
-    let locationManager = CLLocationManager()
-    let probe = LocationAuthProbe()
-    locationManager.delegate = probe
-    locationManager.requestWhenInUseAuthorization()
-    locationManager.startUpdatingLocation()
-
-    // Pump the run loop until the authorization callback fires or a
-    // 2-second timeout elapses. The callback only fires after
-    // CoreLocation has fully registered with locationd, which is what
-    // CoreWLAN's redaction gate checks for. Each `run(until:)` slice
-    // returns control briefly so we can re-check the probe flag and
-    // exit early once authorization is resolved — usually within ~50ms
-    // when the grant is already in TCC.db.
-    let deadline = Date(timeIntervalSinceNow: 2.0)
-    while !probe.statusResolved && Date() < deadline {
-        RunLoop.current.run(mode: .default,
-                            before: Date(timeIntervalSinceNow: 0.05))
-    }
-    // Proceed regardless of probe outcome. If authorization is still
-    // .notDetermined after 2 s (TCC grant genuinely missing), the
-    // scan will return redacted rows — same end state as before, just
-    // not slower than necessary. Hold the manager reference past the
-    // scan call so the consumer registration doesn't get released.
-    _ = locationManager
-
-    let client = CWWiFiClient.shared()
-    guard let iface = client.interface() else {
-        emitError("no Wi-Fi interface")
-    }
-
-    let networks: Set<CWNetwork>
-    do {
-        networks = try iface.scanForNetworks(withName: nil)
-    } catch {
-        emitError("scan failed: \(error.localizedDescription)")
-    }
-
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    var out: [[String: Any]] = []
-    for net in networks {
-        var row: [String: Any] = [:]
-        if let s = net.ssid { row["ssid"] = s }
-        if let b = net.bssid { row["bssid"] = b }
-        if let cc = net.countryCode { row["country_code"] = cc }
-        row["rssi_dbm"] = net.rssiValue
-        row["noise_dbm"] = net.noiseMeasurement
-        if let ch = net.wlanChannel {
-            row["channel"] = ch.channelNumber
-            row["channel_width_raw"] = ch.channelWidth.rawValue
-            row["channel_band_raw"] = ch.channelBand.rawValue
-        }
-        row["security_raw"] = sampleSecurity(net)
-        // Schema-3 (v0.7.0+) IE parsing. CoreWLAN exposes the raw
-        // beacon information-element data via informationElementData;
-        // we walk the Element ID / length tuples to surface the few
-        // bits diagnostics actually want. Each field is emitted only
-        // when the corresponding IE is present, so v2 consumers (or
-        // a partial scan with no IEs) keep the existing keyset.
-        if let ieData = net.informationElementData {
-            decodeBeaconIEs(ieData, into: &row)
-        }
-        out.append(row)
-    }
-
-    var ifaceMeta: [String: Any] = ["name": iface.interfaceName ?? "?"]
-    if let cc = iface.countryCode() { ifaceMeta["country_code"] = cc }
-    if let hw = iface.hardwareAddress() { ifaceMeta["hardware_address"] = hw }
-
-    let payload: [String: Any] = [
-        // schema 3 = v0.6.0+: BLE deep-ID fields (type / device_class)
-        // and connected-peripheral lines, plus v0.7.0+ Wi-Fi beacon-IE
-        // fields (bss_load_pct / bss_station_count / supports_802_11r
-        // / supports_802_11k / supports_802_11v). The schema number
-        // does not change between v0.6.0 and v0.7.0; the IE fields
-        // are additive and consumers tolerate their absence (older
-        // helpers that ship schema=3 without IE keys remain valid).
-        "schema": 3,
-        "interface": ifaceMeta,
-        "timestamp": timestamp,
-        "networks": out,
-    ]
-    do {
-        let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-        FileHandle.standardOutput.write(data)
-        FileHandle.standardOutput.write("\n".data(using: .utf8)!)
-        exit(0)
-    } catch {
-        emitError("json encode failed: \(error.localizedDescription)")
-    }
+    let worker = ScanWorker()
+    g_scanWorker = worker
+    worker.start()
+    dispatchMain()
 }
 
 // Decode the few beacon information elements diagnostics-grade

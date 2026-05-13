@@ -9,6 +9,60 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.7] — 2026-05-13
+
+v1.0.6 was supposed to be the final fix for the macOS 26 scan-redaction
+hang but wasn't actually verified cold. The `RunLoop.current.run`-based
+pump in v1.0.6 turned out to be load-bearing on locationd's warm cache,
+not on its own dispatch-handshake — when tested 30+ minutes after a
+fresh grant (locationd cache cold) it still returned redacted rows.
+The user surfaced this when `uv run diting` worked (in-repo bundle had
+been re-opened repeatedly during the session, keeping locationd warm)
+but `diting` (curl-installed bundle, cold) still hung indefinitely
+at "需要以下权限：定位服务".
+
+### Fixed
+- **`scan` subcommand restructured around `dispatchMain()` with a
+  scan-with-retry loop.** Same dispatch pattern as the working
+  `bluetooth-status` probe, plus adaptive retry that copes with
+  locationd cold-start latency.
+  - New `ScanWorker : CLLocationManagerDelegate` class drives the
+    location handshake from inside the libdispatch main queue context.
+    Global `g_scanWorker` pins the worker (and its `CLLocationManager`)
+    for the lifetime of the process so the consumer registration
+    doesn't get released mid-scan.
+  - `start()` calls `requestWhenInUseAuthorization` /
+    `startUpdatingLocation`, then triggers the first `attemptScan(0)`
+    immediately. No fixed wait.
+  - Each `attemptScan(n)` calls `scanForNetworks`; if any row has a
+    populated `bssid`, the result is unredacted → emit JSON and exit.
+    If every row is redacted AND the scan returned non-empty, schedule
+    `attemptScan(n + 1)` 500 ms later via
+    `DispatchQueue.main.asyncAfter`. Up to 6 attempts ≈ 5 s
+    worst-case. While we wait, dispatchMain keeps libdispatch and
+    CoreLocation pumping so locationd registration completes in the
+    background.
+  - `locationManagerDidChangeAuthorization` short-circuits the retry
+    loop only on `.denied` / `.restricted` — waiting longer wouldn't
+    change the outcome.
+- **Why retry instead of a fixed wait:** the auth callback fires
+  within ~100 ms when TCC.db has a grant, but CoreLocation's
+  registration with locationd lands non-deterministically anywhere
+  from ~200 ms (warm machine, recently-used cdhash) to ~3 s (cold
+  machine, fresh cdhash). A fixed wait either makes warm scans
+  needlessly slow OR misses cold state. Retry adapts.
+- **Empirical timings on the user's machine:**
+  - Warm subprocess scan (locationd cached): ~90 ms.
+  - Cold subprocess scan (5 s after process exit): 1.7–1.9 s, 1–2
+    retries.
+  - Truly cold (no recent bundle activity): up to ~4 s.
+- **Discovery during testing:** macOS extends System Settings →
+  Location Services grants from one cdhash to fresh rebuilds of the
+  same bundle id, at least for ad-hoc-signed bundles. New cdhashes
+  inherit the grant without a fresh prompt — useful for the
+  install.sh-then-tarball-update flow, and saves the user from
+  prompt rate-limiting when iterating locally.
+
 ## [1.0.6] — 2026-05-13
 
 The v1.0.3 → v1.0.5 chain attempted to fix CoreWLAN scan

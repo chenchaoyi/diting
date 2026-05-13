@@ -8,6 +8,48 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.7] — 2026-05-13
+
+v1.0.6 本来该是 macOS 26 scan-redaction 的最终修复，但没有真正在冷
+状态下验证。v1.0.6 用 `RunLoop.current.run` 来 pump 的方式实际上靠
+的是 locationd 的 warm cache，而不是自己跑完 dispatch 握手——离最近
+一次授权超过 30 分钟（locationd 缓存冷）的子进程 scan 还是返回被屏
+蔽的行。用户的差异化验证暴露了这一点：`uv run diting` 能用（in-repo
+bundle 整个 session 被反复 open，locationd 保持 warm），但 curl 装的
+`diting`（冷状态 bundle）依然卡在「需要以下权限：定位服务」。
+
+### 修复
+- **`scan` 子命令改成 `dispatchMain()` + scan-with-retry 循环**。
+  dispatch 部分跟工作正常的 `bluetooth-status` 探针走同一模式，外加
+  自适应重试以容忍 locationd 冷启动延迟。
+  - 新增 `ScanWorker : CLLocationManagerDelegate` 类，在 libdispatch
+    主队列上下文里驱动 location 握手。全局 `g_scanWorker` 把 worker
+    （含其 `CLLocationManager`）pin 到进程整个生命周期，避免扫描中
+    途消费者注册被释放。
+  - `start()` 调 `requestWhenInUseAuthorization` /
+    `startUpdatingLocation`，立刻触发第一次 `attemptScan(0)`，不再
+    等固定时间。
+  - 每次 `attemptScan(n)` 调 `scanForNetworks`；若至少一行带
+    `bssid` → 未屏蔽，emit JSON 并 exit。若全部被屏蔽且 scan 非空，
+    通过 `DispatchQueue.main.asyncAfter` 排 500 ms 后的
+    `attemptScan(n+1)`。最多 6 次 ≈ 5 秒上限。重试期间 dispatchMain
+    持续 pump，locationd 注册在后台并行完成。
+  - `locationManagerDidChangeAuthorization` 只在
+    `.denied` / `.restricted` 时短路 —— 再等下去也是被屏蔽。
+- **为什么用重试而不是固定等待**：auth 回调在 TCC.db 有授权时 ~100
+  ms 就触发，但 CoreLocation 跟 locationd 的注册落地是非确定性的：
+  暖机器最近用过这个 cdhash → ~200 ms；冷机器全新 cdhash → ~3 秒。
+  固定等待要么让暖路径白等，要么冷路径漏掉。重试能自适应。
+- **用户机器实测时延**：
+  - 暖（locationd 缓存还在）：~90 毫秒。
+  - 冷（进程退出 5 秒后）：1.7–1.9 秒，1–2 次重试。
+  - 真冷（最近一段时间没碰 bundle）：~4 秒。
+- **测试中发现**：macOS 会把「系统设置 → 定位服务」里的授权状态从
+  原 cdhash 扩展到同一 bundle id 的新 rebuild 上 —— 至少 ad-hoc 签
+  名的 bundle 是这样。新 cdhash 不再弹窗就能继承授权，对
+  install.sh-then-tarball-update 流程很友好，本地迭代时也免去 prompt
+  rate-limit 问题。
+
 ## [1.0.6] — 2026-05-13
 
 v1.0.3 → v1.0.5 一路上想修 install.sh 安装路径下 CoreWLAN scan 数据
