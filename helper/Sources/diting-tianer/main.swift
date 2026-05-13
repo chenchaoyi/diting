@@ -269,7 +269,7 @@ enum BLEAdParser {
                     let isAirTag = bytes.count >= 25 && !hasName
                     return BLEDetection(
                         type: isAirTag ? "AirTag" : "Find My target",
-                        deviceClass: nil,
+                        deviceClass: nil
                     )
                 default:
                     if let label = appleContinuityType(typeByte) {
