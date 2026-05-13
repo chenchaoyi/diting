@@ -8,6 +8,77 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.0] — 2026-05-13
+
+**「直接 diting 就能用」版**。安装门槛从「clone 仓库、装 uv、编 Swift
+helper、跑 uv sync」降到一行 curl-bash —— 装出来的是自包含二进制 +
+helper bundle，用户机器上不再需要 Python、`uv` 或 Xcode 命令行工具。
+TUI 这一版也补齐最后一块拼图：三块列表面板（Wi-Fi / BLE / Bonjour）
+共享同一套行选中手势，每块都有自己的详情 modal，按 ↑ / ↓ 时 modal 跟
+着光标走，不用关再开。
+
+### 新增
+- **一行 installer**：`curl -fsSL
+  https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh
+  | bash`。识别架构（`darwin-arm64` / `darwin-x86_64`），从 GitHub
+  Release 拉对应 tarball，校验 SHA256，解压到 `~/.local/share/diting/`，
+  symlink `~/.local/bin/diting`，把 Swift helper 拷贝到
+  `~/Library/Application Support/diting/`，剥离 quarantine xattr，
+  `open -g` 一次触发 TCC 授权弹窗。`~/.local/bin` 不在 PATH 时按
+  zsh / bash / fish 打印对应的 PATH 更新提示。`DITING_VERSION=vX.Y.Z`
+  环境变量锁版本。
+- **PyInstaller 发布流水线**。新 GitHub Actions workflow
+  (`.github/workflows/release.yml`)，`v*` tag 推送触发；`macos-14`
+  arm64 + `macos-13` x86_64 matrix 构建 helper、用 PyInstaller 冻结
+  Python 解释器 + 依赖、打 tarball、上传到 GitHub Release。后续 job
+  把两边的 `.sha256` 汇总成 `SHASUMS256.txt`。
+- **Wi-Fi 详情 modal**（在任意扫描行按 `i` / `Enter` 或鼠标点击）。
+  身份段（SSID / BSSID / 来自 `aps.yaml` 的 AP 名 / OUI 厂商 /
+  「当前连接」标注），射频段（信道 / 频段 / 带宽 / PHY / 加密），
+  信号段（RSSI / 噪声 / SNR），Beacon IE 段（BSS 负载、终端数、
+  802.11r/k/v 支持 —— 全部缺失时整段省略），活动段。BSSID 被 TCC
+  屏蔽时给出可操作的提示，不再静默。
+- **Bonjour 详情 modal**（同一手势移植到 mDNS 面板）。身份段（实例 /
+  服务类型 / i18n 类别 / 厂商），网络段（host / port / IPv4 + IPv6
+  地址分行），TXT 记录段对 > 60 字符的值自动折叠（`<N-byte payload>`
+  + 前 16 字节 hex 预览，避免 30+ TXT key 的 AirPlay 接收器把 modal
+  撑爆），活动段。
+- **任意详情 modal 内的实时导航**。modal 打开后按 ↑ / ↓ 既移动底下面
+  板的选中，又重渲 modal 内容跟到新行。不用关再开就能扫一遍 AP / BLE
+  设备 / Bonjour 服务。BLE modal 还会按设备拉一次 RSSI 历史，sparkline
+  跟着切换。
+
+### 变更
+- **三个列表视图统一行选中手势**。BLE 自 v0.7 起就有的 ↑ / ↓ / `i`
+  / `Enter` / 鼠标点击合约现在 Wi-Fi 与 Bonjour 也按。每个面板的方
+  向键 action 都按视图门控，同一物理键在不同视图下安全。规则落到
+  `openspec/specs/tui-shell/spec.md`，未来新加列表面板默认继承。
+- **`find_helper()` 搜索顺序增加第 5 个候选**：`~/Library/Application
+  Support/diting/diting-tianer.app`，即 curl-bash installer 落地的位
+  置。in-repo 开发构建仍排在最前，确保贡献者跑 `uv run diting` 永远
+  拿到刚 `make helper` 出来的 bundle。
+- **README** 开头改成一行 installer；原 `git clone` + `uv sync` +
+  `make helper` 流程移到「从源码安装（贡献者）」二级标题下，原封保
+  留。两条路径同机共存。
+
+### 修复
+- **TCC 屏蔽扫描时 Wi-Fi 选中健码退化无冲突**。BSSID 为 `None` 时
+  选中键退化为 `f"{ssid}#{channel}"`，未授定位的用户仍可上下导航。
+  同名 SSID 同信道的冲突边界条件已记录在 spec 里。
+- **关 modal 不动选中**。`Esc` / `i` / `q` 关任意详情 modal 都不清
+  除面板高亮，重新打开还回到同一行。
+
+### 维护备注
+- **`docs/RELEASE.md`**（+ `docs/zh/RELEASE.md` 镜像）—— 发版 runbook：
+  版本号 bump、打 tag、盯 workflow、人工冒烟、GitHub Release 文案、
+  workflow_dispatch 干跑、排查（PyInstaller hooks / Gatekeeper /
+  `macos-13` runner 终将退役）。
+- **`docs/workflow.md`**（+ 中文镜像）说明 `uv run diting` 是开发者路
+  径、curl 一行是用户路径，两者都属于一等公民。
+- OpenSpec 规范条数：17 → 20（新增 `wifi-detail-modal`、
+  `bonjour-detail-modal`、`installation`；修改 `ble-detail-modal`、
+  `tui-shell`、`macos-helper`）。
+
 ## [0.9.0] — 2026-05-12
 
 **「Bonjour 版」**。TUI 第三块面板从「Wi-Fi / BLE 二选」扩展为

@@ -9,6 +9,93 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.0] — 2026-05-13
+
+**The "just diting" release.** The install ceiling drops from "clone
+the repo, install uv, build the Swift helper, run uv sync" to a
+single curl-bash one-liner that ships a self-contained binary plus
+the helper bundle. End users no longer need Python, `uv`, or Xcode
+Command Line Tools on their machine. The TUI gets one last round of
+polish: a unified row-select gesture across all three list panels
+(Wi-Fi / BLE / Bonjour), each with its own detail modal that walks
+the list live as the user presses ↑ / ↓.
+
+### Added
+- **One-line installer.** `curl -fsSL
+  https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh
+  | bash` detects arch (`darwin-arm64` / `darwin-x86_64`), pulls the
+  matching tarball from the GitHub Release, verifies SHA256, extracts
+  to `~/.local/share/diting/`, symlinks `~/.local/bin/diting`, copies
+  the Swift helper to `~/Library/Application Support/diting/`, strips
+  the quarantine xattr, and `open -g`s the helper once to prime TCC
+  prompts. PATH-update hint for zsh / bash / fish printed when
+  `~/.local/bin` isn't on PATH. `DITING_VERSION=vX.Y.Z` env var pins
+  a specific release.
+- **PyInstaller release pipeline.** New GitHub Actions workflow
+  (`.github/workflows/release.yml`) triggered by `v*` tag push;
+  `macos-14` arm64 + `macos-13` x86_64 matrix builds the helper,
+  freezes the Python interpreter + deps via PyInstaller, packages
+  the tarball, and uploads to the GitHub Release. A follow-up job
+  aggregates `SHASUMS256.txt` from both arch builds.
+- **Wi-Fi detail modal** (`i` / `Enter` / mouse-click on any scan
+  row). Identity (SSID / BSSID / AP-name from `aps.yaml` / OUI
+  vendor / "(associated)" annotation), Radio (channel / band /
+  width / PHY / security), Signal (RSSI / noise / SNR), Beacon IE
+  (BSS load, station count, 802.11r/k/v support — section omitted
+  when all absent), Activity. BSSID redaction shows an actionable
+  TCC hint instead of going silent.
+- **Bonjour detail modal** (same gesture on the mDNS panel).
+  Identity (instance / service type / category via i18n / vendor),
+  Network (host / port / IPv4 + IPv6 addresses listed separately),
+  TXT records with auto-fold for values > 60 chars (`<N-byte
+  payload>` placeholder + 16-byte hex preview so AirPlay receivers
+  with 30+ keys don't blow out the modal), Activity.
+- **Live navigation inside any detail modal.** While a modal is
+  open, ↑ / ↓ advance the underlying selection AND the modal body
+  re-renders to track the new row. Walk a list of APs, BLE devices,
+  or Bonjour services without close-and-reopen cycles. BLE modal
+  also re-fetches per-device RSSI history so the sparkline updates.
+
+### Changed
+- **Unified row-select gesture across all three list views.** The
+  ↑ / ↓ / `i` / `Enter` / mouse-click contract that BLE has had
+  since v0.7 now applies to Wi-Fi and Bonjour too. Each panel's
+  arrow-key action is view-gated so the same physical key is safe
+  across views. Pin in `openspec/specs/tui-shell/spec.md` so future
+  list panels inherit the contract by default.
+- **`find_helper()` search order gains a fifth candidate**:
+  `~/Library/Application Support/diting/diting-tianer.app`, where
+  the curl-bash installer drops the bundle. The in-repo dev build
+  stays pinned first so contributors running `uv run diting` from
+  a checkout always pick up their freshly-`make helper`ed bundle.
+- **README** leads with the one-liner; the existing clone + `uv
+  sync` + `make helper` flow moves under "From source (for
+  contributors)" — preserved exactly. Both paths coexist on the
+  same machine.
+
+### Fixed
+- **Wi-Fi selection collides cleanly under TCC-redacted scans.**
+  When BSSID is `None` (Location Services denied), the selection
+  key falls back to `f"{ssid}#{channel}"` so users without grants
+  can still navigate the list. Documented collision behaviour for
+  the same-SSID-on-same-channel edge case.
+- **Modal-close keys don't mutate selection.** `Esc` / `i` / `q`
+  close any detail modal without clearing the panel highlight, so
+  reopening returns to the same row.
+
+### Bookkeeping
+- **`docs/RELEASE.md`** (+ `docs/zh/RELEASE.md` mirror) — maintainer
+  runbook for cutting a release: version bump, tag, watch the
+  workflow, manual smoke, GitHub Release notes, dispatch dry-runs,
+  troubleshooting (PyInstaller hooks, Gatekeeper, future `macos-13`
+  runner retirement).
+- **`docs/workflow.md`** (+ ZH mirror) notes that `uv run diting` is
+  the developer path and the curl one-liner is the end-user path;
+  both are first-class.
+- Canonical OpenSpec count: 17 → 20 (new `wifi-detail-modal`,
+  `bonjour-detail-modal`, `installation`; modified `ble-detail-modal`,
+  `tui-shell`, `macos-helper`).
+
 ## [0.9.0] — 2026-05-12
 
 The **Bonjour release.** diting grows a third TUI panel — mDNS /
