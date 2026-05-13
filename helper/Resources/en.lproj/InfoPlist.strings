@@ -1,0 +1,19 @@
+/* English (default) localisation for the helper bundle's Info.plist.
+ *
+ * macOS's TCC prompts and the Finder display name read both
+ * CFBundleDisplayName and the usage descriptions through the
+ * active locale's lproj. Without this file, English users would
+ * see the global CFBundleDisplayName ("谛听 · 天耳") even though
+ * their locale is English — and the prompt bodies are English
+ * literals living in Info.plist directly.
+ *
+ * Keys must match exactly; macOS does NOT fall back to Info.plist
+ * if a key is missing here.
+ */
+
+"CFBundleDisplayName" = "diting · tianer";
+"CFBundleName" = "diting · tianer";
+
+"NSLocationUsageDescription" = "diting reads nearby Wi-Fi network names and BSSIDs to label access points and detect roaming. Location data never leaves your machine.";
+"NSLocationWhenInUseUsageDescription" = "diting reads nearby Wi-Fi network names and BSSIDs to label access points and detect roaming. Location data never leaves your machine.";
+"NSBluetoothAlwaysUsageDescription" = "diting scans nearby BLE advertisements so the TUI can show you what devices are around.";

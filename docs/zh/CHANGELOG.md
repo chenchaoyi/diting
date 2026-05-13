@@ -8,6 +8,33 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.4] — 2026-05-13
+
+用户反馈 macOS TCC 权限弹窗不一致：定位权限弹窗显示「谛听 · 天耳」
+（中文显示名），蓝牙权限弹窗显示「diting-tianer.app」（裸 bundle
+文件名）；而且两个弹窗的正文都永远是英文，中文用户看不到中文描
+述。本质上 macOS 给不同类别的 TCC 弹窗取标题字段的来源不一样
+（定位用 `CFBundleDisplayName`，蓝牙用 bundle URL filename），
+弹窗正文则直接来自 usage description 字段。
+
+### 修复
+- **TCC 弹窗在各语言下保持一致**。Helper bundle 新增
+  `Resources/en.lproj/InfoPlist.strings` 与
+  `Resources/zh-Hans.lproj/InfoPlist.strings`，按当前 locale 提供
+  `CFBundleDisplayName` / `CFBundleName` 以及三个 usage description
+  字段（`NSLocationUsageDescription`、
+  `NSLocationWhenInUseUsageDescription`、
+  `NSBluetoothAlwaysUsageDescription`）。zh 用户现在在「定位」和
+  「蓝牙」两个弹窗里都看到中文标题和中文正文。Info.plist 新增
+  `CFBundleLocalizations` 列出两种语言，老版本 macOS 不自动扫
+  lproj 目录也能找到对应翻译。`helper/build.sh` 已经把
+  `Resources/*.lproj` 整棵树拷进打包好的 .app。
+- **`Info.plist` 顶层 `CFBundleName` / `CFBundleDisplayName` 统一**。
+  两个 key 现在都默认是 `diting · tianer`（英文兜底）；先前
+  `CFBundleName` 是 `diting-tianer`，`CFBundleDisplayName` 是
+  `谛听 · 天耳` —— 正是这种分裂导致了上面那种语言不一致的 TCC
+  弹窗组合。
+
 ## [1.0.3] — 2026-05-13
 
 第一个真正可被最终用户装出来的 release。装出来之后 `diting` 一直卡
