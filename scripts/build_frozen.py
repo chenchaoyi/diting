@@ -104,12 +104,19 @@ def main() -> None:
         # data files. They live under src/diting/data/ and are read
         # via importlib.resources at runtime.
         "--add-data", f"{REPO_ROOT / 'src' / 'diting' / 'data'}:diting/data",
+        # PyInstaller needs to know where to find the `diting`
+        # package since the entry stub imports it. Pointing
+        # --paths at src/ lets the analyzer walk the package
+        # tree.
+        "--paths", str(REPO_ROOT / "src"),
         # Strip debug symbols from binaries. Knocks ~6 MB off a
         # release build at no runtime cost.
         "--strip",
-        # The entry script — the CLI dispatcher that pyproject.toml's
-        # [project.scripts] maps `diting` to.
-        str(REPO_ROOT / "src" / "diting" / "cli.py"),
+        # Entry stub that imports `diting.cli:main` rather than
+        # PyInstaller-compiling `cli.py` directly. Compiling cli.py
+        # as a top-level script breaks `from .x import y` relative
+        # imports inside the package.
+        str(REPO_ROOT / "scripts" / "frozen_entry.py"),
     ]
 
     # Invoke PyInstaller; let its output stream straight to our

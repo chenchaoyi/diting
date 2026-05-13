@@ -9,6 +9,40 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.2] — 2026-05-13
+
+Second hot-fix to the v1.0.0 release pipeline. v1.0.1 unblocked the
+Swift helper build but the per-arch tarball step then failed on
+two further issues that surfaced once the pipeline got further:
+
+1. `scripts/package_release.sh` invoked `tar` with GNU-only flags
+   (`--owner=0 --group=0 --numeric-owner`) which macOS bsdtar
+   rejects outright. The fallback path I added for
+   `--no-mac-metadata` still kept those flags, so the tarball
+   command failed on the hosted runners.
+2. The PyInstaller-frozen binary crashed on first run with
+   `ImportError: attempted relative import with no known parent
+   package`. PyInstaller compiled `cli.py` as a top-level script,
+   stripping the `diting` package context that the module's
+   `from .x import y` imports rely on.
+
+End users with v1.0.0 or v1.0.1 should install v1.0.2 — those tags
+never produced consumable assets. `install.sh` resolves "latest"
+by default, so the curl one-liner picks v1.0.2 automatically.
+
+### Fixed
+- **Tarball builds on macOS bsdtar.** Drop the GNU-only
+  `--owner=0 --group=0 --numeric-owner` flags from
+  `scripts/package_release.sh`; plain `tar -czf` runs everywhere.
+  Tarball reproducibility (deterministic uid/gid headers) was a
+  nice-to-have, not load-bearing — SHA256 in `SHASUMS256.txt`
+  remains the integrity guarantee.
+- **Frozen binary preserves package context.** New
+  `scripts/frozen_entry.py` stub imports `diting.cli:main`, and
+  PyInstaller now compiles the stub (with `--paths src`) instead
+  of `cli.py` directly. Relative imports inside the diting
+  package resolve correctly at runtime.
+
 ## [1.0.1] — 2026-05-13
 
 Hot-fix for the v1.0.0 release pipeline. The Swift helper source
