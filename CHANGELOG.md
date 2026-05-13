@@ -9,6 +9,37 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.4] — 2026-05-13
+
+User reported macOS's TCC permission prompts were inconsistent:
+the Location prompt showed "谛听 · 天耳" (Chinese display name)
+while the Bluetooth prompt showed "diting-tianer.app" (raw bundle
+filename) — and both prompt bodies were always English even for
+zh users. macOS picks the TCC prompt's header name from different
+fields per category (`CFBundleDisplayName` for Location, the
+bundle's URL filename for Bluetooth), and the prompt body comes
+straight from the usage-description plist keys.
+
+### Fixed
+- **TCC prompts now localise consistently.** Helper bundle ships
+  `Resources/en.lproj/InfoPlist.strings` and `Resources/zh-Hans.lproj/
+  InfoPlist.strings` with locale-specific `CFBundleDisplayName`,
+  `CFBundleName`, and all three usage-description keys
+  (`NSLocationUsageDescription`,
+  `NSLocationWhenInUseUsageDescription`,
+  `NSBluetoothAlwaysUsageDescription`). macOS now picks Chinese
+  strings for zh users in both the Location and Bluetooth prompt
+  headers AND bodies. `CFBundleLocalizations` lists both
+  locales so older macOS releases that don't autodiscover lproj
+  dirs still pick the right one. `helper/build.sh` copies the
+  `Resources/*.lproj` tree into the assembled `.app`.
+- **Top-level `Info.plist` `CFBundleName` / `CFBundleDisplayName`
+  unified.** Both keys now default to `diting · tianer` (English
+  fallback) instead of the previous split where `CFBundleName` was
+  `diting-tianer` and `CFBundleDisplayName` was `谛听 · 天耳` —
+  the split was what produced the language-inconsistent prompts
+  in the first place.
+
 ## [1.0.3] — 2026-05-13
 
 First end-user-installed release surfaced a long-latent CoreWLAN

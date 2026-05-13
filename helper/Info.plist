@@ -11,11 +11,26 @@
     <key>CFBundleIdentifier</key>
     <string>com.chenchaoyi.diting.tianer</string>
 
+    <!-- CFBundleName / CFBundleDisplayName here are the English
+         defaults (fallback for any locale not in our lproj list).
+         The real per-locale display strings live in
+         Resources/{en,zh-Hans}.lproj/InfoPlist.strings so macOS
+         picks the user's preferred language for both the TCC prompt
+         header AND the prompt body
+         (NSLocationUsageDescription / NSBluetoothAlwaysUsageDescription).
+         Older macOS that doesn't honour CFBundleLocalizations still
+         falls back to these top-level values. -->
     <key>CFBundleName</key>
-    <string>diting-tianer</string>
+    <string>diting · tianer</string>
 
     <key>CFBundleDisplayName</key>
-    <string>谛听 · 天耳</string>
+    <string>diting · tianer</string>
+
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>zh-Hans</string>
+    </array>
 
     <key>CFBundlePackageType</key>
     <string>APPL</string>

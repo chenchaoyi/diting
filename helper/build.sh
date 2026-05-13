@@ -31,6 +31,19 @@ cp Info.plist "$BUNDLE/Contents/Info.plist"
 cp "$BIN_PATH" "$BUNDLE/Contents/MacOS/$BIN_NAME"
 chmod +x "$BUNDLE/Contents/MacOS/$BIN_NAME"
 
+# Ship per-locale InfoPlist.strings overrides so macOS's TCC
+# prompts (Location / Bluetooth) AND the Finder display name pick
+# up Chinese strings for zh users instead of the English defaults
+# baked into Info.plist. Without these, the user sees one prompt
+# with "谛听 · 天耳" (CFBundleDisplayName) and another with
+# "diting-tianer.app" (the bundle filename), since macOS uses
+# different name sources across TCC prompt categories.
+for lproj in Resources/*.lproj; do
+    if [ -d "$lproj" ]; then
+        cp -R "$lproj" "$BUNDLE/Contents/Resources/"
+    fi
+done
+
 echo "==> ad-hoc code signing"
 # Ad-hoc signature is enough for local use; macOS still recognises the
 # bundle as a distinct TCC subject. For distribution, replace `-` with

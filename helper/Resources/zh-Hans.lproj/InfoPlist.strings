@@ -1,0 +1,18 @@
+/* Simplified Chinese localisation for the helper bundle's Info.plist.
+ *
+ * Applies when the user's macOS preferred language starts with `zh`
+ * (zh-Hans, zh-CN, zh-HK with Simplified fallback). macOS shows
+ * these strings in the TCC prompts (CWNetwork / CBCentralManager
+ * permission dialogs) and in the Finder / Force Quit dialog.
+ *
+ * Keep parity with the EN strings — same fields, equivalent
+ * meaning. The brand name 谛听 · 天耳 follows the project memory:
+ * 谛听 (diting) is the family name, 天耳 (tianer) is the helper.
+ */
+
+"CFBundleDisplayName" = "谛听 · 天耳";
+"CFBundleName" = "谛听 · 天耳";
+
+"NSLocationUsageDescription" = "diting 读取附近 Wi-Fi 网络的 SSID 和 BSSID，用于识别 AP 与漫游事件。位置数据不会离开你的电脑。";
+"NSLocationWhenInUseUsageDescription" = "diting 读取附近 Wi-Fi 网络的 SSID 和 BSSID，用于识别 AP 与漫游事件。位置数据不会离开你的电脑。";
+"NSBluetoothAlwaysUsageDescription" = "diting 扫描附近 BLE 广播，TUI 才能显示周围的设备。";
