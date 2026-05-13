@@ -8,6 +8,32 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.6] — 2026-05-13
+
+v1.0.3 → v1.0.5 一路上想修 install.sh 安装路径下 CoreWLAN scan 数据
+被屏蔽的问题，做法是「disclaim 责任继承 + `CLLocationManager.start
+UpdatingLocation()` + `Thread.sleep(0.3)`」。disclaim 和 manager 初
+始化都是必要的，第三块错了：`Thread.sleep` 不会 pump run loop，所
+以 `CLLocationManager` 跟 `locationd` 的 delegate 回调握手在 CLI
+子进程的短生命周期里根本完不成。macOS 26 上 CoreWLAN 的屏蔽门看
+的是「调用方进程是不是已注册的 location 消费者」（不是「是否被授权」），
+所以即使 bundle 的 TCC 授权已经在了，scan 出来还是 null。
+
+用户从 v1.0.3 一路被卡到 v1.0.5，点了 Allow 弹窗也无解，就是这个
+原因。
+
+### 修复
+- **`runScanAndDumpJSON()` 现在真正 pump run loop 等
+  `CLLocationManager` 授权回调**。新加 `LocationAuthProbe` delegate，
+  在 `locationManagerDidChangeAuthorization` 回调里把 status 从
+  `.notDetermined` 翻转出来时打标记。scan 子命令以 50 ms 为粒度跑
+  `RunLoop.current.run(mode:.default, before:…)`，回调一落地立刻退
+  出（已授权的 bundle 上通常 <100 ms），或 2 秒超时兜底。完成后才
+  调 `scanForNetworks`。模式对齐已有的
+  `runBluetoothStatusProbe`。
+- 本地端到端验证：3 次冷启动 subprocess scan（每次先 kill helper
+  GUI 防止 warm-cache 干扰）全部返回 100% 解屏蔽行。
+
 ## [1.0.5] — 2026-05-13
 
 macOS 26 用户走一行 installer 装 v1.0.4 之后，helper bundle 的

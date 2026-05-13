@@ -9,6 +9,37 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.6] — 2026-05-13
+
+The v1.0.3 → v1.0.5 chain attempted to fix CoreWLAN scan
+redaction under install.sh-installed helpers via
+disclaim-responsibility + `CLLocationManager.startUpdatingLocation()`
++ `Thread.sleep(0.3)`. The disclaim hop and the manager init are
+necessary but the third piece was wrong: `Thread.sleep` does not
+pump the run loop, so `CLLocationManager`'s delegate-callback
+handshake with `locationd` never actually completes inside the
+short-lived CLI subprocess. CoreWLAN's redaction gate on macOS 26
+checks whether the calling process is a *registered* location
+consumer (not just an authorized one), so scans came back redacted
+even when the bundle's TCC grant was in place.
+
+This kept the user stuck at "需要以下权限：- 定位服务" through
+v1.0.3 / v1.0.4 / v1.0.5 even after clicking Allow on the popup.
+
+### Fixed
+- **`runScanAndDumpJSON()` pumps the run loop until the location
+  authorization callback fires.** New `LocationAuthProbe` delegate
+  signals when `locationManagerDidChangeAuthorization` resolves to
+  a non-`.notDetermined` state. The scan subcommand now runs
+  `RunLoop.current.run(mode:.default, before:…)` slices of 50 ms
+  each, exiting as soon as the callback lands (typically <100 ms
+  on a freshly-granted bundle) or after a 2 s timeout. Only then
+  does `scanForNetworks` get called. Mirrors the existing
+  `runBluetoothStatusProbe` pattern.
+- Verified locally end-to-end: 3 cold-start subprocess scans
+  (helper GUI killed between runs to defeat warm-cache effects)
+  return 100% unredacted rows.
+
 ## [1.0.5] — 2026-05-13
 
 User on macOS 26 installed v1.0.4 via the one-liner and ended up
