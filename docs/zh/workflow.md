@@ -191,6 +191,22 @@ openspec list                                              # 在飞 changes
 openspec view                                              # 仪表盘
 ```
 
+## 开发者路径 vs 最终用户安装
+
+到「能跑的 `diting`」一共两条路径，贡献者得清楚自己当下在跑哪条：
+
+- **开发者路径**（本文档）。`git clone` + `uv sync` + `make helper`
+  + `uv run diting`。会自动取仓库里的
+  `helper/diting-tianer.app`（`find_helper()` 把它排在搜索顺序最前
+  面）。在 diting 自身上迭代时永远走这条。
+- **最终用户安装**。README 里的 curl-bash 一行命令（`install.sh`）
+  下载 PyInstaller 冻结后的 binary + 一份 helper bundle 副本，分别
+  落到 `~/.local/share/diting/` 和 `~/Library/Application Support/
+  diting/`。用户拿到的就是这条。
+
+两条路径在同机上互不干扰。最终用户路径的发版细节见
+[`docs/RELEASE.md`](RELEASE.md)。
+
 ## CI 强制项
 
 `.github/workflows/test.yml` 在每次 PR 与 push 到 `main` 时跑：

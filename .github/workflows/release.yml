@@ -1,0 +1,141 @@
+name: release
+
+# Builds per-arch tarballs on tag push and uploads them to the
+# GitHub Release. The install.sh one-liner reads from these assets
+# via the GitHub API.
+#
+# Trigger:
+#   - push of a tag matching `v*` (the release flow)
+#   - manual workflow_dispatch (dry-run; uploads to a draft release
+#     so we can inspect the artefact before cutting a real tag)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version override for workflow_dispatch runs (e.g. v0.10.0-rc1)"
+        required: false
+        default: ""
+
+# Block concurrent runs on the same ref so two tag pushes in
+# quick succession can't produce a racy double-upload.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  # gh release upload needs to write to the release.
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14   # M1 hosted runner → arm64
+            arch: arm64
+          - os: macos-13   # x86_64 hosted runner → x86_64
+            arch: x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="${{ inputs.version }}"
+            if [ -z "$VERSION" ]; then VERSION="v0.0.0-dispatch"; fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "num_version=${VERSION#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.11
+        run: uv python install 3.11
+
+      - name: Sync release dependencies
+        # PyInstaller lives in the [release] group. --all-groups
+        # also pulls dev tools we don't need; --group release keeps
+        # the build env lean.
+        run: uv sync --group release --python 3.11
+
+      - name: Build Swift helper
+        run: ( cd helper && ./build.sh )
+
+      - name: Run package_release.sh
+        env:
+          # Stage everything under the workspace so the upload step
+          # can find the tarball + sha256 by glob.
+          DITING_RELEASE_VERSION: ${{ steps.ver.outputs.num_version }}
+        run: |
+          uv run --python 3.11 \
+            bash scripts/package_release.sh "${{ steps.ver.outputs.num_version }}"
+
+      - name: Upload tarball to release
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push'
+        with:
+          tag_name: ${{ steps.ver.outputs.version }}
+          files: |
+            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-${{ matrix.arch }}.tar.gz
+            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-${{ matrix.arch }}.tar.gz.sha256
+
+      - name: Upload tarball as workflow artifact (dispatch dry-runs)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: diting-${{ steps.ver.outputs.num_version }}-darwin-${{ matrix.arch }}
+          path: |
+            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-${{ matrix.arch }}.tar.gz
+            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-${{ matrix.arch }}.tar.gz.sha256
+          retention-days: 14
+
+  shasums:
+    # Aggregate the per-arch .sha256 sidecars into a single
+    # SHASUMS256.txt sibling asset on the release, which is what
+    # install.sh fetches for verification.
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "num_version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch per-arch tarballs from the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p tarballs
+          gh release download "${{ steps.ver.outputs.version }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "diting-${{ steps.ver.outputs.num_version }}-darwin-*.tar.gz" \
+            --dir tarballs
+
+      - name: Compute SHASUMS256.txt
+        run: |
+          ( cd tarballs && sha256sum *.tar.gz ) > SHASUMS256.txt
+          cat SHASUMS256.txt
+
+      - name: Upload SHASUMS256.txt to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.version }}
+          files: SHASUMS256.txt

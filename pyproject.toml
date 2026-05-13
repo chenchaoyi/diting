@@ -28,6 +28,9 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.0.3",
 ]
+release = [
+    "pyinstaller>=6.10",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -205,6 +205,19 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Cluster labels stable across sessions | `test_network.py::test_cluster_label_groups_chip`, `::test_cluster_label_separates_unrelated`, `::test_cluster_label_none_or_malformed` |
 | BSSID format normalised (lowercase, colon-separated) | `test_network.py::test_format_bssid_known_with_band`, `::test_format_bssid_unknown_passthrough`, `::test_format_bssid_none`, `test_ble.py::test_lookup_oui_vendor_dash_separated_mac`, `::test_lookup_oui_vendor_colon_separated_mac` |
 
+### `installation`
+
+| Requirement | Test |
+|---|---|
+| One-line installer drops a working `diting` onto macOS without Python / uv / Xcode | (manual — end-to-end install on a fresh user account; the per-branch unit tests below cover the install.sh logic in isolation) |
+| Installer refuses to run on non-macOS hosts with a clear error | `test_install.py::test_install_script_refuses_linux`, `::test_install_script_refuses_unknown_uname` |
+| Tarball SHA256 verified against `SHASUMS256.txt`, mismatch aborts | `test_install.py::test_install_script_aborts_on_sha_mismatch`, `::test_install_script_accepts_matching_sha` |
+| Tarball extracted under `~/.local/share/diting/`, symlinked at `~/.local/bin/diting`; sudo not required | `test_install.py::test_install_script_lays_out_user_local_paths_in_dry_run` |
+| Helper bundle copied to `~/Library/Application Support/diting/`, quarantine xattr stripped, `open` primes TCC | `test_install.py::test_install_script_primes_application_support_helper_in_dry_run` |
+| PATH-update hint printed when `~/.local/bin` not on PATH (zsh / bash / fish detected) | `test_install.py::test_install_script_emits_zsh_path_hint`, `::test_install_script_silent_when_already_on_path` |
+| `DITING_VERSION=vX.Y.Z` env var pins the install to a specific tag | `test_install.py::test_install_script_uses_diting_version_override` |
+| Frozen-binary install coexists with `uv run diting` developer flow | (review-enforced — search-path priority pins the in-repo dev build first; tested via `test_helper.py::test_find_helper_repo_dev_build_shadows_application_support`) |
+
 ### `link-health`
 
 | Requirement | Test |
@@ -226,6 +239,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Adv objects plumb required CoreBluetooth fields | `test_ble.py::test_schema_4_raw_passthrough_fields_populate` |
 | Connected snapshots from IOBluetoothDevice (not CoreBluetooth) | `test_ble.py::test_connected_line_routes_to_connected_dict_only`, `::test_ble_scan_update_propagates_connected_through_poller` |
 | Helper auto-detectable from Python | `test_helper.py::test_find_helper_env_override_wins`, `::test_find_helper_env_override_can_point_at_binary`, `::test_find_helper_returns_none_when_nothing_present`, `::test_bundle_path_extracts_app_dir`, `::test_bundle_path_none_for_loose_binary` |
+| `find_helper()` also picks up the one-line installer's drop at `~/Library/Application Support/diting/diting-tianer.app`, with the in-repo dev build keeping priority | `test_helper.py::test_find_helper_picks_up_application_support_bundle`, `::test_find_helper_repo_dev_build_shadows_application_support` |
 | Helper exits 3 + writes "bluetooth unauthorized" on TCC denial | `test_ble.py::test_permission_denied_via_subprocess_exit_code`, `test_helper.py::test_has_bluetooth_permission_false_on_unauthorized` |
 
 ### `mdns-scanning`

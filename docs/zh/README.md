@@ -96,24 +96,45 @@ Apple 的面板不会告诉你你连在哪台 AP；谛听会，而且按 `c` 一
 
 ## 快速开始
 
-需要 Python 3.11+ 与 [uv](https://docs.astral.sh/uv/)，外加 Xcode 命令行工具
-（首次启动时会从一份小 Swift 源码自动构建辅助进程）。
+```bash
+curl -fsSL https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh | bash
+diting
+```
+
+一行搞定。你的机器上**不需要** Python、`uv`、Xcode 命令行工具——
+installer 会下载一份自包含的二进制 + 辅助 bundle，分别落到
+`~/.local/share/diting/` 和 `~/Library/Application Support/diting/`。
+首次运行 macOS 会弹「定位服务」与「蓝牙」授权对话框，点 Allow 即可，
+TUI 启动并显示完整的 SSID / BSSID / BLE 数据。
+
+> **为什么需要辅助进程？** macOS 14.4+ 把 SSID 与 BSSID 隐藏成 None，
+> 除非调用进程已被授予「定位服务」权限。从 Terminal 启动的 Python CLI
+> 进不了那个权限列表，但一个小 `.app` bundle 可以。`diting` 调用它取
+> 扫描数据，从而拿回真实值。在 TUI 里按 `h` 看完整说明。
+
+锁版本：
+
+```bash
+DITING_VERSION=v0.10.0 curl -fsSL https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh | bash
+```
+
+### 源码安装（贡献者路径）
+
+需要 Python 3.11+、[uv](https://docs.astral.sh/uv/) 与 Xcode 命令行工具
+（辅助进程会从 Swift 源码现场编译）。
 
 ```bash
 git clone git@github.com:chenchaoyi/diting.git
 cd diting
 uv sync
+make helper          # 一次：编译 + 签 Swift 辅助 bundle
+open helper/diting-tianer.app   # 一次：授予定位服务 + 蓝牙
 uv run diting
 ```
 
-首次运行时，`diting` 会构建并 `open` 一个迷你的 **辅助进程 .app**，请求
-「定位服务」权限。点一次 Allow，窗口自动关闭，TUI 启动并显示完整的 SSID
-和 BSSID。后续启动直接进 TUI —— 授权是持久的。
-
-> **为什么需要辅助进程？** macOS 14.4+ 把 SSID 与 BSSID 隐藏成 None，
-> 除非调用进程已被授予「定位服务」权限。从 Terminal 启动的 Python CLI 进
-> 不了那个权限列表，但一个小 `.app` 打包可以。`diting` 调用它来取扫描
-> 数据，从而拿回真实值。在 TUI 里按 `h` 看完整说明。
+`uv run diting` 与 curl 装的 `diting` 可以同机共存——开发者路径继续从
+仓库内的 helper 取数据，安装好的 binary 走自己的 Application Support
+副本。
 
 ## 切换语言
 

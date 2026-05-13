@@ -111,29 +111,50 @@ BSSID. Same path as menu-off-then-on, in one keystroke.
 
 ## Quick start
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh | bash
+diting
+```
+
+One command. No Python, no `uv`, no Xcode Command Line Tools on
+your machine — the installer downloads a self-contained binary
+plus the helper bundle and drops them in
+`~/.local/share/diting/` and `~/Library/Application Support/diting/`.
+On first run a macOS dialog asks for Location Services and Bluetooth
+permission; click Allow, and the TUI launches with full SSID, BSSID,
+and BLE data.
+
+> **Why the helper?** macOS 14.4+ redacts SSID and BSSID to None
+> unless the calling process has Location Services. A Python CLI
+> launched from Terminal cannot get on that list, but a tiny `.app`
+> bundle can. `diting` shells out to it for scan data and gets the
+> real values back. Press `h` inside the TUI for the full story.
+
+Pin a specific release:
+
+```bash
+DITING_VERSION=v0.10.0 curl -fsSL https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh | bash
+```
+
+### From source (for contributors)
+
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/), plus the
-Xcode Command Line Tools (the helper bundle is built from a small
-Swift source on first launch).
+Xcode Command Line Tools (the helper bundle is built from Swift
+sources on first launch).
 
 ```bash
 git clone git@github.com:chenchaoyi/diting.git
 cd diting
 uv sync
+make helper          # one-time: build + sign the Swift helper bundle
+open helper/diting-tianer.app   # one-time: grant Location Services + Bluetooth
 uv run diting
 ```
 
-On first run, `diting` builds and opens a tiny **helper bundle**
-that asks for Location Services permission. Click Allow once; the
-window auto-closes; the TUI launches with full SSID and BSSID for
-every visible AP. Subsequent runs go straight to the TUI — the grant
-is persistent.
-
-> **Why the helper?** macOS 14.4+ redacts SSID and BSSID to None
-> unless the calling process has Location Services. A Python CLI
-> launched from Terminal cannot get on that list, but a tiny `.app`
-> bundle can. `diting` shells out to it for scan data and gets
-> the real values back. Press `h` inside the TUI for the full
-> story.
+`uv run diting` and the curl-installed `diting` can coexist on the
+same machine — the developer flow keeps picking up the in-repo
+helper, the installed binary uses its own copy under Application
+Support.
 
 ## Switching language
 

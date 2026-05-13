@@ -206,6 +206,25 @@ openspec list                                              # active changes
 openspec view                                              # dashboard
 ```
 
+## Developer flow vs end-user install
+
+There are two paths to a working `diting`, and contributors should
+know which one they're testing at any moment:
+
+- **Developer flow** (this guide). `git clone` + `uv sync` + `make
+  helper` + `uv run diting`. Picks up the in-repo
+  `helper/diting-tianer.app` automatically (priority in
+  `find_helper()`'s search order). Always the right path when
+  you're iterating on diting itself.
+- **End-user install**. The curl-bash one-liner from the README
+  (`install.sh`) downloads a PyInstaller-frozen binary plus a copy
+  of the helper bundle into `~/.local/share/diting/` and
+  `~/Library/Application Support/diting/`. This is what users get.
+
+The two coexist on the same machine without interference. The
+release-cutting steps for the end-user path live in
+[`docs/RELEASE.md`](RELEASE.md).
+
 ## CHANGELOG + bilingual docs
 
 `CHANGELOG.md` keeps user-facing release notes (English). As of
