@@ -103,26 +103,19 @@ cp -R helper/diting-tianer.app "$STAGE_DIR/share/diting-tianer.app"
 
 # ---- produce tarball ----
 
-# Reproducibility-ish: pin the mtime so a rebuild of the same
-# version doesn't produce a byte-different tarball. --owner / --group
-# / --numeric-owner make the archive look the same regardless of
-# whose machine produced it (helps SHASUMS verification land
-# consistently across CI matrix jobs).
+# Plain `tar -czf`. We do NOT pass `--owner=0 --group=0
+# --numeric-owner` here even though it would produce a more
+# reproducible archive — those are GNU-tar-only flags and macOS
+# ships bsdtar, which rejects them outright (bsdtar accepts a
+# different `--uid`/`--gid` syntax that doesn't ride alongside).
+# Per-arch tarballs are built fresh on clean hosted runners, so the
+# uid/gid baked into the archive header is whatever the runner uses
+# (uid 502 in practice). SHA256 verification of the resulting
+# tarball is what the install.sh path actually relies on for
+# integrity; a deterministic header would be nice-to-have, not
+# load-bearing.
 echo "==> tarballing into ${TARBALL}"
-tar \
-  --no-mac-metadata 2>/dev/null \
-  --owner=0 --group=0 --numeric-owner \
-  -czf "$TARBALL" \
-  -C dist \
-  "${STAGE_NAME}" || tar \
-  --owner=0 --group=0 --numeric-owner \
-  -czf "$TARBALL" \
-  -C dist \
-  "${STAGE_NAME}"
-# (the `|| tar ...` fallback drops `--no-mac-metadata` on platforms
-# where bsdtar doesn't recognise that flag — older macOS releases
-# accept it, brand-new GNU tar does not. The tarball still produces
-# correct contents either way.)
+tar -czf "$TARBALL" -C dist "${STAGE_NAME}"
 
 # SHA256 sidecar so CI can stitch SHASUMS256.txt together across
 # matrix jobs without re-hashing.

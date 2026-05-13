@@ -8,6 +8,11 @@ build/
 dist/
 *.egg-info/
 *.egg
+# PyInstaller writes <name>.spec at the repo root on the first run
+# of `scripts/build_frozen.py`. The build script is the source of
+# truth for the freeze config; the generated .spec is regenerated
+# every build and never checked in.
+diting.spec
 
 # Virtual environments (uv puts venvs at .venv by default)
 .venv/
@@ -63,3 +68,6 @@ snapshot-output/
 # Personal/meeting notes — never commit. Keep these out of the public repo.
 会议纪要_*.md
 /会议纪要*.md
+
+# Claude Code scheduled-task local state.
+.claude/scheduled_tasks.lock

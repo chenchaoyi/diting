@@ -8,6 +8,36 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.2] — 2026-05-13
+
+第二个针对 v1.0.0 发布流水线的热修复。v1.0.1 解开了 Swift helper 构建
+那一卡，分架构 tarball 那一步又卡在另外两个问题上：
+
+1. `scripts/package_release.sh` 调 `tar` 时带了 GNU-only 标志
+   （`--owner=0 --group=0 --numeric-owner`），macOS bsdtar 直接拒绝。
+   我为 `--no-mac-metadata` 写的回退分支也带着这些 GNU 标志，所以
+   tarball 那一步在托管 runner 上就死了。
+2. PyInstaller 冻结后的 binary 首次运行就崩在
+   `ImportError: attempted relative import with no known parent
+   package`。PyInstaller 把 `cli.py` 当顶层脚本编译，丢掉了模块自身
+   `from .x import y` 依赖的 `diting` 包上下文。
+
+装了 v1.0.0 / v1.0.1 的最终用户应该装 v1.0.2 —— 那两个 tag 都没产出
+可消费的发布产物。`install.sh` 默认解析最新 tag，所以 curl 一行会自
+动取 v1.0.2。
+
+### 修复
+- **Tarball 在 macOS bsdtar 上能正常打**。从
+  `scripts/package_release.sh` 里去掉 GNU-only 的
+  `--owner=0 --group=0 --numeric-owner`，纯 `tar -czf` 哪里都能跑。
+  原本想要的 tarball 可复现（uid/gid 头一致）只是 nice-to-have，
+  不是关键 —— SHASUMS256.txt 的 SHA256 才是真正的完整性保证。
+- **冻结 binary 保留包上下文**。新增
+  `scripts/frozen_entry.py` stub，里面只 import `diting.cli:main`
+  并调用；PyInstaller 现在编译这个 stub（外加 `--paths src`），
+  而不是直接编译 `cli.py`。diting 包内部的相对 import 运行时能正
+  常 resolve。
+
 ## [1.0.1] — 2026-05-13
 
 v1.0.0 发布流水线的热修复。Swift helper 源码里一个函数调用参数列表的
