@@ -9,6 +9,49 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.3] — 2026-05-13
+
+First end-user-installed release surfaced a long-latent CoreWLAN
+bug that only bites under the install.sh flow, plus two small
+helper-popup UX issues. v1.0.2's install path worked but `diting`
+itself hung at "需要以下权限：定位服务" because the helper's `scan`
+subcommand kept returning redacted BSSIDs even after the user
+clicked Allow.
+
+### Fixed
+- **Wi-Fi scan unredacts under install-script TCC grants.** Two
+  parallel issues kept BSSIDs / SSIDs `null`:
+  1. The helper's `scan` subcommand inherited responsibility from
+     its terminal parent, so tccd attributed the request to
+     Terminal (no `NSLocationUsageDescription`) instead of the
+     bundle. The BLE path has done a
+     `responsibility_spawnattrs_setdisclaim` re-exec since
+     v0.5.0; `scan` now does the same hop.
+  2. macOS 14.4+ / 26 requires an active `CLLocationManager` in
+     the calling process at the moment of `scanForNetworks` — the
+     bundle's TCC grant on disk is necessary but not sufficient.
+     The `scan` subcommand now initialises a `CLLocationManager`
+     and calls `startUpdatingLocation()` before the CoreWLAN
+     call, mirroring what the GUI bundle has always done.
+  The earlier code comment claiming CoreLocation was "more
+  lenient than CoreBluetooth" was wrong — verified locally that
+  with both fixes BSSIDs / SSIDs / IE diagnostics flow as
+  expected.
+
+### Changed
+- **Helper popup window is localised.** When `DITING_LANG=zh` (passed
+  via `open --env` from Python's launcher) or when macOS's
+  `Locale.preferredLanguages` starts with `zh`, the popup window
+  shows Chinese instead of English. Title becomes "diting 天耳",
+  body / status lines translate accordingly. The first-launch
+  install.sh popup also picks up zh automatically for users on a
+  Chinese-locale Mac.
+- **Helper popup auto-close delay 1.5s → 4s.** Users reported the
+  "All permissions granted" confirmation flashed by too fast to
+  read; 4 s is long enough to comfortably take in without being
+  annoying. The Python launcher's polling loop picks up the
+  grants immediately regardless of how long the window stays up.
+
 ## [1.0.2] — 2026-05-13
 
 Second hot-fix to the v1.0.0 release pipeline. v1.0.1 unblocked the

@@ -8,6 +8,41 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.3] — 2026-05-13
+
+第一个真正可被最终用户装出来的 release。装出来之后 `diting` 一直卡
+在「需要以下权限：定位服务」，原因是 helper 的 `scan` 子命令即使在
+用户点了 Allow 之后，依然返回被 TCC 屏蔽的 BSSID/SSID。同时修了两
+个 helper 弹窗的小 UX 问题。
+
+### 修复
+- **install.sh 安装路径下 Wi-Fi 扫描真正解除 TCC 屏蔽**。两个并行的
+  问题让 BSSID / SSID 都是 `null`：
+  1. helper 的 `scan` 子命令继承了 terminal 父进程的 responsibility，
+     tccd 把 Location 请求算到 Terminal 头上（Terminal 没有
+     `NSLocationUsageDescription`），CWNetwork 直接静默屏蔽
+     ssid / bssid。BLE 路径自 v0.5.0 起就用
+     `responsibility_spawnattrs_setdisclaim` 重启自己来打断这条
+     继承；`scan` 现在做同样的 hop。
+  2. macOS 14.4+ / 26 要求**当前进程**在 `scanForNetworks` 调用
+     的瞬间有活动的 `CLLocationManager`，bundle 的 TCC 授权只是必
+     要条件不是充分条件。`scan` 子命令现在在调 CoreWLAN 之前先
+     `CLLocationManager` + `startUpdatingLocation()`，跟 GUI bundle
+     一直在做的同。
+  代码里原来注释说 CoreLocation 比 CoreBluetooth「宽松」是错的——
+  本地验证两个修复同时上之后，BSSID / SSID / Beacon IE 数据如期
+  流出。
+
+### 变更
+- **helper 弹窗本地化**。`DITING_LANG=zh`（Python 启动器通过
+  `open --env` 传过来）或 macOS 的 `Locale.preferredLanguages` 以
+  `zh` 开头时，弹窗切到中文：标题改为「diting 天耳」，正文 / 状态
+  行也都翻译过来。中文 locale 用户跑 install.sh 时弹的第一个窗也
+  自动是中文。
+- **弹窗自动关闭从 1.5 s 改到 4 s**。多位用户反馈「全部权限已授予」
+  闪一下就消失，看不清；4 s 既够看完，又不至于让人觉得磨蹭。Python
+  启动器的轮询不依赖窗口停留时长，授权一落地立刻被识别。
+
 ## [1.0.2] — 2026-05-13
 
 第二个针对 v1.0.0 发布流水线的热修复。v1.0.1 解开了 Swift helper 构建

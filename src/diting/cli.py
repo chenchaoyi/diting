@@ -891,8 +891,24 @@ def _ensure_helper_ready() -> str | None:
     print(t("(Ctrl+C to skip and start the TUI with degraded views.)"))
     print()
     try:
+        # `open --env KEY=VALUE` bridges our process env into the
+        # LaunchServices-spawned bundle. Without this, the bundle would
+        # inherit the user's login session env, which doesn't know
+        # anything about diting's --lang flag, and the popup window
+        # would show English even when the user is running
+        # `diting --lang zh`. We pass DITING_LANG explicitly so the
+        # Swift HelperAppDelegate's HelperStrings struct picks the
+        # right localisation. The bundle falls back to
+        # `Locale.preferredLanguages` if we don't set this, which
+        # covers install.sh's first-launch `open -g` call (no Python
+        # in the chain to know about --lang yet).
+        open_argv = [
+            "/usr/bin/open",
+            "--env", f"DITING_LANG={i18n.get_lang()}",
+            bundle,
+        ]
         subprocess.Popen(
-            ["/usr/bin/open", bundle],
+            open_argv,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except OSError as e:
