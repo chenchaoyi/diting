@@ -15,9 +15,18 @@ readonly BUNDLE="diting-tianer.app"
 readonly BIN_NAME="diting-tianer"
 
 echo "==> swift build -c release"
-swift build -c release --product "$BIN_NAME"
-
-readonly BIN_PATH=".build/release/$BIN_NAME"
+# DITING_HELPER_UNIVERSAL=1 builds a universal2 binary (arm64 +
+# x86_64 in one Mach-O) so the same .app ships in both per-arch
+# release tarballs. Release workflow sets this; local dev defaults
+# to native-only for a faster build.
+if [ "${DITING_HELPER_UNIVERSAL:-}" = "1" ]; then
+    echo "==> universal2 build (arm64 + x86_64)"
+    swift build -c release --arch arm64 --arch x86_64 --product "$BIN_NAME"
+    readonly BIN_PATH=".build/apple/Products/Release/$BIN_NAME"
+else
+    swift build -c release --product "$BIN_NAME"
+    readonly BIN_PATH=".build/release/$BIN_NAME"
+fi
 if [ ! -f "$BIN_PATH" ]; then
     echo "build failed: $BIN_PATH does not exist" >&2
     exit 1

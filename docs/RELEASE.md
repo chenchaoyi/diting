@@ -7,16 +7,26 @@ How to cut a new version that the curl-bash one-liner installs.
 
 ## What gets released
 
-Each tagged version produces three release assets on GitHub:
+Each tagged version produces these release assets on GitHub:
 
 | Asset | Built by | Consumed by |
 |---|---|---|
-| `diting-X.Y.Z-darwin-arm64.tar.gz` | matrix job `macos-14` | install.sh on Apple Silicon |
-| `diting-X.Y.Z-darwin-x86_64.tar.gz` | matrix job `macos-13` | install.sh on Intel |
-| `SHASUMS256.txt` | `shasums` job after both matrix builds | install.sh SHA verification |
+| `diting-X.Y.Z-darwin-arm64.tar.gz` | `macos-14` runner (native) | install.sh on Apple Silicon |
+| `diting-X.Y.Z-darwin-x86_64.tar.gz` | `macos-14` runner under Rosetta 2 | install.sh on Intel |
+| `<arch>.tar.gz.sha256` (×2) | `package_release.sh` (one per arch) | sidecar, aggregated by `shasums` job |
+| `SHASUMS256.txt` | `shasums` job after both arch builds | install.sh SHA verification |
+
+Both arches are built from the **same** `macos-14` (arm64) runner.
+The Swift helper is built once as a universal2 binary (one Mach-O
+with both arm64 and x86_64 slices) and shipped inside both
+tarballs. The PyInstaller-frozen Python is arch-specific and gets
+built twice: natively for arm64, under Rosetta 2 (`arch -x86_64`)
+for x86_64. See the `build` job in `.github/workflows/release.yml`
+for the full sequence.
 
 Each tarball contains a PyInstaller-frozen `diting` binary plus a
-copy of the Swift helper bundle (`diting-tianer.app`). Layout:
+copy of the universal2 Swift helper bundle (`diting-tianer.app`).
+Layout:
 
 ```
 diting-X.Y.Z/
@@ -41,11 +51,12 @@ diting-X.Y.Z/
    ```
    The tag push triggers `.github/workflows/release.yml`.
 
-3. **Watch the workflow.** Both matrix jobs (`macos-14` and
-   `macos-13`) build the helper, freeze the Python binary, run
-   `scripts/package_release.sh`, and upload the tarball + `.sha256`
-   sidecar to the release. The `shasums` job runs after both, pulls
-   the tarballs back down via `gh release download`, computes
+3. **Watch the workflow.** The single `build` job on `macos-14`
+   produces both arches: builds the universal2 helper once,
+   PyInstaller-freezes Python natively for arm64, then again under
+   Rosetta 2 for x86_64. Both tarballs + their `.sha256` sidecars
+   are uploaded to the release. The `shasums` job runs after,
+   pulls the tarballs back down via `gh release download`, computes
    `SHASUMS256.txt`, and uploads it as a sibling asset.
 
 4. **Smoke-test the install.** On a clean macOS account (or a Mac
@@ -95,10 +106,13 @@ bash scripts/package_release.sh 0.10.0-rc1
   notarization. Until then the warning fires only once per
   cdhash — re-installing the same release doesn't re-trigger it.
 
-- **`macos-13` runner deprecation.** GitHub will eventually retire
-  the Intel hosted runners. When that happens we either move
-  x86_64 builds to whatever the latest x86_64 runner is, or drop
-  x86_64 (Apple Silicon adoption is >70% of new Macs as of 2026).
+- **`macos-13` runner queue.** As of v1.0.8 (2026-05-13) the
+  workflow no longer uses `macos-13` at all. Both arches build on a
+  single `macos-14` (arm64) runner; the helper goes universal2 and
+  the frozen Python is built twice (native + Rosetta). If GitHub
+  ever retires the arm64 hosted runners too, point the workflow at
+  the current `macos-N` arm64 tier; the Rosetta 2 step keeps
+  working as long as Apple ships Rosetta.
 
 - **Upgrade users get re-prompted for Location and Bluetooth after a
   release.** Expected when the helper bundle's cdhash changes —

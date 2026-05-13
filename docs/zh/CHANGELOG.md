@@ -8,13 +8,12 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
-## [Unreleased]
+## [1.0.8] — 2026-05-14
 
-安装后的 UX 太乱了——三个窗口、两种语言堆在一起，其中一个权限弹窗
-还直接显示原始 bundle 文件名。本次围绕 helper bundle 重塑成一条
-顺序授权流程，并把 diting 自己的 logo 端到端打通。
+两件事并行落地：helper bundle 有了自己的图标和一条顺序的安装授权
+流（不再三窗口堆叠），release 流水线也终于稳定产出 x86_64 包了。
 
-### 新增
+### 新增（helper bundle / 安装体验）
 - **helper bundle 用 diting logo 作为 AppIcon。** 预渲染好的 PNG
   按 macOS iconset 全套尺寸放在
   `helper/Resources/AppIcon.iconset/`（由
@@ -30,7 +29,7 @@
 - **安装时多请求一次通知权限**（与定位、蓝牙并列），让 watchdog
   之后再发通知时不会突然弹个意料之外的授权框。
 
-### 变更
+### 变更（helper bundle / 安装体验）
 - **安装时的权限流程改成单一顺序向导。** `HelperAppDelegate`
   按定位 → 蓝牙 → 通知顺序请求，每一步等上一步授权回调返回后才进
   下一步。用户每次只在状态窗口上看到一个 macOS TCC 弹窗。状态面板
@@ -55,10 +54,41 @@
   helper 不存在时静默丢弃通知。这一改顺带干掉了之前每条通知都带的
   AppleScript 卷轴图标。
 
-### 升级说明
+### 变更（release 流水线）
+Intel（x86_64）发布产物每个 tag 都能产出了。从 v1.0.0 到 v1.0.7，
+x86_64 tarball 只在 `macos-13` runner 碰巧可用时才会落地——而 2026
+年 GitHub Actions 一直在收紧 Intel 托管 runner 池，「碰巧可用」基
+本等于「几乎不发生」。v1.0.7 发布时 Intel job 排了几个小时还没动，
+最后是用户手动上传了一份只含 arm64 的 SHASUMS 才把 arm64 用户解
+锁。
+
+- **发布流水线现在用单个 `macos-14`（arm64）runner 同时构建两种
+  arch**：
+  - Swift helper 一次性构建成 **universal2**（`swift build --arch
+    arm64 --arch x86_64`）—— 单个 .app，binary 里同时塞了两种
+    arch slice。env var `DITING_HELPER_UNIVERSAL=1` 控制是否走
+    universal2 路径，本地开发默认还是单 arch 原生构建（更快）。
+  - PyInstaller 冻结的 Python binary 跟当前运行 Python 的 arch 绑
+    定，所以构建两次：一次在 arm64 host 上原生跑，一次通过
+    **Rosetta 2**（`arch -x86_64`）跑。Rosetta 那条路径用独立的
+    `uv`（也是 Rosetta 装的）拉 x86_64 的 pyobjc / ifaddr /
+    zeroconf wheels。
+  - 两个 tarball 都传到 release，`shasums` job 像之前一样汇总。从
+    install.sh 的视角看 release 产物没变 —— 还是按 `uname -m` 拉
+    `diting-<v>-darwin-<arch>.tar.gz`。
+- **本地开发不受影响**：`helper/build.sh` 默认还是原生构建。要测
+  universal2 时设 `DITING_HELPER_UNIVERSAL=1`。
+
+### 升级说明（破坏性）
 新加的 `CFBundleIconFile` 字段会改变 bundle 的 cdhash。从 v1.0.x
 升级的用户在下一次安装时会再被询问一次定位与蓝牙授权（并第一次
 获得通知授权）。之后在同一路径再次安装会保留授权。
+
+### 注意事项
+- Rosetta 模拟下的 PyInstaller 比同机原生跑慢约 2 倍 —— 单次发布
+  的 workflow 总时长多 3–5 分钟。可接受。
+- x86_64 冻结 binary 是 arm64 host 上模拟构建出来的；本变更没有在
+  真的 Intel Mac 上端到端冒烟过。志愿验证欢迎。
 
 ## [1.0.7] — 2026-05-13
 

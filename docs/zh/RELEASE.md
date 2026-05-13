@@ -7,16 +7,24 @@
 
 ## 发布产物
 
-每个 tag 对应 GitHub Release 上的三个 asset：
+每个 tag 对应 GitHub Release 上的这些 asset：
 
 | Asset | 由谁构建 | 谁消费 |
 |---|---|---|
-| `diting-X.Y.Z-darwin-arm64.tar.gz` | matrix job `macos-14` | install.sh（Apple Silicon） |
-| `diting-X.Y.Z-darwin-x86_64.tar.gz` | matrix job `macos-13` | install.sh（Intel） |
-| `SHASUMS256.txt` | 两个 matrix 跑完后的 `shasums` job | install.sh 的 SHA 校验 |
+| `diting-X.Y.Z-darwin-arm64.tar.gz` | `macos-14` runner（原生） | install.sh（Apple Silicon） |
+| `diting-X.Y.Z-darwin-x86_64.tar.gz` | `macos-14` runner 上 Rosetta 2 | install.sh（Intel） |
+| `<arch>.tar.gz.sha256`（×2） | `package_release.sh`（每 arch 一份） | sidecar，由 `shasums` job 汇总 |
+| `SHASUMS256.txt` | 两个 arch 都构建完后的 `shasums` job | install.sh 的 SHA 校验 |
 
-每个 tarball 含一个 PyInstaller 冻结后的 `diting` 二进制 + Swift
-helper bundle 副本（`diting-tianer.app`）。结构：
+两种 arch 都从**同一个** `macos-14`（arm64）runner 上构建。Swift
+helper 只编译一次，产出 universal2 binary（单个 Mach-O 里同时包含
+arm64 与 x86_64 两个 slice），两份 tarball 都用这同一个 helper。
+PyInstaller 冻结的 Python 是 arch-specific，所以分两次构建：arm64
+走原生，x86_64 走 Rosetta 2（`arch -x86_64`）。完整顺序见
+`.github/workflows/release.yml` 里的 `build` job。
+
+每个 tarball 含一个 PyInstaller 冻结后的 `diting` 二进制 + 一份
+universal2 的 Swift helper bundle（`diting-tianer.app`）。结构：
 
 ```
 diting-X.Y.Z/
@@ -41,12 +49,12 @@ diting-X.Y.Z/
    ```
    tag 推送会触发 `.github/workflows/release.yml`。
 
-3. **盯 workflow。** 两个 matrix job（`macos-14` 与 `macos-13`）各
-   自构建 helper、冻结 Python binary、跑
-   `scripts/package_release.sh`、把 tarball + `.sha256` sidecar 上
-   传到 release。`shasums` job 等两边跑完后，用 `gh release
-   download` 拉回来，跑 `sha256sum`，把汇总好的 `SHASUMS256.txt`
-   作为 sibling asset 传上去。
+3. **盯 workflow。** 单个 `build` job 在 `macos-14` 上产出两种
+   arch：一次性构建 universal2 helper，arm64 原生跑 PyInstaller，
+   再走 Rosetta 2 跑 x86_64。两个 tarball + 各自的 `.sha256`
+   sidecar 一起上传到 release。`shasums` job 跑完后用
+   `gh release download` 拉回来跑 `sha256sum`，把汇总好的
+   `SHASUMS256.txt` 作为 sibling asset 传上去。
 
 4. **在干净环境冒烟。** 在干净 macOS 账号（或没有源码树的 Mac）
    上跑：
@@ -92,10 +100,12 @@ bash scripts/package_release.sh 0.10.0-rc1
   Apple Developer 签名 + 公证。在此之前同一 cdhash 只会弹一次警
   告——重装相同版本不会再触发。
 
-- **`macos-13` runner 退役。** GitHub 终将下线 Intel 托管 runner。
-  到那时要么把 x86_64 构建迁到当时最新的 x86_64 runner，要么
-  直接放弃 x86_64（截止 2026 年 Apple Silicon 在新 Mac 中占比已
-  >70%）。
+- **`macos-13` runner 队列。** 从 v1.0.8（2026-05-13）起 workflow
+  完全不再用 `macos-13`。两种 arch 都在一个 `macos-14`（arm64）
+  runner 上构建；helper 改成 universal2，冻结 Python 跑两次（原生
+  + Rosetta）。如果 GitHub 以后连 arm64 托管 runner 都退役，把
+  workflow 指向当时最新的 `macos-N` arm64 即可；只要苹果还发
+  Rosetta，Rosetta 那步就还能用。
 
 - **升级用户在新版本安装后又被询问了一次定位与蓝牙授权。** 这是预期
   行为——helper bundle 的 cdhash 变了，macOS TCC 按 cdhash 锚授权。
