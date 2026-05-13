@@ -54,6 +54,43 @@ import IOBluetooth
 // ---------------------------------------------------------------------
 
 func runScanAndDumpJSON() -> Never {
+    // macOS 14.4+ gates CWNetwork.ssid / .bssid behind Location Services
+    // at the calling process level — having the bundle's TCC grant on
+    // disk is not enough. Two things have to be true at scanForNetworks
+    // time:
+    //
+    //   1. The TCC subject seen by macOS is the helper bundle (not the
+    //      terminal that launched us). Inherited responsibility from
+    //      Terminal → diting → diting-tianer breaks this on macOS 26 —
+    //      tccd attributes the request to Terminal, which has no
+    //      NSLocationUsageDescription, and CWNetwork redacts ssid /
+    //      bssid silently. The fix is to disclaim our parent so we
+    //      become our own responsible process, same hop the ble-scan
+    //      subcommand has done since v0.5.0.
+    //
+    //   2. A CLLocationManager has called startUpdatingLocation() in
+    //      this process. The bundle grant alone isn't enough; CoreWLAN
+    //      checks for an active location signal at the moment of
+    //      scanForNetworks(). We init the manager, kick it, hold a
+    //      reference for the lifetime of the function so the runtime
+    //      can't release it before the scan call hits CoreWLAN.
+    //
+    // The earlier code comment claiming CoreLocation was "more lenient"
+    // than CoreBluetooth was wrong; CoreWLAN on macOS 26 enforces both.
+    if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
+        reExecWithDisclaimedResponsibility()
+    }
+
+    let locationManager = CLLocationManager()
+    locationManager.requestWhenInUseAuthorization()
+    locationManager.startUpdatingLocation()
+    // Brief settle so CoreLocation's TCC registration lands before
+    // CoreWLAN inspects it. Empirically ~50ms is enough on M-series
+    // Macs; 300ms gives headroom on slower hardware without making
+    // the user wait an obvious extra beat.
+    Thread.sleep(forTimeInterval: 0.3)
+    _ = locationManager  // hold the reference until the scan returns
+
     let client = CWWiFiClient.shared()
     guard let iface = client.interface() else {
         emitError("no Wi-Fi interface")
@@ -855,6 +892,73 @@ func runBluetoothStatusProbe() -> Never {
 }
 
 // ---------------------------------------------------------------------
+// App-mode localization
+//
+// Resolution order matches the Python CLI's i18n: DITING_LANG env var
+// first (so `open --env DITING_LANG=zh bundle.app` from the Python
+// launcher wins), then the user's macOS locale preference. install.sh's
+// first-launch `open -g` can't pass env, so the macOS preference is the
+// fallback that gets the first popup right for a Chinese-locale user.
+// ---------------------------------------------------------------------
+
+private enum HelperLang { case en, zh }
+
+private func detectHelperLang() -> HelperLang {
+    if let env = ProcessInfo.processInfo.environment["DITING_LANG"]?.lowercased() {
+        return env == "zh" ? .zh : .en
+    }
+    if let pref = Locale.preferredLanguages.first?.lowercased(),
+       pref.hasPrefix("zh") {
+        return .zh
+    }
+    return .en
+}
+
+private struct HelperStrings {
+    let lang: HelperLang
+    var title: String        { lang == .zh ? "diting 天耳" : "diting tianer" }
+    var intro: String {
+        switch lang {
+        case .zh:
+            return "这个辅助 .app 让 diting（Python TUI）能够读取附近 Wi-Fi 的 SSID / BSSID，并扫描附近 BLE 设备 —— 否则 macOS 的「定位服务」和「蓝牙」权限会拦下 Python 进程。下面的弹窗点 Allow 各一次（只用一次），授权完毕关闭此窗口即可。"
+        case .en:
+            return "This helper exists so diting (the Python TUI) can read nearby Wi-Fi network names / BSSIDs and scan for nearby BLE devices without being blocked by macOS Location Services or Bluetooth permissions. Grant the prompts below — a one-time action — and you can close this window."
+        }
+    }
+    var requestingStatus: String { lang == .zh ? "正在请求权限…" : "Requesting permissions..." }
+    var allGranted: String {
+        switch lang {
+        case .zh:
+            return "全部权限已授予。本窗口将在几秒后自动关闭…"
+        case .en:
+            return "All permissions granted. This window will close automatically in a few seconds..."
+        }
+    }
+    // Location lines
+    func locationWaiting() -> String { lang == .zh ? "定位服务：等待用户决定…" : "Location: waiting for permission decision..." }
+    func locationRestricted() -> String { lang == .zh ? "定位服务：被系统策略限制。" : "Location: restricted by a system policy." }
+    func locationDenied() -> String {
+        lang == .zh
+            ? "定位服务：被拒绝。请到 系统设置 → 隐私与安全性 → 定位服务 → diting-tianer 启用。"
+            : "Location: denied. Enable it in System Settings → Privacy & Security → Location Services → diting-tianer."
+    }
+    func locationGranted() -> String { lang == .zh ? "定位服务：已授权。" : "Location: granted." }
+    func locationUnknown(_ raw: Int) -> String { lang == .zh ? "定位服务：未知状态 \(raw)。" : "Location: unknown state \(raw)." }
+    // Bluetooth lines
+    func bluetoothQuerying() -> String { lang == .zh ? "蓝牙：正在查询状态…" : "Bluetooth: querying state..." }
+    func bluetoothResetting() -> String { lang == .zh ? "蓝牙：正在重置…" : "Bluetooth: resetting..." }
+    func bluetoothUnsupported() -> String { lang == .zh ? "蓝牙：本机硬件不支持。" : "Bluetooth: unsupported on this hardware." }
+    func bluetoothUnauthorized() -> String {
+        lang == .zh
+            ? "蓝牙：被拒绝。请到 系统设置 → 隐私与安全性 → 蓝牙 → diting-tianer 启用。"
+            : "Bluetooth: denied. Enable it in System Settings → Privacy & Security → Bluetooth → diting-tianer."
+    }
+    func bluetoothOff() -> String { lang == .zh ? "蓝牙：已关闭。请在控制中心打开蓝牙。" : "Bluetooth: turned off. Toggle it on in Control Center." }
+    func bluetoothGranted() -> String { lang == .zh ? "蓝牙：已授权。" : "Bluetooth: granted." }
+    func bluetoothUnknown(_ raw: Int) -> String { lang == .zh ? "蓝牙：未知状态 \(raw)。" : "Bluetooth: unknown state \(raw)." }
+}
+
+// ---------------------------------------------------------------------
 // App mode (Finder launch / open)
 // ---------------------------------------------------------------------
 
@@ -865,6 +969,8 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
     private var bluetoothManager: CBCentralManager!
     private var locationGranted = false
     private var bluetoothGranted = false
+    private var autoCloseScheduled = false
+    private let strings = HelperStrings(lang: detectHelperLang())
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let frame = NSRect(x: 0, y: 0, width: 520, height: 280)
@@ -874,7 +980,7 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
             backing: .buffered,
             defer: false
         )
-        window.title = "diting tianer"
+        window.title = strings.title
         window.center()
 
         let body = NSStackView(frame: NSRect(x: 24, y: 24, width: 472, height: 232))
@@ -883,21 +989,15 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
         body.spacing = 12
         body.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = NSTextField(labelWithString: "diting tianer")
+        let title = NSTextField(labelWithString: strings.title)
         title.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
         body.addArrangedSubview(title)
 
-        let intro = NSTextField(wrappingLabelWithString:
-            "This helper exists so diting (the Python TUI) can read " +
-            "nearby Wi-Fi network names / BSSIDs and scan for nearby BLE " +
-            "devices without being blocked by macOS Location Services or " +
-            "Bluetooth permissions. Grant the prompts below — a one-time " +
-            "action — and you can close this window."
-        )
+        let intro = NSTextField(wrappingLabelWithString: strings.intro)
         intro.preferredMaxLayoutWidth = 472
         body.addArrangedSubview(intro)
 
-        statusLabel = NSTextField(wrappingLabelWithString: "Requesting permissions...")
+        statusLabel = NSTextField(wrappingLabelWithString: strings.requestingStatus)
         statusLabel.font = NSFont.systemFont(ofSize: 13, weight: .regular)
         statusLabel.preferredMaxLayoutWidth = 472
         body.addArrangedSubview(statusLabel)
@@ -953,13 +1053,17 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
         lines.append(bluetoothLine(btState))
         statusLabel.stringValue = lines.joined(separator: "\n")
 
-        if locationGranted && bluetoothGranted {
-            statusLabel.stringValue += "\n\nAll permissions granted. This window will close automatically..."
-            // Give the user ~1.5 s to read the message, then exit so
-            // they do not have to find Cmd+Q. The TCC grants are
-            // persistent — diting's Python TUI immediately picks
-            // them up the next time it polls the helper.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        if locationGranted && bluetoothGranted && !autoCloseScheduled {
+            autoCloseScheduled = true
+            statusLabel.stringValue += "\n\n" + strings.allGranted
+            // 4 s gives the user a beat to actually read "All
+            // permissions granted" before the window vanishes. The
+            // 1.5 s default felt too snappy and a few users
+            // reported being confused that the window blinked
+            // closed. TCC grants are persistent — diting's Python
+            // launcher will pick them up on its next poll cycle
+            // regardless of how long this window stays up.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
                 NSApp.terminate(nil)
             }
         }
@@ -968,34 +1072,34 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
     private func locationLine(_ status: CLAuthorizationStatus) -> String {
         switch status {
         case .notDetermined:
-            return "Location: waiting for permission decision..."
+            return strings.locationWaiting()
         case .restricted:
-            return "Location: restricted by a system policy."
+            return strings.locationRestricted()
         case .denied:
-            return "Location: denied. Enable it in System Settings → Privacy & Security → Location Services → diting-tianer."
+            return strings.locationDenied()
         case .authorizedAlways, .authorizedWhenInUse:
-            return "Location: granted."
+            return strings.locationGranted()
         @unknown default:
-            return "Location: unknown state \(status.rawValue)."
+            return strings.locationUnknown(Int(status.rawValue))
         }
     }
 
     private func bluetoothLine(_ state: CBManagerState) -> String {
         switch state {
         case .unknown:
-            return "Bluetooth: querying state..."
+            return strings.bluetoothQuerying()
         case .resetting:
-            return "Bluetooth: resetting..."
+            return strings.bluetoothResetting()
         case .unsupported:
-            return "Bluetooth: unsupported on this hardware."
+            return strings.bluetoothUnsupported()
         case .unauthorized:
-            return "Bluetooth: denied. Enable it in System Settings → Privacy & Security → Bluetooth → diting-tianer."
+            return strings.bluetoothUnauthorized()
         case .poweredOff:
-            return "Bluetooth: turned off. Toggle it on in Control Center."
+            return strings.bluetoothOff()
         case .poweredOn:
-            return "Bluetooth: granted."
+            return strings.bluetoothGranted()
         @unknown default:
-            return "Bluetooth: unknown state \(state.rawValue)."
+            return strings.bluetoothUnknown(Int(state.rawValue))
         }
     }
 
