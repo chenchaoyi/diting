@@ -9,6 +9,41 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.10] — 2026-05-14
+
+Two fixes that surface only in the curl-installed frozen binary
+(not in `uv run diting`).
+
+### Fixed
+- **Frozen binary's `--version` and TUI title now report the real
+  version.** v1.0.9 shipped without `--copy-metadata diting` in the
+  PyInstaller invocation, so `importlib.metadata.version("diting")`
+  raised `PackageNotFoundError` in the frozen build and
+  `__version__` fell back to `"0+unknown"`. Result: `diting
+  --version` printed `diting 0+unknown` and the TUI header rendered
+  `diting v0+unknown`. Adding `--copy-metadata diting` to
+  `scripts/build_frozen.py` packs the dist-info into the frozen
+  archive. Regression test in `tests/test_helper.py` guards against
+  the flag being removed again.
+- **Bonjour prewarm now starts at TUI mount, not on first
+  wifi → BLE.** The "first wifi → BLE" trigger landed in
+  1.0.x worked on the source build because `.py` file reads release
+  the GIL during the actual `open()` syscall, so the prewarm
+  worker overlapped with the BLE view's reading time. PyInstaller's
+  `PyiFrozenImporter` decompresses modules from a PYZ archive
+  inside pure-Python code that holds the GIL throughout — so
+  `asyncio.to_thread` doesn't help, and users on v1.0.9 saw the
+  second `n` press (BLE → mDNS) hang for >1.5 s. Moving the
+  trigger to `App.on_mount` gives the prewarm the entire wifi-view
+  dwell time to amortise, which is plenty.
+
+### Spec / breaking-ish note
+The `mdns-scanning` capability's "user who only uses Wi-Fi view
+never imports zeroconf" guarantee no longer holds — every TUI
+session now imports zeroconf at mount. The cost runs in a worker
+so there's no user-visible slowdown; the change is documented in
+the `prewarm-bonjour-at-mount` OpenSpec change.
+
 ## [1.0.9] — 2026-05-14
 
 Small, useful: a way to tell what version of diting you're running.
