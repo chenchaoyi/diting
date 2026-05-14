@@ -104,8 +104,10 @@ diting
 一行搞定。你的机器上**不需要** Python、`uv`、Xcode 命令行工具——
 installer 会下载一份自包含的二进制 + 辅助 bundle，分别落到
 `~/.local/share/diting/` 和 `~/Library/Application Support/diting/`。
-首次运行 macOS 会弹「定位服务」与「蓝牙」授权对话框，点 Allow 即可，
-TUI 启动并显示完整的 SSID / BSSID / BLE 数据。
+首次运行 helper 会弹一个状态小窗口，依次引导你走过三个 macOS 权限
+弹窗——「定位服务 → 蓝牙 → 通知」——每次只出现一个。每个都点 Allow，
+TUI 就会启动并显示完整的 SSID / BSSID / BLE 数据；之后 watchdog 检测
+到异常时发出的通知也会带 diting 自己的 logo。
 
 > **为什么需要辅助进程？** macOS 14.4+ 把 SSID 与 BSSID 隐藏成 None，
 > 除非调用进程已被授予「定位服务」权限。从 Terminal 启动的 Python CLI
@@ -128,7 +130,7 @@ git clone git@github.com:chenchaoyi/diting.git
 cd diting
 uv sync
 make helper          # 一次：编译 + 签 Swift 辅助 bundle
-open helper/diting-tianer.app   # 一次：授予定位服务 + 蓝牙
+open helper/diting-tianer.app   # 一次：授予「定位 → 蓝牙 → 通知」
 uv run diting
 ```
 

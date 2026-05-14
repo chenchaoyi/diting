@@ -515,3 +515,34 @@ def test_scan_v3_rejects_malformed_ie_values():
     # were dropped.
     assert r.bssid == "aa:bb:cc:00:11:22"
     assert r.rssi_dbm == -55
+
+
+# ---------- bundle branding ----------
+
+def test_helper_bundle_declares_appicon_and_ships_iconset():
+    """The helper bundle MUST ship the diting logo as its AppIcon.
+    Info.plist declares `CFBundleIconFile=AppIcon`, and the iconset
+    source covers the macOS standard sizes so `iconutil --convert
+    icns` (run by helper/build.sh) produces a usable .icns."""
+    repo_root = Path(__file__).resolve().parent.parent
+    info_plist = repo_root / "helper" / "Info.plist"
+    assert info_plist.exists(), "helper/Info.plist must exist"
+    content = info_plist.read_text(encoding="utf-8")
+    assert "<key>CFBundleIconFile</key>" in content
+    assert "<string>AppIcon</string>" in content
+
+    iconset = repo_root / "helper" / "Resources" / "AppIcon.iconset"
+    assert iconset.is_dir(), (
+        "helper/Resources/AppIcon.iconset must be committed so "
+        "helper/build.sh can run `iconutil --convert icns` against it"
+    )
+    required = {
+        "icon_16x16.png",      "icon_16x16@2x.png",
+        "icon_32x32.png",      "icon_32x32@2x.png",
+        "icon_128x128.png",    "icon_128x128@2x.png",
+        "icon_256x256.png",    "icon_256x256@2x.png",
+        "icon_512x512.png",    "icon_512x512@2x.png",
+    }
+    present = {p.name for p in iconset.iterdir() if p.suffix == ".png"}
+    missing = required - present
+    assert not missing, f"AppIcon.iconset is missing sizes: {sorted(missing)}"

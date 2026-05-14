@@ -37,6 +37,7 @@ import CoreBluetooth
 import CoreLocation
 import CoreWLAN
 import Foundation
+import UserNotifications
 // IOBluetooth is needed for the connected-peripherals enumeration.
 // CoreBluetooth's retrieveConnectedPeripherals(withServices:) only
 // returns peripherals connected via a CBCentralManager.connect()
@@ -1096,6 +1097,75 @@ func runBluetoothStatusProbe() -> Never {
 }
 
 // ---------------------------------------------------------------------
+// `notify` subcommand
+//
+// Posts a single UserNotification under the bundle's identity so the
+// notification carries the helper's app icon (the diting logo) instead
+// of /usr/bin/osascript's AppleScript scroll. The Python TUI's anomaly
+// watchdog (_watchdog.py) shells out to this rather than emitting via
+// osascript.
+//
+// Authorization is requested on each call; if the user has previously
+// granted notifications (during the install-time HelperAppDelegate
+// flow) it's a cheap no-op. If they declined, we exit silently — the
+// caller treats notifications as best-effort.
+//
+// We need to wait briefly before exit() so the notification request
+// actually makes it through the system daemon — a process that exits
+// too fast can lose the message. 1 s is enough in practice.
+// ---------------------------------------------------------------------
+
+func runNotifyAndExit(args: [String]) -> Never {
+    var title = ""
+    var body = ""
+    var i = 0
+    while i < args.count {
+        let arg = args[i]
+        if arg == "--title" && i + 1 < args.count {
+            title = args[i + 1]
+            i += 2
+        } else if arg == "--body" && i + 1 < args.count {
+            body = args[i + 1]
+            i += 2
+        } else {
+            i += 1
+        }
+    }
+    if title.isEmpty && body.isEmpty {
+        FileHandle.standardError.write(
+            "notify: --title and/or --body required\n".data(using: .utf8)!
+        )
+        exit(64)
+    }
+
+    let center = UNUserNotificationCenter.current()
+    let group = DispatchGroup()
+
+    group.enter()
+    center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+        guard granted else {
+            group.leave()
+            return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+        center.add(request) { _ in group.leave() }
+    }
+
+    // Best-effort: cap the wait so a stuck notification daemon does
+    // not block the calling TUI's watchdog longer than necessary.
+    _ = group.wait(timeout: .now() + 1.0)
+    exit(0)
+}
+
+// ---------------------------------------------------------------------
 // App-mode localization
 //
 // Resolution order matches the Python CLI's i18n: DITING_LANG env var
@@ -1111,7 +1181,15 @@ private func detectHelperLang() -> HelperLang {
     if let env = ProcessInfo.processInfo.environment["DITING_LANG"]?.lowercased() {
         return env == "zh" ? .zh : .en
     }
-    if let pref = Locale.preferredLanguages.first?.lowercased(),
+    // Fall back to the same source macOS uses to pick the bundle's
+    // .lproj for TCC prompts (Bundle.preferredLocalizations) rather
+    // than the user-global Locale.preferredLanguages. Under
+    // LaunchServices these two can return different first entries —
+    // the helper used to render its status window in English while
+    // macOS's Location prompt rendered "谛听 · 天耳" in the same
+    // session. Using Bundle.preferredLocalizations guarantees that
+    // the helper UI and the macOS prompts speak the same language.
+    if let pref = Bundle.main.preferredLocalizations.first?.lowercased(),
        pref.hasPrefix("zh") {
         return .zh
     }
@@ -1160,24 +1238,46 @@ private struct HelperStrings {
     func bluetoothOff() -> String { lang == .zh ? "蓝牙：已关闭。请在控制中心打开蓝牙。" : "Bluetooth: turned off. Toggle it on in Control Center." }
     func bluetoothGranted() -> String { lang == .zh ? "蓝牙：已授权。" : "Bluetooth: granted." }
     func bluetoothUnknown(_ raw: Int) -> String { lang == .zh ? "蓝牙：未知状态 \(raw)。" : "Bluetooth: unknown state \(raw)." }
+    // Notification lines
+    func notificationsPending() -> String { lang == .zh ? "通知：等待用户决定…" : "Notifications: waiting for permission decision..." }
+    func notificationsGranted() -> String { lang == .zh ? "通知：已授权。" : "Notifications: granted." }
+    func notificationsDenied() -> String {
+        lang == .zh
+            ? "通知：被拒绝。可到 系统设置 → 通知 → diting · 天耳 重新开启。"
+            : "Notifications: denied. Re-enable in System Settings → Notifications → diting · tianer."
+    }
+    // Step markers
+    var pendingMarker: String   { "→ " }
+    var inactiveMarker: String  { "  " }
+    func stepPrefix(_ n: Int, of total: Int) -> String { "\(n)/\(total) " }
 }
 
 // ---------------------------------------------------------------------
 // App mode (Finder launch / open)
 // ---------------------------------------------------------------------
 
+private enum InstallStep: Int {
+    case requestingLocation = 1
+    case requestingBluetooth
+    case requestingNotifications
+    case allDone
+}
+
 final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, CBCentralManagerDelegate {
     private var window: NSWindow!
     private var statusLabel: NSTextField!
     private let locationManager = CLLocationManager()
-    private var bluetoothManager: CBCentralManager!
-    private var locationGranted = false
-    private var bluetoothGranted = false
+    private var bluetoothManager: CBCentralManager?
+    private var locationSettled = false
+    private var bluetoothSettled = false
+    private var notificationsSettled = false
+    private var notificationsGranted = false
     private var autoCloseScheduled = false
+    private var step: InstallStep = .requestingLocation
     private let strings = HelperStrings(lang: detectHelperLang())
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let frame = NSRect(x: 0, y: 0, width: 520, height: 280)
+        let frame = NSRect(x: 0, y: 0, width: 520, height: 320)
         window = NSWindow(
             contentRect: frame,
             styleMask: [.titled, .closable, .miniaturizable],
@@ -1187,7 +1287,7 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
         window.title = strings.title
         window.center()
 
-        let body = NSStackView(frame: NSRect(x: 24, y: 24, width: 472, height: 232))
+        let body = NSStackView(frame: NSRect(x: 24, y: 24, width: 472, height: 272))
         body.orientation = .vertical
         body.alignment = .leading
         body.spacing = 12
@@ -1210,67 +1310,118 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
+        // Step 1/3 — Location only. The Bluetooth and Notifications
+        // requests fire from their predecessor's auth callback, so
+        // macOS shows at most one TCC prompt on screen at a time
+        // and the status panel can update each line in sequence.
         locationManager.delegate = self
         locationManager.requestWhenInUseAuthorization()
         locationManager.startUpdatingLocation()
-
-        // Initialising CBCentralManager from an .app bundle triggers
-        // the macOS Bluetooth permission prompt the first time. After
-        // grant, the same bundle's CLI subprocesses inherit the TCC
-        // identity, so `ble-scan` works without re-asking.
-        bluetoothManager = CBCentralManager(delegate: self, queue: nil)
-
         report()
     }
 
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-        DispatchQueue.main.async { self.report() }
+        DispatchQueue.main.async { self.handleLocationCallback(status) }
+    }
+
+    private func handleLocationCallback(_ status: CLAuthorizationStatus) {
+        if status == .notDetermined {
+            // First fire is .notDetermined right after the request;
+            // wait for the user's actual choice before advancing.
+            report()
+            return
+        }
+        if !locationSettled {
+            locationSettled = true
+            // Step 2/3 — Bluetooth. Initialising CBCentralManager
+            // from a bundle triggers the macOS Bluetooth TCC prompt
+            // the first time. The previous prompt is gone, so the
+            // user sees this one cleanly on top of the status panel.
+            step = .requestingBluetooth
+            bluetoothManager = CBCentralManager(delegate: self, queue: nil)
+        }
+        report()
     }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        DispatchQueue.main.async { self.report() }
+        DispatchQueue.main.async { self.handleBluetoothCallback(central.state) }
+    }
+
+    private func handleBluetoothCallback(_ state: CBManagerState) {
+        switch state {
+        case .unknown, .resetting:
+            // Still settling. Don't advance yet.
+            report()
+            return
+        default:
+            break
+        }
+        if !bluetoothSettled {
+            bluetoothSettled = true
+            // Step 3/3 — Notifications. UNUserNotificationCenter's
+            // request fires a system prompt on first call. The
+            // completion handler is invoked off the main thread,
+            // so we re-enter the state machine on the main queue.
+            step = .requestingNotifications
+            UNUserNotificationCenter.current().requestAuthorization(
+                options: [.alert, .sound]
+            ) { granted, _ in
+                DispatchQueue.main.async {
+                    self.handleNotificationsCallback(granted: granted)
+                }
+            }
+        }
+        report()
+    }
+
+    private func handleNotificationsCallback(granted: Bool) {
+        notificationsSettled = true
+        notificationsGranted = granted
+        step = .allDone
+        report()
     }
 
     private func report() {
         let locStatus = locationManager.authorizationStatus
         let btState = bluetoothManager?.state ?? .unknown
 
-        switch locStatus {
-        case .authorizedAlways, .authorizedWhenInUse:
-            locationGranted = true
-        default:
-            locationGranted = false
-        }
+        let line1 = renderLine(
+            stepNum: 1,
+            isCurrent: step == .requestingLocation,
+            text: locationLine(locStatus)
+        )
+        let line2 = renderLine(
+            stepNum: 2,
+            isCurrent: step == .requestingBluetooth,
+            // Show "waiting" if we haven't yet entered this step;
+            // otherwise show the live BT state line.
+            text: step.rawValue >= InstallStep.requestingBluetooth.rawValue
+                ? bluetoothLine(btState)
+                : strings.bluetoothQuerying()
+        )
+        let line3 = renderLine(
+            stepNum: 3,
+            isCurrent: step == .requestingNotifications,
+            text: notificationsLine()
+        )
+        statusLabel.stringValue = [line1, line2, line3].joined(separator: "\n")
 
-        switch btState {
-        case .poweredOn:
-            bluetoothGranted = true
-        case .unauthorized, .poweredOff, .unsupported:
-            bluetoothGranted = false
-        default:
-            // .unknown / .resetting — defer judgement
-            break
-        }
-
-        var lines: [String] = []
-        lines.append(locationLine(locStatus))
-        lines.append(bluetoothLine(btState))
-        statusLabel.stringValue = lines.joined(separator: "\n")
-
-        if locationGranted && bluetoothGranted && !autoCloseScheduled {
+        if step == .allDone && !autoCloseScheduled {
             autoCloseScheduled = true
             statusLabel.stringValue += "\n\n" + strings.allGranted
-            // 4 s gives the user a beat to actually read "All
-            // permissions granted" before the window vanishes. The
-            // 1.5 s default felt too snappy and a few users
-            // reported being confused that the window blinked
-            // closed. TCC grants are persistent — diting's Python
-            // launcher will pick them up on its next poll cycle
-            // regardless of how long this window stays up.
+            // 4 s gives the user a beat to actually read the final
+            // outcome before the window vanishes. TCC grants are
+            // persistent — diting's Python launcher will pick them
+            // up on its next poll cycle regardless.
             DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
                 NSApp.terminate(nil)
             }
         }
+    }
+
+    private func renderLine(stepNum: Int, isCurrent: Bool, text: String) -> String {
+        let marker = isCurrent ? strings.pendingMarker : strings.inactiveMarker
+        return marker + strings.stepPrefix(stepNum, of: 3) + text
     }
 
     private func locationLine(_ status: CLAuthorizationStatus) -> String {
@@ -1307,6 +1458,15 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
         }
     }
 
+    private func notificationsLine() -> String {
+        if !notificationsSettled {
+            return strings.notificationsPending()
+        }
+        return notificationsGranted
+            ? strings.notificationsGranted()
+            : strings.notificationsDenied()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 
@@ -1324,6 +1484,8 @@ if args.count > 1 {
         runBLEScan()
     case "bluetooth-status":
         runBluetoothStatusProbe()
+    case "notify":
+        runNotifyAndExit(args: Array(args.dropFirst(2)))
     case "--help", "-h":
         print("""
         diting-tianer
@@ -1343,6 +1505,12 @@ if args.count > 1 {
                             0 .poweredOn (granted), 2 timeout / unknown,
                             3 .unauthorized, 4 .poweredOff,
                             5 .unsupported.
+          notify --title T --body B
+                            Post a UserNotification with the helper's
+                            bundle identity (icon = diting logo).
+                            Best-effort; exits within ~1 s regardless
+                            of whether macOS surfaced the notification.
+                            Used by the Python TUI watchdog.
         """)
         exit(0)
     default:

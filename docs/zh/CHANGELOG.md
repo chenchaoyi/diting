@@ -8,6 +8,58 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [Unreleased]
+
+安装后的 UX 太乱了——三个窗口、两种语言堆在一起，其中一个权限弹窗
+还直接显示原始 bundle 文件名。本次围绕 helper bundle 重塑成一条
+顺序授权流程，并把 diting 自己的 logo 端到端打通。
+
+### 新增
+- **helper bundle 用 diting logo 作为 AppIcon。** 预渲染好的 PNG
+  按 macOS iconset 全套尺寸放在
+  `helper/Resources/AppIcon.iconset/`（由
+  `scripts/build_app_icon.py` 从
+  `docs/design/diting-design/assets/logo-mark.svg` 重新渲染）。
+  `helper/build.sh` 用 `iconutil --convert icns` 打包成
+  `Contents/Resources/AppIcon.icns`，Info.plist 声明
+  `CFBundleIconFile=AppIcon`。logo 会出现在 Finder、macOS 定位 /
+  通知 TCC 弹窗，以及 watchdog 每条通知的缩略图里。
+- **`diting-tianer notify --title T --body B` 子命令。** 用
+  `UNUserNotificationCenter` 以 bundle 身份发通知，缩略图就是
+  diting logo。每次调用请求一次授权、发出去、约 1 s 内退出。
+- **安装时多请求一次通知权限**（与定位、蓝牙并列），让 watchdog
+  之后再发通知时不会突然弹个意料之外的授权框。
+
+### 变更
+- **安装时的权限流程改成单一顺序向导。** `HelperAppDelegate`
+  按定位 → 蓝牙 → 通知顺序请求，每一步等上一步授权回调返回后才进
+  下一步。用户每次只在状态窗口上看到一个 macOS TCC 弹窗。状态面板
+  会渲染三行（每行一个步骤），用 `1/3` / `2/3` / `3/3` 前缀以及
+  箭头标出当前等待哪一步。
+- **安装时 locale 跟随 macOS 用户偏好。** `install.sh` 读
+  `defaults read -g AppleLanguages`，推导出 `DITING_LANG=en|zh`，
+  并把 `--env DITING_LANG=...` 和 `--args -AppleLanguages
+  '(<tag>)'` 同时透传给 `open`，从而让 helper UI、TCC 弹窗的标题、
+  以及弹窗正文都用同一种语言。之前 `Locale.preferredLanguages`
+  与 `Bundle.preferredLocalizations` 在 LaunchServices 下可能给出
+  不同结果，用户就看到了那种英中混搭的窗口栈。
+- **`cli.py` 的 helper 自动 prime 路径也补传 `-AppleLanguages`**，
+  这样运行时 `diting --lang zh` 再启动 helper 也保持一致。
+- **helper 语言兜底从 `Locale.preferredLanguages.first` 切换到
+  `Bundle.main.preferredLocalizations.first`**——这才是 macOS 自己
+  挑 `.lproj` 用的同一个源头，于是没设 `DITING_LANG` 时 UI 也能
+  和 macOS 保持一致。
+- **watchdog 的通知改走 helper，不再用 osascript。** `_macos_notify`
+  改为调 `<helper-bin> notify --title ... --body ...`（由
+  `_helper.find_helper` 解析路径）。不再 fallback 到 osascript——
+  helper 不存在时静默丢弃通知。这一改顺带干掉了之前每条通知都带的
+  AppleScript 卷轴图标。
+
+### 升级说明
+新加的 `CFBundleIconFile` 字段会改变 bundle 的 cdhash。从 v1.0.x
+升级的用户在下一次安装时会再被询问一次定位与蓝牙授权（并第一次
+获得通知授权）。之后在同一路径再次安装会保留授权。
+
 ## [1.0.7] — 2026-05-13
 
 v1.0.3 → v1.0.5 都没解开的 macOS 26 安装卡死，根因比之前所有

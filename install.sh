@@ -55,6 +55,33 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# detect_locale prints `zh` if the user's macOS-preferred language
+# starts with zh, otherwise `en`. The first-launch helper run has no
+# DITING_LANG signal yet (the user hasn't run `diting --lang ...`),
+# so the macOS preference is the only locale signal available — and
+# the one macOS itself uses to pick the TCC prompt's lproj. Falling
+# open to `en` keeps the install path safe when `defaults` errors.
+detect_locale() {
+  local pref
+  pref="$(defaults read -g AppleLanguages 2>/dev/null \
+    | tr -d '(),"' \
+    | awk 'NF { print $1; exit }')"
+  case "$pref" in
+    zh*) echo "zh" ;;
+    *)   echo "en" ;;
+  esac
+}
+
+# bundle_locale_tag maps a DITING_LANG value to the matching macOS
+# bundle locale identifier. The Cocoa -AppleLanguages launch arg
+# uses these tags to pick which Resources/<tag>.lproj/ to load.
+bundle_locale_tag() {
+  case "$1" in
+    zh) echo "zh-Hans" ;;
+    *)  echo "en" ;;
+  esac
+}
+
 # ---- platform check ----
 
 OS="$(uname -s)"
@@ -158,10 +185,14 @@ fi
 
 # ---- prime helper bundle ----
 
+DITING_LOCALE="$(detect_locale)"
+DITING_LOCALE_TAG="$(bundle_locale_tag "$DITING_LOCALE")"
+
 if [ -n "$TESTONLY" ]; then
+  note "TESTONLY: detected locale=${DITING_LOCALE} (tag=${DITING_LOCALE_TAG})"
   note "TESTONLY: would copy helper to ${APP_SUPPORT_DIR}"
   note "TESTONLY: would xattr -dr com.apple.quarantine"
-  note "TESTONLY: would open helper bundle to prime TCC"
+  note "TESTONLY: would open --env DITING_LANG=${DITING_LOCALE} --args -AppleLanguages (${DITING_LOCALE_TAG})"
 else
   mkdir -p "$APP_SUPPORT_DIR"
   SRC_BUNDLE="${INSTALL_PREFIX}/share/diting-tianer.app"
@@ -175,18 +206,29 @@ else
   # in via curl. Without this Gatekeeper would block first launch.
   # Same trick Homebrew uses for unsigned casks.
   xattr -dr com.apple.quarantine "$DST_BUNDLE" 2>/dev/null || true
-  # Open the bundle foreground so macOS surfaces the Location
-  # Services + Bluetooth TCC prompts ON TOP — and so the helper's
-  # own status window is visible long enough for the user to see
-  # what's being requested. Earlier versions used `open -g`
-  # (background); on at least one user's macOS 26 install the
-  # prompts fired briefly and vanished before the user could
-  # interact, leaving the bundle un-granted while the install
-  # script reported success.
-  open "$DST_BUNDLE" 2>/dev/null || true
+  # Open the bundle foreground (no -g) so macOS surfaces the TCC
+  # prompts ON TOP and the helper's status window stays visible.
+  # `--env DITING_LANG=...` makes the helper's Swift UI render in
+  # the matching language; `--args -AppleLanguages (...)` forces
+  # Cocoa's NSUserDefaults for the launched process to pick the
+  # matching .lproj so the macOS TCC prompt headers + bodies use
+  # the same locale. Without -AppleLanguages, Bundle.preferred-
+  # Localizations and Locale.preferredLanguages can disagree under
+  # LaunchServices and the user sees a mixed-language stack.
+  open --env "DITING_LANG=${DITING_LOCALE}" \
+       "$DST_BUNDLE" \
+       --args -AppleLanguages "(${DITING_LOCALE_TAG})" \
+       2>/dev/null || true
   note "helper bundle primed at ${DST_BUNDLE}"
-  note "macOS will prompt for Location Services + Bluetooth — click Allow on both"
-  note "the helper window auto-closes ~4s after both grants land"
+  if [ "$DITING_LOCALE" = "zh" ]; then
+    note "macOS 会依次弹出 3 个权限请求（定位 → 蓝牙 → 通知）— 请逐个点击 Allow"
+    note "helper 窗口在第 3 个授权完成后约 4 秒自动关闭"
+    note "升级用户：bundle cdhash 已变更，定位与蓝牙会重新询问一次"
+  else
+    note "macOS will prompt for Location → Bluetooth → Notifications in order — click Allow on each"
+    note "the helper window auto-closes ~4s after the third grant lands"
+    note "upgrading from v1.0.x: the bundle's cdhash changed, so Location + Bluetooth re-prompt once"
+  fi
 fi
 
 # ---- PATH hint ----

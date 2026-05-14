@@ -11,6 +11,15 @@
     <key>CFBundleIdentifier</key>
     <string>com.chenchaoyi.diting.tianer</string>
 
+    <!-- Packed by helper/build.sh from Resources/AppIcon.iconset
+         via `iconutil --convert icns`. The PNG sources are
+         committed (see scripts/build_app_icon.py for the
+         pixel-art-from-logo-mark renderer). Adding this key bumps
+         the bundle's cdhash, so users upgrading from a v1.0.x
+         that lacked it will re-grant TCC permissions once. -->
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+
     <!-- CFBundleName / CFBundleDisplayName here are the English
          defaults (fallback for any locale not in our lproj list).
          The real per-locale display strings live in
@@ -58,6 +67,11 @@
 
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>diting scans nearby BLE advertisements so the TUI can show you what devices are around</string>
+
+    <!-- macOS does not require a usage description for
+         UNUserNotificationCenter, but lproj per-locale variants
+         in en.lproj / zh-Hans.lproj/InfoPlist.strings give the
+         third install-time prompt a friendly header. -->
 
     <key>LSUIElement</key>
     <false/>
