@@ -8,6 +8,25 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.9] — 2026-05-14
+
+小但有用：一个查 diting 当前版本号的口子。
+
+### 新增
+- **`diting --version`（以及 `-V`）** 打印 `diting <X.Y.Z>` 后退出
+  0。在 locale / log / TUI / helper 之前短路，快且无副作用，可以
+  放心写进 bug 上报脚本。
+- **TUI 顶部显示版本号。** `App.title` 变成 `diting v<X.Y.Z>`，
+  运行版本一眼可见，不用按任何键。subtitle（视图 / 扫描节奏 /
+  暂停）保持不变。
+
+### 变更
+- **`diting.__version__` 改为懒读。** 来源是
+  `importlib.metadata.version("diting")`，不再手维护一份字符串。
+  之前 `src/diting/__init__.py` 里的常量一直停在 `"0.5.0"` 没跟上
+  项目实际的 1.0.8，新写法让 `pyproject.toml` 的 `version` 成为唯
+  一真相源，避免重蹈覆辙。
+
 ## [1.0.8] — 2026-05-14
 
 两件事并行落地：helper bundle 有了自己的图标和一条顺序的安装授权

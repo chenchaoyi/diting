@@ -9,6 +9,28 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.9] — 2026-05-14
+
+Small, useful: a way to tell what version of diting you're running.
+
+### Added
+- **`diting --version` (and `-V`)** prints `diting <X.Y.Z>` and
+  exits 0. Short-circuits before any locale / log / TUI / helper
+  work so it's fast and side-effect-free — safe to wire into bug-
+  report scripts.
+- **TUI header now shows the version.** `App.title` becomes
+  `diting v<X.Y.Z>` so the running version is visible at a glance,
+  no key press required. Subtitle (view / scan cadence / paused)
+  is unchanged.
+
+### Changed
+- **`diting.__version__` is now lazy.** Sourced from
+  `importlib.metadata.version("diting")` instead of a hand-
+  maintained string. The previous constant in
+  `src/diting/__init__.py` had drifted to `"0.5.0"` while the
+  project was at 1.0.8 — the new approach makes `pyproject.toml`'s
+  `version` the single source of truth so this can't drift again.
+
 ## [1.0.8] — 2026-05-14
 
 Two parallel pushes land together: the helper bundle gets its own
