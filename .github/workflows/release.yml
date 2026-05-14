@@ -8,6 +8,16 @@ name: release
 #   - push of a tag matching `v*` (the release flow)
 #   - manual workflow_dispatch (dry-run; uploads to a draft release
 #     so we can inspect the artefact before cutting a real tag)
+#
+# Architecture strategy (since v1.0.8):
+#   All builds run on macos-14 (arm64). The Swift helper is built
+#   universal2 (single binary with both arm64 + x86_64 slices) and
+#   shipped in both per-arch release tarballs. The PyInstaller-frozen
+#   Python binary IS arch-specific, so we build it twice — once
+#   natively on the arm64 host, once under Rosetta 2 (`arch -x86_64`)
+#   for the Intel slice. Avoids the macos-13 runner queue, which
+#   was starving so badly that the Intel tarball was effectively
+#   never landing.
 
 on:
   push:
@@ -20,29 +30,17 @@ on:
         required: false
         default: ""
 
-# Block concurrent runs on the same ref so two tag pushes in
-# quick succession can't produce a racy double-upload.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
-  # gh release upload needs to write to the release.
   contents: write
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-14   # M1 hosted runner → arm64
-            arch: arm64
-          - os: macos-13   # x86_64 hosted runner → x86_64
-            arch: x86_64
-
-    runs-on: ${{ matrix.os }}
-
+    # Both arches build from this single arm64 runner.
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
@@ -58,49 +56,113 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "num_version=${VERSION#v}" >> "$GITHUB_OUTPUT"
 
+      - name: Ensure Rosetta 2 is installed
+        # GitHub macos-14 runners normally have Rosetta installed,
+        # but `softwareupdate --install-rosetta --agree-to-license`
+        # is the official idempotent way to be sure. The flag is a
+        # no-op if Rosetta is already there.
+        run: softwareupdate --install-rosetta --agree-to-license || true
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
-      - name: Set up Python 3.11
-        run: uv python install 3.11
-
-      - name: Sync release dependencies
-        # PyInstaller lives in the [release] group. --all-groups
-        # also pulls dev tools we don't need; --group release keeps
-        # the build env lean.
-        run: uv sync --group release --python 3.11
-
-      - name: Build Swift helper
+      # ---- Swift helper: build once, universal2, used by both
+      # tarballs. The helper bundle is signed ad-hoc which produces
+      # a stable cdhash across both arches — same cdhash means the
+      # TCC grants the user accumulates carry across arm64 / x86_64
+      # installs of the same release.
+      - name: Build Swift helper (universal2)
+        env:
+          DITING_HELPER_UNIVERSAL: "1"
         run: ( cd helper && ./build.sh )
 
-      - name: Run package_release.sh
-        env:
-          # Stage everything under the workspace so the upload step
-          # can find the tarball + sha256 by glob.
-          DITING_RELEASE_VERSION: ${{ steps.ver.outputs.num_version }}
+      # ---- arm64 build (native) -----------------------------------
+      - name: Set up Python 3.11 (arm64 native)
+        run: uv python install 3.11
+
+      - name: Sync release deps (arm64)
+        run: uv sync --group release --python 3.11
+
+      - name: Package arm64 tarball
         run: |
           uv run --python 3.11 \
             bash scripts/package_release.sh "${{ steps.ver.outputs.num_version }}"
 
-      - name: Upload tarball to release
+      - name: Stash arm64 tarball + sha256
+        run: |
+          mkdir -p stash
+          mv dist/diting-${{ steps.ver.outputs.num_version }}-darwin-arm64.tar.gz        stash/
+          mv dist/diting-${{ steps.ver.outputs.num_version }}-darwin-arm64.tar.gz.sha256 stash/
+
+      # ---- x86_64 build (Rosetta) ---------------------------------
+      # PyInstaller takes the arch of the currently-running Python.
+      # uv can install an x86_64 Python build on an arm64 host via
+      # the --python-platform flag; we then create a separate venv
+      # for it. All subsequent commands wrapped in `arch -x86_64`
+      # so uv, python, and any subprocess they invoke run as x86_64
+      # under Rosetta.
+      - name: Set up Python 3.11 (x86_64 via Rosetta)
+        run: |
+          arch -x86_64 /bin/bash -c '
+            curl -fsSL https://astral.sh/uv/install.sh | sh
+          '
+          # The Rosetta-installed uv lives under
+          # ~/.local/bin/uv. Use a separate cache dir so it does not
+          # collide with the arm64 uv's state.
+          echo "ROSETTA_UV=$HOME/.local/bin/uv" >> $GITHUB_ENV
+
+      - name: Install x86_64 Python via Rosetta uv
+        run: |
+          arch -x86_64 "$ROSETTA_UV" python install 3.11
+
+      - name: Wipe arm64 venv before x86_64 sync
+        # `uv sync` reuses .venv/ if present. The arm64 build above
+        # populated it with arm64 wheels (pyobjc et al.); we need a
+        # clean slate for the x86_64 install so the right wheels get
+        # pulled.
+        run: rm -rf .venv
+
+      - name: Sync release deps (x86_64)
+        run: |
+          arch -x86_64 "$ROSETTA_UV" sync --group release --python 3.11
+
+      - name: Clean previous build artefacts
+        # PyInstaller and the staging dir from the arm64 run.
+        run: rm -rf build dist
+
+      - name: Package x86_64 tarball
+        run: |
+          arch -x86_64 "$ROSETTA_UV" run --python 3.11 \
+            bash scripts/package_release.sh "${{ steps.ver.outputs.num_version }}"
+
+      - name: Restore arm64 tarball alongside x86_64
+        run: |
+          mv stash/* dist/
+
+      # ---- Upload both tarballs -----------------------------------
+      - name: Upload tarballs to release
         uses: softprops/action-gh-release@v2
         if: github.event_name == 'push'
         with:
           tag_name: ${{ steps.ver.outputs.version }}
           files: |
-            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-${{ matrix.arch }}.tar.gz
-            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-${{ matrix.arch }}.tar.gz.sha256
+            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-arm64.tar.gz
+            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-arm64.tar.gz.sha256
+            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-x86_64.tar.gz
+            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-x86_64.tar.gz.sha256
 
-      - name: Upload tarball as workflow artifact (dispatch dry-runs)
+      - name: Upload tarballs as workflow artifacts (dispatch dry-runs)
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: diting-${{ steps.ver.outputs.num_version }}-darwin-${{ matrix.arch }}
+          name: diting-${{ steps.ver.outputs.num_version }}-darwin
           path: |
-            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-${{ matrix.arch }}.tar.gz
-            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-${{ matrix.arch }}.tar.gz.sha256
+            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-arm64.tar.gz
+            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-arm64.tar.gz.sha256
+            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-x86_64.tar.gz
+            dist/diting-${{ steps.ver.outputs.num_version }}-darwin-x86_64.tar.gz.sha256
           retention-days: 14
 
   shasums:
