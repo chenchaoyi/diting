@@ -141,6 +141,7 @@
 | `diting monitor` stdout 只发 JSONL | `test_event_log.py::test_to_path_writes_appendable_jsonl`（事件格式）；banner-cleanliness 是人工 |
 | `--config <PATH>` 覆盖 aps.yaml 搜索路径 | `test_network.py::test_resolve_config_path_env_override_wins`、`::test_resolve_config_path_no_env_falls_through_to_default` |
 | `--notify` 在默认 TUI 子命令与 `monitor` 上都可用 | `test_tui_smoke.py::test_app_with_notify_calls_watchdog_on_event`（TUI wire-up）；`test_watchdog.py::test_maybe_notify_fires_for_latency_spike`（monitor wire-up）；旗标解析 review-enforced |
+| `--version`（或 `-V`）打印 `diting <版本号>` 后退出 0，在 locale / TUI / helper 之前短路 | `test_cli.py::test_version_flag_prints_running_version`、`::test_version_flag_short_dash_v`、`::test_version_short_circuits_before_locale` |
 
 ### `environment-monitor`
 
@@ -276,6 +277,7 @@
 | Footer 是单一 GroupedFooter 三段 | (gap — 没有 footer 分组的单元测试；regression 捕获里可见) |
 | 隐藏 binding 为高级用户存在 | `test_tui_smoke.py::test_pause_and_resume`、`::test_force_rescan_does_not_crash`、`::test_cycle_sort_modes`（绑定能触发）；footer 不显示隐藏 binding 是 review-enforced |
 | Header 显示 title + 时钟；subtitle 反映实时状态 | (gap — 没有 subtitle 的 pytest 断言；regression 捕获里可见) |
+| App title 固定为 `diting v<版本>`（取自 importlib.metadata），运行版本号一眼可见 | `test_tui_smoke.py::test_app_title_carries_version` |
 | 所有 list-style 视图面板共享同一套行选中 + 查看手势（`up` / `down`、`i` / `enter`、鼠标点击即查看；Esc / `i` / `q` 关 modal 不动选择）；如需偏离该手势必须改本 Requirement | `test_tui_smoke.py::test_wifi_inspect_opens_modal_on_first_press`、`::test_bonjour_inspect_opens_modal_on_first_press`（与既有的 BLE 覆盖 `tui_snapshot.py::ble_detail_decoded` 并列） |
 
 ### `wifi-detail-modal`

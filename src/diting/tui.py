@@ -4330,7 +4330,12 @@ class DitingApp(App):
         # current AP pinned. The grouped view is more readable on dense
         # corporate networks where one AP broadcasts many BSSIDs.
         self._sort_mode: str = "ap"
-        self.title = "diting"
+        # Header shows `diting v<version>` so users always know the
+        # running version without pressing a key. __version__ is
+        # sourced from importlib.metadata at package import; falls
+        # back to "0+unknown" on unusual install layouts.
+        from . import __version__ as _diting_version
+        self.title = f"diting v{_diting_version}"
         self.sub_title = self._build_subtitle()
 
     def compose(self) -> ComposeResult:

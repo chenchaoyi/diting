@@ -583,6 +583,7 @@ def _usage() -> str:
         "              Same schema as `diting monitor`; append-mode + line-\n"
         "              flushed so already-emitted events survive Ctrl+C / kill /\n"
         "              traceback. Env: DITING_LOG=PATH (or =auto for default).\n"
+        "  --version   print the running version and exit\n"
         "  -h, --help  show this message\n"
     )
 
@@ -968,6 +969,13 @@ def _ensure_helper_ready() -> str | None:
 
 def main() -> None:
     args = sys.argv[1:]
+    # --version short-circuits before any locale / log / TUI work.
+    # We deliberately do NOT pass it through to subcommand parsers;
+    # `diting once --version` etc. are not supported.
+    if "--version" in args or "-V" in args:
+        from . import __version__
+        print(f"diting {__version__}")
+        return
     cli_lang = _extract_lang_arg(args)
     cli_log = _extract_log_arg(args)
     i18n.set_lang(i18n.resolve_lang(cli_lang))
