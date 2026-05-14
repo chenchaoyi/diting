@@ -85,6 +85,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | `--notify` raises macOS Notification Centre alerts for `rf_stir` / `latency_spike` / `loss_burst` (both `monitor` and default TUI subcommand) | `test_watchdog.py::test_maybe_notify_fires_for_latency_spike`, `::test_maybe_notify_fires_for_loss_burst`, `::test_maybe_notify_fires_for_rf_stir_high_confidence`, `::test_maybe_notify_silent_when_notify_disabled` (call-site bail); TUI wire-up: `test_tui_smoke.py::test_app_with_notify_calls_watchdog_on_event` |
 | `rf_stir` notifications gate on `DITING_NOTIFY_STIR_CONFIDENCE` (`high` default, `medium`, `all`) | `test_watchdog.py::test_should_notify_stir_default_gate`, `::test_should_notify_stir_medium_gate`, `::test_should_notify_stir_all_gate`, `::test_watchdog_config_falls_back_on_invalid_stir_gate` |
 | Per-(event-type, target) silence window (default 60 s, `DITING_NOTIFY_SILENCE_S` override) | `test_watchdog.py::test_silence_clock_first_fire_returns_true`, `::test_silence_clock_second_fire_within_window_returns_false`, `::test_silence_clock_second_fire_after_window_returns_true`, `::test_silence_clock_independent_per_tuple`, `::test_watchdog_config_defaults_when_env_unset`, `::test_watchdog_config_parses_valid_env`, `::test_watchdog_config_falls_back_on_invalid_silence` |
+| Notifications dispatched via the helper bundle's `notify` subcommand (icon = diting logo); missing helper → silent skip (no osascript fallback) | `test_watchdog.py::test_macos_notify_invokes_helper_notify_subcommand`, `::test_macos_notify_silent_when_helper_absent` |
 
 ### `ble-decoders`
 
@@ -214,6 +215,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Tarball SHA256 verified against `SHASUMS256.txt`, mismatch aborts | `test_install.py::test_install_script_aborts_on_sha_mismatch`, `::test_install_script_accepts_matching_sha` |
 | Tarball extracted under `~/.local/share/diting/`, symlinked at `~/.local/bin/diting`; sudo not required | `test_install.py::test_install_script_lays_out_user_local_paths_in_dry_run` |
 | Helper bundle copied to `~/Library/Application Support/diting/`, quarantine xattr stripped, `open` primes TCC | `test_install.py::test_install_script_primes_application_support_helper_in_dry_run` |
+| Install-time locale derived from `defaults read -g AppleLanguages` and threaded into the helper launch via `--env DITING_LANG=` AND `--args -AppleLanguages '(<tag>)'` so the helper UI and macOS TCC prompts agree on language | `test_install.py::test_install_script_primes_application_support_helper_in_dry_run` |
 | PATH-update hint printed when `~/.local/bin` not on PATH (zsh / bash / fish detected) | `test_install.py::test_install_script_emits_zsh_path_hint`, `::test_install_script_silent_when_already_on_path` |
 | `DITING_VERSION=vX.Y.Z` env var pins the install to a specific tag | `test_install.py::test_install_script_uses_diting_version_override` |
 | Frozen-binary install coexists with `uv run diting` developer flow | (review-enforced — search-path priority pins the in-repo dev build first; tested via `test_helper.py::test_find_helper_repo_dev_build_shadows_application_support`) |
@@ -241,6 +243,10 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Helper auto-detectable from Python | `test_helper.py::test_find_helper_env_override_wins`, `::test_find_helper_env_override_can_point_at_binary`, `::test_find_helper_returns_none_when_nothing_present`, `::test_bundle_path_extracts_app_dir`, `::test_bundle_path_none_for_loose_binary` |
 | `find_helper()` also picks up the one-line installer's drop at `~/Library/Application Support/diting/diting-tianer.app`, with the in-repo dev build keeping priority | `test_helper.py::test_find_helper_picks_up_application_support_bundle`, `::test_find_helper_repo_dev_build_shadows_application_support` |
 | Helper exits 3 + writes "bluetooth unauthorized" on TCC denial | `test_ble.py::test_permission_denied_via_subprocess_exit_code`, `test_helper.py::test_has_bluetooth_permission_false_on_unauthorized` |
+| Helper bundle ships the diting logo as its AppIcon (`CFBundleIconFile=AppIcon`, full iconset committed) | `test_helper.py::test_helper_bundle_declares_appicon_and_ships_iconset` |
+| Helper requests Location → Bluetooth → Notifications in sequence at install time (state machine in `HelperAppDelegate`) | (manual — verified by running `open helper/diting-tianer.app` after build and observing one prompt at a time on top of the status window) |
+| Helper exposes `notify --title T --body B` subcommand using `UNUserNotificationCenter` under the bundle's identity | (manual — `helper/diting-tianer.app/Contents/MacOS/diting-tianer notify --title test --body hi` posts a banner with the diting logo) |
+| Helper language fallback uses `Bundle.preferredLocalizations.first` (not `Locale.preferredLanguages.first`) so the helper UI matches the macOS-chosen `.lproj` | (review-enforced — Swift code in `detectHelperLang`) |
 
 ### `mdns-scanning`
 

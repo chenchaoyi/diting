@@ -279,3 +279,53 @@ def test_notify_message_loss_burst() -> None:
     })
     assert "Loss burst on WAN" in msg
     assert "60.0%" in msg
+
+
+# ---------- _macos_notify: helper-binary routing ----------
+
+def test_macos_notify_silent_when_helper_absent(monkeypatch) -> None:
+    """If the diting helper binary cannot be resolved, the watchdog
+    drops the notification silently — no osascript fallback, no
+    error propagated to callers. The watchdog contract is fire-and-
+    forget; a missing helper must never break the TUI."""
+    from diting import _helper, _watchdog
+    monkeypatch.setattr(_helper, "find_helper", lambda: None)
+    # Should complete with no exception.
+    asyncio.run(_watchdog._macos_notify(title="diting", message="x"))
+
+
+def test_macos_notify_invokes_helper_notify_subcommand(monkeypatch) -> None:
+    """When the helper IS available, `_macos_notify` shells out to
+    `<helper> notify --title T --body B` (not osascript). The argv
+    threads title and body through verbatim so the helper's
+    UNUserNotificationCenter call carries the watchdog's text."""
+    import asyncio as _asyncio
+    from diting import _helper, _watchdog
+
+    monkeypatch.setattr(_helper, "find_helper", lambda: "/fake/helper")
+    captured: dict[str, object] = {}
+
+    class _FakeProc:
+        async def wait(self) -> int:
+            return 0
+
+    async def fake_exec(*argv, **kwargs):
+        captured["argv"] = argv
+        captured["stdout"] = kwargs.get("stdout")
+        return _FakeProc()
+
+    monkeypatch.setattr(_asyncio, "create_subprocess_exec", fake_exec)
+
+    _asyncio.run(_watchdog._macos_notify(
+        title="diting", message="Latency spike on gw: 240.5 ms",
+    ))
+
+    argv = captured["argv"]
+    assert argv[0] == "/fake/helper"
+    assert argv[1] == "notify"
+    assert "--title" in argv
+    assert "diting" in argv
+    assert "--body" in argv
+    assert "Latency spike on gw: 240.5 ms" in argv
+    # And no osascript fallback path is hit.
+    assert "/usr/bin/osascript" not in argv

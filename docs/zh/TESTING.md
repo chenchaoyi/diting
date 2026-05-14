@@ -76,6 +76,7 @@
 | `--notify` 对 `rf_stir` / `latency_spike` / `loss_burst` 三种异常都触发 macOS 通知中心横幅（`monitor` 与默认 TUI 子命令均生效） | `test_watchdog.py::test_maybe_notify_fires_for_latency_spike`、`::test_maybe_notify_fires_for_loss_burst`、`::test_maybe_notify_fires_for_rf_stir_high_confidence`、`::test_maybe_notify_silent_when_notify_disabled`（调用方早返）；TUI wire-up：`test_tui_smoke.py::test_app_with_notify_calls_watchdog_on_event` |
 | `rf_stir` 通知按 `DITING_NOTIFY_STIR_CONFIDENCE` 阈值（默认 `high`，可选 `medium` / `all`）过滤 | `test_watchdog.py::test_should_notify_stir_default_gate`、`::test_should_notify_stir_medium_gate`、`::test_should_notify_stir_all_gate`、`::test_watchdog_config_falls_back_on_invalid_stir_gate` |
 | 按 (event-type, target) 维度的静默窗口（默认 60 s，`DITING_NOTIFY_SILENCE_S` 可覆盖） | `test_watchdog.py::test_silence_clock_first_fire_returns_true`、`::test_silence_clock_second_fire_within_window_returns_false`、`::test_silence_clock_second_fire_after_window_returns_true`、`::test_silence_clock_independent_per_tuple`、`::test_watchdog_config_defaults_when_env_unset`、`::test_watchdog_config_parses_valid_env`、`::test_watchdog_config_falls_back_on_invalid_silence` |
+| 通知通过 helper bundle 的 `notify` 子命令派发（图标 = diting logo）；helper 不存在则静默跳过（不再 fallback 到 osascript） | `test_watchdog.py::test_macos_notify_invokes_helper_notify_subcommand`、`::test_macos_notify_silent_when_helper_absent` |
 
 ### `ble-decoders`
 
@@ -205,6 +206,7 @@
 | Tarball SHA256 对 `SHASUMS256.txt` 校验，不一致即 abort | `test_install.py::test_install_script_aborts_on_sha_mismatch`、`::test_install_script_accepts_matching_sha` |
 | Tarball 解压到 `~/.local/share/diting/`，symlink 落 `~/.local/bin/diting`；不要求 sudo | `test_install.py::test_install_script_lays_out_user_local_paths_in_dry_run` |
 | Helper bundle 拷贝到 `~/Library/Application Support/diting/`，剥离 quarantine xattr，`open` 触发 TCC | `test_install.py::test_install_script_primes_application_support_helper_in_dry_run` |
+| 安装期 locale 从 `defaults read -g AppleLanguages` 派生，并通过 `--env DITING_LANG=` + `--args -AppleLanguages '(<tag>)'` 同时透传给 helper，使 helper UI 与 macOS TCC 弹窗语言一致 | `test_install.py::test_install_script_primes_application_support_helper_in_dry_run` |
 | `~/.local/bin` 不在 PATH 时输出对应 shell 的 PATH 更新提示（zsh / bash / fish 三种） | `test_install.py::test_install_script_emits_zsh_path_hint`、`::test_install_script_silent_when_already_on_path` |
 | `DITING_VERSION=vX.Y.Z` 环境变量锁版本 | `test_install.py::test_install_script_uses_diting_version_override` |
 | 冻结二进制与 `uv run diting` 开发流共存 | （review-enforced — 搜索路径优先级把 in-repo 开发构建排在前；通过 `test_helper.py::test_find_helper_repo_dev_build_shadows_application_support` 验证） |
@@ -232,6 +234,10 @@
 | Python 端可自动发现 helper | `test_helper.py::test_find_helper_env_override_wins`、`::test_find_helper_env_override_can_point_at_binary`、`::test_find_helper_returns_none_when_nothing_present`、`::test_bundle_path_extracts_app_dir`、`::test_bundle_path_none_for_loose_binary` |
 | `find_helper()` 也能发现一行 installer 安装到 `~/Library/Application Support/diting/diting-tianer.app` 的 bundle；in-repo 开发构建优先级仍最高 | `test_helper.py::test_find_helper_picks_up_application_support_bundle`、`::test_find_helper_repo_dev_build_shadows_application_support` |
 | TCC 拒绝时 helper exit 3 + stderr "bluetooth unauthorized" | `test_ble.py::test_permission_denied_via_subprocess_exit_code`、`test_helper.py::test_has_bluetooth_permission_false_on_unauthorized` |
+| Helper bundle 用 diting logo 作为 AppIcon（Info.plist 声明 `CFBundleIconFile=AppIcon`，iconset 全套尺寸入库） | `test_helper.py::test_helper_bundle_declares_appicon_and_ships_iconset` |
+| 安装期 helper 按定位 → 蓝牙 → 通知顺序请求权限（`HelperAppDelegate` 状态机） | （人工 — 构建后运行 `open helper/diting-tianer.app`，观察状态窗口上每次只显示一个 TCC 弹窗） |
+| Helper 提供 `notify --title T --body B` 子命令，通过 `UNUserNotificationCenter` 以 bundle 身份发通知 | （人工 — `helper/diting-tianer.app/Contents/MacOS/diting-tianer notify --title test --body hi` 弹出带 diting logo 的横幅） |
+| Helper 语言兜底走 `Bundle.preferredLocalizations.first`（不再走 `Locale.preferredLanguages.first`），与 macOS 挑 `.lproj` 的源头一致 | （review-enforced — `detectHelperLang` 的 Swift 代码） |
 
 ### `mdns-scanning`
 

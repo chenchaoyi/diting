@@ -100,6 +100,13 @@ bash scripts/package_release.sh 0.10.0-rc1
   x86_64 builds to whatever the latest x86_64 runner is, or drop
   x86_64 (Apple Silicon adoption is >70% of new Macs as of 2026).
 
+- **Upgrade users get re-prompted for Location and Bluetooth after a
+  release.** Expected when the helper bundle's cdhash changes —
+  macOS TCC keys grants by cdhash. The release notes should call this
+  out explicitly when the bundle gains a new file (e.g. v1.0.x
+  shipped `AppIcon.icns` for the first time, bumping the cdhash).
+  Future installs of the same release at the same path retain grants.
+
 - **`diting` (installed) hangs at "需要以下权限：定位服务" while
   `uv run diting` works.** This is the macOS 26 TCC-vs-LaunchServices
   asymmetry — pinned by the v1.0.7 fix. If you regress it (e.g. by

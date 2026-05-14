@@ -898,14 +898,22 @@ def _ensure_helper_ready() -> str | None:
         # would show English even when the user is running
         # `diting --lang zh`. We pass DITING_LANG explicitly so the
         # Swift HelperAppDelegate's HelperStrings struct picks the
-        # right localisation. The bundle falls back to
-        # `Locale.preferredLanguages` if we don't set this, which
-        # covers install.sh's first-launch `open` call (no Python
-        # in the chain to know about --lang yet).
+        # right localisation.
+        #
+        # `--args -AppleLanguages '(<tag>)'` additionally forces
+        # Cocoa's NSUserDefaults for the launched process to pick
+        # the matching `.lproj`, so the macOS TCC prompt headers
+        # and prompt bodies render in the same language as the
+        # status window. Without this, Bundle.preferredLocalizations
+        # can disagree with Locale.preferredLanguages and the user
+        # sees a mixed-language stack (the screenshot that motivated
+        # the helper-install-flow-and-branding change).
+        bundle_tag = "zh-Hans" if i18n.get_lang() == i18n.ZH else "en"
         open_argv = [
             "/usr/bin/open",
             "--env", f"DITING_LANG={i18n.get_lang()}",
             bundle,
+            "--args", "-AppleLanguages", f"({bundle_tag})",
         ]
         subprocess.Popen(
             open_argv,

@@ -97,6 +97,12 @@ bash scripts/package_release.sh 0.10.0-rc1
   直接放弃 x86_64（截止 2026 年 Apple Silicon 在新 Mac 中占比已
   >70%）。
 
+- **升级用户在新版本安装后又被询问了一次定位与蓝牙授权。** 这是预期
+  行为——helper bundle 的 cdhash 变了，macOS TCC 按 cdhash 锚授权。
+  bundle 里增删任意文件（比如 v1.0.x 第一次加入 `AppIcon.icns`）都
+  会导致 cdhash 变化。同一版本之后在相同路径再次安装则保留授权。
+  发版 notes 中应明确告知这一变化。
+
 - **curl 装的 `diting` 卡在「需要以下权限：定位服务」而
   `uv run diting` 正常**。这就是 v1.0.7 修过的 macOS 26
   TCC-vs-LaunchServices 不对称问题。如果哪天回退（比如把 helper 的

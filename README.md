@@ -120,9 +120,11 @@ One command. No Python, no `uv`, no Xcode Command Line Tools on
 your machine — the installer downloads a self-contained binary
 plus the helper bundle and drops them in
 `~/.local/share/diting/` and `~/Library/Application Support/diting/`.
-On first run a macOS dialog asks for Location Services and Bluetooth
-permission; click Allow, and the TUI launches with full SSID, BSSID,
-and BLE data.
+On first run the helper opens a small status window and walks you
+through three macOS permission prompts in order — Location → Bluetooth
+→ Notifications — one at a time. Click Allow on each and the TUI
+launches with full SSID, BSSID, and BLE data, plus diting-branded
+notifications when the watchdog detects an anomaly.
 
 > **Why the helper?** macOS 14.4+ redacts SSID and BSSID to None
 > unless the calling process has Location Services. A Python CLI
@@ -147,7 +149,7 @@ git clone git@github.com:chenchaoyi/diting.git
 cd diting
 uv sync
 make helper          # one-time: build + sign the Swift helper bundle
-open helper/diting-tianer.app   # one-time: grant Location Services + Bluetooth
+open helper/diting-tianer.app   # one-time: grant Location → Bluetooth → Notifications
 uv run diting
 ```
 

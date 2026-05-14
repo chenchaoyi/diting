@@ -174,14 +174,36 @@ async def maybe_notify(
 
 
 async def _macos_notify(*, title: str, message: str) -> None:
-    """Fire ``osascript -e 'display notification ...'`` non-blocking."""
+    """Post a macOS notification via the diting helper bundle.
+
+    The helper's `notify` subcommand uses `UNUserNotificationCenter`
+    under the bundle's identity, so the notification carries the
+    bundle's AppIcon (the diting logo) — unlike the legacy
+    `osascript -e 'display notification'` path which always
+    attached the AppleScript scroll icon.
+
+    Best-effort: if the helper isn't installed or doesn't respond in
+    time, the notification is silently skipped. The watchdog's
+    contract is fire-and-forget; we never propagate an exception
+    into the TUI's event loop.
+    """
+    # Imported lazily to keep this module's import path free of the
+    # macos_backend / pyobjc graph — _watchdog runs in `diting monitor`
+    # (headless CLI) as well as the TUI, and we don't want to drag
+    # CoreWLAN into the import surface of the simpler path.
+    from . import _helper
+
+    binary = _helper.find_helper()
+    if binary is None:
+        return
     try:
         proc = await asyncio.create_subprocess_exec(
-            "/usr/bin/osascript", "-e",
-            f'display notification "{message}" with title "{title}"',
+            binary, "notify",
+            "--title", title,
+            "--body", message,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        await proc.wait()
-    except (FileNotFoundError, OSError):
+        await asyncio.wait_for(proc.wait(), timeout=3.0)
+    except (FileNotFoundError, OSError, asyncio.TimeoutError):
         pass
