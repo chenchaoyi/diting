@@ -96,6 +96,30 @@ def test_app_boots_and_quits():
     asyncio.run(_run_pilot())
 
 
+def test_app_title_carries_version():
+    """The header title is `diting v<version>` so users always see the
+    running version without pressing a key. The actual version string
+    comes from importlib.metadata; we only assert the prefix here so
+    the test does not need to track release bumps."""
+    import asyncio
+    from importlib.metadata import version as _pkg_version
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.2)
+            assert app.title.startswith("diting v"), (
+                f"title should start with `diting v`, got {app.title!r}"
+            )
+            assert _pkg_version("diting") in app.title, (
+                f"title should contain the importlib-metadata version, "
+                f"got {app.title!r}"
+            )
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
 def test_pause_and_resume():
     import asyncio
     asyncio.run(_run_pilot("p", "p"))

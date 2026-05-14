@@ -150,6 +150,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | `diting monitor` emits JSONL on stdout, no banner | `test_event_log.py::test_to_path_writes_appendable_jsonl` (event format); banner-cleanliness is manual |
 | `--config <PATH>` overrides aps.yaml search | `test_network.py::test_resolve_config_path_env_override_wins`, `::test_resolve_config_path_no_env_falls_through_to_default` |
 | `--notify` valid on both default TUI subcommand and `monitor` | `test_tui_smoke.py::test_app_with_notify_calls_watchdog_on_event` (TUI wire-up); `test_watchdog.py::test_maybe_notify_fires_for_latency_spike` (monitor wire-up); flag-parsing is review-enforced |
+| `--version` (or `-V`) prints `diting <version>` and exits 0, short-circuits before locale / TUI / helper work | `test_cli.py::test_version_flag_prints_running_version`, `::test_version_flag_short_dash_v`, `::test_version_short_circuits_before_locale` |
 
 ### `environment-monitor`
 
@@ -285,6 +286,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Footer is one GroupedFooter with three semantic groups | (gap — no footer-grouping unit test; visible in regression captures) |
 | Hidden bindings exist for power-user navigation | `test_tui_smoke.py::test_pause_and_resume`, `::test_force_rescan_does_not_crash`, `::test_cycle_sort_modes` (binding firing); footer omission of hidden bindings is review-enforced |
 | Header shows title + clock; subtitle reflects live state | (gap — no subtitle assertion in pytest; visible in regression captures) |
+| App title pinned to `diting v<version>` (sourced from importlib.metadata) so the running version is always visible | `test_tui_smoke.py::test_app_title_carries_version` |
 | Every list-style view panel shares the same row-select + inspect gesture (`up` / `down`, `i` / `enter`, mouse-click-to-inspect; modal close `Esc` / `i` / `q` does not mutate selection); deviations require modifying this Requirement | `test_tui_smoke.py::test_wifi_inspect_opens_modal_on_first_press`, `::test_bonjour_inspect_opens_modal_on_first_press` (alongside existing BLE coverage in `tui_snapshot.py::ble_detail_decoded`) |
 
 ### `wifi-detail-modal`

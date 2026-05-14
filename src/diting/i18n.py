@@ -463,6 +463,7 @@ _ZH: dict[str, str] = {
     "              Same schema as `diting monitor`; append-mode + line-\n"
     "              flushed so already-emitted events survive Ctrl+C / kill /\n"
     "              traceback. Env: DITING_LOG=PATH (or =auto for default).\n"
+    "  --version   print the running version and exit\n"
     "  -h, --help  show this message\n":
         "用法：diting [--lang en|zh] [--log [PATH]] [子命令]\n"
         "\n"
@@ -483,6 +484,7 @@ _ZH: dict[str, str] = {
         "              schema 与 `diting monitor` 一致，append 模式 + 行\n"
         "              刷新，已写入的事件 Ctrl+C / kill / traceback 后都\n"
         "              留在文件里。环境变量：DITING_LOG=PATH 或 =auto。\n"
+        "  --version   打印当前版本号后退出\n"
         "  -h, --help  显示本说明\n",
     "diting: unknown subcommand {cmd!r}":
         "diting：未知子命令 {cmd!r}",
