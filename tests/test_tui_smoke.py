@@ -307,53 +307,63 @@ def test_subtitle_uses_display_name_not_internal_token():
     asyncio.run(go())
 
 
-def test_app_constructs_bonjour_panel_lazily():
-    """The `BonjourPoller` is not instantiated while the user stays in
-    the Wi-Fi view. `_mdns_poller` stays None and `zeroconf` may not
-    even be imported until the user presses `n`."""
+def test_bonjour_prewarms_at_mount():
+    """The Bonjour stack starts prewarming at TUI mount, not on first
+    `n` press. The PyInstaller-frozen binary's GIL-bound import path
+    needs the longest possible window to amortise; mount-time gives
+    it the entire wifi-view dwell time before the user navigates."""
     import asyncio
 
     async def go():
         app = DitingApp(_FakeBackend(), _INVENTORY)
         async with app.run_test(size=(140, 50)) as pilot:
-            await pilot.pause(0.4)
-            assert app._mdns_poller is None
-            assert not app._mdns_starting
+            # First refresh tick is enough for on_mount to schedule
+            # the prewarm worker — either `_mdns_starting` is True or
+            # the poller is already up.
+            await pilot.pause(0.05)
+            assert app._mdns_starting or app._mdns_poller is not None, (
+                "TUI mount should kick off the Bonjour prewarm; "
+                "neither `_mdns_starting` nor `_mdns_poller` is set"
+            )
+            # Allow the worker to finish so subsequent assertions are
+            # stable. zeroconf init is real-time; 1.5 s is generous.
+            for _ in range(15):
+                await pilot.pause(0.1)
+                if app._mdns_poller is not None:
+                    break
+            assert app._mdns_poller is not None
             await pilot.press("q")
 
     asyncio.run(go())
 
 
-def test_bonjour_prewarms_on_first_wifi_to_ble_switch():
-    """Pre-warm semantics: the first `n` press (wifi → BLE) kicks off
-    the Bonjour poller in the background. By the time the user reaches
-    the mDNS view, the poller is already initialised so the second `n`
-    press has nothing slow to do."""
+def test_bonjour_view_switch_is_idempotent_after_mount_prewarm():
+    """Once on_mount has prewarmed the poller, pressing `n` to cycle
+    through views does NOT spawn additional pollers or workers — the
+    `_ensure_mdns_poller` gate sees a non-None poller and no-ops.
+    Guarantees the mount-time prewarm doesn't double up with the
+    legacy wifi→BLE trigger."""
     import asyncio
 
     async def go():
         app = DitingApp(_FakeBackend(), _INVENTORY)
         async with app.run_test(size=(140, 50)) as pilot:
-            await pilot.pause(0.4)
-            assert app._mdns_poller is None
-            # First press: wifi → ble. Prewarm starts.
-            await pilot.press("n")
-            assert app._view_mode == "ble"
-            # Allow the worker thread to finish the import +
-            # BonjourPoller() construction. zeroconf can take real
-            # wall-clock to start up; 1.5 s is generous for CI.
+            # Wait for the mount-time prewarm to settle.
             for _ in range(15):
                 await pilot.pause(0.1)
                 if app._mdns_poller is not None:
                     break
-            assert app._mdns_poller is not None, (
-                "prewarm should have completed during the BLE step"
+            assert app._mdns_poller is not None
+            poller_after_mount = app._mdns_poller
+            # Drive the full view cycle.
+            await pilot.press("n")  # wifi → ble
+            await pilot.press("n")  # ble → mdns
+            await pilot.pause(0.2)
+            # Same poller instance — no rebuild.
+            assert app._mdns_poller is poller_after_mount, (
+                "Pressing `n` after mount-time prewarm must not "
+                "replace the existing poller"
             )
-            # Second press: ble → mdns. The poller is already there,
-            # so _ensure_mdns_poller is a no-op (no new worker spawned)
-            # and the view-switch is instantaneous.
-            await pilot.press("n")
-            assert app._view_mode == "mdns"
             await pilot.press("q")
 
     asyncio.run(go())
@@ -782,7 +792,13 @@ def test_wifi_selection_clears_when_target_drops_out():
 def _inject_bonjour_devices(app, devices):
     """Bypass the zeroconf-driven poller (which would need real Macs
     on the LAN) by setting the App's latest snapshot directly and
-    refreshing the panel."""
+    refreshing the panel.
+
+    Sets `_paused = True` so the mount-time prewarm consumer task
+    (which would otherwise yield an empty `BonjourScanUpdate` from
+    the real poller and overwrite our injection) sees the pause gate
+    and skips the `self._latest_mdns = snap.devices` assignment."""
+    app._paused = True
     app._latest_mdns = devices
     app._refresh_mdns_panel()
 

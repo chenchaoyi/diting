@@ -4380,6 +4380,19 @@ class DitingApp(App):
                 exclusive=False,
                 name="latency",
             )
+        # Pre-warm Bonjour as soon as the TUI mounts. The earlier
+        # "first time leaving Wi-Fi" trigger gave the source build
+        # enough window to absorb the `from .mdns import ...` import
+        # in `asyncio.to_thread`, but the PyInstaller-frozen binary's
+        # PyiFrozenImporter holds the GIL for the entire 1-2 s of
+        # decompression — `asyncio.to_thread` doesn't help there
+        # because the worker thread isn't actually I/O-blocked. By
+        # kicking off the prewarm at mount, the wifi view's reading
+        # time amortises the cost across both builds. The gate in
+        # `_ensure_mdns_poller` stays idempotent, so the explicit
+        # call from `action_toggle_view` (kept for safety) is a
+        # no-op after this.
+        self._ensure_mdns_poller()
 
     def on_unmount(self) -> None:
         # Flush + close the JSONL log on TUI exit so the file is

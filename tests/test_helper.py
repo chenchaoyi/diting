@@ -546,3 +546,21 @@ def test_helper_bundle_declares_appicon_and_ships_iconset():
     present = {p.name for p in iconset.iterdir() if p.suffix == ".png"}
     missing = required - present
     assert not missing, f"AppIcon.iconset is missing sizes: {sorted(missing)}"
+
+
+def test_frozen_build_copies_diting_metadata():
+    """The PyInstaller-frozen binary MUST ship `diting`'s dist-info
+    so `importlib.metadata.version("diting")` resolves at runtime.
+    Without it, the frozen binary's __version__ falls back to
+    `0+unknown` — v1.0.9 shipped this way and the TUI title rendered
+    `diting v0+unknown`. Guard against regression by asserting the
+    build script still passes `--copy-metadata diting`."""
+    repo_root = Path(__file__).resolve().parent.parent
+    build_script = repo_root / "scripts" / "build_frozen.py"
+    assert build_script.exists()
+    text = build_script.read_text(encoding="utf-8")
+    assert '"--copy-metadata"' in text and '"diting"' in text, (
+        "scripts/build_frozen.py must pass `--copy-metadata diting` "
+        "to PyInstaller so the frozen binary can read its own version "
+        "via importlib.metadata. See the v1.0.9 -> v1.0.10 fix."
+    )

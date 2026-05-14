@@ -104,6 +104,15 @@ def main() -> None:
         # data files. They live under src/diting/data/ and are read
         # via importlib.resources at runtime.
         "--add-data", f"{REPO_ROOT / 'src' / 'diting' / 'data'}:diting/data",
+        # Ship the `diting` package's own dist-info so
+        # `importlib.metadata.version("diting")` can resolve at
+        # runtime. Without this, the frozen binary's __version__
+        # falls back to "0+unknown" (which is what v1.0.9 shipped:
+        # `diting --version` printed `diting 0+unknown` and the TUI
+        # title rendered `diting v0+unknown`). PyInstaller does not
+        # copy a package's metadata by default — only modules and
+        # data files referenced by static analysis.
+        "--copy-metadata", "diting",
         # PyInstaller needs to know where to find the `diting`
         # package since the entry stub imports it. Pointing
         # --paths at src/ lets the analyzer walk the package

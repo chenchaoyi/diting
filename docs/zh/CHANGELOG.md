@@ -8,6 +8,35 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.10] — 2026-05-14
+
+两个只在 curl 装的冻结 binary 里出现的 bug（`uv run diting` 都没有）。
+
+### 修复
+- **冻结 binary 的 `--version` 和 TUI 标题现在能正确显示版本号了。**
+  v1.0.9 漏了 PyInstaller 的 `--copy-metadata diting`，导致冻结
+  binary 里 `importlib.metadata.version("diting")` 抛
+  `PackageNotFoundError`，`__version__` 兜底到 `"0+unknown"`。
+  结果：`diting --version` 打印 `diting 0+unknown`，TUI 顶部也是
+  `diting v0+unknown`。在 `scripts/build_frozen.py` 里加上
+  `--copy-metadata diting` 就把 dist-info 打进了冻结归档。
+  `tests/test_helper.py` 里加了回归测试，避免再被移掉。
+- **Bonjour 预热改成在 TUI mount 时启动，不再等到第一次按
+  wifi → BLE。** 1.0.x 时落的「第一次离开 Wi-Fi 视图触发预热」对
+  源码安装路径有效，因为 `.py` 文件读 IO 时 CPython 会释放 GIL，
+  预热 worker 能和 BLE 视图的浏览时间重叠。但 PyInstaller 的
+  `PyiFrozenImporter` 从 PYZ 归档解压模块时全程持 GIL，
+  `asyncio.to_thread` 并帮不上忙——所以 v1.0.9 用户在按第二次
+  `n`（BLE → mDNS）时会卡 1.5 s 以上。把触发点改到
+  `App.on_mount`，预热就拿到了整个 Wi-Fi 视图浏览时间窗口，足够
+  把成本平摊掉。
+
+### Spec 说明
+`mdns-scanning` 能力之前保证「只看 Wi-Fi 视图的用户从不 import
+zeroconf」，这条不再成立——每次 TUI 启动都会在 mount 时 import
+zeroconf。这部分跑在 worker 上，用户看不到延迟；变更记录在
+OpenSpec change `prewarm-bonjour-at-mount`。
+
 ## [1.0.9] — 2026-05-14
 
 小但有用：一个查 diting 当前版本号的口子。
