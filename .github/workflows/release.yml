@@ -104,25 +104,38 @@ jobs:
       # so uv, python, and any subprocess they invoke run as x86_64
       # under Rosetta.
       - name: Set up Python 3.11 (x86_64 via Rosetta)
+        env:
+          # Pin the uv version we download as x86_64 to match the
+          # arm64 one that astral-sh/setup-uv@v5 installed earlier.
+          # If they diverge, lockfile-resolution would too.
+          UV_PIN: "0.11.14"
         run: |
-          # The arm64 uv from astral-sh/setup-uv@v5 lives at
-          # ~/.local/bin/uv and cannot run under `arch -x86_64`
-          # (Rosetta refuses to translate arm64 binaries — exits
-          # with "Bad CPU type in executable"). Install a *second*
-          # uv under Rosetta to a separate prefix via UV_INSTALL_DIR
-          # so the host path's arm64 uv is untouched and ROSETTA_UV
-          # always resolves to a genuine x86_64 binary.
-          arch -x86_64 /bin/bash -c '
-            export UV_INSTALL_DIR="$HOME/.local/bin-x86_64"
-            curl -fsSL https://astral.sh/uv/install.sh | sh
-          '
-          # Verify the installed binary is x86_64 — fail fast if uv's
-          # install script ever stops honouring UV_INSTALL_DIR under
-          # Rosetta. Without this assertion, the next step would
-          # repeat the v1.0.8-tag-attempt failure ("Bad CPU type")
-          # halfway through the run.
-          file "$HOME/.local/bin-x86_64/uv"
-          file "$HOME/.local/bin-x86_64/uv" | grep -q "x86_64"
+          # The astral.sh/uv install.sh script reads
+          # `sysctl hw.optional.arm64` directly, so running it under
+          # `arch -x86_64` still picks the arm64 binary. We bypass
+          # the install script entirely and download the explicit
+          # x86_64 release tarball — that's the only way to get a
+          # truly x86_64 uv onto an arm64 host runner.
+          mkdir -p "$HOME/.local/bin-x86_64"
+          curl -fsSL --retry 3 \
+            "https://github.com/astral-sh/uv/releases/download/${UV_PIN}/uv-x86_64-apple-darwin.tar.gz" \
+            -o /tmp/uv-x86_64.tar.gz
+          tar -xzf /tmp/uv-x86_64.tar.gz -C "$HOME/.local/bin-x86_64" --strip-components=1
+          # Assert via `file -b` (no path prefix) that the binary is
+          # x86_64 — the previous attempt grepped `file <path>` and
+          # got fooled by "x86_64" appearing in the install dir name.
+          ARCH_LINE=$(file -b "$HOME/.local/bin-x86_64/uv")
+          echo "uv arch: $ARCH_LINE"
+          case "$ARCH_LINE" in
+            *x86_64*) echo "uv is x86_64 — ok" ;;
+            *)
+              echo "expected x86_64 binary, got: $ARCH_LINE" >&2
+              exit 1 ;;
+          esac
+          # Smoke-test under Rosetta — fails immediately if the
+          # binary somehow still can't translate, sparing us a
+          # confusing "Bad CPU type" later in the pipeline.
+          arch -x86_64 "$HOME/.local/bin-x86_64/uv" --version
           echo "ROSETTA_UV=$HOME/.local/bin-x86_64/uv" >> $GITHUB_ENV
 
       - name: Install x86_64 Python via Rosetta uv
