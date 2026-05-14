@@ -105,13 +105,25 @@ jobs:
       # under Rosetta.
       - name: Set up Python 3.11 (x86_64 via Rosetta)
         run: |
+          # The arm64 uv from astral-sh/setup-uv@v5 lives at
+          # ~/.local/bin/uv and cannot run under `arch -x86_64`
+          # (Rosetta refuses to translate arm64 binaries — exits
+          # with "Bad CPU type in executable"). Install a *second*
+          # uv under Rosetta to a separate prefix via UV_INSTALL_DIR
+          # so the host path's arm64 uv is untouched and ROSETTA_UV
+          # always resolves to a genuine x86_64 binary.
           arch -x86_64 /bin/bash -c '
+            export UV_INSTALL_DIR="$HOME/.local/bin-x86_64"
             curl -fsSL https://astral.sh/uv/install.sh | sh
           '
-          # The Rosetta-installed uv lives under
-          # ~/.local/bin/uv. Use a separate cache dir so it does not
-          # collide with the arm64 uv's state.
-          echo "ROSETTA_UV=$HOME/.local/bin/uv" >> $GITHUB_ENV
+          # Verify the installed binary is x86_64 — fail fast if uv's
+          # install script ever stops honouring UV_INSTALL_DIR under
+          # Rosetta. Without this assertion, the next step would
+          # repeat the v1.0.8-tag-attempt failure ("Bad CPU type")
+          # halfway through the run.
+          file "$HOME/.local/bin-x86_64/uv"
+          file "$HOME/.local/bin-x86_64/uv" | grep -q "x86_64"
+          echo "ROSETTA_UV=$HOME/.local/bin-x86_64/uv" >> $GITHUB_ENV
 
       - name: Install x86_64 Python via Rosetta uv
         run: |
