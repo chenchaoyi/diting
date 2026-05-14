@@ -284,24 +284,101 @@ def test_subtitle_uses_display_name_not_internal_token():
 
 
 def test_app_constructs_bonjour_panel_lazily():
-    """The `BonjourPoller` is instantiated only when the user first
-    transitions into the mDNS view. Before that, `_mdns_poller` is
-    None and `zeroconf` may not even be imported."""
+    """The `BonjourPoller` is not instantiated while the user stays in
+    the Wi-Fi view. `_mdns_poller` stays None and `zeroconf` may not
+    even be imported until the user presses `n`."""
     import asyncio
-    from diting.tui import BonjourPanel
 
     async def go():
         app = DitingApp(_FakeBackend(), _INVENTORY)
         async with app.run_test(size=(140, 50)) as pilot:
             await pilot.pause(0.4)
             assert app._mdns_poller is None
-            # Cycle wifi → ble → mdns. After the third press the
-            # poller should be instantiated.
+            assert not app._mdns_starting
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_bonjour_prewarms_on_first_wifi_to_ble_switch():
+    """Pre-warm semantics: the first `n` press (wifi → BLE) kicks off
+    the Bonjour poller in the background. By the time the user reaches
+    the mDNS view, the poller is already initialised so the second `n`
+    press has nothing slow to do."""
+    import asyncio
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            assert app._mdns_poller is None
+            # First press: wifi → ble. Prewarm starts.
             await pilot.press("n")
+            assert app._view_mode == "ble"
+            # Allow the worker thread to finish the import +
+            # BonjourPoller() construction. zeroconf can take real
+            # wall-clock to start up; 1.5 s is generous for CI.
+            for _ in range(15):
+                await pilot.pause(0.1)
+                if app._mdns_poller is not None:
+                    break
+            assert app._mdns_poller is not None, (
+                "prewarm should have completed during the BLE step"
+            )
+            # Second press: ble → mdns. The poller is already there,
+            # so _ensure_mdns_poller is a no-op (no new worker spawned)
+            # and the view-switch is instantaneous.
             await pilot.press("n")
-            await pilot.pause(0.3)
-            assert app._mdns_poller is not None
             assert app._view_mode == "mdns"
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_bonjour_consumer_task_resets_poller_on_unexpected_error(monkeypatch):
+    """If the consumer task hits an unexpected exception, it stops the
+    poller and clears `_mdns_poller` so a subsequent `n` cycle can
+    rebuild it. Without this reset the lazy-init gate would see a
+    non-None poller and refuse to restart."""
+    import asyncio
+
+    stopped = {"count": 0}
+
+    class _ExplodingPoller:
+        async def events(self):
+            raise RuntimeError("simulated zeroconf failure")
+            yield  # pragma: no cover  (makes it a generator)
+
+        def stop(self) -> None:
+            stopped["count"] += 1
+
+    # The consumer imports BonjourPoller via the module-level helper.
+    # Patching it short-circuits the real `from .mdns import ...` and
+    # gives us an exploding poller instead.
+    import diting.tui as tui_mod
+    monkeypatch.setattr(
+        tui_mod, "_import_bonjour_poller", lambda: _ExplodingPoller,
+    )
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.3)
+            # Trigger the prewarm path. With the exploding poller in
+            # place the consumer will hit the failure path on its
+            # first iteration of events().
+            await pilot.press("n")  # wifi → ble; triggers _ensure_mdns_poller
+            for _ in range(20):
+                await pilot.pause(0.05)
+                if app._mdns_poller is None and not app._mdns_starting:
+                    break
+            assert app._mdns_poller is None, (
+                "consumer should have reset _mdns_poller after the "
+                "exception so a future `n` press can rebuild it"
+            )
+            assert stopped["count"] >= 1, (
+                "consumer should have called poller.stop() on its way out"
+            )
             await pilot.press("q")
 
     asyncio.run(go())

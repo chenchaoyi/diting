@@ -244,7 +244,10 @@
 | `BonjourPanel` 渲染 vendor / name / services / age / id 列（无 RSSI / 信号条 / connected 分割） | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi`、`tui_snapshot.py`（explore 模式真机回归） |
 | 诊断面板在 mDNS 视图下渲染 Bonjour 侧汇总 | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
 | `BonjourPoller.stop()` 会清理 zeroconf 后台线程 | `test_mdns.py::test_poller_stop_joins_background_thread` |
-| `zeroconf` 懒加载——不进 mDNS 视图就不 import | `test_tui_smoke.py::test_app_constructs_bonjour_panel_lazily` |
+| `zeroconf` 懒加载——只要用户没离开 Wi-Fi 视图就不 import | `test_tui_smoke.py::test_app_constructs_bonjour_panel_lazily` |
+| wifi → BLE 这一步就开始预热 Bonjour，使得第二次按 `n`（BLE → mDNS）不再卡顿 | `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |
+| Bonjour 初始化跑在 worker 线程上（`asyncio.to_thread`），import 与 `Zeroconf()` socket 都不阻塞事件循环 | `test_mdns.py::test_start_browser_runs_on_worker_thread`, `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |
+| consumer 任务异常退出时会清掉 `_mdns_poller`，下一次按 `n` 能重建 | `test_tui_smoke.py::test_bonjour_consumer_task_resets_poller_on_unexpected_error` |
 
 ### `roam-detection`
 
