@@ -4131,6 +4131,22 @@ class GroupedFooter(Static):
         self.update(out)
 
 
+def _import_bonjour_poller():
+    """Lazy module-import wrapper for `asyncio.to_thread`.
+
+    The first import of `diting.mdns` transitively loads the
+    `zeroconf` package and its dependencies (~200 – 500 ms on a
+    cold interpreter). Calling this from a worker thread keeps the
+    asyncio event loop responsive while the import runs.
+
+    Module-scope rather than a method so `to_thread` does not need
+    to capture `self` (avoiding accidental cross-thread access to
+    App state during the import).
+    """
+    from .mdns import BonjourPoller
+    return BonjourPoller
+
+
 class DitingApp(App):
     """Top-level Textual app.
 
@@ -4290,6 +4306,10 @@ class DitingApp(App):
         # Users who never press `n` past BLE never pay the import or
         # background-thread cost.
         self._mdns_poller = None  # set in _ensure_mdns_poller()
+        # Guards _ensure_mdns_poller against firing twice in the gap
+        # between the prewarm worker starting and `_mdns_poller`
+        # being assigned. Cleared once the assignment lands.
+        self._mdns_starting: bool = False
         self._latest_mdns: list = []
         self._paused = False
         # Cache the most recent *non-empty* scan. CoreWLAN's throttle
@@ -4769,28 +4789,49 @@ class DitingApp(App):
             pass
 
     def _ensure_mdns_poller(self) -> None:
-        """Lazy-instantiate the BonjourPoller and its consumer task.
+        """Lazy-start the BonjourPoller + its consumer task.
 
-        Called the first time the user toggles into the mDNS view.
-        Subsequent calls are no-ops — the existing poller and task
-        keep going. Imports `diting.mdns` here (not at module load)
-        so the `zeroconf` dep is paid only by users who want it.
+        Two callers:
+        - `action_toggle_view` triggers this the first time the user
+          leaves Wi-Fi (toward BLE or mDNS). Pre-warming on the BLE
+          step means by the time they hit mDNS the poller is already
+          initialised, which removes the ~300 ms – 1 s pause users
+          previously saw on the second `n` press.
+        - The consumer task's exception path resets state then
+          (optionally) lets a future `n` press call this again to
+          rebuild a dead poller.
+
+        Idempotent. The actual work — `from .mdns import BonjourPoller`
+        (slow first import) and `BonjourPoller()` — runs on a worker
+        thread via `asyncio.to_thread`, so this method returns to the
+        UI thread synchronously.
         """
-        if self._mdns_poller is not None:
+        if self._mdns_poller is not None or self._mdns_starting:
             return
-        from .mdns import BonjourPoller
-        self._mdns_poller = BonjourPoller()
+        self._mdns_starting = True
         self.run_worker(
             self._consume_mdns_events(),
             exclusive=False, name="mdns-poller",
         )
 
     async def _consume_mdns_events(self) -> None:
-        """Drain BonjourPoller snapshots into the panel."""
-        if self._mdns_poller is None:
-            return
+        """Prewarm + drain. Both heavy stages (the `diting.mdns`
+        import and the `Zeroconf()` socket setup inside
+        `_start_browser`) run on a worker thread so the asyncio
+        event loop stays responsive across view switches.
+
+        On any unexpected error the poller is torn down and
+        `_mdns_poller` is reset to None so the next `n` press can
+        rebuild it.
+        """
         try:
-            async for snap in self._mdns_poller.events():
+            BonjourPoller = await asyncio.to_thread(_import_bonjour_poller)
+            poller = BonjourPoller()
+            self._mdns_poller = poller
+        finally:
+            self._mdns_starting = False
+        try:
+            async for snap in poller.events():
                 if self._paused:
                     continue
                 self._latest_mdns = snap.devices
@@ -4799,10 +4840,14 @@ class DitingApp(App):
         except (asyncio.CancelledError, GeneratorExit):
             raise
         except Exception:
-            # Any unexpected stream error: stop. The TUI keeps going;
-            # the mDNS view will just show its last snapshot until
-            # the user restarts.
-            pass
+            # Reset so a future `n` press can rebuild. Without this
+            # the gate in _ensure_mdns_poller would still see a non-
+            # None poller and refuse to restart.
+            try:
+                poller.stop()
+            finally:
+                if self._mdns_poller is poller:
+                    self._mdns_poller = None
 
     def _refresh_mdns_panel(self) -> None:
         try:
@@ -4949,12 +4994,19 @@ class DitingApp(App):
         scan.display = self._view_mode == "wifi"
         ble.display = self._view_mode == "ble"
         mdns.display = self._view_mode == "mdns"
+        # Pre-warm Bonjour as soon as the user leaves Wi-Fi. This
+        # absorbs the ~300 ms – 1 s startup cost (zeroconf import +
+        # multicast-socket join) while the user is reading the BLE
+        # panel, so the second `n` press (BLE → mDNS) feels instant.
+        # _ensure_mdns_poller is idempotent — calling it from both
+        # the BLE step and the mDNS step is safe.
+        if self._view_mode in ("ble", "mdns"):
+            self._ensure_mdns_poller()
         if self._view_mode == "wifi":
             self._refresh_scan_panel()
         elif self._view_mode == "ble":
             self._refresh_ble_panel()
         else:  # mdns
-            self._ensure_mdns_poller()
             self._refresh_mdns_panel()
         # Diagnostics panel content has to follow the view too, even
         # on the snapshot the toggle does not trigger a poller event

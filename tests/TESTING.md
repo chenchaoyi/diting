@@ -253,7 +253,10 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | `BonjourPanel` renders vendor / name / services / age / id columns (no RSSI / signal-bar / connected split) | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi`, `tui_snapshot.py` (regression via explore mode; rendering shape) |
 | Diagnostics panel renders mDNS-side rows when view is `mdns` | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
 | `BonjourPoller.stop()` cleanly joins zeroconf background threads | `test_mdns.py::test_poller_stop_joins_background_thread` |
-| `zeroconf` import is lazy — never imported unless mDNS view is activated | `test_tui_smoke.py::test_app_constructs_bonjour_panel_lazily` |
+| `zeroconf` import is lazy — never imported while the user stays in Wi-Fi view | `test_tui_smoke.py::test_app_constructs_bonjour_panel_lazily` |
+| Bonjour stack pre-warms on the wifi → BLE step so the second `n` press (BLE → mDNS) does not pause | `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |
+| Bonjour init runs on a worker thread (`asyncio.to_thread`) so the event loop is not blocked by the import or the `Zeroconf()` socket setup | `test_mdns.py::test_start_browser_runs_on_worker_thread`, `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |
+| A crashed consumer task resets `_mdns_poller` so a subsequent `n` press rebuilds it | `test_tui_smoke.py::test_bonjour_consumer_task_resets_poller_on_unexpected_error` |
 
 ### `roam-detection`
 

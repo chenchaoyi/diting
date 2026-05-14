@@ -262,7 +262,11 @@ class BonjourPoller:
         """
         self._loop = asyncio.get_running_loop()
         if self._zc is None:
-            self._start_browser()
+            # `Zeroconf()` opens a UDP multicast socket and joins
+            # 224.0.0.251:5353; that handshake can take 100 – 500 ms
+            # on macOS. Run it on a worker thread so the asyncio
+            # event loop stays responsive across view switches.
+            await asyncio.to_thread(self._start_browser)
         try:
             while not self._stopped:
                 # Drain anything the listener queued since the last

@@ -393,3 +393,64 @@ def test_poller_stop_joins_background_thread():
     assert after <= before, (
         f"zeroconf threads leaked: before={before}, after={after}"
     )
+
+
+def test_start_browser_runs_on_worker_thread():
+    """`BonjourPoller.events()` runs `_start_browser` via
+    `asyncio.to_thread`, so the multicast socket setup does not
+    block the asyncio event loop. We prove it by capturing the
+    `threading.current_thread()` ident from inside the patched
+    `_start_browser` and confirming it is NOT the loop's thread.
+    """
+    captured: dict[str, object] = {}
+
+    class _FakeBrowser:
+        def __init__(self, zc, types, listener=None, **kw):
+            pass
+        def cancel(self):
+            pass
+
+    class _FakeZeroconf:
+        def __init__(self, *a, **kw):
+            pass
+        def close(self):
+            pass
+
+    async def go():
+        poller = BonjourPoller(snapshot_interval_s=0.05, ttl_s=60)
+        loop_thread_ident = threading.get_ident()
+        captured["loop_thread"] = loop_thread_ident
+
+        orig_start = poller._start_browser
+
+        def spy_start_browser():
+            captured["browser_thread"] = threading.get_ident()
+            return orig_start()
+
+        poller._start_browser = spy_start_browser  # type: ignore[method-assign]
+
+        import diting.mdns as mdns_mod
+        orig_zc = mdns_mod.Zeroconf
+        orig_browser = mdns_mod.ServiceBrowser
+        mdns_mod.Zeroconf = _FakeZeroconf
+        mdns_mod.ServiceBrowser = _FakeBrowser
+        try:
+            agen = poller.events()
+            try:
+                await asyncio.wait_for(anext(agen), timeout=2.0)
+            except asyncio.TimeoutError:
+                pass
+            poller.stop()
+            await agen.aclose()
+        finally:
+            mdns_mod.Zeroconf = orig_zc
+            mdns_mod.ServiceBrowser = orig_browser
+
+    asyncio.run(go())
+
+    assert "browser_thread" in captured, "_start_browser was not invoked"
+    assert captured["browser_thread"] != captured["loop_thread"], (
+        "_start_browser ran on the asyncio loop thread; it should be "
+        "dispatched via asyncio.to_thread so the multicast socket "
+        "setup does not block the event loop"
+    )
