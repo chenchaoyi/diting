@@ -3715,11 +3715,24 @@ class WifiDetailScreen(ModalScreen):
         scan: ScanResult,
         connection: Connection | None,
         inv: NetworkInventory,
+        environment_monitor: "EnvironmentMonitor | None" = None,
+        event_ring: "EventRing | None" = None,
+        latest_scan: "list[ScanResult] | None" = None,
     ) -> None:
         super().__init__()
         self._scan = scan
         self._conn = connection
         self._inv = inv
+        # New context refs — supplied by the App so the modal can
+        # render Signal history (env monitor), Same physical AP
+        # (latest scan + inv grouping), Roam history (event ring),
+        # and Recommendation (latest scan + connection). Each defaults
+        # to None so existing fixtures + tests that construct the
+        # modal directly without these refs still work; sections
+        # whose ref is None are omitted by the section method.
+        self._env_monitor = environment_monitor
+        self._event_ring = event_ring
+        self._latest_scan = latest_scan or []
 
     def compose(self) -> ComposeResult:
         body = Static(self._render_body(), id="wifi-detail-content")
@@ -3778,9 +3791,21 @@ class WifiDetailScreen(ModalScreen):
         self._section_radio(out)
         out.append("\n")
         self._section_signal(out)
+        if self._signal_history_has_data():
+            out.append("\n")
+            self._section_signal_history(out)
         if self._beacon_ie_has_data():
             out.append("\n")
             self._section_beacon_ie(out)
+        if self._siblings_has_data():
+            out.append("\n")
+            self._section_siblings(out)
+        if self._roam_history_has_data():
+            out.append("\n")
+            self._section_roam_history(out)
+        if self._recommendation_has_data():
+            out.append("\n")
+            self._section_recommendation(out)
         out.append("\n")
         self._section_activity(out)
         return out
@@ -3882,6 +3907,153 @@ class WifiDetailScreen(ModalScreen):
         ):
             if value is not None:
                 self._label(out, t(label_key), t("yes") if value else t("no"))
+
+    # -------- Signal history (sparkline + σ band) --------
+
+    def _signal_history_samples(self) -> list[tuple[datetime, int]]:
+        """Pull this BSSID's RSSI history from the env monitor when
+        both the monitor ref and the BSSID are available. Empty list
+        means "omit the section."
+        """
+        if self._env_monitor is None or not self._scan.bssid:
+            return []
+        return self._env_monitor.get_rssi_history(self._scan.bssid)
+
+    def _signal_history_has_data(self) -> bool:
+        return len(self._signal_history_samples()) >= 2
+
+    def _section_signal_history(self, out: Text) -> None:
+        self._heading(out, t("Signal history"))
+        samples = self._signal_history_samples()
+        sparkline = _rssi_sparkline(samples)
+        rssis = [r for _, r in samples]
+        lo, hi = min(rssis), max(rssis)
+        self._label(
+            out, t("history"),
+            f"{sparkline}  {lo}..{hi} dBm  ({len(samples)} samples)",
+        )
+        # σ baseline + label: reuse the env monitor's per-AP baseline
+        # so the modal agrees with the diagnostics panel.
+        if self._env_monitor is not None and self._scan.bssid:
+            baseline = self._env_monitor.get_baseline(self._scan.bssid)
+            if baseline is not None and baseline.current_sigma is not None:
+                # "stable" vs "active" uses the same threshold the
+                # aggregate label uses elsewhere. The detail modal
+                # doesn't try to distinguish "noisy" — that's an
+                # aggregate-only concept today.
+                label = (
+                    t("active") if baseline.current_sigma >= 3.0
+                    else t("stable")
+                )
+                self._label(
+                    out, t("σ"),
+                    f"{baseline.current_sigma} dB  ·  {label}",
+                )
+
+    # -------- Same physical AP (sibling BSSIDs) --------
+
+    def _siblings(self) -> list[ScanResult]:
+        """Other rows from latest_scan that share a physical AP with
+        the inspected BSSID per inventory grouping. Empty when the
+        AP is a singleton or BSSID is missing.
+        """
+        if not self._scan.bssid or not self._latest_scan:
+            return []
+        this = self._scan.bssid.lower()
+        out: list[ScanResult] = []
+        for r in self._latest_scan:
+            if r.bssid is None:
+                continue
+            if r.bssid.lower() == this:
+                continue
+            if self._inv.is_same_ap(this, r.bssid):
+                out.append(r)
+        out.sort(key=lambda r: r.rssi_dbm or -200, reverse=True)
+        return out
+
+    def _siblings_has_data(self) -> bool:
+        return bool(self._siblings())
+
+    def _section_siblings(self, out: Text) -> None:
+        self._heading(out, t("Same physical AP"))
+        for r in self._siblings():
+            band = band_label(r.channel) or "?"
+            rssi = f"{r.rssi_dbm} dBm" if r.rssi_dbm is not None else "—"
+            self._label(
+                out,
+                r.bssid or "?",
+                f"ch {r.channel}  ·  {band}  ·  {rssi}",
+            )
+
+    # -------- Roam history involving this BSSID --------
+
+    def _roam_history_events(self) -> list[RoamEvent]:
+        if self._event_ring is None or not self._scan.bssid:
+            return []
+        this = self._scan.bssid.lower()
+        out: list[RoamEvent] = []
+        # snapshot() is newest-first; cap at 10.
+        for ev in self._event_ring.snapshot():
+            if not isinstance(ev, RoamEvent):
+                continue
+            if (ev.previous_bssid.lower() == this
+                    or ev.new_bssid.lower() == this):
+                out.append(ev)
+                if len(out) >= 10:
+                    break
+        return out
+
+    def _roam_history_has_data(self) -> bool:
+        return bool(self._roam_history_events())
+
+    def _section_roam_history(self, out: Text) -> None:
+        self._heading(out, t("Roam history"))
+        for ev in self._roam_history_events():
+            ts = ev.timestamp.strftime("%H:%M:%S")
+            tag = (
+                t("[same-AP]")
+                if self._inv.is_same_ap(ev.previous_bssid, ev.new_bssid)
+                else t("[cross-AP]")
+            )
+            self._label(
+                out, ts,
+                f"{tag}  {ev.previous_bssid}  →  {ev.new_bssid}",
+            )
+
+    # -------- Recommendation (clearly-better same-SSID candidate) --------
+
+    def _recommendation(self) -> tuple[ScanResult, int] | None:
+        """Mirror of the diagnostics panel's clearly-better rule, but
+        only fires when the inspected row is the currently-associated
+        BSSID — otherwise the recommendation doesn't apply (the user
+        isn't on this row to begin with).
+        """
+        if self._conn is None or not self._latest_scan:
+            return None
+        if not self._scan.bssid or not self._conn.bssid:
+            return None
+        if self._scan.bssid.lower() != self._conn.bssid.lower():
+            return None
+        return _best_same_ssid_candidate(self._latest_scan, self._conn)
+
+    def _recommendation_has_data(self) -> bool:
+        return self._recommendation() is not None
+
+    def _section_recommendation(self, out: Text) -> None:
+        rec = self._recommendation()
+        if rec is None:
+            return
+        candidate, delta_db = rec
+        self._heading(out, t("Recommendation"))
+        band = band_label(candidate.channel) or "?"
+        self._label(
+            out, t("better candidate"),
+            t(
+                "consider switching to {bssid} on {band}  ·  +{delta} dB",
+                bssid=candidate.bssid or "?",
+                band=band, delta=delta_db,
+            ),
+        )
 
     def _section_activity(self, out: Text) -> None:
         r = self._scan
@@ -5231,6 +5403,9 @@ class DitingApp(App):
                     scan=scan,
                     connection=self._latest_connection,
                     inv=self._inv,
+                    environment_monitor=self._environment_monitor,
+                    event_ring=self._events_ring,
+                    latest_scan=list(self._cached_scan),
                 ))
 
     def action_wifi_select_prev(self) -> None:
@@ -5285,6 +5460,9 @@ class DitingApp(App):
             scan=scan,
             connection=self._latest_connection,
             inv=self._inv,
+            environment_monitor=self._environment_monitor,
+            event_ring=self._events_ring,
+            latest_scan=list(self._cached_scan),
         ))
 
     def _bonjour_ordered_keys(self) -> list[str]:

@@ -275,6 +275,50 @@ class EnvironmentMonitor:
         out.sort(key=lambda b: (order.get(b.mode, 9), -b.samples))
         return out
 
+    def get_rssi_history(self, bssid: str) -> list[tuple[datetime, int]]:
+        """Per-BSSID RSSI history as (timestamp, dBm) pairs.
+
+        Exposed for the Wi-Fi detail modal's Signal-history sparkline.
+        Returns the live deque snapshot (oldest → newest); callers
+        SHOULD treat the list as read-only — mutating it would corrupt
+        the monitor's rolling window. Returns an empty list when the
+        BSSID is unknown to the monitor.
+        """
+        if not bssid:
+            return []
+        state = self._state.get(bssid.lower())
+        if state is None:
+            return []
+        return list(state["history"])
+
+    def get_baseline(self, bssid: str) -> APBaseline | None:
+        """Single-AP baseline for the Wi-Fi detail modal.
+
+        Same fields `baseline_summary()` would render for this BSSID,
+        but without scanning every tracked AP. Returns `None` when
+        the BSSID is unknown to the monitor or has zero samples (a
+        renderer using this for the σ label can then omit the row).
+        """
+        if not bssid:
+            return None
+        b = bssid.lower()
+        state = self._state.get(b)
+        if state is None or not state["history"]:
+            return None
+        now = datetime.now()
+        mode = self._classify_mode(b)
+        baseline = self._baseline_sigma(b, state, now)
+        current = self._current_sigma(state, now)
+        return APBaseline(
+            bssid=b,
+            location=self._location(b),
+            mode=mode,
+            samples=len(state["history"]),
+            baseline_sigma=None if baseline is None else round(baseline, 1),
+            current_sigma=None if current is None else round(current, 1),
+            last_rssi=state["last_rssi"],
+        )
+
     def aggregate_sigma(self, now: datetime) -> tuple[str, float | None, datetime | None]:
         """One-line summary for the Diagnostics ``Environment`` row.
 

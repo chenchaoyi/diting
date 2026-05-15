@@ -288,6 +288,10 @@
 | 键盘 `up` / `down` / `enter` / `i` priority binding（Wi-Fi 视图外 no-op） | `test_tui_smoke.py::test_wifi_inspect_opens_modal_on_first_press` |
 | 鼠标点击 → 一手选中+打开 modal | （人工；鼠标路径与键盘 `i` 共用 `_wifi_set_selected(inspect=True)` 入口） |
 | Modal 渲染每个 `ScanResult` 字段，分成 Identity / Radio / Signal / Beacon IE / Activity 五段 | `test_tui_helpers.py::test_wifi_detail_renders_identity_radio_signal_activity_sections`、`::test_wifi_detail_renders_beacon_ie_when_present`、`::test_wifi_detail_omits_beacon_ie_when_all_fields_absent` |
+| Signal history 段在 EnvironmentMonitor 有 ≥ 2 个 RSSI 样本时渲染 sparkline + σ 基线；否则省略 | `test_tui_helpers.py::test_wifi_detail_signal_history_omitted_when_no_env_monitor`、`::test_wifi_detail_signal_history_omitted_when_under_two_samples`、`::test_wifi_detail_signal_history_renders_sparkline_and_sigma` |
+| Same physical AP 段通过 `NetworkInventory.is_same_ap` 列出同 AP 的兄弟无线电；只有自身一个 BSSID 时省略 | `test_tui_helpers.py::test_wifi_detail_siblings_omitted_when_singleton`、`::test_wifi_detail_siblings_renders_when_inv_groups_radios` |
+| Roam history 段按 BSSID 过滤事件环，按时间倒序最多 10 条；无匹配事件时省略 | `test_tui_helpers.py::test_wifi_detail_roam_history_omitted_when_ring_empty`、`::test_wifi_detail_roam_history_renders_matching_events_newest_first` |
+| Recommendation 段仅在被查看的行就是当前关联 BSSID 且 `_best_same_ssid_candidate` 找到更强候选时渲染 | `test_tui_helpers.py::test_wifi_detail_recommendation_omitted_when_not_associated`、`::test_wifi_detail_recommendation_renders_for_associated_row_with_better_candidate`、`::test_wifi_detail_recommendation_omitted_when_no_clearly_better` |
 | BSSID 被 TCC 屏蔽时给出可读 hint 而不是静默 | `test_tui_helpers.py::test_wifi_detail_redacted_bssid_renders_tcc_hint_and_omits_vendor` |
 | AP 名只来自 `aps.yaml`；无匹配时不出现 | `test_tui_helpers.py::test_wifi_detail_renders_ap_name_when_inventory_matches`、`::test_wifi_detail_omits_ap_name_row_when_inventory_misses` |
 | Esc / `i` / `q` 关闭 modal 不动选择 | （review-enforced；binding 是声明式的） |
