@@ -9,6 +9,81 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.11] — 2026-05-15
+
+The Wi-Fi and Bonjour detail modals stop being raw-field dumps and
+start telling you what the rest of diting already knows. Same data,
+much richer context.
+
+### Added (Wi-Fi detail modal)
+- **Signal history** — sparkline of the last ~hour of RSSI samples
+  for the inspected BSSID + a `σ X dB · stable / active` stability
+  label. Drawn from `EnvironmentMonitor`'s existing per-BSSID ring.
+- **Same physical AP** — sibling BSSIDs (2.4 / 5 / 6 GHz radios)
+  grouped via `NetworkInventory.is_same_ap`, with their channel /
+  band / RSSI from the current scan.
+- **Roam history** — newest-first list (capped at 10) of roam
+  events where this BSSID was either `previous_bssid` or
+  `new_bssid`. `[same-AP]` / `[cross-AP]` tags.
+- **Recommendation** — when the inspected row IS the
+  currently-associated BSSID AND a same-SSID candidate is ≥ 15 dB
+  stronger, render `consider switching to <BSSID> on <band> ·
+  +N dB`. Uses the same `clearly-better` rule the diagnostics
+  panel's Roam score line uses.
+
+### Added (Bonjour detail modal)
+- **Vendor-resolution trace** — Identity section's vendor row
+  appends ` · via txt-vendor / oui / hostname-pattern /
+  service-type-hint` so the user can see which signal won. Backed
+  by a new `BonjourDevice.vendor_trace` field populated by a new
+  `resolve_vendor_with_trace()`. Maintainers use it to find
+  long-tail decoder gaps; users get a small confidence cue.
+- **Other services on this host** — when one host advertises
+  multiple services (the user's own Mac is the canonical case:
+  `AirPlay` + `AirPlay audio` + `Apple Companion`), list the other
+  categories with their `last_seen` age. Reframes the modal from
+  service-instance-centric to device-centric.
+- **TXT decoders** — well-known keys (`model` / `osxvers` /
+  `srcvers` / `deviceid`) parse into named friendly fields
+  rendered above the raw TXT table. Apple model identifiers like
+  `MacBookPro18,1` decode to `MacBook Pro 16-inch (M1 Pro, 2021)`;
+  macOS major versions render with codenames (e.g. `Tahoe (26)`).
+  Lives in `src/diting/mdns_txt_decoders.py` as a small
+  registry; decoders never raise.
+- **Cross-surface correlation** — new section ties the Bonjour
+  host to the rest of diting's scan surfaces via three rules:
+  - **Rule 1** (deterministic): the announced IP matches the
+    Mac's `Connection.ip_address` → `local Mac (this host is
+    you)`. Fires on every announcement of the user's own Mac.
+  - **Rule 2** (opportunistic): TXT `deviceid` parses as a
+    canonical MAC AND those bytes appear in some BLE row's
+    `manufacturer_hex` → `also on BLE as <name|type|vendor> ·
+    <RSSI> dBm`. Rare for Apple devices (RPA) but useful for
+    printers / IoT hubs that embed their MAC in adverts.
+  - **Rule 3** (probabilistic, hedged): the Bonjour hostname
+    resolves to Apple via `_NAME_PATTERN_VENDORS` AND a nearby
+    BLE row carries an Apple-Proximity-class `type` (`Nearby
+    Info` / `Nearby Action` / `Handoff` / `Apple Proximity`) →
+    `likely the same device as BLE row <short-id>`. The
+    "likely" hedge is explicit because hostname-pattern
+    correlation is probabilistic.
+
+### Changed
+- `WifiDetailScreen.__init__` and `BonjourDetailScreen.__init__`
+  gain optional kwargs (`environment_monitor` / `event_ring` /
+  `latest_scan` for Wi-Fi; `latest_mdns` / `latest_ble` /
+  `latest_connection` for Bonjour) so the modals can read live
+  session state. All default to `None`; sections whose ref is
+  missing omit entirely.
+- `_section_txt` (Bonjour) now renders Decoded first + Raw second.
+  Decoded keys are excluded from the Raw table via
+  `mdns_txt_decoders.decoded_keys()`.
+
+### Spec
+Three capabilities modified: `wifi-detail-modal`,
+`bonjour-detail-modal`, `mdns-scanning`. See
+`openspec/changes/archive/2026-05-15-wifi-and-bonjour-detail-enrichment/`.
+
 ## [1.0.10] — 2026-05-14
 
 Two fixes that surface only in the curl-installed frozen binary
