@@ -1339,6 +1339,164 @@ def test_wifi_detail_omits_ap_name_row_when_inventory_misses():
     assert "AP name" not in body
 
 
+# --- WifiDetailScreen enrichment sections ---------------------------
+#
+# Each enrichment section is omitted when its underlying ref is None
+# or its data is empty. The tests assert both halves of that contract
+# so a future refactor can't silently leak placeholder rows.
+
+def _wifi_detail_with(
+    scan, *, connection=None, inv=None,
+    environment_monitor=None, event_ring=None, latest_scan=None,
+):
+    from diting.tui import WifiDetailScreen
+    screen = WifiDetailScreen(
+        scan=scan,
+        connection=connection,
+        inv=inv if inv is not None else NetworkInventory(aps=()),
+        environment_monitor=environment_monitor,
+        event_ring=event_ring,
+        latest_scan=latest_scan,
+    )
+    return screen._render_body().plain
+
+
+def test_wifi_detail_signal_history_omitted_when_no_env_monitor():
+    """Section is gated on the env-monitor ref. Without it we have no
+    history data; the section MUST NOT render an empty placeholder."""
+    r = _scan("40:fe:95:89:c7:e3")
+    body = _wifi_detail_with(r)
+    assert "Signal history" not in body
+
+
+def test_wifi_detail_signal_history_omitted_when_under_two_samples():
+    """Single RSSI sample is not a "history" worth drawing. _rssi_sparkline
+    itself returns "" for n<2; the modal MUST treat that as "omit", not
+    "render header + blank line"."""
+    from diting.environment import EnvironmentMonitor
+    monitor = EnvironmentMonitor(inventory=NetworkInventory(aps=()))
+    monitor.ingest("40:fe:95:89:c7:e3", -55, datetime.now())
+    r = _scan("40:fe:95:89:c7:e3")
+    body = _wifi_detail_with(r, environment_monitor=monitor)
+    assert "Signal history" not in body
+
+
+def test_wifi_detail_signal_history_renders_sparkline_and_sigma():
+    """With ≥2 samples the section renders. We don't assert the exact
+    sparkline glyphs (Unicode block characters vary per terminal) — we
+    just confirm the header + sample-count summary appear. Uses naive
+    datetimes to match the monitor's internal `datetime.now()` calls."""
+    from diting.environment import EnvironmentMonitor
+    monitor = EnvironmentMonitor(inventory=NetworkInventory(aps=()))
+    now = datetime.now()
+    for offset, rssi in enumerate([-58, -57, -56, -55]):
+        monitor.ingest(
+            "40:fe:95:89:c7:e3", rssi,
+            now - timedelta(seconds=20 - offset * 5),
+        )
+    r = _scan("40:fe:95:89:c7:e3")
+    body = _wifi_detail_with(r, environment_monitor=monitor)
+    assert "Signal history" in body
+    assert "4 samples" in body
+
+
+def test_wifi_detail_siblings_omitted_when_singleton():
+    """An AP with no sibling radios in latest_scan is a singleton.
+    The section MUST omit rather than render a header with no rows."""
+    r = _scan("40:fe:95:89:c7:e3")
+    body = _wifi_detail_with(r, latest_scan=[r])
+    assert "Same physical AP" not in body
+
+
+def test_wifi_detail_siblings_renders_when_inv_groups_radios():
+    """When inventory groups the inspected BSSID with another radio in
+    latest_scan, that radio appears in the section. The grouping rule
+    is `NetworkInventory.is_same_ap` — we use the auto-cluster heuristic
+    (matching mid-4 octets) since neither BSSID is in aps.yaml."""
+    me = _scan("40:fe:95:8a:3c:58", channel=48)
+    sibling = _scan("40:fe:95:8a:3c:54", channel=6)  # same mid-4
+    body = _wifi_detail_with(me, latest_scan=[me, sibling])
+    assert "Same physical AP" in body
+    assert "40:fe:95:8a:3c:54" in body
+
+
+def test_wifi_detail_roam_history_omitted_when_ring_empty():
+    """No event ring → no section. Empty event ring → also no section
+    (no RoamEvents to match this BSSID)."""
+    from diting.events import EventRing
+    r = _scan("40:fe:95:8a:3c:58")
+    body = _wifi_detail_with(r, event_ring=EventRing())
+    assert "Roam history" not in body
+
+
+def test_wifi_detail_roam_history_renders_matching_events_newest_first():
+    """RoamEvents whose previous_bssid OR new_bssid matches the
+    inspected BSSID appear in the section; non-matching events are
+    filtered out; newest-first ordering follows `EventRing.snapshot`."""
+    from diting.events import EventRing
+    ring = EventRing()
+    now = datetime.now(timezone.utc)
+    # 1st: roam INTO this BSSID
+    ring.push(RoamEvent(
+        timestamp=now - timedelta(seconds=120),
+        previous_bssid="40:fe:95:8a:3c:5a", previous_channel=6,
+        new_bssid="40:fe:95:8a:3c:58", new_channel=48,
+    ))
+    # 2nd: unrelated roam (shouldn't appear)
+    ring.push(RoamEvent(
+        timestamp=now - timedelta(seconds=60),
+        previous_bssid="aa:bb:cc:dd:ee:ff", previous_channel=11,
+        new_bssid="aa:bb:cc:dd:ee:f0", new_channel=36,
+    ))
+    # 3rd: roam OUT of this BSSID
+    ring.push(RoamEvent(
+        timestamp=now - timedelta(seconds=10),
+        previous_bssid="40:fe:95:8a:3c:58", previous_channel=48,
+        new_bssid="40:fe:95:8a:3c:5a", new_channel=6,
+    ))
+    r = _scan("40:fe:95:8a:3c:58")
+    body = _wifi_detail_with(r, event_ring=ring)
+    assert "Roam history" in body
+    # Both matching events render; the unrelated one does not.
+    assert "40:fe:95:8a:3c:5a" in body
+    assert "aa:bb:cc:dd:ee:ff" not in body
+
+
+def test_wifi_detail_recommendation_omitted_when_not_associated():
+    """The recommendation only makes sense when the user is currently
+    *on* this BSSID — inspecting a non-associated row, the user isn't
+    going to "switch away" from a row they aren't on. Section omits."""
+    r = _scan("40:fe:95:8a:3c:58", ssid="home", rssi=-55)
+    better = _scan("40:fe:95:8a:3c:5a", ssid="home", rssi=-30)
+    conn = _conn(bssid="aa:bb:cc:dd:ee:ff", ssid="home", rssi=-70)
+    body = _wifi_detail_with(r, connection=conn, latest_scan=[r, better])
+    assert "Recommendation" not in body
+
+
+def test_wifi_detail_recommendation_renders_for_associated_row_with_better_candidate():
+    """When the inspected row IS the connection's BSSID AND a same-SSID
+    candidate is ≥15 dB stronger, the section renders with the +N dB delta."""
+    weak = _scan("40:fe:95:8a:3c:58", ssid="home", rssi=-75, channel=48)
+    strong = _scan("40:fe:95:8a:3c:5a", ssid="home", rssi=-50, channel=6)
+    conn = _conn(bssid="40:fe:95:8a:3c:58", ssid="home", rssi=-75, channel=48)
+    body = _wifi_detail_with(weak, connection=conn, latest_scan=[weak, strong])
+    assert "Recommendation" in body
+    # The stronger candidate's BSSID shows up; delta is +25 dB.
+    assert "40:fe:95:8a:3c:5a" in body
+    assert "+25" in body
+
+
+def test_wifi_detail_recommendation_omitted_when_no_clearly_better():
+    """A 5 dB delta is below the 15 dB threshold — nothing to recommend."""
+    weak = _scan("40:fe:95:8a:3c:58", ssid="home", rssi=-70)
+    slightly_better = _scan("40:fe:95:8a:3c:5a", ssid="home", rssi=-65)
+    conn = _conn(bssid="40:fe:95:8a:3c:58", ssid="home", rssi=-70)
+    body = _wifi_detail_with(
+        weak, connection=conn, latest_scan=[weak, slightly_better],
+    )
+    assert "Recommendation" not in body
+
+
 # --- BonjourDetailScreen rendering ----------------------------------
 
 class _BD:
