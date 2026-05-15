@@ -23,17 +23,17 @@
 
 ## 4. Cross-surface correlation
 
-- [ ] 4.1 Implement rule 1 (address match → "local Mac (this host is you)"). Compare against `latest_connection.local_ip` and `latest_connection.this_mac`-derived interface addresses.
-- [ ] 4.2 Implement rule 2 (TXT `deviceid` MAC → BLE peripheral match). Parse `deviceid` as MAC; scan `latest_ble` for the same MAC in manufacturer data or known fields. Render `also on BLE as <category | name | vendor> · <RSSI> dBm`.
-- [ ] 4.3 Implement rule 3 (hostname pattern + Apple-Proximity hint). Hedge the render with "likely". Skip if false-positive risk is too high in real captures; design.md:D7 permits deferral.
-- [ ] 4.4 Wire the section into `_render_body` between Network and TXT.
+- [x] 4.1 Implement rule 1 (address match → "local Mac (this host is you)"). Compare against `latest_connection.ip_address`. **Status**: `_cross_surface_local_mac_line` reads `Connection.ip_address` and matches against announced addresses.
+- [x] 4.2 Implement rule 2 (TXT `deviceid` MAC → BLE peripheral match). Parse `deviceid` as MAC; scan `latest_ble` for the same MAC in manufacturer data or known fields. Render `also on BLE as <category | name | vendor> · <RSSI> dBm`. **Status**: `_cross_surface_ble_via_deviceid` parses canonical MAC, looks for the 12-hex-char byte pattern in each BLE row's `manufacturer_hex`. Note: Apple devices use RPA so this rule rarely fires for iPhone/AirPods etc.; aimed at printers / IoT hubs that embed their MAC in the advert.
+- [x] 4.3 Implement rule 3 (hostname pattern + Apple-Proximity hint). Hedge the render with "likely". **Status**: `_cross_surface_ble_via_hostname` checks the Bonjour host's hostname against `_NAME_PATTERN_VENDORS` (must resolve to "Apple, Inc.") AND requires at least one nearby BLE row whose `type` is "Nearby Info" / "Nearby Action" / "Handoff" / "Apple Proximity". Renders `likely the same device as BLE row <short-id>`.
+- [x] 4.4 Wire the section into `_render_body` between Network and TXT.
 
 ## 5. Tests
 
 - [x] 5.1 `tests/test_tui_helpers.py` — synthetic-fixture tests for each new section's renderer. **Status**: Wi-Fi side (9 tests, Stage 1) + Bonjour side (7 tests, Stage 2: vendor-trace annotation, other-services, decoded TXT) complete. Plus a dedicated `tests/test_mdns_txt_decoders.py` for the decoder registry (12 tests).
 - [x] 5.2 `tests/test_tui_smoke.py` — smoke through `Pilot`. **Status**: existing smoke tests cover both modals opening / closing without raising; the new section paths are exercised via the section-level helper tests in `test_tui_helpers.py` and `test_mdns_txt_decoders.py`.
 - [x] 5.3 `tests/test_mdns.py` — assert `BonjourDevice.vendor_trace` is set to the correct chain step for each of the 5 resolution paths, including `None` when all abstain. **Status**: 5 new tests added for `resolve_vendor_with_trace`.
-- [ ] 5.4 Cross-surface tests behind a clear-cut local-Mac fixture (rule 1) — rules 2 and 3 are harder to fixture without real BLE data; manual smoke + the existing `/tui-audit` capture covers them.
+- [x] 5.4 Cross-surface tests behind a clear-cut local-Mac fixture (rule 1) — rules 2 and 3 are harder to fixture without real BLE data; manual smoke + the existing `/tui-audit` capture covers them. **Status**: 7 new tests in `test_tui_helpers.py` covering the section's omission when no refs supplied, rule 1 (IP-match success + non-match), rule 2 (deviceid MAC byte-search hit + miss), and rule 3 (Apple-named host + Apple-Proximity BLE → "likely" hedge; non-Apple host omits).
 
 ## 6. Docs
 

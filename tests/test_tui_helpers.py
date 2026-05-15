@@ -1727,3 +1727,146 @@ def test_bonjour_detail_decoded_txt_skipped_when_no_known_keys():
     # Decoder-only labels do NOT leak when their source keys are absent.
     assert "macOS" not in body
     assert "firmware" not in body
+
+
+# --- Cross-surface correlation (stage 3) ----------------------------
+#
+# Rule 1 (IP match) has a clean fixture: pass a Connection whose
+# ip_address matches one of the BonjourDevice's addresses. Rules 2
+# (TXT deviceid → BLE manufacturer_hex byte-search) and 3 (hostname
+# pattern + Apple-Proximity BLE) need fake BLEDevice-like objects;
+# we stand them in with a small dataclass-shaped stub to avoid
+# coupling tests to BLEDevice's frozen-slot internals.
+
+class _BLERow:
+    """Stand-in for BLEDevice carrying just the fields the cross-
+    surface rules read. Test-local because we don't need the rest of
+    BLEDevice's schema-4 plumbing."""
+
+    def __init__(
+        self, *,
+        identifier="11111111-2222-3333-4444-555555555555",
+        name=None, vendor=None, services=(),
+        rssi_dbm=-55, manufacturer_hex=None, type=None,
+    ):
+        self.identifier = identifier
+        self.name = name
+        self.vendor = vendor
+        self.services = services
+        self.rssi_dbm = rssi_dbm
+        self.manufacturer_hex = manufacturer_hex
+        self.type = type
+
+
+def _bonjour_detail_cross_surface(
+    device, *, latest_ble=None, latest_connection=None,
+):
+    from diting.tui import BonjourDetailScreen
+    screen = BonjourDetailScreen(
+        device=device,
+        latest_ble=latest_ble,
+        latest_connection=latest_connection,
+    )
+    return screen._render_body().plain
+
+
+def test_bonjour_cross_surface_omitted_when_no_refs():
+    """No connection, no BLE list → no cross-surface section. Matches
+    the omit-when-empty discipline of the other enrichment sections."""
+    d = _BD()
+    body = _bonjour_detail_cross_surface(d)
+    assert "Cross-surface" not in body
+
+
+def test_bonjour_cross_surface_local_mac_when_ip_matches():
+    """Rule 1: the Bonjour announce carries the local Mac's IP → the
+    section renders ``local Mac (this host is you)``."""
+    d = _BD(host="ccy-MBP2024.local.", addresses=("192.168.1.42",))
+    conn = _conn(rssi=-50)
+    # Real Connection objects have `ip_address` attached; the helper
+    # constructs one without it, so set it explicitly.
+    conn = Connection(
+        ssid=conn.ssid, bssid=conn.bssid, rssi_dbm=conn.rssi_dbm,
+        noise_dbm=conn.noise_dbm, tx_rate_mbps=conn.tx_rate_mbps,
+        channel=conn.channel, channel_width_mhz=conn.channel_width_mhz,
+        channel_band=conn.channel_band, phy_mode=conn.phy_mode,
+        security=conn.security, mcs_index=conn.mcs_index,
+        nss=conn.nss, timestamp=conn.timestamp,
+        ip_address="192.168.1.42",
+    )
+    body = _bonjour_detail_cross_surface(d, latest_connection=conn)
+    assert "Cross-surface" in body
+    assert "local Mac" in body
+
+
+def test_bonjour_cross_surface_local_mac_omitted_when_ips_disagree():
+    """Rule 1 requires an actual IP match. A different host's IP MUST
+    NOT trigger the 'this host is you' line."""
+    d = _BD(addresses=("192.168.1.99",))
+    conn = Connection(
+        ssid="x", bssid=None, rssi_dbm=-50, noise_dbm=-95,
+        tx_rate_mbps=None, channel=48, channel_width_mhz=80,
+        channel_band="5 GHz", phy_mode=None, security=None,
+        mcs_index=None, nss=None, timestamp=datetime.now(timezone.utc),
+        ip_address="192.168.1.42",
+    )
+    body = _bonjour_detail_cross_surface(d, latest_connection=conn)
+    assert "local Mac" not in body
+
+
+def test_bonjour_cross_surface_ble_via_deviceid_finds_mac_in_manufacturer_hex():
+    """Rule 2: a TXT ``deviceid`` MAC parses canonically and its hex
+    bytes appear inside a BLE row's manufacturer_hex. Renders the
+    matched row by its name."""
+    mac = "aa:bb:cc:dd:ee:ff"
+    d = _BD(txt={"deviceid": mac})
+    ble = _BLERow(
+        name="My Printer",
+        # MAC bytes embedded in manufacturer data ("aabbccddeeff").
+        manufacturer_hex="0049" + "aabbccddeeff" + "0000",
+        rssi_dbm=-62,
+    )
+    body = _bonjour_detail_cross_surface(d, latest_ble=[ble])
+    assert "Cross-surface" in body
+    assert "My Printer" in body
+    assert "-62 dBm" in body
+
+
+def test_bonjour_cross_surface_ble_via_deviceid_omitted_when_no_match():
+    """Rule 2 doesn't fire when the BLE list has no row whose
+    manufacturer_hex contains the TXT MAC bytes."""
+    d = _BD(txt={"deviceid": "aa:bb:cc:dd:ee:ff"})
+    ble = _BLERow(name="Unrelated", manufacturer_hex="004c1234abcd")
+    body = _bonjour_detail_cross_surface(d, latest_ble=[ble])
+    assert "also on BLE" not in body
+
+
+def test_bonjour_cross_surface_ble_via_hostname_pattern_hedges_likely():
+    """Rule 3: an Apple-named host + a nearby Apple-Proximity-class
+    BLE row → render the hedge ``likely the same device as BLE row
+    <short-id>``. The hedge is required because hostname-pattern
+    correlation is probabilistic."""
+    d = _BD(
+        host="iPhone.local.",   # matches _NAME_PATTERN_VENDORS Apple rule
+        txt={},
+    )
+    ble = _BLERow(
+        identifier="11111111-2222-3333-4444-555555555555",
+        type="Nearby Info",
+        rssi_dbm=-44,
+    )
+    body = _bonjour_detail_cross_surface(d, latest_ble=[ble])
+    assert "Cross-surface" in body
+    assert "likely" in body
+    # The short-id is the first 8 chars of the identifier.
+    assert "11111111" in body
+
+
+def test_bonjour_cross_surface_ble_via_hostname_skipped_for_non_apple_host():
+    """Rule 3 only fires when the hostname pattern resolves to Apple.
+    A generic hostname → no rule 3 match even with Apple-Proximity
+    BLE peers nearby (they could be anyone else's iPhone)."""
+    d = _BD(host="random-printer-2391.local.", txt={})
+    ble = _BLERow(type="Nearby Info", rssi_dbm=-44)
+    body = _bonjour_detail_cross_surface(d, latest_ble=[ble])
+    assert "Cross-surface" not in body
