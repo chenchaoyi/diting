@@ -2142,7 +2142,14 @@ def _ble_vendors_line(devices: list[BLEDevice]) -> Text:
     if not top and unknown == 0:
         line.append(t("(none)"), style="dim")
         return line
-    parts: list[str] = [f"{vendor} {n}" for vendor, n in top]
+    # Apply the same alias map the per-row table uses, so the
+    # diagnostics summary doesn't show "Anhui Huami Information
+    # Technology Co., Ltd. 5" alongside list rows that read
+    # "Huami". The map lives at module scope so callers stay
+    # cheap; unrecognised vendors fall through unchanged.
+    parts: list[str] = [
+        f"{_BLE_VENDOR_DISPLAY.get(vendor, vendor)} {n}" for vendor, n in top
+    ]
     if unknown:
         parts.append(t("? {n}", n=unknown))
     line.append("  ·  ".join(parts), style="white")
@@ -2826,6 +2833,11 @@ _BLE_VENDOR_DISPLAY: dict[str, str] = {
     "Polar Electro Europe B.V.": "Polar Electro",
     "Anker Innovations Limited": "Anker",
     "HUAWEI Technologies Co., Ltd.": "HUAWEI",
+    # Same registrant, mixed-case spelling — both arrive on the wire
+    # depending on which OUI block / SIG record the device's
+    # advertisement maps to. Aliasing both forms keeps the
+    # diagnostics summary consistent regardless.
+    "Huawei Technologies Co., Ltd.": "HUAWEI",
     "Murata Manufacturing Co., Ltd.": "Murata",
     "SENNHEISER electronic GmbH & Co. KG": "Sennheiser",
     "Sony Ericsson Mobile Communications": "Sony Ericsson",
@@ -2833,6 +2845,7 @@ _BLE_VENDOR_DISPLAY: dict[str, str] = {
     "Telink Semiconductor Co. Ltd": "Telink Semi",
     "Sony Honda Mobility Inc.": "Sony Honda",
     "Starkey Hearing Technologies": "Starkey Hearing",
+    "Anhui Huami Information Technology Co., Ltd.": "Huami",
 }
 
 
@@ -3043,7 +3056,12 @@ def _ble_age_text(d: BLEDevice, now: datetime) -> str:
 
 _COL_MDNS_VENDOR = 18
 _COL_MDNS_NAME = 26
-_COL_MDNS_SERVICES = 14
+# 16 (not 14) so "Apple Companion" (15 cells — the longest category
+# string in src/diting/data/bonjour_services.json) fits without
+# being truncated to "Apple Companio". `fit_cells` doesn't add an
+# ellipsis indicator, so a too-narrow column produced silently-
+# truncated category names.
+_COL_MDNS_SERVICES = 16
 _COL_MDNS_AGE = 8
 # Hostname column was 18, truncating real-world hostnames like
 # ``ccy-MBP2024-M4-Office.local.`` mid-word (the trailing ``.local.``
