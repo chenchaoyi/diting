@@ -4180,6 +4180,13 @@ class BonjourDetailScreen(ModalScreen):
             self._section_other_services(out)
         out.append("\n")
         self._section_network(out)
+        # Cross-surface section sits between Network and TXT — by the
+        # time the user has scanned the host's addresses they are
+        # primed to read "yep, that's the local Mac" / "also a BLE
+        # peer at -53 dBm" without yet wading into TXT records.
+        if self._cross_surface_has_data():
+            out.append("\n")
+            self._section_cross_surface(out)
         if self._device.txt:
             out.append("\n")
             self._section_txt(out)
@@ -4266,6 +4273,129 @@ class BonjourDetailScreen(ModalScreen):
                 out, label,
                 f"{_format_duration_short(ago)} {t('ago')}",
             )
+
+    # -------- Cross-surface correlation --------
+    #
+    # Three rules applied in priority order. Each rule is independent
+    # — none short-circuits, so a host that's both "local Mac" AND
+    # has a matching BLE deviceid would render both lines. Order of
+    # evaluation matters only for stability of the rendered output.
+
+    def _cross_surface_local_mac_line(self) -> str | None:
+        """Rule 1: the announced IPv4 matches the Mac's own IP, OR
+        the announced IPv6 link-local matches. Either says "this
+        host is you." Most actionable on Apple ecosystem because
+        the user's own Mac is the noisiest mDNS source on the link.
+        """
+        if self._latest_connection is None or not self._device.addresses:
+            return None
+        own_ip = getattr(self._latest_connection, "ip_address", None)
+        if not own_ip:
+            return None
+        # The Bonjour announce always carries the host's own IP(s).
+        # Whether or not the Mac's interface IP is in `addresses`
+        # depends on what zeroconf decided to announce; matching even
+        # one is enough.
+        for addr in self._device.addresses:
+            if addr == own_ip:
+                return t("local Mac (this host is you)")
+        return None
+
+    def _cross_surface_ble_via_deviceid(self) -> str | None:
+        """Rule 2: the device's ``deviceid`` TXT carries a MAC; that
+        MAC appears as bytes inside any BLE peripheral's manufacturer
+        data. Some accessories (printers, IoT hubs) embed their own
+        MAC into the manufacturer payload; Apple devices use RPA and
+        almost never do. Opportunistic — rarely fires in practice,
+        but cheap to check.
+        """
+        mac = self._device.txt.get("deviceid")
+        if not mac or not self._latest_ble:
+            return None
+        # Canonical-form 17-char MAC; same gate `mdns_txt_decoders`
+        # applies. Reject anything that doesn't look like one rather
+        # than risk a coincidental 12-hex-char match.
+        parts = mac.split(":")
+        if len(parts) != 6 or any(len(p) != 2 for p in parts):
+            return None
+        mac_hex = "".join(parts).lower()
+        # Scan each BLE row's manufacturer_hex for the MAC bytes.
+        for ble in self._latest_ble:
+            man_hex = getattr(ble, "manufacturer_hex", None)
+            if not man_hex:
+                continue
+            if mac_hex in man_hex.lower():
+                # Prefer name / category / vendor for the rendered hint,
+                # in that order — the user identifies BLE rows the same
+                # way the panel does.
+                label = (
+                    getattr(ble, "name", None)
+                    or getattr(ble, "type", None)
+                    or getattr(ble, "vendor", None)
+                    or "?"
+                )
+                rssi = getattr(ble, "rssi_dbm", None)
+                rssi_str = f"{rssi} dBm" if rssi is not None else "—"
+                return t(
+                    "also on BLE as {label}  ·  {rssi}",
+                    label=label, rssi=rssi_str,
+                )
+        return None
+
+    def _cross_surface_ble_via_hostname(self) -> str | None:
+        """Rule 3 (probabilistic, hedged): hostname matches an
+        Apple naming pattern AND there's a nearby Apple-Proximity
+        BLE advert. Names a "likely" same-device link without
+        committing — the user knows the hedge.
+        """
+        host = self._device.host or ""
+        if not host or not self._latest_ble:
+            return None
+        # The Bonjour vendor resolver's hostname-pattern step uses
+        # the same `_NAME_PATTERN_VENDORS` table from ble.py. Reuse
+        # it: if the host matches AND resolves to Apple, we're in
+        # Apple territory; look for an Apple-Proximity-class BLE row.
+        from .mdns import _name_pattern_vendor
+        bare = host.rstrip(".").split(".", 1)[0]
+        host_vendor = _name_pattern_vendor(bare)
+        if host_vendor != "Apple, Inc.":
+            return None
+        # Apple BLE adverts of interest carry these `type` labels
+        # (see _proximity_category_label in ble.py). Treat all of
+        # them as Apple-Proximity-class for correlation purposes.
+        APPLE_PROX = {
+            "Nearby Info", "Nearby Action", "Handoff", "Apple Proximity",
+        }
+        for ble in self._latest_ble:
+            t_field = getattr(ble, "type", None)
+            if t_field in APPLE_PROX:
+                short_id = getattr(ble, "identifier", "?")[:8]
+                return t(
+                    "likely the same device as BLE row {id}",
+                    id=short_id,
+                )
+        return None
+
+    def _cross_surface_lines(self) -> list[str]:
+        out: list[str] = []
+        for line in (
+            self._cross_surface_local_mac_line(),
+            self._cross_surface_ble_via_deviceid(),
+            self._cross_surface_ble_via_hostname(),
+        ):
+            if line:
+                out.append(line)
+        return out
+
+    def _cross_surface_has_data(self) -> bool:
+        return bool(self._cross_surface_lines())
+
+    def _section_cross_surface(self, out: Text) -> None:
+        self._heading(out, t("Cross-surface"))
+        lines = self._cross_surface_lines()
+        # Single-line section per match; no field-label-style row.
+        for line in lines:
+            out.append("  " + line + "\n", style="white")
 
     def _section_network(self, out: Text) -> None:
         d = self._device
