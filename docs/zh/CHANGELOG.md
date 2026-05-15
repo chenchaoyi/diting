@@ -8,6 +8,36 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.12] — 2026-05-16
+
+针对 v1.0.11 用户反馈的两个相关 helper bundle 修复：TUI 运行期间
+`diting-tianer.app` 的图标在 Dock 里频繁闪现；以及 `--notify` 开启
+后所有异常 banner 都被静默吞掉。
+
+### 修复
+- **`diting-tianer.app` 不再在 TUI 运行时闪 Dock。** `helper/Info.plist`
+  改成 `LSUIElement=true`，bundle 变成「后台 / agent app」——不再
+  出现在 Dock、Cmd+Tab、强制退出列表里。窗口仍能正常显示（安装时
+  HelperAppDelegate 的状态面板不受影响），TCC 授权也仍按
+  CFBundleIdentifier / cdhash 挂载，其他功能完全不变。之前每次
+  `scan` 都通过 LaunchServices 重新启动 bundle（v1.0.7 macOS-26
+  修复的一部分），直到 `setActivationPolicy(.prohibited)` 跑到才
+  把图标藏掉，所以 Dock 上能看到一下闪烁。
+- **`--notify` 真的会弹出 banner 了。** 和 `scan` 当年一样的 macOS-26
+  TCC 不对称问题也卡到了 `notify`：Python 直接 exec bundle binary
+  调 `notify` 时，进程并不是 LaunchServices 归属的，
+  `UNUserNotificationCenter.requestAuthorization` 返回 `granted=false`
+  ——静默丢弃，无任何 banner。`notify` 现在走和 `scan` 一致的
+  outer / inner 拆分：outer 半通过 `/usr/bin/open -W -g -a <bundle>
+  --env DITING_NOTIFY_VIA_LAUNCH=1 --env DITING_NOTIFY_TITLE=...
+  --env DITING_NOTIFY_BODY=... --args notify` 重启自己；inner 半
+  以 LaunchServices 启动的实例身份运行，拥有 bundle 的通知权限，
+  发完 banner 后退出。Python 端 watchdog 代码路径完全没变。
+
+### 升级说明
+`LSUIElement` 的改动会变更 bundle 的 cdhash。从 v1.0.11 升级的
+用户下次安装会被再问一次定位 + 蓝牙 + 通知授权。
+
 ## [1.0.11] — 2026-05-15
 
 Wi-Fi 与 Bonjour 详情 modal 不再只是字段堆叠——开始把 diting 自己
