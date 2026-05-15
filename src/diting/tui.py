@@ -2833,6 +2833,11 @@ _BLE_VENDOR_DISPLAY: dict[str, str] = {
     "Polar Electro Europe B.V.": "Polar Electro",
     "Anker Innovations Limited": "Anker",
     "HUAWEI Technologies Co., Ltd.": "HUAWEI",
+    # Same registrant, mixed-case spelling — both arrive on the wire
+    # depending on which OUI block / SIG record the device's
+    # advertisement maps to. Aliasing both forms keeps the
+    # diagnostics summary consistent regardless.
+    "Huawei Technologies Co., Ltd.": "HUAWEI",
     "Murata Manufacturing Co., Ltd.": "Murata",
     "SENNHEISER electronic GmbH & Co. KG": "Sennheiser",
     "Sony Ericsson Mobile Communications": "Sony Ericsson",
