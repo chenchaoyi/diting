@@ -1105,17 +1105,37 @@ func runBluetoothStatusProbe() -> Never {
 // watchdog (_watchdog.py) shells out to this rather than emitting via
 // osascript.
 //
-// Authorization is requested on each call; if the user has previously
-// granted notifications (during the install-time HelperAppDelegate
-// flow) it's a cheap no-op. If they declined, we exit silently — the
-// caller treats notifications as best-effort.
+// Same outer / inner LaunchServices split as `scan`. The reason is the
+// same macOS 26 TCC asymmetry: direct-exec subprocesses of an ad-hoc-
+// signed bundle's binary do NOT inherit the bundle's TCC grants. For
+// Notifications that means `requestAuthorization` reports `granted=false`
+// even when the user clicked Allow during the install-time HelperAppDelegate
+// flow. The fix mirrors `runScanAndDumpJSON`:
 //
-// We need to wait briefly before exit() so the notification request
-// actually makes it through the system daemon — a process that exits
-// too fast can lose the message. 1 s is enough in practice.
+//   A. Outer (no DITING_NOTIFY_VIA_LAUNCH env): spawn ourselves via
+//      `/usr/bin/open -W -g -a <bundle>` so the inner instance is
+//      LaunchServices-attributed and sees the bundle's Notifications
+//      grant. Title + body travel via env vars (newline / quote safe).
+//   B. Inner (DITING_NOTIFY_VIA_LAUNCH=1): set activation policy to
+//      `.prohibited` (defence-in-depth alongside LSUIElement=true so
+//      nothing can ever flash even on older macOS), call
+//      UNUserNotificationCenter, exit.
+//
+// We wait briefly before exit() in the inner half so the notification
+// request actually makes it through the system daemon — a process
+// that exits too fast can lose the message. 1 s is enough in practice.
 // ---------------------------------------------------------------------
 
 func runNotifyAndExit(args: [String]) -> Never {
+    if ProcessInfo.processInfo.environment["DITING_NOTIFY_VIA_LAUNCH"] == "1" {
+        runNotifyViaLaunchInner()
+    }
+    runNotifyViaLaunchOuter(args: args)
+}
+
+/// Parse `--title T --body B` out of an arg list. Used by the outer
+/// half to thread the values through env vars to the inner half.
+private func parseNotifyArgs(_ args: [String]) -> (title: String, body: String) {
     var title = ""
     var body = ""
     var i = 0
@@ -1131,12 +1151,57 @@ func runNotifyAndExit(args: [String]) -> Never {
             i += 1
         }
     }
+    return (title, body)
+}
+
+/// Outer half: spawn the bundle via `open` so the inner half runs
+/// LaunchServices-attributed (and thus sees the bundle's Notifications
+/// authorization). Returns the inner's exit code.
+private func runNotifyViaLaunchOuter(args: [String]) -> Never {
+    let (title, body) = parseNotifyArgs(args)
     if title.isEmpty && body.isEmpty {
         FileHandle.standardError.write(
             "notify: --title and/or --body required\n".data(using: .utf8)!
         )
         exit(64)
     }
+
+    let bundlePath = Bundle.main.bundlePath
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    task.arguments = [
+        "-W",                                       // wait for app to exit
+        "-g",                                       // do not bring to front
+        "-a", bundlePath,                           // target bundle
+        "--env", "DITING_NOTIFY_VIA_LAUNCH=1",
+        "--env", "DITING_NOTIFY_TITLE=\(title)",
+        "--env", "DITING_NOTIFY_BODY=\(body)",
+        "--args", "notify",
+    ]
+    do {
+        try task.run()
+    } catch {
+        // Spawn failed — silent exit because the watchdog treats
+        // notifications as best-effort. We pick a non-zero code so
+        // Python's `proc.wait()` can surface it to logs if needed.
+        exit(70)
+    }
+    task.waitUntilExit()
+    exit(task.terminationStatus)
+}
+
+/// Inner half: runs as a LaunchServices-launched bundle instance with
+/// the bundle's Notifications grant. Posts the notification via
+/// UNUserNotificationCenter and exits.
+private func runNotifyViaLaunchInner() -> Never {
+    let env = ProcessInfo.processInfo.environment
+    let title = env["DITING_NOTIFY_TITLE"] ?? ""
+    let body = env["DITING_NOTIFY_BODY"] ?? ""
+
+    // Defence in depth: even with LSUIElement=true, set the activation
+    // policy explicitly so any future regression in the Info.plist
+    // doesn't suddenly make notifications flash a Dock icon.
+    NSApplication.shared.setActivationPolicy(.prohibited)
 
     let center = UNUserNotificationCenter.current()
     let group = DispatchGroup()

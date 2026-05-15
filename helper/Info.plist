@@ -73,7 +73,20 @@
          in en.lproj / zh-Hans.lproj/InfoPlist.strings give the
          third install-time prompt a friendly header. -->
 
+    <!-- LSUIElement=true makes the bundle a "background-only / agent
+         app": no Dock icon, no Cmd+Tab presence, no Force-Quit entry.
+         Windows still work (the install-time HelperAppDelegate's
+         status panel is unchanged) and TCC grants still attach by
+         CFBundleIdentifier / cdhash, so the install flow + the
+         LaunchServices-attributed `scan` and `notify` paths still
+         get Location / Bluetooth / Notifications authorisation.
+
+         Why not `false` (regular app): every `scan` / `notify` from
+         Python re-launches the bundle via LaunchServices to inherit
+         the bundle's TCC grant (the v1.0.7 macOS-26 finding). With
+         LSUIElement=false the Dock icon flashes briefly on every
+         such call. Agent-app mode removes that flash entirely. -->
     <key>LSUIElement</key>
-    <false/>
+    <true/>
 </dict>
 </plist>

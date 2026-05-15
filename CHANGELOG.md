@@ -9,6 +9,42 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [1.0.12] — 2026-05-16
+
+Two related helper-bundle fixes for v1.0.11 user reports: Dock icon
+flashing on every Wi-Fi scan, and `--notify` silently dropping
+every anomaly banner.
+
+### Fixed
+- **`diting-tianer.app` no longer flashes in the Dock during TUI
+  runtime.** `helper/Info.plist` now sets `LSUIElement=true` so the
+  bundle is a "background-only / agent app" — no Dock presence,
+  no Cmd+Tab presence. Windows still work (the install-time
+  HelperAppDelegate's status panel is unchanged), and TCC grants
+  still attach by CFBundleIdentifier / cdhash so every other
+  feature is unaffected. Previously every `scan` invocation
+  re-launched the bundle via LaunchServices (per the v1.0.7
+  macOS-26 fix) and the Dock icon flashed briefly until
+  `setActivationPolicy(.prohibited)` ran.
+- **`--notify` banners actually deliver.** Same macOS-26 TCC
+  asymmetry that bit `scan` also bit `notify`: when Python
+  invoked the bundle's binary directly with `notify`, the helper
+  process was NOT LaunchServices-attributed and
+  `UNUserNotificationCenter.requestAuthorization` came back
+  `granted=false` — silent drop, no banner. `notify` now uses the
+  same outer/inner LaunchServices split as `scan`: outer half
+  spawns `/usr/bin/open -W -g -a <bundle> --env
+  DITING_NOTIFY_VIA_LAUNCH=1 --env DITING_NOTIFY_TITLE=... --env
+  DITING_NOTIFY_BODY=... --args notify`; inner half runs as the
+  LaunchServices-launched instance, has the bundle's
+  Notifications grant, posts the banner, exits. Python's
+  watchdog code path is unchanged.
+
+### Migration note
+The `LSUIElement` change bumps the bundle's cdhash. Users
+upgrading from v1.0.11 will re-grant Location + Bluetooth +
+Notifications once on next install.
+
 ## [1.0.11] — 2026-05-15
 
 The Wi-Fi and Bonjour detail modals stop being raw-field dumps and
