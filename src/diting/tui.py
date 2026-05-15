@@ -4106,9 +4106,26 @@ class BonjourDetailScreen(ModalScreen):
     }
     """
 
-    def __init__(self, *, device) -> None:
+    def __init__(
+        self,
+        *,
+        device,
+        latest_mdns: "list | None" = None,
+        latest_ble: "list | None" = None,
+        latest_connection: "Connection | None" = None,
+    ) -> None:
         super().__init__()
         self._device = device
+        # New context refs — supplied by the App so the modal can
+        # render "Other services on this host" (latest_mdns) and the
+        # cross-surface correlation rules (latest_ble + connection).
+        # All default to None so existing fixtures + tests that
+        # construct the modal directly without these refs still work;
+        # sections whose ref is None / empty are omitted by the
+        # section method.
+        self._latest_mdns = latest_mdns or []
+        self._latest_ble = latest_ble or []
+        self._latest_connection = latest_connection
 
     def compose(self) -> ComposeResult:
         body = Static(self._render_body(), id="bonjour-detail-content")
@@ -4158,6 +4175,9 @@ class BonjourDetailScreen(ModalScreen):
     def _render_body(self) -> Text:
         out = Text()
         self._section_identity(out)
+        if self._other_services_has_data():
+            out.append("\n")
+            self._section_other_services(out)
         out.append("\n")
         self._section_network(out)
         if self._device.txt:
@@ -4190,7 +4210,62 @@ class BonjourDetailScreen(ModalScreen):
             # catalog maps it. Falls through to the raw category when no
             # translation exists.
             self._label(out, t("category"), t(d.category))
-        self._label(out, t("vendor"), d.vendor)
+        # Append ` · via <trace>` to the vendor row when the resolver
+        # recorded which step won. Trace is None on devices whose
+        # vendor itself is None (no chain step matched) and on
+        # `BonjourDevice` instances built directly without going
+        # through `resolve_vendor_with_trace` (test fixtures); both
+        # cases keep the row clean.
+        trace = getattr(d, "vendor_trace", None)
+        if d.vendor and trace:
+            self._label(out, t("vendor"), f"{d.vendor}  ·  via {trace}")
+        else:
+            self._label(out, t("vendor"), d.vendor)
+
+    # -------- Other services on this host --------
+
+    def _other_services(self) -> list:
+        """Walk `latest_mdns` for other `BonjourDevice`s on the same
+        host as this device. "Same host" prefers literal host match,
+        falling back to shared addresses when host is None on either
+        side.
+        """
+        d = self._device
+        if not self._latest_mdns:
+            return []
+        this_host = (d.host or "").rstrip(".").lower()
+        this_addrs = set(d.addresses or ())
+        out = []
+        for other in self._latest_mdns:
+            # Skip the device itself.
+            if (other.service_type == d.service_type
+                    and other.name == d.name):
+                continue
+            other_host = (other.host or "").rstrip(".").lower()
+            if this_host and other_host and this_host == other_host:
+                out.append(other)
+                continue
+            # Fall-back: addresses overlap (covers anonymous hosts).
+            if this_addrs and other.addresses:
+                if this_addrs & set(other.addresses):
+                    out.append(other)
+        # Newest-first so the most recently announced peer surfaces first.
+        out.sort(key=lambda o: o.last_seen, reverse=True)
+        return out
+
+    def _other_services_has_data(self) -> bool:
+        return bool(self._other_services())
+
+    def _section_other_services(self, out: Text) -> None:
+        self._heading(out, t("Other services on this host"))
+        now = datetime.now(self._device.last_seen.tzinfo)
+        for other in self._other_services():
+            label = t(other.category) if other.category else other.service_type
+            ago = (now - other.last_seen).total_seconds()
+            self._label(
+                out, label,
+                f"{_format_duration_short(ago)} {t('ago')}",
+            )
 
     def _section_network(self, out: Text) -> None:
         d = self._device
@@ -4219,7 +4294,23 @@ class BonjourDetailScreen(ModalScreen):
     def _section_txt(self, out: Text) -> None:
         d = self._device
         self._heading(out, t("TXT records") + f"  ({len(d.txt)})")
+        # Decoded — well-known keys (model / osxvers / srcvers /
+        # deviceid / …) come out first as named friendly fields. The
+        # decoded set lives in `mdns_txt_decoders.py`; each decoder
+        # abstains rather than raises on malformed input.
+        from .mdns_txt_decoders import decode_txt, decoded_keys
+        decoded = decode_txt(d.txt)
+        if decoded:
+            for label, value in decoded:
+                self._label(out, label, value, label_w=20)
+            out.append("\n")
+        skip = decoded_keys() if decoded else set()
+        # Raw — every TXT key the decoder set didn't claim, sorted
+        # alphabetically. Decoded keys are deliberately omitted here
+        # so the user doesn't see the same data twice.
         for k in sorted(d.txt.keys()):
+            if k in skip:
+                continue
             v = d.txt[k]
             if len(v) > 60:
                 # Fold opaque blob values to keep the modal scannable.
@@ -5484,7 +5575,12 @@ class DitingApp(App):
         if inspect:
             device = self._bonjour_lookup(key)
             if device is not None:
-                self.push_screen(BonjourDetailScreen(device=device))
+                self.push_screen(BonjourDetailScreen(
+                    device=device,
+                    latest_mdns=list(self._latest_mdns),
+                    latest_ble=list(self._latest_ble),
+                    latest_connection=self._latest_connection,
+                ))
 
     def action_bonjour_select_prev(self) -> None:
         if self._view_mode != "mdns":
@@ -5534,7 +5630,12 @@ class DitingApp(App):
             return
         self._bonjour_selected_key = key
         self._refresh_mdns_panel()
-        self.push_screen(BonjourDetailScreen(device=device))
+        self.push_screen(BonjourDetailScreen(
+            device=device,
+            latest_mdns=list(self._latest_mdns),
+            latest_ble=list(self._latest_ble),
+            latest_connection=self._latest_connection,
+        ))
 
     # ------------------------------------------------------------------
     # View-dispatching select / inspect actions

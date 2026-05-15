@@ -120,6 +120,9 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Mouse click → select-and-inspect | (manual; mouse path is the same `_bonjour_set_selected(inspect=True)` entry as the keyboard `i`) |
 | Modal renders every `BonjourDevice` field, with TXT folding for long values | `test_tui_helpers.py::test_bonjour_detail_renders_identity_network_txt_activity_sections`, `::test_bonjour_detail_folds_long_txt_values`, `::test_bonjour_detail_omits_txt_section_when_empty` |
 | Service-category lookup via i18n | `test_tui_helpers.py::test_bonjour_detail_renders_translated_category_when_known`, `::test_bonjour_detail_omits_category_row_when_unknown` |
+| Identity section annotates the vendor row with ` · via <trace>` when `BonjourDevice.vendor_trace` is set | `test_tui_helpers.py::test_bonjour_detail_vendor_trace_annotation_appears_when_set`, `::test_bonjour_detail_vendor_trace_omitted_when_none` |
+| Other services on this host section lists other `BonjourDevice`s sharing the same host (or addresses on anonymous hosts); omitted when this host has only the selected service | `test_tui_helpers.py::test_bonjour_detail_other_services_omitted_when_lone_host`, `::test_bonjour_detail_other_services_lists_same_host_categories`, `::test_bonjour_detail_other_services_falls_back_to_addresses` |
+| TXT records section renders Decoded (well-known keys via `mdns_txt_decoders`) before Raw; decoded keys are not also in Raw | `test_tui_helpers.py::test_bonjour_detail_decoded_txt_appears_for_known_keys`, `::test_bonjour_detail_decoded_txt_skipped_when_no_known_keys`; decoder unit tests in `test_mdns_txt_decoders.py` |
 | Modal close (Esc / `i` / `q`) doesn't mutate selection | (review-enforced; binding is declarative) |
 
 ### `bluetooth-scanning`
@@ -260,6 +263,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | `BonjourPanel` renders vendor / name / services / age / id columns (no RSSI / signal-bar / connected split) | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi`, `tui_snapshot.py` (regression via explore mode; rendering shape) |
 | Diagnostics panel renders mDNS-side rows when view is `mdns` | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
 | `BonjourPoller.stop()` cleanly joins zeroconf background threads | `test_mdns.py::test_poller_stop_joins_background_thread` |
+| `BonjourDevice.vendor_trace` records which of the 5 resolver steps produced `vendor` (`txt-vendor` / `oui` / `hostname-pattern` / `service-type-hint`; both None on abstain) | `test_mdns.py::test_resolve_vendor_with_trace_records_txt_step`, `::test_resolve_vendor_with_trace_records_oui_step`, `::test_resolve_vendor_with_trace_records_hostname_step`, `::test_resolve_vendor_with_trace_records_service_hint_step`, `::test_resolve_vendor_with_trace_abstain_returns_none_pair` |
 | `zeroconf` import is lazy — never imported while the user stays in Wi-Fi view | `test_tui_smoke.py::test_app_constructs_bonjour_panel_lazily` |
 | Bonjour stack pre-warms on the wifi → BLE step so the second `n` press (BLE → mDNS) does not pause | `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |
 | Bonjour init runs on a worker thread (`asyncio.to_thread`) so the event loop is not blocked by the import or the `Zeroconf()` socket setup | `test_mdns.py::test_start_browser_runs_on_worker_thread`, `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |

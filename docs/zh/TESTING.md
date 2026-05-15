@@ -111,6 +111,9 @@
 | 鼠标点击 → 一手选中+打开 modal | （人工；鼠标路径与键盘 `i` 共用 `_bonjour_set_selected(inspect=True)` 入口） |
 | Modal 渲染每个 `BonjourDevice` 字段，过长 TXT 值做折叠 | `test_tui_helpers.py::test_bonjour_detail_renders_identity_network_txt_activity_sections`、`::test_bonjour_detail_folds_long_txt_values`、`::test_bonjour_detail_omits_txt_section_when_empty` |
 | 服务类别走 i18n 翻译 | `test_tui_helpers.py::test_bonjour_detail_renders_translated_category_when_known`、`::test_bonjour_detail_omits_category_row_when_unknown` |
+| Identity 段在 `BonjourDevice.vendor_trace` 有值时为 vendor 行追加 ` · via <trace>` 注解 | `test_tui_helpers.py::test_bonjour_detail_vendor_trace_annotation_appears_when_set`、`::test_bonjour_detail_vendor_trace_omitted_when_none` |
+| Other services on this host 段列出同 host（或匿名 host 时通过 addresses 重叠）的其他 `BonjourDevice`；只有自身一个服务时省略 | `test_tui_helpers.py::test_bonjour_detail_other_services_omitted_when_lone_host`、`::test_bonjour_detail_other_services_lists_same_host_categories`、`::test_bonjour_detail_other_services_falls_back_to_addresses` |
+| TXT records 段先渲染 Decoded（注册到 `mdns_txt_decoders` 的已知键），再渲染 Raw；Decoded 命中的键不出现在 Raw 表里 | `test_tui_helpers.py::test_bonjour_detail_decoded_txt_appears_for_known_keys`、`::test_bonjour_detail_decoded_txt_skipped_when_no_known_keys`；decoder 单测见 `test_mdns_txt_decoders.py` |
 | Esc / `i` / `q` 关闭 modal 不动选择 | （review-enforced；binding 是声明式的） |
 
 ### `bluetooth-scanning`
@@ -251,6 +254,7 @@
 | `BonjourPanel` 渲染 vendor / name / services / age / id 列（无 RSSI / 信号条 / connected 分割） | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi`、`tui_snapshot.py`（explore 模式真机回归） |
 | 诊断面板在 mDNS 视图下渲染 Bonjour 侧汇总 | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
 | `BonjourPoller.stop()` 会清理 zeroconf 后台线程 | `test_mdns.py::test_poller_stop_joins_background_thread` |
+| `BonjourDevice.vendor_trace` 记录解析链中生效的那一步（`txt-vendor` / `oui` / `hostname-pattern` / `service-type-hint`；abstain 时两者都是 None） | `test_mdns.py::test_resolve_vendor_with_trace_records_txt_step`、`::test_resolve_vendor_with_trace_records_oui_step`、`::test_resolve_vendor_with_trace_records_hostname_step`、`::test_resolve_vendor_with_trace_records_service_hint_step`、`::test_resolve_vendor_with_trace_abstain_returns_none_pair` |
 | `zeroconf` 懒加载——只要用户没离开 Wi-Fi 视图就不 import | `test_tui_smoke.py::test_app_constructs_bonjour_panel_lazily` |
 | wifi → BLE 这一步就开始预热 Bonjour，使得第二次按 `n`（BLE → mDNS）不再卡顿 | `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |
 | Bonjour 初始化跑在 worker 线程上（`asyncio.to_thread`），import 与 `Zeroconf()` socket 都不阻塞事件循环 | `test_mdns.py::test_start_browser_runs_on_worker_thread`, `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |

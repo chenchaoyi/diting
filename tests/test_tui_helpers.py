@@ -1510,6 +1510,8 @@ class _BD:
         host="HomePod-Office.local.",
         port=7000, addresses=("192.168.1.42",),
         txt=None, vendor="Apple, Inc.", category="AirPlay audio",
+        vendor_trace=None,
+        first_seen=None, last_seen=None,
     ):
         self.name = name
         self.service_type = service_type
@@ -1519,9 +1521,10 @@ class _BD:
         self.txt = txt or {}
         self.vendor = vendor
         self.category = category
+        self.vendor_trace = vendor_trace
         now = datetime.now(timezone.utc)
-        self.first_seen = now - timedelta(minutes=12)
-        self.last_seen = now - timedelta(seconds=3)
+        self.first_seen = first_seen or (now - timedelta(minutes=12))
+        self.last_seen = last_seen or (now - timedelta(seconds=3))
 
 
 def _bonjour_detail_text(device):
@@ -1588,3 +1591,139 @@ def test_bonjour_detail_omits_category_row_when_unknown():
     # exact field-label prefix avoids a false positive from a section
     # header that happens to contain "category" in some future revision.
     assert "  category" not in body
+
+
+# --- BonjourDetailScreen enrichment sections ------------------------
+
+def _bonjour_detail_with(device, *, latest_mdns=None):
+    """Construct a BonjourDetailScreen with the Stage-2 kwargs and
+    return the rendered body as a plain string. Mirrors the existing
+    `_bonjour_detail_text` helper but lets us thread the new context
+    refs in."""
+    screen = BonjourDetailScreen(
+        device=device,
+        latest_mdns=latest_mdns,
+    )
+    return screen._render_body().plain
+
+
+def test_bonjour_detail_vendor_trace_annotation_appears_when_set():
+    """Stage 2: when `vendor_trace` is set, the Identity section's
+    vendor row appends ` · via <trace>`. Pure UX annotation — the
+    underlying vendor field stays the same."""
+    d = _BD(vendor="Apple, Inc.", vendor_trace="hostname-pattern")
+    body = _bonjour_detail_text(d)
+    assert "Apple, Inc." in body
+    assert "via hostname-pattern" in body
+
+
+def test_bonjour_detail_vendor_trace_omitted_when_none():
+    """No `vendor_trace` set (legacy `_BD` default) → vendor row
+    renders cleanly without the trace annotation."""
+    d = _BD(vendor="Apple, Inc.", vendor_trace=None)
+    body = _bonjour_detail_text(d)
+    assert "Apple, Inc." in body
+    assert "via " not in body
+
+
+def test_bonjour_detail_other_services_omitted_when_lone_host():
+    """The Other-services section is gated on at least one other
+    BonjourDevice sharing the host. With nothing else in
+    latest_mdns the section MUST omit."""
+    d = _BD(host="Living-Room.local.", service_type="_raop._tcp.local.")
+    body = _bonjour_detail_with(d, latest_mdns=[d])
+    assert "Other services on this host" not in body
+
+
+def test_bonjour_detail_other_services_lists_same_host_categories():
+    """When latest_mdns contains additional services on the same host,
+    they render newest-first with their category + age."""
+    now = datetime.now(timezone.utc)
+    primary = _BD(
+        name="Office._raop._tcp.local.",
+        service_type="_raop._tcp.local.",
+        host="ccy-MBP2024-M4.local.",
+        category="AirPlay audio",
+        last_seen=now - timedelta(seconds=15),
+    )
+    sibling_a = _BD(
+        name="Office._airplay._tcp.local.",
+        service_type="_airplay._tcp.local.",
+        host="ccy-MBP2024-M4.local.",
+        category="AirPlay",
+        last_seen=now - timedelta(seconds=5),
+    )
+    sibling_b = _BD(
+        name="Office._companion-link._tcp.local.",
+        service_type="_companion-link._tcp.local.",
+        host="ccy-MBP2024-M4.local.",
+        category="Apple Companion",
+        last_seen=now - timedelta(seconds=20),
+    )
+    body = _bonjour_detail_with(
+        primary, latest_mdns=[primary, sibling_a, sibling_b],
+    )
+    assert "Other services on this host" in body
+    # Both siblings' categories appear; primary itself is excluded.
+    assert "AirPlay" in body
+    assert "Apple Companion" in body
+
+
+def test_bonjour_detail_other_services_falls_back_to_addresses():
+    """When `host` is None on either side, the matcher falls back to
+    intersecting the `addresses` tuple. Covers anonymous announcers
+    (some printers / IoT lack a hostname)."""
+    primary = _BD(
+        name="Anon._http._tcp.local.",
+        service_type="_http._tcp.local.",
+        host=None,
+        addresses=("10.0.0.42",),
+        category="HTTP server",
+    )
+    sibling = _BD(
+        name="Anon._ipp._tcp.local.",
+        service_type="_ipp._tcp.local.",
+        host=None,
+        addresses=("10.0.0.42",),
+        category="Printer (IPP)",
+    )
+    body = _bonjour_detail_with(primary, latest_mdns=[primary, sibling])
+    assert "Other services on this host" in body
+    assert "Printer (IPP)" in body
+
+
+def test_bonjour_detail_decoded_txt_appears_for_known_keys():
+    """Stage 2: well-known TXT keys (model / osxvers / srcvers /
+    deviceid) get decoded into named fields. The raw table renders
+    only keys without a registered decoder."""
+    d = _BD(txt={
+        "model": "MacBookPro18,1",
+        "osxvers": "26",
+        "srcvers": "405.6",
+        "deviceid": "aa:bb:cc:dd:ee:ff",
+        "unknown_key": "some-value",
+    })
+    body = _bonjour_detail_text(d)
+    # Decoded fields render with their friendly label.
+    assert "MacBook Pro 16-inch (M1 Pro, 2021)" in body
+    assert "Tahoe" in body  # macOS 26
+    assert "405.6" in body  # firmware passthrough
+    # Decoded keys SHALL NOT also show in the raw table.
+    # The raw table prefixes the key with two spaces + padding;
+    # exact prefix `  model` would be the raw row.
+    assert "  model               MacBookPro18,1" not in body
+    # Unknown key still shows up in raw.
+    assert "unknown_key" in body
+    assert "some-value" in body
+
+
+def test_bonjour_detail_decoded_txt_skipped_when_no_known_keys():
+    """When TXT has only unknown keys, the Decoded sub-block is empty
+    (no spurious section header). The raw table renders normally."""
+    d = _BD(txt={"foo": "bar", "baz": "qux"})
+    body = _bonjour_detail_text(d)
+    assert "foo" in body
+    assert "baz" in body
+    # Decoder-only labels do NOT leak when their source keys are absent.
+    assert "macOS" not in body
+    assert "firmware" not in body
