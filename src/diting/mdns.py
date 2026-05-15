@@ -103,6 +103,15 @@ class BonjourDevice:
     category: str | None
     first_seen: datetime
     last_seen: datetime
+    # Which step of the 5-step resolver produced `vendor`. One of
+    # "txt-vendor", "oui", "hostname-pattern", "service-type-hint",
+    # or None when `vendor` is also None (no step matched). Recorded
+    # by `resolve_vendor_with_trace` so the detail modal can annotate
+    # the Identity section's vendor row with the winning signal.
+    # Optional + default-None for backwards compat with code paths
+    # that build a `BonjourDevice` directly without going through
+    # the resolver.
+    vendor_trace: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,38 +164,57 @@ def _name_pattern_vendor(host: str | None) -> str | None:
     return None
 
 
-def resolve_vendor(device: BonjourDevice) -> str | None:
-    """5-step deterministic vendor chain.
+def resolve_vendor_with_trace(
+    device: BonjourDevice,
+) -> tuple[str | None, str | None]:
+    """5-step deterministic vendor chain, recording which step won.
+
+    Returns ``(vendor, trace)`` where ``trace`` names the winning step
+    (``txt-vendor`` / ``oui`` / ``hostname-pattern`` /
+    ``service-type-hint``) or ``None`` when no step matched. Used by
+    the poller to populate `BonjourDevice.vendor_trace` so the detail
+    modal can annotate the resolved vendor with its provenance.
 
     1. TXT explicit ``vendor`` / ``manufacturer`` field.
     2. OUI lookup against any MAC-formatted address in TXT.
     3. Hostname pattern (Apple- / Sonos- / Macbook- / HP- …).
     4. Service-type vendor hint (``_googlecast._tcp`` → Google).
-    5. Abstain → None.
+    5. Abstain → ``(None, None)``.
     """
     # Step 1: TXT explicit vendor field.
     for key in ("vendor", "manufacturer"):
         v = device.txt.get(key)
         if v:
-            return v
+            return v, "txt-vendor"
     # Step 2: OUI lookup against any MAC-looking TXT value.
     for value in device.txt.values():
         match = _MAC_RE.search(value)
         if match:
             vendor = lookup_oui_vendor(match.group(0), _ouis())
             if vendor:
-                return vendor
+                return vendor, "oui"
     # Step 3: hostname pattern.
     if device.host:
         vendor = _name_pattern_vendor(device.host)
         if vendor:
-            return vendor
+            return vendor, "hostname-pattern"
     # Step 4: service-type hint.
     hint = _SERVICE_VENDOR_HINTS.get(device.service_type)
     if hint:
-        return hint
+        return hint, "service-type-hint"
     # Step 5: abstain.
-    return None
+    return None, None
+
+
+def resolve_vendor(device: BonjourDevice) -> str | None:
+    """5-step deterministic vendor chain — vendor only.
+
+    Convenience wrapper for callers that don't need the trace. See
+    :func:`resolve_vendor_with_trace` for the step-naming variant
+    used by the poller.
+    """
+    vendor, _ = resolve_vendor_with_trace(device)
+    return vendor
 
 
 class _Listener(ServiceListener):
@@ -384,8 +412,8 @@ class BonjourPoller:
             first_seen=existing.first_seen if existing else now,
             last_seen=now,
         )
-        vendor = resolve_vendor(candidate)
-        self._state[key] = replace(candidate, vendor=vendor)
+        vendor, trace = resolve_vendor_with_trace(candidate)
+        self._state[key] = replace(candidate, vendor=vendor, vendor_trace=trace)
 
     def _expire_stale(self, now: datetime) -> None:
         cutoff = now.timestamp() - self._ttl_s

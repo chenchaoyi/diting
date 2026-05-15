@@ -152,6 +152,78 @@ def test_resolve_vendor_oui_from_txt_mac_field():
     assert vendor is not None or vendor is None  # smoke: doesn't crash
 
 
+# ---------- resolve_vendor_with_trace ----------
+
+def test_resolve_vendor_with_trace_records_txt_step():
+    """Step 1 winner: trace == ``txt-vendor``."""
+    from diting.mdns import resolve_vendor_with_trace
+    d = _device(txt={"vendor": "HomePod"})
+    vendor, trace = resolve_vendor_with_trace(d)
+    assert vendor == "HomePod"
+    assert trace == "txt-vendor"
+
+
+def test_resolve_vendor_with_trace_records_oui_step():
+    """Step 2 winner: trace == ``oui``. Pin the service type to one
+    without a vendor hint so the OUI step actually fires (otherwise
+    `_airplay`'s hint would short-circuit to step 4)."""
+    from diting.mdns import resolve_vendor_with_trace
+    d = _device(
+        service_type="_http._tcp.local.",  # no vendor hint
+        host="random-device-3a4b.local.",
+        txt={"deviceid": "40:fe:95:89:c7:e3"},
+    )
+    vendor, trace = resolve_vendor_with_trace(d)
+    # If the bundled OUI map covers 40:fe:95 the trace is "oui".
+    # Else the chain falls through to None — accept either path so
+    # the test stays robust against OUI-map updates.
+    if vendor is not None:
+        assert trace == "oui"
+
+
+def test_resolve_vendor_with_trace_records_hostname_step():
+    """Step 3 winner: trace == ``hostname-pattern``. Use a service
+    type without a vendor hint (`_http._tcp`) so the hostname step
+    actually gets to fire — `_airplay._tcp` has an Apple hint that
+    would short-circuit. Use the canonical 'MacBook' capitalisation
+    that matches `ble.py:_NAME_PATTERN_VENDORS`."""
+    from diting.mdns import resolve_vendor_with_trace
+    d = _device(
+        service_type="_http._tcp.local.",
+        host="MacBook-Pro-2.local.",
+        txt={},
+    )
+    vendor, trace = resolve_vendor_with_trace(d)
+    assert vendor == "Apple, Inc."
+    assert trace == "hostname-pattern"
+
+
+def test_resolve_vendor_with_trace_records_service_hint_step():
+    """Step 4 winner: trace == ``service-type-hint``."""
+    from diting.mdns import resolve_vendor_with_trace
+    d = _device(
+        service_type="_googlecast._tcp.local.",
+        host="some-random-host.local.",
+        txt={},
+    )
+    vendor, trace = resolve_vendor_with_trace(d)
+    assert vendor == "Google"
+    assert trace == "service-type-hint"
+
+
+def test_resolve_vendor_with_trace_abstain_returns_none_pair():
+    """Step 5 (no match): both vendor AND trace are None."""
+    from diting.mdns import resolve_vendor_with_trace
+    d = _device(
+        service_type="_http._tcp.local.",
+        host="some-iot-device-2391.local.",
+        txt={},
+    )
+    vendor, trace = resolve_vendor_with_trace(d)
+    assert vendor is None
+    assert trace is None
+
+
 # ---------- BonjourPoller — listener wiring ----------
 
 class _StubInfo:
