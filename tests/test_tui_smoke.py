@@ -120,6 +120,81 @@ def test_app_title_carries_version():
     asyncio.run(go())
 
 
+def test_brand_header_renders_logo_mark():
+    """The brand header SHALL render the diting radar mark using
+    Unicode half-block characters in brand orange.
+
+    We check for the mark by querying the BrandHeader's _LogoMark
+    child and asserting its rendered text contains at least one
+    half-block glyph (`▀`, `█`, or `▄`). Colour assertion is left
+    to the regression-snapshot CSS check; pytest only proves the
+    mark is on screen.
+    """
+    import asyncio
+    from diting.tui import BrandHeader
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.3)
+            header = app.query_one(BrandHeader)
+            rendered = "\n".join(
+                str(child.render()) for child in header.query("_LogoMark")
+            )
+            assert any(g in rendered for g in ("▀", "█", "▄")), (
+                f"BrandHeader should render half-block glyphs, got {rendered!r}"
+            )
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_brand_header_carries_live_title_and_subtitle():
+    """The brand header's right-hand stack SHALL render the App's
+    title (`diting v<X.Y.Z>`) and the live subtitle string
+    (`view: Wi-Fi · scan 7s`). Both are pulled from `app.title` /
+    `app.sub_title` via the widget's reactive watchers, so existing
+    assignment sites in DitingApp continue to drive the live state.
+    """
+    import asyncio
+    from diting.tui import BrandHeader, _TitleStack
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY, scan_interval=7.0)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.3)
+            header = app.query_one(BrandHeader)
+            stack = header.query_one(_TitleStack)
+            # Static.visual wraps the renderable; reach in for the Group.
+            renderable = stack.visual._renderable
+            from rich.console import Group
+            assert isinstance(renderable, Group), (
+                f"_TitleStack should render a Rich Group of three lines, "
+                f"got {type(renderable).__name__}"
+            )
+            from rich.align import Align
+            from rich.text import Text
+            plain_lines = []
+            for r in renderable.renderables:
+                if isinstance(r, Align):
+                    plain_lines.append(str(r.renderable))
+                elif isinstance(r, Text):
+                    plain_lines.append(r.plain)
+                else:
+                    plain_lines.append(str(r))
+            plain = "\n".join(plain_lines)
+            # title comes from app.title; subtitle from app.sub_title.
+            assert "diting v" in plain, (
+                f"header stack should carry the App title, got {plain!r}"
+            )
+            assert "view:" in plain or "视图" in plain, (
+                f"header stack should carry the App subtitle, got {plain!r}"
+            )
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
 def test_pause_and_resume():
     import asyncio
     asyncio.run(_run_pilot("p", "p"))

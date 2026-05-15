@@ -1077,7 +1077,7 @@ async def _capture_one(scenario: Scenario, out_dir: Path) -> dict:
     text_for_assertions = ""
     findings: list[Finding] = []
 
-    async with app.run_test(size=(160, 56)) as pilot:
+    async with app.run_test(size=(160, 60)) as pilot:
         if scenario.after_mount is not None:
             await scenario.after_mount(pilot)
         else:
