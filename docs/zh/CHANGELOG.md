@@ -8,6 +8,73 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [1.0.11] — 2026-05-15
+
+Wi-Fi 与 Bonjour 详情 modal 不再只是字段堆叠——开始把 diting 自己
+已经收集到的上下文摆出来。同一份数据，更厚的语境。
+
+### 新增（Wi-Fi 详情 modal）
+- **Signal history** —— 选中 BSSID 最近约一小时的 RSSI sparkline +
+  一行 `σ X dB · stable / active` 稳定度标签。数据源自
+  `EnvironmentMonitor` 现有的 per-BSSID 滚动环。
+- **Same physical AP** —— 通过 `NetworkInventory.is_same_ap` 把同
+  物理 AP 的 2.4 / 5 / 6 GHz 兄弟无线电列出来，附信道 / 频段 /
+  当前扫描的 RSSI。
+- **Roam history** —— 按时间倒序最多 10 条，过滤事件环中
+  `previous_bssid` 或 `new_bssid` 命中此 BSSID 的 roam 事件，附
+  `[same-AP]` / `[cross-AP]` 标签。
+- **Recommendation** —— 仅在被查看的行就是当前关联 BSSID 且 scan
+  里存在同 SSID、信号强 ≥ 15 dB 的候选时渲染 `consider switching
+  to <BSSID> on <band> · +N dB`。规则与诊断面板 Roam score 行
+  完全相同。
+
+### 新增（Bonjour 详情 modal）
+- **Vendor 解析路径** —— Identity 段的 vendor 行追加 ` ·
+  via txt-vendor / oui / hostname-pattern / service-type-hint`，
+  让用户一眼看到生效的是哪个信号。新加 `BonjourDevice.vendor_trace`
+  字段，由新的 `resolve_vendor_with_trace()` 写入。维护者据此发现
+  长尾解码缺口；用户得到一点信心提示。
+- **Other services on this host** —— 一个主机同时通告多个服务时
+  （用户自己 Mac 是典型场景：`AirPlay` + `AirPlay audio` + `Apple
+  Companion`），把同 host 的其他类别按 `last_seen` 倒序列出来。
+  视角从「service instance」切到「device」。
+- **TXT 解码器** —— 已知键（`model` / `osxvers` / `srcvers` /
+  `deviceid`）解析成命名字段，渲染在 raw 表格之上。Apple model
+  identifier（如 `MacBookPro18,1`）解码成 `MacBook Pro 16-inch
+  (M1 Pro, 2021)`；macOS 主版本号转代号（如 `Tahoe (26)`）。
+  实现在 `src/diting/mdns_txt_decoders.py`，注册器模式；解码器
+  绝不抛异常。
+- **Cross-surface 关联** —— 新段，把 Bonjour host 关联到其他扫描
+  面上：
+  - **规则 1**（确定性）：announce 的 IP 与 Mac 的
+    `Connection.ip_address` 命中 → `local Mac (this host is
+    you)`。每次用户自己 Mac 的 announce 都会命中。
+  - **规则 2**（机会性）：TXT `deviceid` 解析为合法 MAC 且这串
+    字节出现在某个 BLE 行的 `manufacturer_hex` 中 → `also on BLE
+    as <name|type|vendor> · <RSSI> dBm`。Apple 设备走 RPA 极少触
+    发，但对会把 MAC 嵌进 advert 的打印机 / IoT hub 有用。
+  - **规则 3**（概率性，带修饰）：Bonjour hostname 经
+    `_NAME_PATTERN_VENDORS` 解析为 Apple，并且附近有 Apple-
+    Proximity 类型的 BLE 设备（`type` ∈ `Nearby Info` /
+    `Nearby Action` / `Handoff` / `Apple Proximity`）→
+    `likely the same device as BLE row <short-id>`。带 "likely"
+    修饰是必需的，因为 hostname 模式匹配本身就有概率成分。
+
+### 变更
+- `WifiDetailScreen.__init__` 与 `BonjourDetailScreen.__init__`
+  新增可选 kwargs（Wi-Fi 侧：`environment_monitor` / `event_ring`
+  / `latest_scan`；Bonjour 侧：`latest_mdns` / `latest_ble` /
+  `latest_connection`），让 modal 能读到实时 session 状态。默认
+  都是 `None`，对应段没传引用时整段省略。
+- `_section_txt`（Bonjour）改为 Decoded 在前 + Raw 在后。Decoded
+  已经命中的键通过 `mdns_txt_decoders.decoded_keys()` 从 Raw 表
+  中剔除。
+
+### Spec
+三个能力做了 spec 变更：`wifi-detail-modal`、
+`bonjour-detail-modal`、`mdns-scanning`。详见
+`openspec/changes/archive/2026-05-15-wifi-and-bonjour-detail-enrichment/`。
+
 ## [1.0.10] — 2026-05-14
 
 两个只在 curl 装的冻结 binary 里出现的 bug（`uv run diting` 都没有）。
