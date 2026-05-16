@@ -116,11 +116,10 @@ the divine mount of Kṣitigarbha Bodhisattva (地藏王菩萨). It is
 said to hear every sound in heaven, on earth, and across the ten
 directions; one ear pressed to the ground, it can tell truth
 from falsehood, virtue from sin, and the present from the past.
-The project takes the name because the thesis is the same:
-your Mac already perceives the wireless world around it — Wi-Fi
-networks coming and going, BLE devices whispering nearby,
-upstream packets dropping — and 谛听's job is to listen on its
-behalf and tell you, plainly, what it heard.
+Your Mac sits at the centre of a smaller ten directions of its
+own — Wi-Fi networks coming and going, BLE devices whispering
+nearby, upstream packets quietly dropping — and, left to itself,
+it never relays a word of any of it.
 
 **tianer (天耳)** is the Buddhist supernormal power of
 clairaudient hearing — the "heavenly ear" (天耳通) that 谛听
