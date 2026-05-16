@@ -109,6 +109,26 @@ BSSID. Same path as menu-off-then-on, in one keystroke.
 - **(Future) Room-presence sensing.** Long-term, hardware-assisted
   flagship. See [Roadmap](#roadmap).
 
+## The name
+
+**diting (谛听)** is a mythical beast in Chinese Buddhist lore —
+the divine mount of Kṣitigarbha Bodhisattva (地藏王菩萨). It is
+said to hear every sound in heaven, on earth, and across the ten
+directions; one ear pressed to the ground, it can tell truth
+from falsehood, virtue from sin, and the present from the past.
+Your Mac sits at the centre of a smaller ten directions of its
+own — Wi-Fi networks coming and going, BLE devices whispering
+nearby, upstream packets quietly dropping — and, left to itself,
+it never relays a word of any of it.
+
+**tianer (天耳)** — literally "heavenly ear" — is the ear
+behind 天耳通, one of the Six Supernormal Powers (六神通) in
+Buddhist tradition: the faculty of clairaudient hearing, by
+which sounds too far, too faint, or too hidden for ordinary
+ears can still be made out. 谛听's reputation for hearing all
+ten directions rests on this faculty — the beast is the
+listener, but 天耳 is the ear it listens through.
+
 ## Quick start
 
 ```bash
