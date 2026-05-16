@@ -121,17 +121,23 @@ own — Wi-Fi networks coming and going, BLE devices whispering
 nearby, upstream packets quietly dropping — and, left to itself,
 it never relays a word of any of it.
 
-**tianer (天耳)** is the Buddhist supernormal power of
-clairaudient hearing — the "heavenly ear" (天耳通) that 谛听
-itself is said to possess, by which it can hear what is too far,
-too quiet, or too hidden for ordinary ears. In this codebase the
-name belongs to the Swift helper bundle (`diting-tianer.app`):
-the component that carries the macOS TCC grants — Location
-Services (so Wi-Fi scans come back unredacted on macOS 14.4+)
-and Bluetooth (so BLE advertising data is visible) — and brokers
-raw signal data over to the Python TUI. The Python front-end
-listens, narrates, and ranks; *tianer* is the ear the operating
-system actually allows to hear.
+**tianer (天耳)** — literally "heavenly ear" — is the ear
+behind 天耳通, one of the Six Supernormal Powers (六神通) in
+Buddhist tradition: the faculty of clairaudient hearing, by
+which sounds too far, too faint, or too hidden for ordinary
+ears can still be made out. 谛听's reputation for hearing all
+ten directions rests on this faculty — the beast is the
+listener, but 天耳 is the ear it listens through. That same
+split shows up in the codebase. The Python TUI plays 谛听 — it
+listens, narrates, ranks — but on macOS 14.4+ it cannot, on
+its own, perceive much: unprivileged Wi-Fi scans come back
+with SSID set to `None` and BSSIDs redacted, and Bluetooth is
+gated behind TCC entirely. The Swift helper bundle
+(`diting-tianer.app`) is what carries the macOS grants that
+lift those veils — Location Services for unredacted Wi-Fi
+scans, Bluetooth for BLE advertising — and brokers the raw
+signal stream to the front-end. The helper *is* the ear; the
+Python TUI is what makes sense of what it hears.
 
 ## Quick start
 
