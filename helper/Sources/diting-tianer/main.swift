@@ -1471,6 +1471,29 @@ private final class AssociateWorker: NSObject, CLLocationManagerDelegate {
         manager.delegate = self
         manager.requestWhenInUseAuthorization()
         manager.startUpdatingLocation()
+
+        // Already-on-this-SSID short-circuit. The user can press `j`
+        // on the row of the network they're currently associated to
+        // (per the spec scenario "User opens detail on the currently-
+        // associated SSID and presses j"); we don't need to scan +
+        // re-associate — that would tear the link down for no gain.
+        // CWInterface.ssid() is TCC-redacted to nil in unprivileged
+        // processes, but inside the LaunchServices-attributed bundle
+        // it's populated, so this check fires reliably.
+        let client = CWWiFiClient.shared()
+        if let iface = client.interface(),
+           let live = iface.ssid(),
+           live == ssid {
+            done = true
+            emitAssociateInnerExit(
+                payload: associateJSONOK(
+                    bssid: iface.bssid(),
+                    keychainSaved: false
+                ),
+                exitCode: 0
+            )
+        }
+
         attemptResolve(attempt: 0)
     }
 
@@ -1481,11 +1504,18 @@ private final class AssociateWorker: NSObject, CLLocationManagerDelegate {
 
     private func attemptResolve(attempt: Int) {
         guard !done else { return }
-        if attempt >= 6 {
+        // 12 attempts × ~0.5 s + scan call time (~0.1 s cached,
+        // ~3 s fresh). Total budget ~6-20 s — wide enough for a
+        // cold helper-bundle launch to complete the CoreLocation
+        // registration handshake before we give up. The previous
+        // budget (6 attempts) timed out on a freshly-spawned
+        // bundle with the user clearly seeing the SSID in the TUI.
+        if attempt >= 12 {
             done = true
             emitAssociateInnerExit(
                 payload: associateJSONError(
-                    message: "SSID \(ssid) not in scan range",
+                    message: "SSID \(ssid) not in scan range "
+                        + "(\(attempt) attempts, no match)",
                     code: "ssid_not_found"
                 ),
                 exitCode: 8
@@ -1562,7 +1592,34 @@ private final class AssociateWorker: NSObject, CLLocationManagerDelegate {
                 )
             }
         }
-        // Saved-credential / open path.
+        // Saved-credential / open path. CWInterface.associate(
+        // toNetwork:password:nil error:) does NOT itself read from
+        // Keychain — that's done by the higher-level WiFiAgent
+        // daemon when the user clicks an SSID in the menu bar.
+        // CoreWLAN's `associate` is the raw primitive and demands an
+        // explicit password. So: try the private `CWKeychain
+        // findWiFiPasswordForSSID:` first, and only fall back to the
+        // nil-password call (which works for open networks).
+        if !net.supportsSecurity(.none),
+           let saved = attemptKeychainRead(ssid: ssid) {
+            do {
+                try iface.associate(to: net, password: saved)
+                emitAssociateInnerExit(
+                    payload: associateJSONOK(bssid: net.bssid, keychainSaved: false),
+                    exitCode: 0
+                )
+            } catch {
+                // Saved password was rejected (the user changed it on
+                // the AP, or the Keychain entry is for a different
+                // BSSID). Fall through to the sheet so they can
+                // re-enter — overwriting the stale Keychain on
+                // success.
+                DispatchQueue.main.async { [weak self] in
+                    self?.showPasswordSheet(net: net, iface: iface)
+                }
+                return
+            }
+        }
         do {
             try iface.associate(to: net, password: nil)
             emitAssociateInnerExit(
@@ -1673,6 +1730,29 @@ private func attemptKeychainWrite(ssid: String, password: String) -> Bool {
     typealias Fn = @convention(c) (AnyObject, Selector, NSString, NSString) -> Bool
     let fn = unsafeBitCast(imp, to: Fn.self)
     return fn(cls, sel, password as NSString, ssid as NSString)
+}
+
+/// Read a saved Wi-Fi password from the System Keychain via the
+/// private `+[CWKeychain findWiFiPasswordForSSID:]` class method.
+/// Returns nil when the symbol is missing (future macOS that drops
+/// the API) or when no entry exists for the SSID. The OS Wi-Fi
+/// menu's auto-join uses a higher-level orchestration
+/// (WiFiAgent + CoreWLAN); CoreWLAN's own
+/// `CWInterface.associate(toNetwork:password:nil error:)` does NOT
+/// automatically read from Keychain, so we have to do it ourselves
+/// to deliver the "saved password = silent join" UX the spec
+/// promised. The bundle is already in the SystemKeychain ACL for
+/// AirPort items (granted automatically when the user first joins
+/// any network via macOS itself), so this read does not pop a
+/// "diting-tianer wants to access the Keychain" prompt.
+private func attemptKeychainRead(ssid: String) -> String? {
+    guard let cls = NSClassFromString("CWKeychain") else { return nil }
+    let sel = NSSelectorFromString("findWiFiPasswordForSSID:")
+    guard let method = class_getClassMethod(cls, sel) else { return nil }
+    let imp = method_getImplementation(method)
+    typealias Fn = @convention(c) (AnyObject, Selector, NSString) -> NSString?
+    let fn = unsafeBitCast(imp, to: Fn.self)
+    return fn(cls, sel, ssid as NSString) as String?
 }
 
 private func associateJSONOK(bssid: String?, keychainSaved: Bool) -> Data {
