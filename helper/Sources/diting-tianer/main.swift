@@ -1471,6 +1471,29 @@ private final class AssociateWorker: NSObject, CLLocationManagerDelegate {
         manager.delegate = self
         manager.requestWhenInUseAuthorization()
         manager.startUpdatingLocation()
+
+        // Already-on-this-SSID short-circuit. The user can press `j`
+        // on the row of the network they're currently associated to
+        // (per the spec scenario "User opens detail on the currently-
+        // associated SSID and presses j"); we don't need to scan +
+        // re-associate — that would tear the link down for no gain.
+        // CWInterface.ssid() is TCC-redacted to nil in unprivileged
+        // processes, but inside the LaunchServices-attributed bundle
+        // it's populated, so this check fires reliably.
+        let client = CWWiFiClient.shared()
+        if let iface = client.interface(),
+           let live = iface.ssid(),
+           live == ssid {
+            done = true
+            emitAssociateInnerExit(
+                payload: associateJSONOK(
+                    bssid: iface.bssid(),
+                    keychainSaved: false
+                ),
+                exitCode: 0
+            )
+        }
+
         attemptResolve(attempt: 0)
     }
 
@@ -1481,11 +1504,18 @@ private final class AssociateWorker: NSObject, CLLocationManagerDelegate {
 
     private func attemptResolve(attempt: Int) {
         guard !done else { return }
-        if attempt >= 6 {
+        // 12 attempts × ~0.5 s + scan call time (~0.1 s cached,
+        // ~3 s fresh). Total budget ~6-20 s — wide enough for a
+        // cold helper-bundle launch to complete the CoreLocation
+        // registration handshake before we give up. The previous
+        // budget (6 attempts) timed out on a freshly-spawned
+        // bundle with the user clearly seeing the SSID in the TUI.
+        if attempt >= 12 {
             done = true
             emitAssociateInnerExit(
                 payload: associateJSONError(
-                    message: "SSID \(ssid) not in scan range",
+                    message: "SSID \(ssid) not in scan range "
+                        + "(\(attempt) attempts, no match)",
                     code: "ssid_not_found"
                 ),
                 exitCode: 8
