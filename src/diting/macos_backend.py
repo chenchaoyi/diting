@@ -17,7 +17,7 @@ from datetime import datetime
 from CoreWLAN import CWWiFiClient
 
 from . import _dynamic_store, _helper
-from .backend import PermissionState, WiFiBackend
+from .backend import AssociateResult, PermissionState, WiFiBackend
 from .models import Connection, ScanResult
 
 # CoreWLAN enums → human strings. Values mirror the CoreWLAN headers; we
@@ -269,6 +269,34 @@ class MacOSWiFiBackend(WiFiBackend):
         time.sleep(0.3)
         iface.setPower_error_(True, None)
         return True
+
+    def associate(
+        self, ssid: str, *, bssid: str | None = None
+    ) -> AssociateResult:
+        """Associate to a specific SSID via the helper subprocess.
+
+        Mirror of `force_reroam`'s "TUI uses getattr-with-default"
+        pattern: the method only exists when a helper bundle is
+        installed (the helper owns the CoreLocation grant CoreWLAN
+        needs for an unredacted scan + association). Without it we
+        cannot guarantee the network resolves at all, so we degrade
+        loudly via `unknown` rather than guessing.
+
+        We deliberately do NOT call `iface.disassociate()` first.
+        `CWInterface.associate(toNetwork:password:error:)` (inside
+        the helper) drives the L2 transition itself — the deauth
+        frame goes out as part of the new auth+assoc burst, which
+        is the minimum-window path. Calling disassociate first adds
+        latency and (per the `force_reroam` comment) can hang on
+        802.1X.
+        """
+        if self._helper_path is None:
+            return AssociateResult(
+                ok=False,
+                error_code="unknown",
+                error_message="helper not installed",
+            )
+        return _helper.associate(self._helper_path, ssid, bssid=bssid)
 
     def permission_state(self) -> PermissionState:
         # CoreLocation could give a definitive answer, but it requires the

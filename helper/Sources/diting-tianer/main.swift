@@ -1231,6 +1231,521 @@ private func runNotifyViaLaunchInner() -> Never {
 }
 
 // ---------------------------------------------------------------------
+// `associate` subcommand
+//
+// Drives a CoreWLAN association to a user-selected SSID, called by
+// the Python TUI's WifiDetailScreen `j` binding. Same outer / inner
+// LaunchServices split as `scan` and `notify`: CoreWLAN association
+// to a CWNetwork needs the bundle's Location TCC grant, which a
+// directly-exec'd subprocess cannot inherit on macOS 26.
+//
+//   Outer (no DITING_ASSOC_VIA_LAUNCH env): parses argv, rejects
+//   `--password` (the password protocol is stdin-only — a `ps` view
+//   must never see secrets). Drains stdin into a 0600 temp file if
+//   non-empty so a piped password reaches the inner without
+//   crossing argv or env. Spawns the inner via `open`, waits, copies
+//   the result JSON written to DITING_ASSOC_OUT onto our own stdout,
+//   exits with the inner's status.
+//
+//   Inner (DITING_ASSOC_VIA_LAUNCH=1): activation-policy `.accessory`
+//   (no dock icon flash); runs an AssociateWorker on the
+//   dispatchMain queue that registers CoreLocation, performs a
+//   CoreWLAN scan to locate the SSID, refuses Enterprise / 802.1X
+//   with code `enterprise_unsupported`, calls
+//   `CWInterface.associate(toNetwork:password:nil error:)` for the
+//   open-or-Keychain fast path, and falls back to an NSAlert with
+//   an NSSecureTextField + Remember-this-network checkbox when the
+//   nil-password attempt fails on a secured network. Writes a JSON
+//   status to DITING_ASSOC_OUT, exits.
+//
+// Exit codes:
+//   0 ok
+//   2 unexpected (no Wi-Fi interface, JSON encode failure, spawn fail)
+//   5 enterprise_unsupported
+//   6 user cancelled the AppKit sheet
+//   7 auth_failed (CWInterface.associate threw)
+//   8 ssid_not_found (SSID absent from a fresh scan)
+//   64 bad args (--password on argv, missing --ssid)
+//
+// We deliberately do NOT call `iface.disassociate()` first.
+// `CWInterface.associate(toNetwork:password:error:)` drives the L2
+// transition itself, which is the minimum-window path. Per the
+// design's D7 ("Lossless / hitless cross-SSID switching is
+// explicitly not a goal"), the user has already consented in the
+// TUI's JoinConfirmScreen to the 2-5 s gap.
+// ---------------------------------------------------------------------
+
+private enum AssociateEnv {
+    static let viaLaunch = "DITING_ASSOC_VIA_LAUNCH"
+    static let ssid      = "DITING_ASSOC_SSID"
+    static let bssid     = "DITING_ASSOC_BSSID"
+    static let pwFile    = "DITING_ASSOC_PW_FILE"
+    static let outFile   = "DITING_ASSOC_OUT"
+}
+
+func runAssociateAndExit(args: [String]) -> Never {
+    if ProcessInfo.processInfo.environment[AssociateEnv.viaLaunch] == "1" {
+        runAssociateInner()
+    }
+    runAssociateOuter(args: args)
+}
+
+private func runAssociateOuter(args: [String]) -> Never {
+    var ssid: String?
+    var bssid: String?
+    var i = 0
+    while i < args.count {
+        let a = args[i]
+        if a == "--ssid" && i + 1 < args.count {
+            ssid = args[i + 1]; i += 2
+        } else if a == "--bssid" && i + 1 < args.count {
+            bssid = args[i + 1]; i += 2
+        } else if a == "--password" || a.hasPrefix("--password=") {
+            emitAssociateOuterError(
+                message: "--password is not accepted; pipe the password via stdin",
+                code: "bad_args",
+                exitCode: 64
+            )
+        } else {
+            i += 1
+        }
+    }
+    guard let targetSSID = ssid, !targetSSID.isEmpty else {
+        emitAssociateOuterError(
+            message: "--ssid <SSID> required",
+            code: "bad_args",
+            exitCode: 64
+        )
+    }
+
+    // Drain stdin. Strip a single trailing newline so `echo "$pw"`
+    // and `printf %s "$pw"` both work cleanly. Non-empty stdin
+    // becomes a 0600 temp file the inner reads and immediately
+    // deletes; argv and env are visible to `ps eww` and must not
+    // carry secrets.
+    var stdinData = FileHandle.standardInput.readDataToEndOfFile()
+    if !stdinData.isEmpty, stdinData.last == 0x0a {
+        stdinData.removeLast()
+    }
+    var pwFile: String? = nil
+    if !stdinData.isEmpty {
+        let path = NSTemporaryDirectory() + "diting-assoc-pw-\(UUID().uuidString)"
+        let ok = FileManager.default.createFile(
+            atPath: path,
+            contents: stdinData,
+            attributes: [.posixPermissions: NSNumber(value: 0o600)]
+        )
+        if ok { pwFile = path }
+    }
+    stdinData.resetBytes(in: 0..<stdinData.count)
+
+    let outPath = NSTemporaryDirectory() + "diting-assoc-out-\(UUID().uuidString).json"
+    let bundlePath = Bundle.main.bundlePath
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    var taskArgs: [String] = [
+        "-W",                                  // wait for app to exit
+        "-a", bundlePath,                      // target bundle
+        "--env", "\(AssociateEnv.viaLaunch)=1",
+        "--env", "\(AssociateEnv.ssid)=\(targetSSID)",
+        "--env", "\(AssociateEnv.outFile)=\(outPath)",
+    ]
+    if let b = bssid {
+        taskArgs += ["--env", "\(AssociateEnv.bssid)=\(b)"]
+    }
+    if let pwf = pwFile {
+        taskArgs += ["--env", "\(AssociateEnv.pwFile)=\(pwf)"]
+    }
+    taskArgs += ["--args", "associate"]
+    task.arguments = taskArgs
+    do {
+        try task.run()
+    } catch {
+        if let pwf = pwFile { try? FileManager.default.removeItem(atPath: pwf) }
+        emitAssociateOuterError(
+            message: "associate-via-launch spawn failed: \(error.localizedDescription)",
+            code: "unknown",
+            exitCode: 2
+        )
+    }
+    task.waitUntilExit()
+    if let pwf = pwFile { try? FileManager.default.removeItem(atPath: pwf) }
+
+    if let data = try? Data(contentsOf: URL(fileURLWithPath: outPath)) {
+        FileHandle.standardOutput.write(data)
+        if data.last != UInt8(ascii: "\n") {
+            FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+        }
+        try? FileManager.default.removeItem(atPath: outPath)
+    } else {
+        // Inner produced no JSON; never leave the caller with blank
+        // stdout — they parse JSON unconditionally.
+        let payload = associateJSONError(
+            message: "inner produced no output",
+            code: "unknown"
+        )
+        FileHandle.standardOutput.write(payload)
+        FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+    }
+    exit(task.terminationStatus)
+}
+
+private func runAssociateInner() -> Never {
+    let env = ProcessInfo.processInfo.environment
+    guard let ssid = env[AssociateEnv.ssid], !ssid.isEmpty else {
+        emitAssociateInnerError(
+            message: "missing SSID env",
+            code: "unknown",
+            exitCode: 2
+        )
+    }
+    let bssidHint = env[AssociateEnv.bssid]
+
+    // Read the piped password if the outer dropped one for us.
+    var pipedPassword: String? = nil
+    if let pwPath = env[AssociateEnv.pwFile] {
+        if var data = try? Data(contentsOf: URL(fileURLWithPath: pwPath)) {
+            pipedPassword = String(data: data, encoding: .utf8)
+            data.resetBytes(in: 0..<data.count)
+        }
+        // Defence-in-depth: the outer also tries to remove the file.
+        try? FileManager.default.removeItem(atPath: pwPath)
+    }
+
+    // `.accessory` so the helper doesn't flash a dock icon when the
+    // AppKit sheet path fires. NSAlert.runModal() still brings its
+    // window to the front when we `activate(ignoringOtherApps: true)`.
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+
+    let worker = AssociateWorker(
+        ssid: ssid,
+        bssidHint: bssidHint,
+        pipedPassword: pipedPassword
+    )
+    g_associateWorker = worker
+    worker.start()
+    app.run()
+    exit(0)  // unreachable — worker exits via emitAssociateInnerExit
+}
+
+private var g_associateWorker: AssociateWorker?
+
+private final class AssociateWorker: NSObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private let ssid: String
+    private let bssidHint: String?
+    private var password: String?
+    private var done = false
+
+    init(ssid: String, bssidHint: String?, pipedPassword: String?) {
+        self.ssid = ssid
+        self.bssidHint = bssidHint
+        self.password = pipedPassword
+    }
+
+    func start() {
+        manager.delegate = self
+        manager.requestWhenInUseAuthorization()
+        manager.startUpdatingLocation()
+        attemptResolve(attempt: 0)
+    }
+
+    func locationManager(
+        _ manager: CLLocationManager,
+        didChangeAuthorization status: CLAuthorizationStatus
+    ) { /* no-op; the scan retry loop drives forward progress */ }
+
+    private func attemptResolve(attempt: Int) {
+        guard !done else { return }
+        if attempt >= 6 {
+            done = true
+            emitAssociateInnerExit(
+                payload: associateJSONError(
+                    message: "SSID \(ssid) not in scan range",
+                    code: "ssid_not_found"
+                ),
+                exitCode: 8
+            )
+        }
+        let client = CWWiFiClient.shared()
+        guard let iface = client.interface() else {
+            done = true
+            emitAssociateInnerExit(
+                payload: associateJSONError(
+                    message: "no Wi-Fi interface",
+                    code: "unknown"
+                ),
+                exitCode: 2
+            )
+        }
+        let networks: Set<CWNetwork>
+        do {
+            networks = try iface.scanForNetworks(withName: nil)
+        } catch {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.attemptResolve(attempt: attempt + 1)
+            }
+            return
+        }
+        var match: CWNetwork? = nil
+        for net in networks where net.ssid == ssid {
+            if let hint = bssidHint?.lowercased(),
+               let nb = net.bssid?.lowercased(),
+               nb == hint {
+                match = net
+                break
+            }
+            if match == nil { match = net }
+        }
+        guard let target = match else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.attemptResolve(attempt: attempt + 1)
+            }
+            return
+        }
+        proceed(net: target, iface: iface)
+    }
+
+    private func proceed(net: CWNetwork, iface: CWInterface) {
+        done = true
+        if isEnterpriseOnly(net) {
+            emitAssociateInnerExit(
+                payload: associateJSONError(
+                    message: associateEnterpriseHint(),
+                    code: "enterprise_unsupported"
+                ),
+                exitCode: 5
+            )
+        }
+        // Caller-supplied password path — skip the sheet, the caller
+        // told us exactly what to use.
+        if let pw = password, !pw.isEmpty {
+            do {
+                try iface.associate(to: net, password: pw)
+                password = nil
+                emitAssociateInnerExit(
+                    payload: associateJSONOK(bssid: net.bssid, keychainSaved: false),
+                    exitCode: 0
+                )
+            } catch {
+                password = nil
+                emitAssociateInnerExit(
+                    payload: associateJSONError(
+                        message: error.localizedDescription,
+                        code: "auth_failed"
+                    ),
+                    exitCode: 7
+                )
+            }
+        }
+        // Saved-credential / open path.
+        do {
+            try iface.associate(to: net, password: nil)
+            emitAssociateInnerExit(
+                payload: associateJSONOK(bssid: net.bssid, keychainSaved: false),
+                exitCode: 0
+            )
+        } catch {
+            if net.supportsSecurity(.none) {
+                // The network is open and we still couldn't associate;
+                // password sheet won't help.
+                emitAssociateInnerExit(
+                    payload: associateJSONError(
+                        message: error.localizedDescription,
+                        code: "auth_failed"
+                    ),
+                    exitCode: 7
+                )
+            }
+            // Secured network, no saved credential — fall through to
+            // an AppKit password sheet on the main queue.
+            DispatchQueue.main.async { [weak self] in
+                self?.showPasswordSheet(net: net, iface: iface)
+            }
+        }
+    }
+
+    private func showPasswordSheet(net: CWNetwork, iface: CWInterface) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = associatePromptTitle(ssid: ssid)
+        alert.informativeText = associatePromptBody()
+
+        let pwField = NSSecureTextField(frame: NSRect(x: 0, y: 30, width: 260, height: 24))
+        let rememberBtn = NSButton(
+            checkboxWithTitle: associateRememberLabel(),
+            target: nil,
+            action: nil
+        )
+        rememberBtn.state = .on
+        rememberBtn.frame = NSRect(x: 0, y: 0, width: 260, height: 22)
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 60))
+        container.addSubview(pwField)
+        container.addSubview(rememberBtn)
+        alert.accessoryView = container
+
+        alert.addButton(withTitle: associateJoinLabel())
+        let cancelButton = alert.addButton(withTitle: associateCancelLabel())
+        cancelButton.keyEquivalent = "\u{1b}"  // Esc
+
+        alert.window.initialFirstResponder = pwField
+
+        let resp = alert.runModal()
+        if resp == .alertFirstButtonReturn {
+            let typed = pwField.stringValue
+            let rememberOn = (rememberBtn.state == .on)
+            do {
+                try iface.associate(to: net, password: typed)
+                let saved = rememberOn
+                    ? attemptKeychainWrite(ssid: ssid, password: typed)
+                    : false
+                pwField.stringValue = ""
+                emitAssociateInnerExit(
+                    payload: associateJSONOK(bssid: net.bssid, keychainSaved: saved),
+                    exitCode: 0
+                )
+            } catch {
+                pwField.stringValue = ""
+                emitAssociateInnerExit(
+                    payload: associateJSONError(
+                        message: error.localizedDescription,
+                        code: "auth_failed"
+                    ),
+                    exitCode: 7
+                )
+            }
+        } else {
+            emitAssociateInnerExit(
+                payload: associateJSONError(
+                    message: "user cancelled",
+                    code: "cancelled"
+                ),
+                exitCode: 6
+            )
+        }
+    }
+}
+
+private func isEnterpriseOnly(_ net: CWNetwork) -> Bool {
+    let enterprise: [CWSecurity] = [.wpaEnterprise, .wpa2Enterprise, .wpa3Enterprise]
+    let personal: [CWSecurity] = [.none, .WEP, .wpaPersonal, .wpa2Personal, .wpa3Personal]
+    let supportsEnt = enterprise.contains(where: { net.supportsSecurity($0) })
+    if !supportsEnt { return false }
+    return !personal.contains(where: { net.supportsSecurity($0) })
+}
+
+/// Best-effort write to System Keychain via `+[CWKeychain
+/// setWiFiPassword:forSSID:]`. The class / selector are private
+/// CoreWLAN API: we probe at runtime and silently report `false`
+/// when the symbol is missing or the call fails. Per the spec, a
+/// Keychain-write failure SHALL NOT abort the join — we still exit
+/// 0 with `keychain_saved: false` and the user retypes next time.
+private func attemptKeychainWrite(ssid: String, password: String) -> Bool {
+    guard let cls = NSClassFromString("CWKeychain") else { return false }
+    let sel = NSSelectorFromString("setWiFiPassword:forSSID:")
+    guard let method = class_getClassMethod(cls, sel) else { return false }
+    let imp = method_getImplementation(method)
+    typealias Fn = @convention(c) (AnyObject, Selector, NSString, NSString) -> Bool
+    let fn = unsafeBitCast(imp, to: Fn.self)
+    return fn(cls, sel, password as NSString, ssid as NSString)
+}
+
+private func associateJSONOK(bssid: String?, keychainSaved: Bool) -> Data {
+    var payload: [String: Any] = [
+        "schema": 1,
+        "ok": true,
+        "keychain_saved": keychainSaved,
+    ]
+    if let b = bssid { payload["bssid"] = b }
+    return (try? JSONSerialization.data(
+        withJSONObject: payload,
+        options: [.sortedKeys]
+    )) ?? Data()
+}
+
+private func associateJSONError(message: String, code: String) -> Data {
+    let payload: [String: Any] = [
+        "schema": 1,
+        "error": message,
+        "code": code,
+    ]
+    return (try? JSONSerialization.data(
+        withJSONObject: payload,
+        options: [.sortedKeys]
+    )) ?? Data()
+}
+
+/// Outer-half error path: always writes to stdout (no OUT file yet)
+/// and exits. Python parser reads from stdout.
+private func emitAssociateOuterError(
+    message: String, code: String, exitCode: Int32
+) -> Never {
+    let data = associateJSONError(message: message, code: code)
+    FileHandle.standardOutput.write(data)
+    FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+    exit(exitCode)
+}
+
+/// Inner-half exit path: prefers the OUT file so the outer can relay
+/// the response unchanged; falls back to stdout when run standalone.
+private func emitAssociateInnerExit(payload: Data, exitCode: Int32) -> Never {
+    if let outPath = ProcessInfo.processInfo.environment[AssociateEnv.outFile] {
+        var data = payload
+        if data.last != UInt8(ascii: "\n") {
+            data.append(0x0a)
+        }
+        try? data.write(to: URL(fileURLWithPath: outPath), options: .atomic)
+    } else {
+        FileHandle.standardOutput.write(payload)
+        FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+    }
+    exit(exitCode)
+}
+
+private func emitAssociateInnerError(
+    message: String, code: String, exitCode: Int32
+) -> Never {
+    emitAssociateInnerExit(
+        payload: associateJSONError(message: message, code: code),
+        exitCode: exitCode
+    )
+}
+
+// AppKit sheet + Enterprise hint string lookups. Mirrors the
+// `detectHelperLang()` switch that the install-time status window
+// uses — keeps the helper's user-facing surface speaking one
+// language consistently.
+private func associateEnterpriseHint() -> String {
+    detectHelperLang() == .zh
+        ? "企业 / 802.1X 网络请先用系统 Wi-Fi 菜单加入一次，之后 diting 才能使用保存的凭据。"
+        : "Enterprise / 802.1X — join from the system Wi-Fi menu first; diting can use the saved credential afterwards."
+}
+
+private func associatePromptTitle(ssid: String) -> String {
+    detectHelperLang() == .zh
+        ? "请输入 \"\(ssid)\" 的密码"
+        : "Enter the password for \"\(ssid)\""
+}
+
+private func associatePromptBody() -> String {
+    detectHelperLang() == .zh ? "Wi-Fi 密码" : "Wi-Fi password"
+}
+
+private func associateRememberLabel() -> String {
+    detectHelperLang() == .zh ? "记住此网络" : "Remember this network"
+}
+
+private func associateJoinLabel() -> String {
+    detectHelperLang() == .zh ? "加入" : "Join"
+}
+
+private func associateCancelLabel() -> String {
+    detectHelperLang() == .zh ? "取消" : "Cancel"
+}
+
+// ---------------------------------------------------------------------
 // App-mode localization
 //
 // Resolution order matches the Python CLI's i18n: DITING_LANG env var
@@ -1551,6 +2066,8 @@ if args.count > 1 {
         runBluetoothStatusProbe()
     case "notify":
         runNotifyAndExit(args: Array(args.dropFirst(2)))
+    case "associate":
+        runAssociateAndExit(args: Array(args.dropFirst(2)))
     case "--help", "-h":
         print("""
         diting-tianer
@@ -1576,6 +2093,15 @@ if args.count > 1 {
                             Best-effort; exits within ~1 s regardless
                             of whether macOS surfaced the notification.
                             Used by the Python TUI watchdog.
+          associate --ssid S [--bssid B]
+                            Associate to SSID S via CoreWLAN. The password
+                            is read from STDIN (never argv — `ps` would
+                            otherwise see it); empty stdin drives the
+                            Keychain-or-AppKit-sheet resolution chain.
+                            Writes one JSON object to stdout on every
+                            outcome. Exit codes: 0 ok, 5
+                            enterprise_unsupported, 6 cancelled, 7
+                            auth_failed, 8 ssid_not_found, 64 bad args.
         """)
         exit(0)
     default:
