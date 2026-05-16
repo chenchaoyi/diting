@@ -1345,6 +1345,25 @@ private func runAssociateOuter(args: [String]) -> Never {
     task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
     var taskArgs: [String] = [
         "-W",                                  // wait for app to exit
+        "-g",                                  // do not bring to front
+                                               // (LSUIElement=true means
+                                               // the bundle has no Dock
+                                               // presence; without -g,
+                                               // `open` tries to fg an
+                                               // app it can't fg and
+                                               // returns early without
+                                               // propagating --env /
+                                               // --args. The sheet path
+                                               // calls
+                                               // NSApp.activate(...) on
+                                               // its own when needed.)
+        "-n",                                  // force a new instance —
+                                               // if a stale bundle copy
+                                               // is already running it
+                                               // would otherwise absorb
+                                               // the --args / --env and
+                                               // our inner would never
+                                               // run.
         "-a", bundlePath,                      // target bundle
         "--env", "\(AssociateEnv.viaLaunch)=1",
         "--env", "\(AssociateEnv.ssid)=\(targetSSID)",
@@ -1379,9 +1398,13 @@ private func runAssociateOuter(args: [String]) -> Never {
         try? FileManager.default.removeItem(atPath: outPath)
     } else {
         // Inner produced no JSON; never leave the caller with blank
-        // stdout — they parse JSON unconditionally.
+        // stdout — they parse JSON unconditionally. Carry the
+        // `open` termination status so the user / log can tell
+        // "launchctl rejected the bundle" (non-zero) from "the
+        // inner ran but skipped the write path" (zero).
+        let status = task.terminationStatus
         let payload = associateJSONError(
-            message: "inner produced no output",
+            message: "inner produced no output (open exit=\(status))",
             code: "unknown"
         )
         FileHandle.standardOutput.write(payload)
