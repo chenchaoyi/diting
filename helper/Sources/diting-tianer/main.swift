@@ -1600,30 +1600,42 @@ private final class AssociateWorker: NSObject, CLLocationManagerDelegate {
         // explicit password. So: try the private `CWKeychain
         // findWiFiPasswordForSSID:` first, and only fall back to the
         // nil-password call (which works for open networks).
-        if !net.supportsSecurity(.none),
-           let saved = attemptKeychainRead(ssid: ssid) {
-            do {
-                try iface.associate(to: net, password: saved)
-                emitAssociateInnerExit(
-                    payload: associateJSONOK(bssid: net.bssid, keychainSaved: false),
-                    exitCode: 0
-                )
-            } catch {
-                // Saved password was rejected (the user changed it on
-                // the AP, or the Keychain entry is for a different
-                // BSSID). Fall through to the sheet so they can
-                // re-enter — overwriting the stale Keychain on
-                // success.
-                DispatchQueue.main.async { [weak self] in
-                    self?.showPasswordSheet(net: net, iface: iface)
+        var keychainReadVariant = "skipped-open"
+        if !net.supportsSecurity(.none) {
+            let read = attemptKeychainRead(ssid: ssid)
+            keychainReadVariant = read.variant
+            if let saved = read.password {
+                do {
+                    try iface.associate(to: net, password: saved)
+                    emitAssociateInnerExit(
+                        payload: associateJSONOK(
+                            bssid: net.bssid,
+                            keychainSaved: false,
+                            keychainRead: keychainReadVariant
+                        ),
+                        exitCode: 0
+                    )
+                } catch {
+                    // Saved password was rejected (the user changed
+                    // it on the AP, or the Keychain entry is for a
+                    // different BSSID). Fall through to the sheet so
+                    // they can re-enter — overwriting the stale
+                    // Keychain entry on success.
+                    DispatchQueue.main.async { [weak self] in
+                        self?.showPasswordSheet(net: net, iface: iface)
+                    }
+                    return
                 }
-                return
             }
         }
         do {
             try iface.associate(to: net, password: nil)
             emitAssociateInnerExit(
-                payload: associateJSONOK(bssid: net.bssid, keychainSaved: false),
+                payload: associateJSONOK(
+                    bssid: net.bssid,
+                    keychainSaved: false,
+                    keychainRead: keychainReadVariant
+                ),
                 exitCode: 0
             )
         } catch {
@@ -1722,46 +1734,150 @@ private func isEnterpriseOnly(_ net: CWNetwork) -> Bool {
 /// when the symbol is missing or the call fails. Per the spec, a
 /// Keychain-write failure SHALL NOT abort the join — we still exit
 /// 0 with `keychain_saved: false` and the user retypes next time.
+/// Best-effort write to System Keychain via `+[CWKeychain
+/// setWiFiPassword:forSSID:]` (or its modern data/domain variants).
+/// The class / selector are private CoreWLAN API: we probe at
+/// runtime and silently report `false` when the symbol is missing
+/// or the call fails. Per the spec, a Keychain-write failure SHALL
+/// NOT abort the join — we still exit 0 with `keychain_saved:
+/// false` and the user retypes next time.
+///
+/// Tries three signatures, newest first:
+///   1. `+setWiFiPassword:forSSID:domain:` — macOS 12+ (NSData SSID
+///      + CWKeychainDomain enum). System (2) and User (1) tried.
+///   2. `+setWiFiPassword:forSSIDData:` — intermediate
+///   3. `+setWiFiPassword:forSSID:` — legacy NSString form
 private func attemptKeychainWrite(ssid: String, password: String) -> Bool {
     guard let cls = NSClassFromString("CWKeychain") else { return false }
-    let sel = NSSelectorFromString("setWiFiPassword:forSSID:")
-    guard let method = class_getClassMethod(cls, sel) else { return false }
-    let imp = method_getImplementation(method)
-    typealias Fn = @convention(c) (AnyObject, Selector, NSString, NSString) -> Bool
-    let fn = unsafeBitCast(imp, to: Fn.self)
-    return fn(cls, sel, password as NSString, ssid as NSString)
+    let pwNS = password as NSString
+    let ssidNS = ssid as NSString
+    let ssidData = (ssid.data(using: .utf8) ?? Data()) as NSData
+
+    let sel3 = NSSelectorFromString("setWiFiPassword:forSSID:domain:")
+    if let method = class_getClassMethod(cls, sel3) {
+        let imp = method_getImplementation(method)
+        typealias Fn = @convention(c) (AnyObject, Selector, NSString, NSData, Int) -> Bool
+        let fn = unsafeBitCast(imp, to: Fn.self)
+        if fn(cls, sel3, pwNS, ssidData, 2) { return true }   // System
+        if fn(cls, sel3, pwNS, ssidData, 1) { return true }   // User
+    }
+    let sel2 = NSSelectorFromString("setWiFiPassword:forSSIDData:")
+    if let method = class_getClassMethod(cls, sel2) {
+        let imp = method_getImplementation(method)
+        typealias Fn = @convention(c) (AnyObject, Selector, NSString, NSData) -> Bool
+        let fn = unsafeBitCast(imp, to: Fn.self)
+        if fn(cls, sel2, pwNS, ssidData) { return true }
+    }
+    let sel1 = NSSelectorFromString("setWiFiPassword:forSSID:")
+    if let method = class_getClassMethod(cls, sel1) {
+        let imp = method_getImplementation(method)
+        typealias Fn = @convention(c) (AnyObject, Selector, NSString, NSString) -> Bool
+        let fn = unsafeBitCast(imp, to: Fn.self)
+        if fn(cls, sel1, pwNS, ssidNS) { return true }
+    }
+    return false
 }
 
-/// Read a saved Wi-Fi password from the System Keychain via the
-/// private `+[CWKeychain findWiFiPasswordForSSID:]` class method.
-/// Returns nil when the symbol is missing (future macOS that drops
-/// the API) or when no entry exists for the SSID. The OS Wi-Fi
-/// menu's auto-join uses a higher-level orchestration
-/// (WiFiAgent + CoreWLAN); CoreWLAN's own
+/// Read a saved Wi-Fi password from the System Keychain via private
+/// `+[CWKeychain findWiFiPasswordForSSID:...]` selectors. The OS
+/// Wi-Fi menu's auto-join uses a higher-level orchestration
+/// (WiFiAgent + CoreWLAN) and CoreWLAN's own
 /// `CWInterface.associate(toNetwork:password:nil error:)` does NOT
-/// automatically read from Keychain, so we have to do it ourselves
-/// to deliver the "saved password = silent join" UX the spec
-/// promised. The bundle is already in the SystemKeychain ACL for
-/// AirPort items (granted automatically when the user first joins
-/// any network via macOS itself), so this read does not pop a
-/// "diting-tianer wants to access the Keychain" prompt.
-private func attemptKeychainRead(ssid: String) -> String? {
-    guard let cls = NSClassFromString("CWKeychain") else { return nil }
-    let sel = NSSelectorFromString("findWiFiPasswordForSSID:")
-    guard let method = class_getClassMethod(cls, sel) else { return nil }
-    let imp = method_getImplementation(method)
-    typealias Fn = @convention(c) (AnyObject, Selector, NSString) -> NSString?
-    let fn = unsafeBitCast(imp, to: Fn.self)
-    return fn(cls, sel, ssid as NSString) as String?
+/// automatically read from Keychain — we have to do it ourselves
+/// to deliver the "saved password = silent join" UX.
+///
+/// The class method signature has evolved across macOS releases.
+/// Tries three forms, newest first; returns nil when none of them
+/// produce a password (symbol missing, ACL denies the read, or no
+/// saved entry for the SSID).
+///
+/// Returns a tuple `(password, variant)` where `variant` is a
+/// short label of which signature landed (or `"miss-*"` /
+/// `"no-class"` describing the failure). The variant is plumbed
+/// into the JSON response's `keychain_read` field so we can tell
+/// "Keychain ACL denied us" from "API signature mismatch" from
+/// "no saved entry" in real-world debug rounds.
+private func attemptKeychainRead(ssid: String) -> (password: String?, variant: String) {
+    guard let cls = NSClassFromString("CWKeychain") else {
+        return (nil, "no-class")
+    }
+    let ssidNS = ssid as NSString
+    let ssidData = (ssid.data(using: .utf8) ?? Data()) as NSData
+
+    // Variant 1: macOS 12+ — data SSID + domain enum + autoreleasing
+    // NSString** outparam. CWKeychainDomain values: System=2, User=1.
+    let sel3 = NSSelectorFromString("findWiFiPasswordForSSID:domain:password:")
+    if let method = class_getClassMethod(cls, sel3) {
+        let imp = method_getImplementation(method)
+        typealias Fn = @convention(c) (
+            AnyObject, Selector, NSData, Int,
+            UnsafeMutablePointer<Unmanaged<NSString>?>
+        ) -> Bool
+        let fn = unsafeBitCast(imp, to: Fn.self)
+        for domain in [2, 1] {
+            var out: Unmanaged<NSString>? = nil
+            let ok = fn(cls, sel3, ssidData, domain, &out)
+            if ok, let pwUnm = out {
+                let pw = pwUnm.takeUnretainedValue() as String
+                if !pw.isEmpty {
+                    return (pw, "domain\(domain)")
+                }
+            }
+        }
+    }
+    // Variant 2: intermediate — data SSID, no domain, NSString**.
+    let sel2 = NSSelectorFromString("findWiFiPasswordForSSID:password:")
+    if let method = class_getClassMethod(cls, sel2) {
+        let imp = method_getImplementation(method)
+        typealias Fn = @convention(c) (
+            AnyObject, Selector, NSData,
+            UnsafeMutablePointer<Unmanaged<NSString>?>
+        ) -> Bool
+        let fn = unsafeBitCast(imp, to: Fn.self)
+        var out: Unmanaged<NSString>? = nil
+        let ok = fn(cls, sel2, ssidData, &out)
+        if ok, let pwUnm = out {
+            let pw = pwUnm.takeUnretainedValue() as String
+            if !pw.isEmpty {
+                return (pw, "data-outparam")
+            }
+        }
+    }
+    // Variant 3: legacy — NSString in, NSString? return.
+    let sel1 = NSSelectorFromString("findWiFiPasswordForSSID:")
+    if let method = class_getClassMethod(cls, sel1) {
+        let imp = method_getImplementation(method)
+        typealias Fn = @convention(c) (AnyObject, Selector, NSString) -> NSString?
+        let fn = unsafeBitCast(imp, to: Fn.self)
+        if let pw = fn(cls, sel1, ssidNS) as String?, !pw.isEmpty {
+            return (pw, "legacy")
+        }
+    }
+    // Diagnostic granularity: tell the user-facing JSON which
+    // probe paths existed but returned nothing useful.
+    var miss: [String] = []
+    if class_getClassMethod(cls, sel3) != nil { miss.append("domain") }
+    if class_getClassMethod(cls, sel2) != nil { miss.append("data") }
+    if class_getClassMethod(cls, sel1) != nil { miss.append("legacy") }
+    return (nil, miss.isEmpty ? "no-selectors" : "miss-\(miss.joined(separator: "+"))")
 }
 
-private func associateJSONOK(bssid: String?, keychainSaved: Bool) -> Data {
+private func associateJSONOK(
+    bssid: String?,
+    keychainSaved: Bool,
+    keychainRead: String? = nil
+) -> Data {
     var payload: [String: Any] = [
         "schema": 1,
         "ok": true,
         "keychain_saved": keychainSaved,
     ]
     if let b = bssid { payload["bssid"] = b }
+    // `keychain_read` is a diagnostic-only field: which CWKeychain
+    // signature landed during the saved-credential probe. Python
+    // ignores unknown JSON keys, so this is safe to log even when
+    // the TUI doesn't surface it.
+    if let kr = keychainRead { payload["keychain_read"] = kr }
     return (try? JSONSerialization.data(
         withJSONObject: payload,
         options: [.sortedKeys]
