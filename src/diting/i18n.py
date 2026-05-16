@@ -1132,6 +1132,7 @@ _ZH: dict[str, str] = {
     "WAN {ms} ms": "WAN {ms} ms",
     "jitter {ms} ms": "抖动 {ms} ms",
     "WAN unreachable": "WAN 不可达",
+    "(no ICMP reply)": "(ICMP 无响应)",
     "WAN n/a (DNS == gateway)": "WAN n/a (DNS = 网关)",
     "WAN n/a": "WAN n/a",
     "(measuring...)": "(测量中…)",

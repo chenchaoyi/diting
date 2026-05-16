@@ -618,6 +618,35 @@ def test_link_diagnostic_line_loss_marks_warning():
     assert "25% loss" in text
 
 
+def test_link_diagnostic_line_router_no_icmp_reply_when_all_pings_fail():
+    """When all ICMP probes fail (rtt=None) and loss is ≥ 50%, the
+    Router half renders `(no ICMP reply)` rather than the previous
+    `WAN unreachable` typo. WAN-side wording is unchanged because the
+    WAN probe is TCP/53, not ICMP — a TCP timeout there really IS
+    "unreachable" from the host's perspective."""
+    gw = _agg("router", rtt=None, loss=100.0, jitter=None)
+    text = _link_diagnostic_line(gw, None, None).plain
+    # Router half says ICMP-specific.
+    assert "Router" in text
+    assert "no ICMP reply" in text
+    # The old typo no longer leaks into the Router half.
+    assert "Router WAN unreachable" not in text
+    assert "Router unreachable" not in text
+
+
+def test_link_diagnostic_line_wan_unreachable_when_tcp_fails():
+    """WAN probe is TCP/53. When it fails with rtt=None + ≥50% loss,
+    the WAN half still says `WAN unreachable` — the wording matches
+    the user's actual experience because a TCP failure here means
+    "can't open connections past the router"."""
+    gw = _agg("router", rtt=12.0, loss=0.0, jitter=2.0)
+    wan = _agg("wan", rtt=None, loss=100.0, jitter=None, ip="1.1.1.1")
+    text = _link_diagnostic_line(gw, wan, None).plain
+    assert "WAN unreachable" in text
+    # Router half stays healthy — no ICMP wording leaks here.
+    assert "Router 12 ms" in text
+
+
 def test_link_diagnostic_line_wan_unreachable_when_no_dns():
     """No SCDynamicStore answer → WAN n/a label."""
     gw = _agg("router", rtt=12.0, loss=0.0, jitter=2.0)

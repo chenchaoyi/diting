@@ -2013,10 +2013,26 @@ def _link_target_text(label: str, agg: LatencyAggregate) -> Text:
     rtt = agg.rtt_ms
     loss = agg.loss_pct
     if rtt is None and (loss or 0) >= 50:
-        # Heavy loss with no rtt readings — render as unreachable.
-        text.append(f"{label} ", style="dim")
-        text.append(t("WAN unreachable" if label == "WAN" else "WAN unreachable"),
-                    style="red")
+        # Heavy loss with no rtt readings — the probe couldn't reach
+        # its target. Different wording per label because the probes
+        # use different protocols:
+        #
+        #   - Router probe is ICMP (echo). A non-responding ICMP target
+        #     can still route TCP / HTTP fine — many routers drop or
+        #     rate-limit pings while passing normal traffic. Call it
+        #     out as ICMP-specific so a user whose browsing works
+        #     understands what's actually being said.
+        #
+        #   - WAN probe is TCP/53. A TCP failure here genuinely means
+        #     "the host can't open a connection past the router",
+        #     which is much closer to "unreachable" in user terms.
+        if label == "WAN":
+            text.append(f"{label} ", style="dim")
+            text.append(t("WAN unreachable"), style="red")
+        else:
+            text.append(f"{label}", style="dim")
+            text.append(" ", style="dim")
+            text.append(t("(no ICMP reply)"), style="red")
         return text
     rtt_str = "?" if rtt is None else f"{int(round(rtt))}"
     style = "white"
