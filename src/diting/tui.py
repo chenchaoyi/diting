@@ -2847,6 +2847,12 @@ _BLE_VENDOR_DISPLAY: dict[str, str] = {
     "Sony Honda Mobility Inc.": "Sony Honda",
     "Starkey Hearing Technologies": "Starkey Hearing",
     "Anhui Huami Information Technology Co., Ltd.": "Huami",
+    # The IEEE registrant for Tuya contains a literal double-space
+    # ("Information  Technology"); the dict key has to match
+    # verbatim or the alias won't fire. /tui-audit captures from
+    # 2026-05-16 confirmed the registrant string came through with
+    # the double-space.
+    "Hangzhou Tuya Information  Technology Co., Ltd": "Tuya",
 }
 
 
@@ -3512,9 +3518,15 @@ class BLEDetailScreen(ModalScreen):
                     range_str = f"{lo} dBm"
                 else:
                     range_str = f"{hi}..{lo} dBm"
+                # Sub-second windows used to render as `over 0s`
+                # (int() truncates 0.3 → 0), which read as broken
+                # metadata when N samples all arrived within the
+                # same poller tick. Render `<1s` when the rounding
+                # would have produced 0.
+                span_str = f"{int(span_s)}s" if span_s >= 1 else "<1s"
                 summary = (
                     f"{spark}  {range_str}  ({len(self._history)} "
-                    f"{t('samples over')} {int(span_s)}s)"
+                    f"{t('samples over')} {span_str})"
                 )
                 self._label(out, t("rssi history"), summary)
 
