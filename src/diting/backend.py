@@ -6,11 +6,38 @@ touching the UI / data-flow layer. No Linux placeholder is included.
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Literal
 
 from .models import Connection, ScanResult
 
 PermissionState = Literal["granted", "fallback", "denied", "unknown"]
+
+AssociateErrorCode = Literal[
+    "cancelled",
+    "auth_failed",
+    "enterprise_unsupported",
+    "ssid_not_found",
+    "unknown",
+]
+
+
+@dataclass(frozen=True)
+class AssociateResult:
+    """Outcome of a `j`-initiated cross-SSID join attempt.
+
+    Independent of any specific backend so the TUI consumer (and the
+    helper-subprocess parser) speak the same shape. The action itself
+    is not abstract on `WiFiBackend` — backends that cannot join
+    expose `associate` via `getattr` lookup, the same pattern
+    `force_reroam` uses. ``error_code`` is None iff ``ok`` is True.
+    """
+
+    ok: bool
+    bssid: str | None = None
+    keychain_saved: bool = False
+    error_code: AssociateErrorCode | None = None
+    error_message: str | None = None
 
 
 class WiFiBackend(ABC):

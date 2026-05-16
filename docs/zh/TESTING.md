@@ -243,6 +243,11 @@
 | 安装期 helper 按定位 → 蓝牙 → 通知顺序请求权限（`HelperAppDelegate` 状态机） | （人工 — 构建后运行 `open helper/diting-tianer.app`，观察状态窗口上每次只显示一个 TCC 弹窗） |
 | Helper 提供 `notify --title T --body B` 子命令，通过 `UNUserNotificationCenter` 以 bundle 身份发通知 | （人工 — `helper/diting-tianer.app/Contents/MacOS/diting-tianer notify --title test --body hi` 弹出带 diting logo 的横幅） |
 | Helper 语言兜底走 `Bundle.preferredLocalizations.first`（不再走 `Locale.preferredLanguages.first`），与 macOS 挑 `.lproj` 的源头一致 | （review-enforced — `detectHelperLang` 的 Swift 代码） |
+| `associate` 子命令：JSON 响应解析覆盖每一种 exit code / payload 组合（`ok=true`、`enterprise_unsupported`、`cancelled`、`auth_failed`、`ssid_not_found`、`unknown`），映射到 `AssociateResult` 数据类 | `test_helper_associate.py::test_associate_ok_zero_exit`、`::test_associate_ok_with_keychain_saved`、`::test_associate_enterprise_exits_5`、`::test_associate_cancelled_exits_6`、`::test_associate_auth_failed_exits_7`、`::test_associate_ssid_not_found_exits_8`、`::test_associate_malformed_json_falls_back_to_unknown`、`::test_associate_subprocess_oserror_returns_unknown`、`::test_associate_timeout_returns_unknown` |
+| `associate` 拒绝 argv 上的 `--password`，exit 64（安全护栏）；密码只走 stdin | （人工 — Swift 端 `runAssociateAndExit` 的护栏；review-enforced） |
+| `associate` 不调 `iface.disassociate()`，把 L2 断开窗口压到最小（沿用 `force_reroam` 的同一道理） | （review-enforced — Swift 中 `runAssociateAndExit` 仅调用 `associate(toNetwork:password:error:)`） |
+| 无 Keychain 时弹原生 AppKit 密码 sheet；`NSSecureTextField` 由 helper bundle 渲染 | （人工 — `/tui-audit` 真机回归；首次加入网络场景） |
+| 成功且勾上"记住密码"时 `+[CWKeychain setWiFiPassword:forSSID:]` 回写；回写失败不影响 join 本身成功 | （人工 — `/tui-audit` 真机回归） |
 
 ### `mdns-scanning`
 
@@ -301,6 +306,12 @@
 | BSSID 被 TCC 屏蔽时给出可读 hint 而不是静默 | `test_tui_helpers.py::test_wifi_detail_redacted_bssid_renders_tcc_hint_and_omits_vendor` |
 | AP 名只来自 `aps.yaml`；无匹配时不出现 | `test_tui_helpers.py::test_wifi_detail_renders_ap_name_when_inventory_matches`、`::test_wifi_detail_omits_ap_name_row_when_inventory_misses` |
 | Esc / `i` / `q` 关闭 modal 不动选择 | （review-enforced；binding 是声明式的） |
+| detail modal 上 `j` 键打开 `JoinConfirmScreen`；binding 在 footer 文案中体现 | `test_tui_smoke.py::test_wifi_detail_j_opens_join_confirm`、`::test_wifi_detail_footer_documents_j_binding` |
+| `JoinConfirmScreen` 每次都渲染"会断开窗口 ~2–5 秒、TCP 连接会被重置"的提示，默认焦点放在取消按钮 | `test_tui_smoke.py::test_join_confirm_renders_gap_warning`、`::test_join_confirm_default_focus_is_cancel` |
+| 取消确认对话不会触发后端 `associate` 调用 | `test_tui_smoke.py::test_join_confirm_cancel_does_not_call_backend` |
+| 确认后通过 worker 派发 `Backend.associate(ssid, bssid)`；按每种结果（`ok` / `auth_failed` / `cancelled` / `enterprise_unsupported` / `ssid_not_found` / `unknown`）发对应 severity 的 `notify()` | `test_tui_smoke.py::test_join_confirm_dispatches_associate_on_yes`、`::test_join_notify_severity_per_outcome` |
+| `(joining…)` 标注：确认后到 ① 下一次 poll 命中目标 SSID、② helper 报失败、③ 10 秒超时 这三者最早一个出现前持续显示 | `test_tui_helpers.py::test_joining_annotation_renders_for_pending_ssid`、`::test_joining_annotation_clears_on_connection_match`、`::test_joining_annotation_clears_on_failure_event`、`::test_joining_annotation_clears_after_deadline` |
+| 企业 / 802.1X 网络：footer 文案变为"`j`：企业网请用系统 Wi-Fi 菜单加入"；按 `j` 只发 notify、不弹确认对话 | `test_tui_smoke.py::test_wifi_detail_enterprise_footer_hint`、`::test_wifi_detail_enterprise_j_press_emits_notify_and_no_confirm` |
 
 ### `wifi-scanning`
 

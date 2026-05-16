@@ -3696,6 +3696,112 @@ def _bonjour_row_key(d) -> str:
     return f"{d.name}.{d.service_type}"
 
 
+def _is_enterprise(scan: ScanResult) -> bool:
+    """Surface-level Enterprise detection from the security label.
+
+    The helper's CoreWLAN-side check (`isEnterpriseOnly`) is the
+    source of truth; this is a TUI-side gate so we never push the
+    confirm modal for a row the helper would refuse anyway. The
+    `_SECURITY` map in `_helper.py` produces labels like
+    `"WPA2 Enterprise"` / `"WPA3 Enterprise"`; substring match
+    against `"Enterprise"` is the cheapest reliable test.
+    """
+    s = (scan.security or "")
+    return "Enterprise" in s
+
+
+class JoinConfirmScreen(ModalScreen[bool]):
+    """Yes/no confirmation gate for the `j` join action.
+
+    Sits between the detail-modal `j` press and any backend work.
+    Two reasons to make this explicit rather than just calling
+    `Backend.associate` on the keypress:
+
+    1. Cross-SSID joins are not hitless — the radio MUST disassociate
+       from the current AP before associating with the new one, and
+       the new SSID's DHCP lease almost always yields a different IP
+       (resetting every open TCP connection on the old address).
+       See the change's `design.md` §D7. The user pressed `j`, but
+       they may not have thought through the SSH session / call /
+       upload they have open. The body text spells this out.
+    2. `j` is a single character — easy to reflex-press while
+       reading the detail of a neighbouring AP. Default-focusing the
+       Cancel button makes the destructive default the safer one.
+
+    Dismisses with `True` (Join) or `False` (Cancel / Esc).
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("n", "cancel", show=False),
+        Binding("q", "cancel", show=False),
+        Binding("y", "confirm", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    JoinConfirmScreen {
+        align: center middle;
+    }
+    JoinConfirmScreen > #join-confirm-box {
+        width: 70;
+        height: auto;
+        border: heavy $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+    JoinConfirmScreen #join-confirm-body {
+        height: auto;
+        margin-bottom: 1;
+    }
+    JoinConfirmScreen #join-confirm-footer {
+        height: auto;
+    }
+    """
+
+    def __init__(self, *, ssid: str) -> None:
+        super().__init__()
+        self._ssid = ssid
+
+    def compose(self) -> ComposeResult:
+        prompt = Text()
+        prompt.append(t("Switch to {ssid}?", ssid=self._ssid) + "\n\n",
+                      style="bold white")
+        # The gap warning renders on every confirm: spec
+        # `wifi-detail-modal` requirement "the join confirmation
+        # modal SHALL warn the user that the switch is not
+        # hitless".
+        prompt.append(
+            t(
+                "Current Wi-Fi will disconnect for ~2-5 s. "
+                "Open TCP connections (SSH, calls, transfers) "
+                "on the current IP will reset."
+            ),
+            style="dim",
+        )
+        body = Static(prompt, id="join-confirm-body")
+        footer = Static(
+            Text(
+                f"  [y] {t('Join')}    [n / Esc] {t('Cancel')}  ",
+                style="dim",
+            ),
+            id="join-confirm-footer",
+        )
+        yield Vertical(body, footer, id="join-confirm-box")
+
+    def on_mount(self) -> None:
+        # Border title mirrors the prompt for screen readers / users
+        # walking the modal stack via Textual's command palette.
+        self.query_one("#join-confirm-box").border_title = t(
+            "Switch to {ssid}?", ssid=self._ssid
+        )
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
 class WifiDetailScreen(ModalScreen):
     """Detail view for a single Wi-Fi scan row.
 
@@ -3714,6 +3820,13 @@ class WifiDetailScreen(ModalScreen):
 
     BINDINGS = [
         Binding("escape,i,q", "app.pop_screen", t("Close")),
+        # `j` initiates a cross-SSID join of the inspected row. Routes
+        # through `JoinConfirmScreen` first so a reflexive keypress
+        # does not tear down the user's current connection silently.
+        # Enterprise / 802.1X rows short-circuit to a notify rather
+        # than open the confirm — CWInterface.associate can't carry
+        # EAP credentials so prompting would be a lie.
+        Binding("j", "wifi_join", t("Join")),
     ]
 
     DEFAULT_CSS = """
@@ -3766,7 +3879,7 @@ class WifiDetailScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         body = Static(self._render_body(), id="wifi-detail-content")
         footer = Static(
-            Text(t("Esc / i to close"), style="dim"),
+            Text(self._footer_text(), style="dim"),
             id="wifi-detail-footer",
         )
         yield Vertical(
@@ -3777,6 +3890,19 @@ class WifiDetailScreen(ModalScreen):
 
     def on_mount(self) -> None:
         self._update_title()
+
+    def _footer_text(self) -> str:
+        # Personal vs Enterprise determines whether `j` is offered.
+        # Enterprise / 802.1X cannot flow through
+        # CWInterface.associate(toNetwork:password:), so we surface
+        # the hint inline rather than letting the user press `j`
+        # only to be told no.
+        if _is_enterprise(self._scan):
+            return t(
+                "Esc / i to close · j: join — Enterprise networks "
+                "must be joined from the system Wi-Fi menu"
+            )
+        return t("Esc / i to close · j to join")
 
     def _update_title(self) -> None:
         head = self._scan.ssid or t("(hidden)")
@@ -3808,6 +3934,53 @@ class WifiDetailScreen(ModalScreen):
             return
         body.update(self._render_body())
         self._update_title()
+        # Footer text depends on the inspected row's security type
+        # (Enterprise rows get the "use the system Wi-Fi menu" hint
+        # instead of "j to join"), so refresh it alongside the body.
+        try:
+            footer = self.query_one("#wifi-detail-footer", Static)
+            footer.update(Text(self._footer_text(), style="dim"))
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Join action
+    #
+    # `j` on the detail modal initiates a cross-SSID join. Enterprise
+    # rows short-circuit to a notify; everything else pushes a
+    # `JoinConfirmScreen` and dispatches `Backend.associate` only
+    # after the user confirms.
+    # ------------------------------------------------------------------
+
+    def action_wifi_join(self) -> None:
+        scan = self._scan
+        if not scan.ssid:
+            # Hidden SSIDs cannot be the target of CWInterface.associate
+            # (we have no SSID string to pass). Refuse gracefully.
+            self.app.notify(t("Cannot join a hidden SSID"), severity="warning")
+            return
+        if _is_enterprise(scan):
+            self.app.notify(
+                t(
+                    "Cannot join {ssid}: Enterprise / 802.1X networks "
+                    "must be joined from the system Wi-Fi menu first; "
+                    "diting can use the saved credential afterwards.",
+                    ssid=scan.ssid,
+                ),
+                severity="error",
+            )
+            return
+        # Push a confirmation modal; the user must confirm before
+        # any backend work runs. Result handler dispatches the
+        # actual `Backend.associate` call on confirm.
+        ssid = scan.ssid
+        bssid = scan.bssid
+
+        def _after_confirm(yes: bool | None) -> None:
+            if yes is True:
+                self.app._dispatch_wifi_join(ssid=ssid, bssid=bssid)
+
+        self.app.push_screen(JoinConfirmScreen(ssid=ssid), _after_confirm)
 
     # ------------------------------------------------------------------
     # Rendering
@@ -3863,6 +4036,22 @@ class WifiDetailScreen(ModalScreen):
         )
         if is_associated:
             head_label += "  ·  " + t("(associated)")
+        # `(joining…)` annotation: the user has confirmed a join of
+        # this SSID and we're waiting on either the next 1 Hz poll
+        # to report the new association or the helper to report
+        # failure. The state lives on the App so a modal re-render
+        # from `sync_to_app_selection` picks up the latest snapshot;
+        # the deadline (~10 s) keeps a hung helper from leaving the
+        # annotation stuck forever.
+        joining = getattr(self.app, "_app_joining_to", None)
+        if joining is not None:
+            target_ssid, deadline = joining
+            if (
+                r.ssid is not None
+                and target_ssid == r.ssid
+                and datetime.now() < deadline
+            ):
+                head_label += "  ·  " + t("(joining…)")
         self._heading(out, head_label)
         # SSID
         if r.ssid:
@@ -4845,6 +5034,16 @@ class DitingApp(App):
         # being assigned. Cleared once the assignment lands.
         self._mdns_starting: bool = False
         self._latest_mdns: list = []
+        # `j`-binding join intent. None when no join is in flight;
+        # `(ssid, deadline)` while we're waiting for either the
+        # poller to confirm the new association OR the helper to
+        # report failure. The deadline (~10 s after confirm) makes
+        # sure a hung helper doesn't leave the `(joining…)` modal
+        # annotation stuck. Cleared by `_consume_events`'s
+        # ConnectionUpdate handler on a successful association, by
+        # `_dispatch_wifi_join` on a non-success outcome, and by
+        # the modal's own render path past the deadline.
+        self._app_joining_to: tuple[str, datetime] | None = None
         self._paused = False
         # Cache the most recent *non-empty* scan. CoreWLAN's throttle
         # produces empty results periodically; replacing the panel with
@@ -4948,6 +5147,19 @@ class DitingApp(App):
                 self._latest_bssid = (
                     event.connection.bssid if event.connection else None
                 )
+                # Clear the `(joining…)` annotation as soon as the
+                # poller sees the new association land. We match on
+                # SSID rather than BSSID because the helper's
+                # `associate(...)` does not pin BSSID; the OS may
+                # land on a different radio of the same ESS.
+                joining = self._app_joining_to
+                if (
+                    joining is not None
+                    and event.connection is not None
+                    and event.connection.ssid == joining[0]
+                ):
+                    self._app_joining_to = None
+                    self._sync_open_detail_modal()
                 self.query_one("#conn", ConnectionPanel).update_connection(
                     event.connection, self._inv
                 )
@@ -5949,6 +6161,113 @@ class DitingApp(App):
             )
         else:
             self.notify(t("no Wi-Fi interface"), severity="warning")
+
+    def _dispatch_wifi_join(self, *, ssid: str, bssid: str | None) -> None:
+        """Kick off a background `Backend.associate(ssid, bssid)` call.
+
+        Called from `WifiDetailScreen.action_wifi_join` after the
+        user confirms in `JoinConfirmScreen`. Sets the
+        `(joining…)` annotation deadline ~10 s out so a hung helper
+        eventually unsticks the modal, then runs the blocking
+        subprocess call on a worker thread via `asyncio.to_thread`
+        — `subprocess.run` would otherwise stall the Textual event
+        loop for the full 90 s helper timeout.
+
+        Outcome notify rendering distinguishes every error class
+        the helper exposes (cancelled / auth_failed / Enterprise /
+        ssid_not_found / unknown) with appropriate severity, so
+        the user knows whether to retype, try the system menu, or
+        give up.
+        """
+        associate = getattr(self._backend, "associate", None)
+        if associate is None:
+            self.notify(
+                t("Join failed: {message}", message=t("no Wi-Fi interface")),
+                severity="error",
+            )
+            return
+        self._app_joining_to = (ssid, datetime.now() + timedelta(seconds=10))
+        self._sync_open_detail_modal()
+
+        async def _run() -> None:
+            try:
+                result = await asyncio.to_thread(associate, ssid, bssid=bssid)
+            except Exception as exc:  # defensive: helper or backend bug
+                self._app_joining_to = None
+                self._sync_open_detail_modal()
+                self.notify(
+                    t("Join failed: {message}", message=str(exc)),
+                    severity="error",
+                )
+                return
+            self._render_associate_outcome(ssid, result)
+
+        self.run_worker(_run(), exclusive=False, name="wifi-join")
+
+    def _render_associate_outcome(self, ssid: str, result) -> None:
+        """Translate an `AssociateResult` into one user-facing notify.
+
+        Severity per spec: information for success, warning for
+        user-cancelled (the user knows what they did, no alarm
+        sound), error for everything else (auth failures, Enterprise,
+        SSID gone, generic helper error).
+        """
+        if result.ok:
+            # Success path. Hide the `(joining…)` annotation now
+            # rather than waiting for the next 1 Hz poll — the
+            # poller will catch up shortly and the modal would
+            # otherwise show `(joining…)` next to a connection
+            # state that has already settled.
+            if result.keychain_saved:
+                self.notify(
+                    t(
+                        "Joined {ssid} · password saved to Keychain",
+                        ssid=ssid,
+                    ),
+                    severity="information",
+                )
+            else:
+                self.notify(
+                    t("Joined {ssid}", ssid=ssid),
+                    severity="information",
+                )
+            return
+        # Failure path: clear the annotation immediately so the
+        # modal stops claiming we're still joining.
+        self._app_joining_to = None
+        self._sync_open_detail_modal()
+        code = result.error_code or "unknown"
+        if code == "cancelled":
+            self.notify(
+                t("Cancelled join of {ssid}", ssid=ssid),
+                severity="warning",
+            )
+        elif code == "auth_failed":
+            self.notify(
+                t("Wrong password for {ssid}", ssid=ssid),
+                severity="error",
+            )
+        elif code == "enterprise_unsupported":
+            self.notify(
+                t(
+                    "Cannot join {ssid}: Enterprise / 802.1X networks "
+                    "must be joined from the system Wi-Fi menu first; "
+                    "diting can use the saved credential afterwards.",
+                    ssid=ssid,
+                ),
+                severity="error",
+            )
+        elif code == "ssid_not_found":
+            self.notify(
+                t("{ssid} is no longer in range", ssid=ssid),
+                severity="error",
+            )
+        else:
+            msg = result.error_message or t("(unknown)")
+            self.notify(
+                t("Join failed: {message}", message=msg),
+                severity="error",
+            )
 
     def _build_subtitle(self) -> str:
         # Header subtitle is for state the user can't otherwise see at

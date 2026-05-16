@@ -1375,4 +1375,37 @@ _ZH: dict[str, str] = {
     "and emits an explicit network_change event.":
         "升级 diting 后重新记录。修复版本会在每次网关 IP 变化"
         "时重建 LatencyPoller，并显式发出 network_change 事件。",
+
+    # ---- wifi-connect-from-detail ----
+    # The Wi-Fi detail modal's `j` binding and the JoinConfirmScreen
+    # surface text. Saved-Keychain joins go through silently, so the
+    # only user-facing strings are the confirm modal, the outcome
+    # notifies, the `(joining…)` annotation, and the detail-modal
+    # footer line.
+    "Join": "加入",
+    "Switch to {ssid}?": "切换到 {ssid}？",
+    "Current Wi-Fi will disconnect for ~2-5 s. "
+    "Open TCP connections (SSH, calls, transfers) "
+    "on the current IP will reset.":
+        "当前 Wi-Fi 会断开约 2–5 秒。当前 IP 上的 TCP 连接"
+        "（SSH、通话、上传下载）会被强制重置。",
+    "Joined {ssid}": "已加入 {ssid}",
+    "Joined {ssid} · password saved to Keychain":
+        "已加入 {ssid}·密码已写入 Keychain",
+    "Wrong password for {ssid}": "{ssid} 密码错误",
+    "Cancelled join of {ssid}": "已取消加入 {ssid}",
+    "Cannot join {ssid}: Enterprise / 802.1X networks "
+    "must be joined from the system Wi-Fi menu first; "
+    "diting can use the saved credential afterwards.":
+        "无法加入 {ssid}：企业 / 802.1X 网络请先用系统 Wi-Fi "
+        "菜单加入一次，后续 diting 才能用保存的凭据。",
+    "{ssid} is no longer in range": "{ssid} 已不在扫描范围内",
+    "Join failed: {message}": "加入失败：{message}",
+    "(joining…)": "（加入中…）",
+    "Esc / i to close · j to join":
+        "Esc / i 关闭 · j 加入",
+    "Esc / i to close · j: join — Enterprise networks "
+    "must be joined from the system Wi-Fi menu":
+        "Esc / i 关闭 · j：企业网请用系统 Wi-Fi 菜单加入",
+    "Cancel": "取消",
 }

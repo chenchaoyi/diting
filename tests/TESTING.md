@@ -252,6 +252,11 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Helper requests Location → Bluetooth → Notifications in sequence at install time (state machine in `HelperAppDelegate`) | (manual — verified by running `open helper/diting-tianer.app` after build and observing one prompt at a time on top of the status window) |
 | Helper exposes `notify --title T --body B` subcommand using `UNUserNotificationCenter` under the bundle's identity | (manual — `helper/diting-tianer.app/Contents/MacOS/diting-tianer notify --title test --body hi` posts a banner with the diting logo) |
 | Helper language fallback uses `Bundle.preferredLocalizations.first` (not `Locale.preferredLanguages.first`) so the helper UI matches the macOS-chosen `.lproj` | (review-enforced — Swift code in `detectHelperLang`) |
+| `associate` subcommand: JSON response parser maps every documented exit code / payload combo (`ok=true`, `enterprise_unsupported`, `cancelled`, `auth_failed`, `ssid_not_found`, `unknown`) onto the `AssociateResult` dataclass | `test_helper_associate.py::test_associate_ok_zero_exit`, `::test_associate_ok_with_keychain_saved`, `::test_associate_enterprise_exits_5`, `::test_associate_cancelled_exits_6`, `::test_associate_auth_failed_exits_7`, `::test_associate_ssid_not_found_exits_8`, `::test_associate_malformed_json_falls_back_to_unknown`, `::test_associate_subprocess_oserror_returns_unknown`, `::test_associate_timeout_returns_unknown` |
+| `associate` rejects `--password` on argv with exit 64 (security guard); password only on stdin | (manual — Swift-side guard in `runAssociateAndExit`; review-enforced) |
+| `associate` skips `iface.disassociate()` so the L2 window is minimized (`force_reroam` pattern carried forward) | (review-enforced — Swift code in `runAssociateAndExit` calls only `associate(toNetwork:password:error:)`) |
+| AppKit password sheet on no-Keychain path; native `NSSecureTextField` rendered by helper bundle | (manual — `/tui-audit` real-Mac gate; first-time-join scenario) |
+| `+[CWKeychain setWiFiPassword:forSSID:]` write-on-success when Remember checked; failure does not abort the join | (manual — `/tui-audit` real-Mac gate) |
 
 ### `mdns-scanning`
 
@@ -310,6 +315,12 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | BSSID redaction surfaces a TCC hint rather than going silent | `test_tui_helpers.py::test_wifi_detail_redacted_bssid_renders_tcc_hint_and_omits_vendor` |
 | AP-name pulled from `aps.yaml` only; absent when no entry matches | `test_tui_helpers.py::test_wifi_detail_renders_ap_name_when_inventory_matches`, `::test_wifi_detail_omits_ap_name_row_when_inventory_misses` |
 | Modal close (Esc / `i` / `q`) doesn't mutate selection | (review-enforced; binding is declarative) |
+| `j` binding on the detail modal opens `JoinConfirmScreen`; binding listed in modal footer | `test_tui_smoke.py::test_wifi_detail_j_opens_join_confirm`, `::test_wifi_detail_footer_documents_j_binding` |
+| `JoinConfirmScreen` renders the gap-warning line on every confirm (Wi-Fi will disconnect for ~2-5 s, open TCP connections reset) and defaults focus to Cancel | `test_tui_smoke.py::test_join_confirm_renders_gap_warning`, `::test_join_confirm_default_focus_is_cancel` |
+| Cancel from confirm modal does not dispatch the backend `associate` call | `test_tui_smoke.py::test_join_confirm_cancel_does_not_call_backend` |
+| Successful confirm dispatches `Backend.associate(ssid, bssid)` via worker; outcome surfaced via `notify()` with correct severity per outcome class (`ok` / `auth_failed` / `cancelled` / `enterprise_unsupported` / `ssid_not_found` / `unknown`) | `test_tui_smoke.py::test_join_confirm_dispatches_associate_on_yes`, `::test_join_notify_severity_per_outcome` |
+| `(joining…)` annotation appears between confirm and either next-poll success, helper failure event, or 10 s deadline; clears on the earliest of those | `test_tui_helpers.py::test_joining_annotation_renders_for_pending_ssid`, `::test_joining_annotation_clears_on_connection_match`, `::test_joining_annotation_clears_on_failure_event`, `::test_joining_annotation_clears_after_deadline` |
+| Enterprise networks show `j: join — Enterprise networks must be joined from the system Wi-Fi menu` in the footer; pressing `j` notifies the same hint without showing the confirm modal | `test_tui_smoke.py::test_wifi_detail_enterprise_footer_hint`, `::test_wifi_detail_enterprise_j_press_emits_notify_and_no_confirm` |
 
 ### `wifi-scanning`
 

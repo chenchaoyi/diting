@@ -31,6 +31,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+from .backend import AssociateResult
 from .models import ScanResult
 
 # Mirrors CoreWLAN enum values; the helper passes the raw integers
@@ -264,6 +265,84 @@ def bundle_path(binary: str) -> str | None:
         if ancestor.suffix == ".app":
             return str(ancestor)
     return None
+
+
+_ASSOCIATE_EXIT_TO_CODE: dict[int, str] = {
+    5: "enterprise_unsupported",
+    6: "cancelled",
+    7: "auth_failed",
+    8: "ssid_not_found",
+}
+
+
+def associate(
+    binary: str,
+    ssid: str,
+    *,
+    bssid: str | None = None,
+    timeout: float = 90.0,
+) -> AssociateResult:
+    """Run `<binary> associate --ssid <SSID> [--bssid <BSSID>]` and
+    decode the JSON status.
+
+    Stdin is closed empty: this implementation only drives the
+    helper's Keychain-or-AppKit-sheet path. A future caller that
+    wants to pass a password in directly would extend this API
+    with an explicit ``password`` kwarg piped on stdin — the
+    helper already supports it.
+
+    The timeout is generous (90 s) because the helper may sit on
+    its AppKit password sheet waiting for the user. A subprocess
+    crash, JSON-decode failure, or non-mapped exit code degrades
+    to ``error_code="unknown"`` so callers always get an
+    `AssociateResult`.
+    """
+    argv = [binary, "associate", "--ssid", ssid]
+    if bssid:
+        argv += ["--bssid", bssid]
+    try:
+        proc = subprocess.run(
+            argv,
+            input=b"",
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return AssociateResult(
+            ok=False,
+            error_code="unknown",
+            error_message="helper timed out",
+        )
+    except OSError as exc:
+        return AssociateResult(
+            ok=False,
+            error_code="unknown",
+            error_message=str(exc),
+        )
+    payload: dict = {}
+    if proc.stdout:
+        try:
+            decoded = json.loads(proc.stdout)
+            if isinstance(decoded, dict):
+                payload = decoded
+        except json.JSONDecodeError:
+            payload = {}
+    if proc.returncode == 0 and payload.get("ok") is True:
+        return AssociateResult(
+            ok=True,
+            bssid=(payload.get("bssid") or None),
+            keychain_saved=bool(payload.get("keychain_saved")),
+        )
+    code = _ASSOCIATE_EXIT_TO_CODE.get(proc.returncode, "unknown")
+    message = payload.get("error") if isinstance(payload.get("error"), str) else None
+    if message is None and proc.stderr:
+        message = proc.stderr.decode(errors="replace").strip() or None
+    return AssociateResult(
+        ok=False,
+        error_code=code,  # type: ignore[arg-type]
+        error_message=message,
+    )
 
 
 def try_build() -> str | None:

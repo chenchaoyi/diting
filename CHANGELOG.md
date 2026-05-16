@@ -9,6 +9,20 @@ the project follows [Semantic Versioning](https://semver.org/) where
 practical. The leading `v0.x` line is allowed to break minor
 behaviours between releases.
 
+## [Unreleased]
+
+### Added
+- **Join a Wi-Fi network from its detail page (`j`).** New binding
+  on the Wi-Fi detail modal opens a confirmation prompt — including
+  a "not hitless, ~2-5 s gap" warning — and on confirm associates
+  via a new `diting-tianer associate` helper subcommand. Networks
+  with a saved Keychain password join silently; new networks get
+  a native macOS password sheet rendered by the helper bundle
+  (with a "Remember this network" checkbox that writes back to
+  the System Keychain). Enterprise / 802.1X is refused with a
+  hint to use the system Wi-Fi menu once. `c` (force re-roam) is
+  unchanged. See `openspec/changes/wifi-connect-from-detail/`.
+
 ## [1.0.12] — 2026-05-16
 
 Two related helper-bundle fixes for v1.0.11 user reports: Dock icon
