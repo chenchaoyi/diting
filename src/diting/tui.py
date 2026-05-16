@@ -4045,15 +4045,16 @@ class WifiDetailScreen(ModalScreen):
         # annotation stuck forever.
         #
         # Wrapped in try/except because `Screen.app` raises
-        # `LookupError` when the screen isn't mounted on a running
-        # App — which is exactly how the unit tests construct this
-        # modal (direct instantiation + `_render_body()` without a
-        # Pilot). Outside a running app there's nothing to render
-        # for `(joining…)` anyway.
+        # `textual._context.NoActiveAppError` (a `RuntimeError`) when
+        # the screen isn't mounted on a running App — which is
+        # exactly how the unit tests construct this modal (direct
+        # instantiation + `_render_body()` without a Pilot). Outside
+        # a running app there's nothing to render for `(joining…)`
+        # anyway, so any access failure means "no annotation".
         joining = None
         try:
             joining = getattr(self.app, "_app_joining_to", None)
-        except LookupError:
+        except Exception:
             pass
         if joining is not None:
             target_ssid, deadline = joining
