@@ -236,6 +236,42 @@ response decoder. We do **not** stand up a fake macOS network
 stack — the CoreWLAN call itself is exercised only in manual
 real-environment QA (`/tui-audit`).
 
+### D7 — Lossless / hitless cross-SSID switching is explicitly not a goal
+
+A single Wi-Fi radio cannot be associated to two BSSIDs at once
+(802.11 fundamental). A cross-SSID join therefore has a
+mandatory L2 disassociate→authenticate→associate window —
+typically 2-5 s for WPA2-Personal, 5-10 s for the
+saved-Enterprise fast path. On top of that, the new SSID's DHCP
+lease almost always yields a different IPv4 (different VLAN /
+subnet), which forcibly resets every TCP connection bound to
+the old address. macOS has no per-flow IP-migration primitive
+we could lean on, and bringing up a second Wi-Fi station on the
+same radio is not exposed by CoreWLAN.
+
+What this means for the design:
+
+- The implementation SHALL skip any explicit
+  `iface.disassociate()` and let `CWInterface.associate(...)`
+  drive the L2 transition. This is the minimum-window path:
+  CoreWLAN sends the deauth frame and the new auth+assoc burst
+  back-to-back, without the radio-power-cycle latency that
+  `force_reroam` incurs (and without `disassociate`'s known
+  failure mode on 802.1X, called out in `macos_backend.py:249`).
+- The `JoinConfirmScreen` prompt SHALL warn the user explicitly
+  that existing TCP connections will be torn down for the
+  duration of the gap. This is the consent the modal exists to
+  collect — the user pressed `j`, but they may not have thought
+  through the SSH / call / upload they have open right now.
+- If a future change wants truly hitless behaviour, the
+  realistic paths are (i) operate over a second active
+  interface (Ethernet / USB-Ethernet / iPhone tethering) so IP
+  traffic stays alive across the Wi-Fi gap — but that is a
+  system-level routing concern outside diting's scope, and (ii)
+  same-ESS roaming via 802.11r/k/v, which is `c` / `force_reroam`
+  territory, not `j` / cross-SSID join. Both are out of scope
+  here.
+
 ## Risks / Trade-offs
 
 - **[CWInterface.associate with `password: nil` doesn't, in

@@ -113,3 +113,14 @@ modal SHALL NOT block the Textual event loop.
 #### Scenario: Cancel with keyboard
 - **WHEN** the user presses `j` then `n`, or `j` then `Esc`
 - **THEN** the confirmation closes, no join is dispatched, and the underlying detail modal regains focus
+
+### Requirement: The join confirmation modal SHALL warn the user that the switch is not hitless
+The `JoinConfirmScreen` body SHALL render an explicit one-line warning that the current Wi-Fi connection will be torn down and that all open TCP connections (SSH, video calls, file transfers) bound to the current IP will be reset. The expected gap SHALL be quantified (typical ~2-5 s for WPA2-Personal, longer for Enterprise / 802.1X). The warning text SHALL be locale-aware via `t()` and SHALL be present on every invocation of the modal — including when the user invokes `j` on the currently-associated SSID — so the consent the modal collects is informed.
+
+#### Scenario: Warning is visible on every confirm
+- **WHEN** the user presses `j` on any SSID, current or not
+- **THEN** the confirmation modal body includes the gap warning text in addition to the `Switch to <SSID>?` prompt
+
+#### Scenario: ZH locale gap warning
+- **WHEN** `DITING_LANG=zh` and the user opens the confirmation
+- **THEN** the warning renders in its ZH translation from `i18n.py` and the gap quantification is preserved

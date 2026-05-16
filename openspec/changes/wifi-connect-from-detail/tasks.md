@@ -1,7 +1,7 @@
 ## 1. Test plan + i18n scaffold (write first per project rules)
 
 - [ ] 1.1 Add new rows to `tests/TESTING.md` (EN) and `docs/zh/TESTING.md` (ZH) — one row per requirement in `specs/macos-helper/spec.md` and `specs/wifi-detail-modal/spec.md`. Cover: associate JSON parser, `j` binding opens confirmation, cancel does not dispatch, success / auth_failed / cancelled / enterprise_unsupported / ssid_not_found notifies, `(joining…)` annotation appears + clears, Enterprise footer text.
-- [ ] 1.2 Add EN keys to `src/diting/i18n.py` for: the `Join` binding label, the `Switch to {ssid}?` confirm prompt, success notify (with + without Keychain hint), auth-failed notify, cancelled notify, Enterprise refusal notify, SSID-not-found notify, generic associate-error notify, `(joining…)` annotation, footer hint for `j` (personal + Enterprise variants).
+- [ ] 1.2 Add EN keys to `src/diting/i18n.py` for: the `Join` binding label, the `Switch to {ssid}?` confirm prompt, the gap-warning line ("Current Wi-Fi will disconnect for ~2-5 s; open TCP connections (SSH, calls, transfers) will reset."), success notify (with + without Keychain hint), auth-failed notify, cancelled notify, Enterprise refusal notify, SSID-not-found notify, generic associate-error notify, `(joining…)` annotation, footer hint for `j` (personal + Enterprise variants).
 - [ ] 1.3 Add the matching ZH translations for every key from 1.2 (EN ↔ ZH parity is a CLAUDE.md hard rule).
 
 ## 2. Backend seam — Python side
@@ -30,7 +30,7 @@
 
 ## 4. TUI — confirmation modal + join action
 
-- [ ] 4.1 Add `class JoinConfirmScreen(ModalScreen)` to `src/diting/tui.py`. Compose: title "Switch to <SSID>?", a body paragraph noting the current connection will be torn down, Join + Cancel buttons with Cancel default-focused. Bindings: `escape,n,q` → cancel, `y` → confirm. Pass the result back via `dismiss(bool)`.
+- [ ] 4.1 Add `class JoinConfirmScreen(ModalScreen)` to `src/diting/tui.py`. Compose: title "Switch to <SSID>?", a body that renders the gap-warning line (from 1.2) verbatim so every confirm makes the cost explicit, Join + Cancel buttons with Cancel default-focused. Bindings: `escape,n,q` → cancel, `y` → confirm. Pass the result back via `dismiss(bool)`.
 - [ ] 4.2 Add `Binding("j", "wifi_join", t("Join"))` to `WifiDetailScreen.BINDINGS`.
 - [ ] 4.3 Implement `WifiDetailScreen.action_wifi_join()` — early-out + Enterprise-hint notify when the inspected `ScanResult` is Enterprise (use existing security-type inspection if present; otherwise add a tiny `_is_enterprise(scan)` helper). Otherwise push `JoinConfirmScreen(ssid=...)` and await its result.
 - [ ] 4.4 On confirm, dispatch `Backend.associate(ssid, bssid)` via Textual's worker (`@work` decorator or `self.app.run_worker(...)`) so the helper subprocess does not block the UI thread.
