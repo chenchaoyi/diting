@@ -4043,7 +4043,18 @@ class WifiDetailScreen(ModalScreen):
         # from `sync_to_app_selection` picks up the latest snapshot;
         # the deadline (~10 s) keeps a hung helper from leaving the
         # annotation stuck forever.
-        joining = getattr(self.app, "_app_joining_to", None)
+        #
+        # Wrapped in try/except because `Screen.app` raises
+        # `LookupError` when the screen isn't mounted on a running
+        # App — which is exactly how the unit tests construct this
+        # modal (direct instantiation + `_render_body()` without a
+        # Pilot). Outside a running app there's nothing to render
+        # for `(joining…)` anyway.
+        joining = None
+        try:
+            joining = getattr(self.app, "_app_joining_to", None)
+        except LookupError:
+            pass
         if joining is not None:
             target_ssid, deadline = joining
             if (
