@@ -290,7 +290,8 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Modals push onto stack, Esc/letter closes | `test_tui_smoke.py::test_help_modal_open_and_close`, `::test_help_modal_h_to_close`, `::test_help_modal_renders_through_pilot_query`, `::test_events_modal_open_and_close`; `tui_snapshot.py::events_modal`, `::help_modal`, `::basics_modal`, `::ble_detail_decoded` (regression) |
 | Footer is one GroupedFooter with three semantic groups | (gap — no footer-grouping unit test; visible in regression captures) |
 | Hidden bindings exist for power-user navigation | `test_tui_smoke.py::test_pause_and_resume`, `::test_force_rescan_does_not_crash`, `::test_cycle_sort_modes` (binding firing); footer omission of hidden bindings is review-enforced |
-| Header shows title + clock; subtitle reflects live state | (gap — no subtitle assertion in pytest; visible in regression captures) |
+| Header shows title + clock; subtitle reflects live state | `test_tui_smoke.py::test_brand_header_carries_live_title_and_subtitle` |
+| Brand mark (`docs/design/diting-design/assets/logo-mark.svg`) rendered in the header with Unicode half-blocks in brand orange | `test_tui_smoke.py::test_brand_header_renders_logo_mark`; `tui_snapshot.py::wifi_main_en` (regression captures the orange `fill: #fea62b` styling on the rendered half-blocks) |
 | App title pinned to `diting v<version>` (sourced from importlib.metadata) so the running version is always visible | `test_tui_smoke.py::test_app_title_carries_version` |
 | Every list-style view panel shares the same row-select + inspect gesture (`up` / `down`, `i` / `enter`, mouse-click-to-inspect; modal close `Esc` / `i` / `q` does not mutate selection); deviations require modifying this Requirement | `test_tui_smoke.py::test_wifi_inspect_opens_modal_on_first_press`, `::test_bonjour_inspect_opens_modal_on_first_press` (alongside existing BLE coverage in `tui_snapshot.py::ble_detail_decoded`) |
 

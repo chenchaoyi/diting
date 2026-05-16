@@ -22,13 +22,14 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from rich.align import Align
 from rich.console import Group
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Center, Vertical, VerticalScroll
+from textual.containers import Center, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, RichLog, Static
+from textual.widgets import Footer, RichLog, Static
 
 from .backend import WiFiBackend
 from .ble import (
@@ -4558,6 +4559,100 @@ def _import_bonjour_poller():
     return BonjourPoller
 
 
+# ---------- brand header ----------
+
+# Pixel-art rendering of `docs/design/diting-design/assets/logo-mark.svg`.
+# The SVG is a 9-col × 7-row grid on 8-pixel cells (radar antenna + body
+# with a centre cutout + two pairs of feet + an underbar). We collapse
+# each vertical pair of grid rows into one terminal row using Unicode
+# half-block characters (Block Elements range, U+2580..U+259F), which
+# Fira Code renders at exactly the cell grid with no anti-aliasing gaps.
+# The seventh "underbar" grid row is delivered by the BrandHeader's
+# `border-bottom: tall #fea62b` style rather than a fourth content row,
+# which keeps the underbar's width tied to the actual rendered width.
+_LOGO_MARK_ART = "  █      \n█▀██████▄\n▀██▀▀▀▀██"
+
+
+class _LogoMark(Static):
+    """The diting radar mark, in brand orange, rendered with half-blocks."""
+
+    DEFAULT_CSS = """
+    _LogoMark {
+        width: 11;
+        height: 3;
+        padding: 0 1;
+        color: #fea62b;
+        text-style: bold;
+        background: #121212;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__(_LOGO_MARK_ART)
+
+
+class _TitleStack(Static):
+    """Right column of the brand header: clock, title, subtitle.
+
+    The widget pulls live state from ``self.app.title`` and
+    ``self.app.sub_title`` so existing `self.sub_title = ...`
+    assignments in the App continue to drive the live state — no
+    explicit notification from the call site is required.
+    """
+
+    DEFAULT_CSS = """
+    _TitleStack {
+        width: 1fr;
+        height: 3;
+        padding: 0 1;
+        background: #121212;
+    }
+    """
+
+    def on_mount(self) -> None:
+        self._render_lines()
+        # 1 Hz tick keeps the clock current. Title and subtitle are
+        # driven by reactive watchers so they update on the same
+        # event loop tick as the underlying assignment.
+        self.set_interval(1.0, self._render_lines)
+        self.watch(self.app, "title", lambda *_: self._render_lines())
+        self.watch(self.app, "sub_title", lambda *_: self._render_lines())
+
+    def _render_lines(self) -> None:
+        clock = datetime.now().strftime("%H:%M:%S")
+        title = getattr(self.app, "title", "") or ""
+        subtitle = getattr(self.app, "sub_title", "") or ""
+        self.update(Group(
+            Align.right(Text(clock, style="dim #e0e0e0")),
+            Text(title, style="bold #e0e0e0"),
+            Text(subtitle, style="dim #e0e0e0"),
+        ))
+
+
+class BrandHeader(Horizontal):
+    """Replacement for Textual's default Header.
+
+    Four rows tall: three rows of content (logo + title-stack) plus a
+    one-cell-tall orange ``tall`` bottom border that doubles as the
+    brand underbar. Layout contract pinned in
+    ``openspec/specs/tui-shell/spec.md``.
+    """
+
+    DEFAULT_CSS = """
+    BrandHeader {
+        height: 4;
+        background: #121212;
+        border-bottom: tall #fea62b;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield _LogoMark()
+        yield _TitleStack()
+
+
+# ---------- App ----------
+
 class DitingApp(App):
     """Top-level Textual app.
 
@@ -4750,7 +4845,7 @@ class DitingApp(App):
         self.sub_title = self._build_subtitle()
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield BrandHeader(id="brand-header")
         yield ConnectionPanel(id="conn")
         yield EnvironmentPanel(id="env")
         yield ScanPanel(id="scan")

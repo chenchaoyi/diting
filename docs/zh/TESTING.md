@@ -281,7 +281,8 @@
 | 模态压栈、Esc/同字母关 | `test_tui_smoke.py::test_help_modal_open_and_close`、`::test_help_modal_h_to_close`、`::test_help_modal_renders_through_pilot_query`、`::test_events_modal_open_and_close`；`tui_snapshot.py::events_modal`、`::help_modal`、`::basics_modal`、`::ble_detail_decoded`（regression） |
 | Footer 是单一 GroupedFooter 三段 | (gap — 没有 footer 分组的单元测试；regression 捕获里可见) |
 | 隐藏 binding 为高级用户存在 | `test_tui_smoke.py::test_pause_and_resume`、`::test_force_rescan_does_not_crash`、`::test_cycle_sort_modes`（绑定能触发）；footer 不显示隐藏 binding 是 review-enforced |
-| Header 显示 title + 时钟；subtitle 反映实时状态 | (gap — 没有 subtitle 的 pytest 断言；regression 捕获里可见) |
+| Header 显示 title + 时钟；subtitle 反映实时状态 | `test_tui_smoke.py::test_brand_header_carries_live_title_and_subtitle` |
+| 品牌雷达 mark（`docs/design/diting-design/assets/logo-mark.svg`）以 Unicode 半格字符在 header 中以品牌橙渲染 | `test_tui_smoke.py::test_brand_header_renders_logo_mark`；`tui_snapshot.py::wifi_main_en`（regression 捕获半格字符上 `fill: #fea62b` 的品牌橙样式） |
 | App title 固定为 `diting v<版本>`（取自 importlib.metadata），运行版本号一眼可见 | `test_tui_smoke.py::test_app_title_carries_version` |
 | 所有 list-style 视图面板共享同一套行选中 + 查看手势（`up` / `down`、`i` / `enter`、鼠标点击即查看；Esc / `i` / `q` 关 modal 不动选择）；如需偏离该手势必须改本 Requirement | `test_tui_smoke.py::test_wifi_inspect_opens_modal_on_first_press`、`::test_bonjour_inspect_opens_modal_on_first_press`（与既有的 BLE 覆盖 `tui_snapshot.py::ble_detail_decoded` 并列） |
 
