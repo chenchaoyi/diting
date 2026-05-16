@@ -109,6 +109,31 @@ BSSID. Same path as menu-off-then-on, in one keystroke.
 - **(Future) Room-presence sensing.** Long-term, hardware-assisted
   flagship. See [Roadmap](#roadmap).
 
+## The name
+
+**diting (谛听)** is a mythical beast in Chinese Buddhist lore —
+the divine mount of Kṣitigarbha Bodhisattva (地藏王菩萨). It is
+said to hear every sound in heaven, on earth, and across the ten
+directions; one ear pressed to the ground, it can tell truth
+from falsehood, virtue from sin, and the present from the past.
+The project takes the name because the thesis is the same:
+your Mac already perceives the wireless world around it — Wi-Fi
+networks coming and going, BLE devices whispering nearby,
+upstream packets dropping — and 谛听's job is to listen on its
+behalf and tell you, plainly, what it heard.
+
+**tianer (天耳)** is the Buddhist supernormal power of
+clairaudient hearing — the "heavenly ear" (天耳通) that 谛听
+itself is said to possess, by which it can hear what is too far,
+too quiet, or too hidden for ordinary ears. In this codebase the
+name belongs to the Swift helper bundle (`diting-tianer.app`):
+the component that carries the macOS TCC grants — Location
+Services (so Wi-Fi scans come back unredacted on macOS 14.4+)
+and Bluetooth (so BLE advertising data is visible) — and brokers
+raw signal data over to the Python TUI. The Python front-end
+listens, narrates, and ranks; *tianer* is the ear the operating
+system actually allows to hear.
+
 ## Quick start
 
 ```bash
