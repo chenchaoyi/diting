@@ -127,17 +127,7 @@ Buddhist tradition: the faculty of clairaudient hearing, by
 which sounds too far, too faint, or too hidden for ordinary
 ears can still be made out. 谛听's reputation for hearing all
 ten directions rests on this faculty — the beast is the
-listener, but 天耳 is the ear it listens through. That same
-split shows up in the codebase. The Python TUI plays 谛听 — it
-listens, narrates, ranks — but on macOS 14.4+ it cannot, on
-its own, perceive much: unprivileged Wi-Fi scans come back
-with SSID set to `None` and BSSIDs redacted, and Bluetooth is
-gated behind TCC entirely. The Swift helper bundle
-(`diting-tianer.app`) is what carries the macOS grants that
-lift those veils — Location Services for unredacted Wi-Fi
-scans, Bluetooth for BLE advertising — and brokers the raw
-signal stream to the front-end. The helper *is* the ear; the
-Python TUI is what makes sense of what it hears.
+listener, but 天耳 is the ear it listens through.
 
 ## Quick start
 
