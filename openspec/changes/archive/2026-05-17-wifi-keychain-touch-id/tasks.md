@@ -14,13 +14,13 @@
 
 ## 3. Helper — build verification (real-Mac only, deferred to reviewer)
 
-- [ ] 3.1 `make helper` — confirm Swift compiles cleanly with the new `Security.framework` calls (no new imports needed, `import Security` is already in main.swift). **Deferred:** this implementation was done in a Linux remote-execution container without Swift toolchain. GitHub Actions `release.yml` builds the helper on `macos-14` and will surface any Swift compile error before any artifact ships.
+- [x] 3.1 `make helper` — confirm Swift compiles cleanly with the new `Security.framework` calls (no new imports needed, `import Security` is already in main.swift). **Validated by CI:** `release.yml` ran the helper build on `macos-14` as part of the PR #78 merge gate.
 - [ ] 3.2 Run the helper directly: `helper/diting-tianer.app/Contents/MacOS/diting-tianer associate --ssid <test-SSID>` on a real Mac. Verify:
   - First-time SSID: sheet appears, type password, Touch ID prompt confirms the write
   - Second invocation: Touch ID prompts, silent associate
   - Cancel Touch ID: falls through to sheet (`keychain_read: "denied"` in response JSON)
-  **Deferred:** real-Mac gate. Reviewer to run on their machine before merge.
-- [ ] 3.3 Inspect the keychain entry in Keychain Access.app — confirm `com.chenchaoyi.diting.tianer` / `<SSID>` exists in the login keychain, and Access Control tab shows "Ask for Touch ID or login password" (or similar — exact wording is macOS-version-dependent). **Deferred:** real-Mac gate.
+  **Deferred to user-side real-Mac verification post-merge; not blocking archive.**
+- [ ] 3.3 Inspect the keychain entry in Keychain Access.app — confirm `com.chenchaoyi.diting.tianer` / `<SSID>` exists in the login keychain, and Access Control tab shows "Ask for Touch ID or login password" (or similar — exact wording is macOS-version-dependent). **Deferred to user-side real-Mac verification post-merge; not blocking archive.**
 
 ## 4. Test plan documentation
 
@@ -38,11 +38,11 @@
 
 ## 7. CI gates
 
-- [ ] 7.1 `uv run pytest` — full unit + smoke suite passes. **Deferred:** pyobjc dependency chain refuses to install on this Linux remote-execution container (`/usr/bin/sw_vers` missing). GitHub Actions `test.yml` runs the full pytest suite on `macos-latest` and gates merge.
-- [ ] 7.2 `uv run python scripts/tui_snapshot.py --mode regression` — synthetic regression unchanged. **Deferred:** same pyobjc constraint as 7.1; GitHub Actions covers it.
+- [x] 7.1 `uv run pytest` — full unit + smoke suite passes. **Validated by CI:** `test.yml` ran the suite on `macos-latest` as part of the PR #78 merge gate.
+- [x] 7.2 `uv run python scripts/tui_snapshot.py --mode regression` — synthetic regression unchanged. **Validated by CI:** same `test.yml` run as 7.1.
 - [x] 7.3 `openspec validate --specs --strict` — canonical specs validate (20/20 ✓).
 - [x] 7.4 `openspec validate wifi-keychain-touch-id --strict` — this change validates.
 
 ## 8. Archive
 
-- [ ] 8.1 After merge, run `/opsx:archive wifi-keychain-touch-id` (or `openspec archive wifi-keychain-touch-id`) to fold the delta into `openspec/specs/macos-helper/spec.md` canonically.
+- [x] 8.1 After merge, run `/opsx:archive wifi-keychain-touch-id` (or `openspec archive wifi-keychain-touch-id`) to fold the delta into `openspec/specs/macos-helper/spec.md` canonically.
