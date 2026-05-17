@@ -201,7 +201,7 @@ With no override, `diting` autodetects the system locale —
 | `m` | open / close the Events modal — last 100 roam / stir / latency / loss / link events |
 | `h` | open / close the in-app help screen |
 | `b` | open / close Wi-Fi Basics: SSID, BSSID, channel, band, security, roam score |
-| `j` | (in the Wi-Fi detail modal) join the inspected SSID — saved-Keychain networks join silently, new networks get a native macOS password prompt. Not hitless: a cross-SSID switch tears the current connection down for ~2-5 s. Enterprise / 802.1X is refused with a hint. |
+| `j` | (in the Wi-Fi detail modal) join the inspected SSID — previously-saved networks confirm via Touch ID (or login password on Macs without a sensor) and join silently; new networks get a native macOS password prompt. Not hitless: a cross-SSID switch tears the current connection down for ~2-5 s. Enterprise / 802.1X is refused with a hint. |
 
 `watch`, `once`, `monitor`, and `calibrate` subcommands run
 diting without the TUI:

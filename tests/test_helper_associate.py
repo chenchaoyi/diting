@@ -177,6 +177,27 @@ def test_associate_omits_bssid_when_not_supplied():
     assert captured["argv"] == ["/fake/binary", "associate", "--ssid", "cafe-guest"]
 
 
+def test_associate_ok_with_keychain_read_denied_is_tolerated():
+    """`keychain_read: "denied"` is a new diagnostic variant introduced by
+    the wifi-keychain-touch-id change (user dismissed the Touch ID /
+    login-password prompt). Existing parser ignores unknown JSON keys, but
+    lock the behaviour with an explicit test so a future regression that
+    starts treating unknown variants as errors gets caught.
+
+    Other plausible values: `"diting"`, `"miss"`, `"skipped-open"`,
+    `"err:<status>"`. All ride on the same parser path."""
+    for variant in ("denied", "diting", "miss", "skipped-open", "err:-25291"):
+        payload = json.dumps({
+            "schema": 1, "ok": True,
+            "bssid": "aa:bb:cc:dd:ee:ff", "keychain_saved": False,
+            "keychain_read": variant,
+        })
+        with patch("diting._helper.subprocess.run", return_value=_proc(payload)):
+            result = _helper.associate("/fake/binary", "cafe-guest")
+        assert result.ok is True, f"variant={variant} broke ok-path parse"
+        assert result.error_code is None
+
+
 def test_associate_pipes_empty_stdin_never_password_on_argv():
     """Security guard: the password must NEVER appear on argv. The
     public `associate(...)` doesn't accept a password kwarg, so the

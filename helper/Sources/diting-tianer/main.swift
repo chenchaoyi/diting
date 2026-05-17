@@ -1593,56 +1593,19 @@ private final class AssociateWorker: NSObject, CLLocationManagerDelegate {
                 )
             }
         }
-        // Saved-credential / open path. CWInterface.associate(
-        // toNetwork:password:nil error:) does NOT itself read from
-        // Keychain — that's done by the higher-level WiFiAgent
-        // daemon when the user clicks an SSID in the menu bar.
-        // CoreWLAN's `associate` is the raw primitive and demands an
-        // explicit password. So: try the private `CWKeychain
-        // findWiFiPasswordForSSID:` first, and only fall back to the
-        // nil-password call (which works for open networks).
-        var keychainReadVariant = "skipped-open"
-        if !net.supportsSecurity(.none) {
-            let read = attemptKeychainRead(ssid: ssid)
-            keychainReadVariant = read.variant
-            if let saved = read.password {
-                do {
-                    try iface.associate(to: net, password: saved)
-                    emitAssociateInnerExit(
-                        payload: associateJSONOK(
-                            bssid: net.bssid,
-                            keychainSaved: false,
-                            keychainRead: keychainReadVariant
-                        ),
-                        exitCode: 0
-                    )
-                } catch {
-                    // Saved password was rejected (the user changed
-                    // it on the AP, or the Keychain entry is for a
-                    // different BSSID). Fall through to the sheet so
-                    // they can re-enter — overwriting the stale
-                    // Keychain entry on success.
-                    DispatchQueue.main.async { [weak self] in
-                        self?.showPasswordSheet(net: net, iface: iface)
-                    }
-                    return
-                }
-            }
-        }
-        do {
-            try iface.associate(to: net, password: nil)
-            emitAssociateInnerExit(
-                payload: associateJSONOK(
-                    bssid: net.bssid,
-                    keychainSaved: false,
-                    keychainRead: keychainReadVariant
-                ),
-                exitCode: 0
-            )
-        } catch {
-            if net.supportsSecurity(.none) {
-                // The network is open and we still couldn't associate;
-                // password sheet won't help.
+        // Open network: no Keychain involvement, password is nil.
+        if net.supportsSecurity(.none) {
+            do {
+                try iface.associate(to: net, password: nil)
+                emitAssociateInnerExit(
+                    payload: associateJSONOK(
+                        bssid: net.bssid,
+                        keychainSaved: false,
+                        keychainRead: "skipped-open"
+                    ),
+                    exitCode: 0
+                )
+            } catch {
                 emitAssociateInnerExit(
                     payload: associateJSONError(
                         message: error.localizedDescription,
@@ -1651,15 +1614,61 @@ private final class AssociateWorker: NSObject, CLLocationManagerDelegate {
                     exitCode: 7
                 )
             }
-            // Secured network, no saved credential — fall through to
-            // an AppKit password sheet on the main queue.
-            DispatchQueue.main.async { [weak self] in
-                self?.showPasswordSheet(net: net, iface: iface)
+            return
+        }
+        // Secured network: explicit cached-credential lookup, then
+        // sheet on miss. We do NOT try `associate(...password: nil)`
+        // here — CoreWLAN's raw primitive doesn't read from Keychain
+        // on its own (only WiFiAgent does, and we are not it), so
+        // that call would just spin for 3-5 s before throwing.
+        let read = attemptKeychainRead(ssid: ssid)
+        let keychainReadVariant = read.variant
+        if let saved = read.password {
+            do {
+                try iface.associate(to: net, password: saved)
+                emitAssociateInnerExit(
+                    payload: associateJSONOK(
+                        bssid: net.bssid,
+                        keychainSaved: false,
+                        keychainRead: keychainReadVariant
+                    ),
+                    exitCode: 0
+                )
+            } catch {
+                // Stale cached password (AP key rotation, mismatched
+                // BSSID, etc). Fall through to the sheet — on
+                // resubmit, attemptKeychainWrite hits errSecDuplicateItem
+                // and SecItemUpdate rewrites the data in place,
+                // preserving the existing .userPresence ACL. The read
+                // succeeded (variant == "diting") so we surface that
+                // on the eventual emit — debug signal that this was a
+                // stale-cache recovery, not a first-time-join.
+                DispatchQueue.main.async { [weak self] in
+                    self?.showPasswordSheet(
+                        net: net,
+                        iface: iface,
+                        keychainReadVariant: keychainReadVariant
+                    )
+                }
+                return
             }
+        }
+        // Miss / denied / err — go straight to the sheet. variant
+        // is plumbed onto the response if/when the sheet path emits.
+        DispatchQueue.main.async { [weak self] in
+            self?.showPasswordSheet(
+                net: net,
+                iface: iface,
+                keychainReadVariant: keychainReadVariant
+            )
         }
     }
 
-    private func showPasswordSheet(net: CWNetwork, iface: CWInterface) {
+    private func showPasswordSheet(
+        net: CWNetwork,
+        iface: CWInterface,
+        keychainReadVariant: String = "miss"
+    ) {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.alertStyle = .informational
@@ -1696,7 +1705,11 @@ private final class AssociateWorker: NSObject, CLLocationManagerDelegate {
                     : false
                 pwField.stringValue = ""
                 emitAssociateInnerExit(
-                    payload: associateJSONOK(bssid: net.bssid, keychainSaved: saved),
+                    payload: associateJSONOK(
+                        bssid: net.bssid,
+                        keychainSaved: saved,
+                        keychainRead: keychainReadVariant
+                    ),
                     exitCode: 0
                 )
             } catch {
@@ -1729,84 +1742,135 @@ private func isEnterpriseOnly(_ net: CWNetwork) -> Bool {
     return !personal.contains(where: { net.supportsSecurity($0) })
 }
 
-/// Read a saved Wi-Fi password via Security.framework's
-/// `SecItemCopyMatching` against the well-known AirPort Generic
-/// Password convention (`kSecAttrService = "AirPort"`,
-/// `kSecAttrAccount = <SSID>`). macOS itself stores Wi-Fi passwords
-/// this way when you join via the menu bar, so we can read them
-/// back directly — same data shape `/usr/bin/security
-/// find-generic-password -s AirPort -a <SSID>` uses.
+/// Read a saved Wi-Fi password from the user's login keychain
+/// via `Security.framework`'s `SecItemCopyMatching`. The entry
+/// lives under our own service namespace
+/// (`com.chenchaoyi.diting.tianer`) — we deliberately do NOT probe
+/// macOS's own `AirPort/<SSID>` items in the System keychain.
+/// That path is gated by Authorization Services rule
+/// `authenticate-admin-nonshared`, which forces a fresh admin
+/// password every read and does not accept biometric substitution
+/// (confirmed via macOS Sequoia behaviour observed in PR #75).
 ///
-/// On first read per (bundle cdhash, SSID) pair the user sees a
-/// "diting-tianer wants to access AirPort. Always Allow / Allow /
-/// Deny" prompt; clicking Always Allow adds this bundle's cdhash to
-/// the Keychain item's ACL and subsequent reads are silent. A
-/// `make helper` rebuild changes the cdhash and re-prompts — that
-/// is the documented cost of the in-Swift SecItem path over a
-/// shell-out to the cdhash-stable `/usr/bin/security` binary.
+/// Items we write here carry a `.userPresence` access-control flag
+/// (see `attemptKeychainWrite`). macOS resolves that at read time
+/// against the user's configured authentication path: Touch ID on
+/// capable Macs, Apple Watch unlock if paired, otherwise the login
+/// password (NOT admin password — different Authorization right).
 ///
-/// On clean miss (no AirPort entry) the call returns
-/// `errSecItemNotFound`; on user-clicked-Deny it returns
-/// `errSecUserCanceled`. Both fold to nil here so the caller falls
-/// through to the password sheet.
+/// Returns `(password, variant)`:
+///   - `variant == "diting"` — cached read succeeded, password is non-nil
+///   - `variant == "miss"`   — no entry for this SSID
+///   - `variant == "denied"` — user dismissed the Touch ID / login-pw dialog
+///   - `variant == "err:N"`  — any other OSStatus, surfaced for debug
 ///
-/// Falls back to a `kSecAttrService = "com.chenchaoyi.diting.tianer"`
-/// item (our own service namespace), which is what
-/// `attemptKeychainWrite` writes to after the user types in our
-/// sheet — so previously-typed passwords for SSIDs that macOS
-/// itself never saved are still re-used silently on subsequent
-/// joins.
-///
-/// Returns `(password, source)` so the JSON response can surface
-/// which path supplied the credential — useful when debugging a
-/// silent-join regression.
+/// The caller (the associate worker) drops the password into
+/// `CWInterface.associate(toNetwork:password:error:)` on hit and
+/// falls through to the AppKit sheet on miss / denied / err.
 private let kDitingKeychainService = "com.chenchaoyi.diting.tianer"
 
 private func attemptKeychainRead(ssid: String) -> (password: String?, variant: String) {
-    if let pw = readSecGenericPassword(service: "AirPort", account: ssid) {
-        return (pw, "airport")
-    }
-    if let pw = readSecGenericPassword(service: kDitingKeychainService, account: ssid) {
-        return (pw, "diting")
-    }
-    return (nil, "miss")
+    let prompt = keychainReadPrompt(ssid: ssid)
+    return readSecGenericPassword(
+        service: kDitingKeychainService,
+        account: ssid,
+        prompt: prompt
+    )
 }
 
-private func readSecGenericPassword(service: String, account: String) -> String? {
+/// Locale-aware reason string for `kSecUseOperationPrompt`. The
+/// OS surfaces this in the Touch ID / login-password dialog so the
+/// user sees why authentication is being requested. Locale picked
+/// from `LANG` / `LC_ALL` so a `--lang zh` diting run shows ZH text
+/// here too; note that on some macOS versions the dialog renders
+/// against the system locale regardless — Apple does not guarantee
+/// `kSecUseOperationPrompt` is honoured. Passing it anyway costs
+/// nothing.
+private func keychainReadPrompt(ssid: String) -> String {
+    let lang = (ProcessInfo.processInfo.environment["LC_ALL"]
+                ?? ProcessInfo.processInfo.environment["LANG"]
+                ?? "").lowercased()
+    if lang.hasPrefix("zh") {
+        return "diting 想要连接 Wi-Fi “\(ssid)”"
+    }
+    return "diting wants to join Wi-Fi “\(ssid)”"
+}
+
+private func readSecGenericPassword(
+    service: String,
+    account: String,
+    prompt: String
+) -> (password: String?, variant: String) {
     let query: [String: Any] = [
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: service,
         kSecAttrAccount as String: account,
         kSecReturnData as String: true,
         kSecMatchLimit as String: kSecMatchLimitOne,
+        kSecUseOperationPrompt as String: prompt,
     ]
     var result: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
-    guard status == errSecSuccess,
-          let data = result as? Data,
-          let pw = String(data: data, encoding: .utf8),
-          !pw.isEmpty else {
-        return nil
+    switch status {
+    case errSecSuccess:
+        guard let data = result as? Data,
+              let pw = String(data: data, encoding: .utf8),
+              !pw.isEmpty else {
+            return (nil, "miss")
+        }
+        return (pw, "diting")
+    case errSecItemNotFound:
+        return (nil, "miss")
+    case errSecUserCanceled:
+        return (nil, "denied")
+    default:
+        return (nil, "err:\(status)")
     }
-    return pw
 }
 
-/// Persist a Wi-Fi password to the System Keychain so subsequent
-/// `j` joins of the same SSID hit the silent-read fast path. Uses
-/// our own `kSecAttrService` namespace
-/// (`com.chenchaoyi.diting.tianer`) rather than `"AirPort"`, so we
-/// never modify entries macOS itself created (which would risk a
-/// stale value persisting after the user changes the password via
-/// the menu bar — macOS would refresh `AirPort/<SSID>` but our
-/// shadow `AirPort/<SSID>` write would compete for ACL).
+/// Persist a Wi-Fi password to the user's login keychain so the
+/// next `j` on the same SSID can recover it silently (gated by a
+/// single Touch ID / login-password gesture — see the read path).
 ///
-/// `SecItemAdd` returns `errSecDuplicateItem` when the user has
-/// joined this SSID through us before and the cached password
-/// changed (AP key rotated; user typed a new one); `SecItemUpdate`
-/// rewrites the existing entry in-place so the ACL grant from the
-/// first save survives.
+/// Items are written under our own `kSecAttrService` namespace
+/// (`com.chenchaoyi.diting.tianer`); we never write to
+/// `kSecAttrService = "AirPort"` (would compete with macOS's own
+/// menu-bar-managed entries) and we never set
+/// `kSecAttrSynchronizable` (Wi-Fi passwords stay on this Mac, no
+/// iCloud Keychain sync).
+///
+/// Each `SecItemAdd` attaches a `.userPresence` access-control
+/// flag, which resolves at read time to Touch ID, Apple Watch
+/// unlock, or login passcode depending on hardware + System
+/// Settings. We deliberately avoid `.biometryAny` (would lock
+/// Macs without a sensor out entirely) and `.biometryCurrentSet`
+/// (adding a new fingerprint would invalidate the entry).
+///
+/// `SecItemAdd` returns `errSecDuplicateItem` when the SSID has
+/// been joined through diting before and the cached password
+/// changed (AP key rotation; user typed a fresh one in our sheet
+/// because the old cached value `auth_failed`'d). In that path we
+/// fall back to `SecItemUpdate` writing **only `kSecValueData`**
+/// — passing any other attribute would let macOS replace the
+/// item's `kSecAttrAccessControl`, which would re-prompt the user
+/// for the `.userPresence` ACL on the next read. Keep the update
+/// minimal so rotation is silent on the write side.
 private func attemptKeychainWrite(ssid: String, password: String) -> Bool {
     guard let pwData = password.data(using: .utf8) else { return false }
+    var sacError: Unmanaged<CFError>?
+    guard let access = SecAccessControlCreateWithFlags(
+        nil,
+        kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        .userPresence,
+        &sacError
+    ) else {
+        // ACL construction failed — extremely unlikely (would mean
+        // the user's macOS install lacks the Security framework).
+        // Per spec: keychain failures SHALL NOT abort the join, just
+        // report keychain_saved: false. Don't try to write without
+        // an ACL (that would defeat the whole point of the change).
+        return false
+    }
     let baseAttrs: [String: Any] = [
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: kDitingKeychainService,
@@ -1814,9 +1878,14 @@ private func attemptKeychainWrite(ssid: String, password: String) -> Bool {
     ]
     var addAttrs = baseAttrs
     addAttrs[kSecValueData as String] = pwData
+    addAttrs[kSecAttrAccessControl as String] = access
     let addStatus = SecItemAdd(addAttrs as CFDictionary, nil)
     if addStatus == errSecSuccess { return true }
     if addStatus == errSecDuplicateItem {
+        // ACL preservation: update attrs MUST contain only
+        // kSecValueData. Adding kSecAttrAccessControl here would
+        // re-set the ACL and force the user to re-grant
+        // .userPresence on the next read.
         let updateStatus = SecItemUpdate(
             baseAttrs as CFDictionary,
             [kSecValueData as String: pwData] as CFDictionary
@@ -1837,10 +1906,11 @@ private func associateJSONOK(
         "keychain_saved": keychainSaved,
     ]
     if let b = bssid { payload["bssid"] = b }
-    // `keychain_read` is a diagnostic-only field: which CWKeychain
-    // signature landed during the saved-credential probe. Python
-    // ignores unknown JSON keys, so this is safe to log even when
-    // the TUI doesn't surface it.
+    // `keychain_read` is a diagnostic-only field: which path
+    // supplied the cached credential — "diting" on hit, "miss" /
+    // "denied" / "err:<status>" on the sheet path, "skipped-open"
+    // for open networks. Python ignores unknown JSON keys, so
+    // this is safe to log even when the TUI doesn't surface it.
     if let kr = keychainRead { payload["keychain_read"] = kr }
     return (try? JSONSerialization.data(
         withJSONObject: payload,
