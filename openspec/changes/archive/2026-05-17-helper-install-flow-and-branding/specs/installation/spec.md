@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: The installer SHALL place the Swift helper bundle under `~/Library/Application Support/diting/` and prime it for TCC in a guided, locale-aware flow
+### Requirement: The installer SHALL place the Swift helper bundle under `~/Library/Application Support/diting/` and prime it for TCC
 After extracting the tarball, the installer SHALL copy `share/diting-tianer.app/` to `~/Library/Application Support/diting/diting-tianer.app`, strip the quarantine xattr so Gatekeeper does not block first launch, and launch the bundle once via `/usr/bin/open` so macOS surfaces the Location Services, Bluetooth, and Notifications TCC prompts to the user in a single guided flow.
 
 The `open` invocation SHALL pass:

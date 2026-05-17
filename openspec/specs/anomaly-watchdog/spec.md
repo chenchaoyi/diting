@@ -6,24 +6,32 @@ TBD - created by archiving change anomaly-watchdog. Update Purpose after archive
 ### Requirement: `--notify` SHALL raise a macOS Notification Centre alert for every anomaly event type
 With `--notify` set on either `diting monitor` or the default TUI subcommand `diting`, the running process SHALL raise a macOS Notification Centre alert for each of the three anomaly event types — `rf_stir`, `latency_spike`, `loss_burst` — subject to the per-event severity gate and the silence-window debounce defined in subsequent Requirements. The JSONL event stream (emitted by `monitor` to stdout / `--out`, or by the TUI when `--log` is set) SHALL NOT be filtered by the watchdog; only the OS-notification side-effect is debounced. Both entry points SHALL use the same shared watchdog module so behaviour is identical from the user's perspective.
 
+The notification SHALL be dispatched via the `diting-tianer notify` subcommand of the installed helper bundle (not via `osascript`). This ensures the notification carries the diting logo (the bundle's icon) and a stable bundle identity in Notification Centre. If the helper binary cannot be resolved (e.g. the helper bundle is missing or the bundled scan path is broken), the watchdog SHALL silently skip the notification — no fallback to `osascript`, no error propagated into the TUI.
+
 #### Scenario: monitor — latency spike triggers a notification
 - **WHEN** the user runs `diting monitor --notify` and a `latency_spike` event fires (gateway probe RTT crosses both the multiplier and absolute thresholds)
-- **THEN** `osascript` is invoked with a notification carrying the title `diting` and a body composed by the notification template (e.g. `Latency spike on gateway:192.168.1.1: 240.5 ms`)
+- **THEN** the watchdog invokes `<helper-bin> notify --title diting --body "<message>"` with the notification template body (e.g. `Latency spike on gateway:192.168.1.1: 240.5 ms`)
+- **AND** macOS Notification Centre shows the alert with the diting-logo icon
 - **AND** the same event is emitted as one JSONL line on stdout / `--out` regardless of whether `--notify` is set
 
 #### Scenario: monitor — loss burst triggers a notification
 - **WHEN** the user runs `diting monitor --notify` and a `loss_burst` event fires (3 of 5 recent probes lost)
-- **THEN** `osascript` is invoked with a body composed by the notification template (e.g. `Loss burst on WAN:1.1.1.1: 60.0%`)
+- **THEN** the watchdog invokes the helper `notify` subcommand with a body composed by the notification template (e.g. `Loss burst on WAN:1.1.1.1: 60.0%`)
 
 #### Scenario: TUI — same event types notify with same semantics
 - **WHEN** the user runs `diting --notify` (default TUI subcommand) and any of the three anomaly event types fires
-- **THEN** `osascript` is invoked with the same body the headless monitor would have produced, gated by the same severity rules and silence window
+- **THEN** the watchdog invokes the helper `notify` subcommand with the same body the headless monitor would have produced, gated by the same severity rules and silence window
 - **AND** the TUI's EventsPanel + EventRing keep rendering the event live, independent of the notification
 
 #### Scenario: `--notify` not set means no OS notification
 - **WHEN** the user runs `diting monitor` (no `--notify`) OR `diting` (no flag)
-- **THEN** NO `osascript` invocation occurs for any event type
+- **THEN** NO helper `notify` invocation occurs for any event type
 - **AND** the JSONL / TUI event streams are unchanged
+
+#### Scenario: Helper binary unavailable
+- **WHEN** `--notify` is set and an event fires, but `macos_helper.resolve_helper_binary()` returns `None`
+- **THEN** the watchdog logs nothing and emits nothing — the notification is silently skipped
+- **AND** the JSONL event stream is unaffected
 
 ### Requirement: `rf_stir` notifications SHALL gate on a configurable confidence threshold
 The `rf_stir` notification SHALL fire only when the event's `confidence` field meets or exceeds the threshold configured by the `DITING_NOTIFY_STIR_CONFIDENCE` environment variable, which SHALL accept exactly three values: `high` (default — only high-confidence stirs notify), `medium` (medium- and high-confidence notify), `all` (every stir notifies regardless of confidence). Invalid values SHALL print a one-line warning to stderr and fall back to `high`.
