@@ -247,7 +247,13 @@
 | `associate` 拒绝 argv 上的 `--password`，exit 64（安全护栏）；密码只走 stdin | （人工 — Swift 端 `runAssociateAndExit` 的护栏；review-enforced） |
 | `associate` 不调 `iface.disassociate()`，把 L2 断开窗口压到最小（沿用 `force_reroam` 的同一道理） | （review-enforced — Swift 中 `runAssociateAndExit` 仅调用 `associate(toNetwork:password:error:)`） |
 | 无 Keychain 时弹原生 AppKit 密码 sheet；`NSSecureTextField` 由 helper bundle 渲染 | （人工 — `/tui-audit` 真机回归；首次加入网络场景） |
-| 成功且勾上"记住密码"时 `+[CWKeychain setWiFiPassword:forSSID:]` 回写；回写失败不影响 join 本身成功 | （人工 — `/tui-audit` 真机回归） |
+| 勾上"记住密码"后通过 `SecItemAdd` 把密码写到 login keychain 的 `com.chenchaoyi.diting.tianer` 服务命名空间，附 `SecAccessControlCreateWithFlags(..., .userPresence, ...)` ACL；回写失败不影响 join 本身成功 | （人工 — `/tui-audit` 真机回归；用 Keychain Access.app 验证条目的 Access Control 页要求 user-presence） |
+| 读缓存路径：`SecItemCopyMatching` 在 diting 服务命名空间内查询发生在 `associate(...password:)` 之前；命中时直接调用 `associate(...password: <recovered>)`，**不再**对安全网络做一次 `associate(...password: nil)` 兜底 | （review-enforced — `main.swift` 中 `proceed(net:iface:)` 与 `attemptKeychainRead` 的实现） |
+| 不查 `kSecAttrService = "AirPort"`（System keychain）—— 这条路在 PR #75 已确认不可用（每次读都弹 admin 密码，没有指纹路径） | `grep '"AirPort"' helper/Sources/diting-tianer/main.swift` 应只剩 `attemptKeychainWrite` 注释中说明"为什么不写到这里"的那一处 |
+| 同一已保存 SSID 第二次按 `j` 时，弹的是 Touch ID / 登录密码框（**不是** admin 密码），通过认证后无感关联 | （人工 — `/tui-audit` 真机回归；首次加入、关闭并重开详情、再按 `j`） |
+| 取消 Touch ID / 登录密码框时，helper 响应 JSON 携带 `keychain_read: "denied"`，缓存条目**不**被删除，流程跌落到 AppKit 密码 sheet | （人工 — `/tui-audit` 真机回归；取消系统弹框后观察密码 sheet 出现） |
+| 缓存密码过期：associate 报 `auth_failed`，密码 sheet 弹出，重新提交时 `SecItemAdd` 返回 `errSecDuplicateItem`，`SecItemUpdate` 仅写 `kSecValueData`，保留原始 `.userPresence` ACL，下一次读仍只弹一次 Touch ID 而非重新授权 | （人工 — `/tui-audit` 真机回归；在 AP 处轮换密码后按 `j`；后续 join 应只弹一次 Touch ID） |
+| `kSecUseOperationPrompt` 走 locale 派发（按 `LANG` / `LC_ALL` 决定 EN/ZH）；helper 侧文案为 `diting wants to join Wi-Fi "<SSID>"` / `diting 想要连接 Wi-Fi "<SSID>"` | （review-enforced — Swift 中 `keychainReadPrompt(ssid:)`；注意 macOS 部分版本可能仍按系统 locale 渲染对话框） |
 
 ### `mdns-scanning`
 
