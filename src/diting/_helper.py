@@ -153,7 +153,37 @@ def scan(binary: str, timeout: float = 12.0) -> tuple[list[ScanResult], dict]:
                 supports_802_11v=_safe_bool(net.get("supports_802_11v")),
             )
         )
-    return out, iface_meta
+    return _dedup_by_bssid(out), iface_meta
+
+
+def _dedup_by_bssid(rows: list[ScanResult]) -> list[ScanResult]:
+    # CoreWLAN's scanForNetworksWithName_error_ can return multiple
+    # instances of the same BSSID per call (each scan dwell on a
+    # different channel sees the beacon and produces a separate
+    # CWNetwork). The visible artefact is a Wi-Fi table with the same
+    # row repeated 2-4 times. Collapse to one row per BSSID, keep the
+    # strongest RSSI; preserve first-seen order across distinct BSSIDs.
+    # Rows with bssid=None (TCC-redacted path) bypass dedup — every
+    # such row is its own anonymous scan result.
+    seen: dict[str, ScanResult] = {}
+    out: list[ScanResult] = []
+    for r in rows:
+        if r.bssid is None:
+            out.append(r)
+            continue
+        prev = seen.get(r.bssid)
+        if prev is None:
+            seen[r.bssid] = r
+            out.append(r)
+            continue
+        prev_rssi = prev.rssi_dbm if prev.rssi_dbm is not None else -200
+        new_rssi = r.rssi_dbm if r.rssi_dbm is not None else -200
+        if new_rssi > prev_rssi:
+            # Replace in-place at the prev position to keep order stable.
+            idx = out.index(prev)
+            out[idx] = r
+            seen[r.bssid] = r
+    return out
 
 
 def _safe_int(value) -> int | None:

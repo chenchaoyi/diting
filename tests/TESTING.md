@@ -110,6 +110,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | RSSI sparkline when ≥ 2 history samples | `test_tui_helpers.py::test_rssi_sparkline_empty_history_returns_empty`, `::test_rssi_sparkline_single_sample_returns_empty`, `::test_rssi_sparkline_constant_rssi_renders_flat_line`, `::test_rssi_sparkline_maps_extremes_to_top_and_bottom_blocks`, `::test_rssi_sparkline_renders_one_char_per_sample` (rendering); `test_ble.py::test_history_records_and_returns_samples_in_order` (data path) |
 | Modal close (Esc / `i` / `q`) doesn't mutate selection | (manual; modal binding is declarative) |
 | Distance estimate labelled "rough free-space" | `test_tui_helpers.py::test_free_space_distance_m_at_one_meter_returns_one`, `::test_free_space_distance_m_doubles_at_minus_six_db`, `::test_free_space_distance_m_zero_rssi_returns_none` |
+| Empty Services / Extra UUID lists render placeholder as a standalone dim-italic line (no trailing em-dash from `_label`) | `test_tui_helpers.py::test_ble_detail_services_empty_state_has_no_trailing_emdash`, `::test_ble_detail_extra_uuids_empty_state_has_no_trailing_emdash` |
 
 ### `bonjour-detail-modal`
 
@@ -280,6 +281,8 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Bonjour stack pre-warms on the wifi → BLE step so the second `n` press (BLE → mDNS) does not pause | `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |
 | Bonjour init runs on a worker thread (`asyncio.to_thread`) so the event loop is not blocked by the import or the `Zeroconf()` socket setup | `test_mdns.py::test_start_browser_runs_on_worker_thread`, `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |
 | A crashed consumer task resets `_mdns_poller` so a subsequent `n` press rebuilds it | `test_tui_smoke.py::test_bonjour_consumer_task_resets_poller_on_unexpected_error` |
+| `BonjourPanel` supports a `by-host` sort mode that folds services into a comma-joined column; `s` cycles `service` → `by-host` → `service` | `test_tui_helpers.py::test_bonjour_panel_by_host_mode_folds_services_alphabetically`, `::test_bonjour_panel_s_key_cycles_modes`, `::test_bonjour_panel_by_host_truncates_long_services_with_ellipsis`; `tui_snapshot.py::bonjour_by_host_mode` (regression) |
+| mDNS "Top vendors" diagnostics line labels the unknown bucket `(unknown) N`, never `? N` | `test_tui_helpers.py::test_mdns_diagnostics_top_vendors_uses_unknown_label` |
 
 ### `roam-detection`
 
@@ -338,6 +341,9 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | CoreWLAN throttle respected (≥7s cadence) | (gap — poller cadence is configured, not unit-tested) |
 | Sentinel RSSI rows filtered before panel | `test_ble.py::test_rssi_unavailable_sentinel_filtered`, `::test_rssi_zero_or_positive_dbm_treated_as_invalid` (BLE side; `test_helper.py::test_scan_zero_noise_and_zero_rssi_become_none` Wi-Fi side) |
 | Current BSSID merged into scan when CoreWLAN omits it | `test_tui_helpers.py::test_merge_current_prepends_when_scan_omits_associated_ap`, `::test_merge_current_replaces_when_scan_already_has_ap`, `::test_merge_current_no_op_when_disconnected`, `::test_merge_current_no_op_when_connection_has_no_bssid`, `::test_merge_current_case_insensitive_match` |
+| Scan results deduplicated by BSSID, strongest RSSI wins | `test_helper.py::test_scan_dedup_by_bssid_keeps_strongest_rssi`, `::test_scan_dedup_preserves_insertion_order`, `::test_scan_dedup_skips_none_bssid_rows` |
+| Tx Rate idle cache substitutes last non-zero value on same AP | `test_macos_backend.py::test_tx_rate_idle_cache_substitutes_on_zero_same_ap`, `::test_tx_rate_idle_cache_clears_on_bssid_change`, `::test_tx_rate_idle_flag_false_on_first_zero_with_no_history` |
+| Connection panel renders `(idle)` annotation when `tx_rate_idle=True` | `test_tui_helpers.py::test_connection_panel_renders_tx_idle_annotation`, `::test_connection_panel_no_idle_annotation_when_flag_false` |
 
 ---
 

@@ -168,7 +168,7 @@ DITING_LANG=zh uv run diting   # 用环境变量
 | `q` | 退出 |
 | `p` | 暂停 / 恢复轮询 |
 | `r` | 立即重扫（CoreWLAN ~5 秒限流仍然会生效） |
-| `s` | 扫描排序切换：按 AP ↔ 按信号 |
+| `s` | 排序切换 —— Wi-Fi：按 AP ↔ 按信号；Bonjour：service ↔ 按 host |
 | `n` | 切换附近视图：Wi-Fi BSSID → BLE → Bonjour |
 | `c` | 断开重连 —— 关再开 Wi-Fi，让系统重新挑选最强的 BSSID |
 | `m` | 打开 / 关闭事件浏览器 —— 最近 100 条 漫游 / 扰动 / 延迟 / 丢包 / 链路 |

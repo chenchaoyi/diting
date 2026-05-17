@@ -641,6 +641,70 @@ def _regression_scenarios() -> list[Scenario]:
         await pilot.press("i")
         await pilot.pause(0.3)
 
+    async def _switch_to_bonjour_by_host(pilot):
+        """Cycle to Bonjour view, inject a `multi-service-per-host`
+        snapshot, then press `s` to flip from the default `service`
+        sort to `by-host`. Locks the folded-services rendering under
+        regression."""
+        from datetime import datetime, timezone
+        from diting.mdns import BonjourDevice
+        await _seed_link_and_events(pilot)
+        await pilot.press("n")  # wifi → ble
+        await pilot.pause(0.1)
+        await pilot.press("n")  # ble → mdns
+        await pilot.pause(0.2)
+        now = datetime.now(timezone.utc)
+        # One HomePod host announcing four services so the by-host
+        # row's services column carries the folded list.
+        devices = [
+            BonjourDevice(
+                service_type="_airplay._tcp.local.",
+                name="Blue Pod._airplay._tcp.local.",
+                host="Blue-Pod.local.", port=7000,
+                addresses=("192.168.1.42",), txt={},
+                vendor="Apple, Inc.", category="AirPlay",
+                first_seen=now, last_seen=now,
+            ),
+            BonjourDevice(
+                service_type="_raop._tcp.local.",
+                name="MAC@Blue Pod._raop._tcp.local.",
+                host="Blue-Pod.local.", port=7000,
+                addresses=("192.168.1.42",), txt={},
+                vendor="Apple, Inc.", category="AirPlay audio",
+                first_seen=now, last_seen=now,
+            ),
+            BonjourDevice(
+                service_type="_companion-link._tcp.local.",
+                name="Blue Pod._companion-link._tcp.local.",
+                host="Blue-Pod.local.", port=49152,
+                addresses=("192.168.1.42",), txt={},
+                vendor="Apple, Inc.", category="Apple Companion",
+                first_seen=now, last_seen=now,
+            ),
+            BonjourDevice(
+                service_type="_hap._tcp.local.",
+                name="Blue Pod._hap._tcp.local.",
+                host="Blue-Pod.local.", port=49152,
+                addresses=("192.168.1.42",), txt={},
+                vendor="Apple, Inc.", category="HomeKit",
+                first_seen=now, last_seen=now,
+            ),
+            BonjourDevice(
+                service_type="_http._tcp.local.",
+                name="FriendlyWrt._http._tcp.local.",
+                host="FriendlyWrt.local.", port=80,
+                addresses=("192.168.1.1",), txt={},
+                vendor=None, category="HTTP",
+                first_seen=now, last_seen=now,
+            ),
+        ]
+        pilot.app._latest_mdns = devices
+        pilot.app._refresh_mdns_panel()
+        await pilot.pause(0.2)
+        # Flip to by-host mode.
+        await pilot.press("s")
+        await pilot.pause(0.2)
+
     async def _open_bonjour_detail(pilot):
         """Cycle to Bonjour view, inject a few representative
         services, then open the detail modal on the first row."""
@@ -797,6 +861,25 @@ def _regression_scenarios() -> list[Scenario]:
                 ("AP name from inventory",
                  lambda t: "1F-bedroom" in t),
                 ("Close hint visible", lambda t: "Esc" in t),
+            ),
+            inspectors=(),
+        ),
+        Scenario(
+            id="bonjour_by_host_mode",
+            description="Bonjour panel in `by-host` sort: one row per "
+                        "host, services folded.",
+            lang="en",
+            setup=lambda: _build_good(lang="en"),
+            after_mount=_switch_to_bonjour_by_host,
+            assertions=(
+                ("Subtitle reflects by-host sort",
+                 lambda t: "sort: by-host" in t),
+                ("Blue Pod row appears",
+                 lambda t: "Blue-Pod" in t),
+                ("Folded services join with comma",
+                 lambda t: "AirPlay" in t and "," in t),
+                ("Unknown-vendor row uses (unknown)",
+                 lambda t: "(unknown)" in t),
             ),
             inspectors=(),
         ),

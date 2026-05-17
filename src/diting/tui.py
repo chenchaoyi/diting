@@ -195,8 +195,15 @@ class ConnectionPanel(Static):
                 # 379 Mbps max' duplicates the word the user just
                 # read on the left. Slash convention makes the order
                 # unambiguous.
+                #
+                # `(idle)` annotation surfaces when the backend's
+                # idle-cache substituted in the last non-zero rate
+                # because `transmitRate()` momentarily reported 0
+                # on the same AP. Without it the field flickered to
+                # `n/a` on an otherwise-stable association.
                 t("{tx}  /  {max}",
-                  tx=_fmt(conn.tx_rate_mbps, " Mbps"),
+                  tx=(_fmt(conn.tx_rate_mbps, " Mbps")
+                      + (" " + t("(idle)") if conn.tx_rate_idle else "")),
                   max=_fmt(conn.max_link_speed_mbps, " Mbps")),
             ),
             (
@@ -1594,7 +1601,9 @@ class BonjourPanel(VerticalScroll):
             app._bonjour_set_selected(key, inspect=True)
 
     def update_devices(
-        self, devices: list, *, selected_key: str | None = None,
+        self, devices: list, *,
+        selected_key: str | None = None,
+        sort_mode: str = "service",
     ) -> None:
         body = self.query_one("#mdns-body", Static)
         base_title = t("Nearby Bonjour devices")
@@ -1607,13 +1616,21 @@ class BonjourPanel(VerticalScroll):
             ))
             self._y_to_key = []
             return
-        self.border_subtitle = base_title + f" ({len(devices)})"
         now = datetime.now(timezone.utc)
+        if sort_mode == "by-host":
+            row_specs = _bonjour_by_host_rows(devices, now)
+        else:
+            row_specs = [
+                (_bonjour_row_line(d, now), _bonjour_row_key(d))
+                for d in devices
+            ]
+        self.border_subtitle = (
+            base_title + f" ({len(row_specs)})"
+            + t("  · sort: {mode}", mode=t(sort_mode))
+        )
         lines: list[Text] = [_bonjour_header_line()]
         y_map: list[str | None] = [None]
-        for d in devices:
-            row = _bonjour_row_line(d, now)
-            key = _bonjour_row_key(d)
+        for row, key in row_specs:
             if selected_key is not None and key == selected_key:
                 row.stylize("reverse")
             lines.append(row)
@@ -2168,7 +2185,11 @@ def _ble_vendors_line(devices: list[BLEDevice]) -> Text:
         f"{_BLE_VENDOR_DISPLAY.get(vendor, vendor)} {n}" for vendor, n in top
     ]
     if unknown:
-        parts.append(t("? {n}", n=unknown))
+        # Match the column placeholder convention. The literal `?`
+        # prefix scans as a typo in this diagnostics row; `(unknown)`
+        # reads naturally and matches the BLE table's empty-vendor
+        # cell.
+        parts.append(f"{t('(unknown)')} {unknown}")
     line.append("  ·  ".join(parts), style="white")
     # Annotate how many raw advertisement identifiers got folded into
     # the visible rows by merge_for_display. Without this the user
@@ -3190,6 +3211,101 @@ def _bonjour_age_text(d, now: datetime) -> str:
     return t("{n}s", n=int(delta))
 
 
+def _bonjour_by_host_rows(
+    devices: list, now: datetime,
+) -> list[tuple[Text, str]]:
+    """Render the Bonjour panel grouped by host.
+
+    Each row carries one host. The services column folds every service
+    type announced by that host into an alphabetically-ordered,
+    comma-joined string (`AirPlay, AirPlay audio, Apple Companion, …`).
+    Truncated via ``fit_cells`` so long lists collapse with an
+    ellipsis instead of overflowing the column.
+
+    The row's vendor / name / age / host fields come from the
+    freshest service announce for that host. The row key is the host
+    string (with the trailing ``.`` stripped) — distinct from the
+    per-service `_bonjour_row_key` used in `service` mode, but stable
+    across re-sorts in `by-host` mode.
+
+    Hosts without an announced ``host`` field (rare) fall back to
+    joining their addresses or to the per-service key as a last
+    resort, so every row still has a unique cursor target.
+    """
+    groups: dict[str, list] = {}
+    for d in devices:
+        # Same display normalisation as `_bonjour_row_line` so the
+        # group key matches what the user sees in the host column.
+        host = (d.host or "").rstrip(".")
+        if host.endswith(".local"):
+            host = host[: -len(".local")]
+        if not host:
+            host = (
+                ",".join(d.addresses) if getattr(d, "addresses", None)
+                else _bonjour_row_key(d)
+            )
+        groups.setdefault(host, []).append(d)
+
+    # Newest-host-first so a freshly-re-advertising host floats to the
+    # top of the panel.
+    host_order = sorted(
+        groups.keys(),
+        key=lambda h: max(d.last_seen for d in groups[h]),
+        reverse=True,
+    )
+
+    out: list[tuple[Text, str]] = []
+    for host in host_order:
+        members = groups[host]
+        freshest = max(members, key=lambda d: d.last_seen)
+        # Vendor / name / age come from the freshest member.
+        if freshest.vendor:
+            vendor_cell = fit_cells(freshest.vendor, _COL_MDNS_VENDOR)
+            vendor_style = "cyan"
+        else:
+            vendor_cell = pad_cells(t("(unknown)"), _COL_MDNS_VENDOR)
+            vendor_style = "dim"
+        raw_name = _strip_service_suffix(
+            freshest.name or "", freshest.service_type,
+        )
+        name_text = raw_name if raw_name else t("(unknown)")
+        name_style = "white" if raw_name else "dim italic"
+
+        # Folded services column. Alphabetically by short category
+        # name keeps the order stable across rerenders.
+        cats = sorted({
+            t(d.category) for d in members if d.category
+        })
+        services_text = ", ".join(cats) if cats else ""
+        # `fit_cells` hard-truncates without an ellipsis, which is the
+        # right default for AP / device names where every glyph
+        # matters. For a comma-joined list we'd rather lose a couple
+        # of cells and gain a `…` hint that more services are folded
+        # in; otherwise the user reads `AirPlay, AirP` and assumes
+        # that's the complete list.
+        if cell_len(services_text) > _COL_MDNS_SERVICES:
+            services_text = services_text[: _COL_MDNS_SERVICES - 1].rstrip() + "…"
+
+        age_text = _bonjour_age_text(freshest, now)
+
+        line = Text()
+        line.append("  ")
+        line.append(vendor_cell + "  ", style=vendor_style)
+        line.append(
+            fit_cells(name_text, _COL_MDNS_NAME) + "  ", style=name_style,
+        )
+        line.append(
+            fit_cells(services_text, _COL_MDNS_SERVICES) + "  ", style="dim",
+        )
+        line.append(
+            fit_cells(age_text, _COL_MDNS_AGE) + "  ", style="dim",
+        )
+        line.append(fit_cells(host, _COL_MDNS_HOST), style="dim")
+
+        out.append((line, host))
+    return out
+
+
 def _bonjour_diagnostic_lines(devices) -> list[Text]:
     """Three-row mDNS-side diagnostic summary for the Diagnostics
     panel when the active view is `mdns`.
@@ -3235,7 +3351,10 @@ def _bonjour_diagnostic_lines(devices) -> list[Text]:
         top = vendors.most_common(3)
         parts = [f"{n} {v}" for v, n in top]
         if unknown_vendor:
-            parts.append(t("? {n}", n=unknown_vendor))
+            # Match the column placeholder convention used elsewhere
+            # (`(unknown)`); a literal `?` reads as a typo in the
+            # diagnostics row.
+            parts.append(f"{t('(unknown)')} {unknown_vendor}")
         line = Text()
         line.append(t("Top vendors  "), style="bold dim")
         line.append("  ·  ".join(parts), style="white")
@@ -3580,7 +3699,13 @@ class BLEDetailScreen(ModalScreen):
         d = self._device
         if not d.services:
             self._heading(out, t("Services"))
-            self._label(out, t("(none advertised)"), None)
+            # Placeholder is a single descriptive line, NOT a
+            # label / value pair — `_label(name, None)` would append
+            # a "no value" em-dash and produce "(none advertised)—".
+            out.append(
+                "  " + t("(none advertised)") + "\n",
+                style="dim italic",
+            )
             return
         self._heading(out, t("Services") + f"  ({len(d.services)})")
         for s in d.services:
@@ -3606,7 +3731,10 @@ class BLEDetailScreen(ModalScreen):
         d = self._device
         self._heading(out, t("Manufacturer data"))
         if d.vendor_id is None and d.manufacturer_hex is None:
-            self._label(out, t("(no manufacturer-specific data)"), None)
+            out.append(
+                "  " + t("(no manufacturer-specific data)") + "\n",
+                style="dim italic",
+            )
             return
         if d.vendor_id is not None:
             cid_str = f"cid {d.vendor_id} / 0x{d.vendor_id:04x}"
@@ -5075,6 +5203,11 @@ class DitingApp(App):
         # current AP pinned. The grouped view is more readable on dense
         # corporate networks where one AP broadcasts many BSSIDs.
         self._sort_mode: str = "ap"
+        # Bonjour-side sort cycle. `service` (default) is one row per
+        # (host, service-type) pair. `by-host` collapses all of a
+        # host's announces into a single row with the services column
+        # comma-joined. Cycled via `s` while the view is `mdns`.
+        self._bonjour_sort_mode: str = "service"
         # Header shows `diting v<version>` so users always know the
         # running version without pressing a key. __version__ is
         # sourced from importlib.metadata at package import; falls
@@ -5636,7 +5769,9 @@ class DitingApp(App):
             if self._bonjour_selected_key not in keys:
                 self._bonjour_selected_key = None
         panel.update_devices(
-            self._latest_mdns, selected_key=self._bonjour_selected_key,
+            self._latest_mdns,
+            selected_key=self._bonjour_selected_key,
+            sort_mode=self._bonjour_sort_mode,
         )
         if self._view_mode == "mdns":
             self._refresh_environment_panel()
@@ -5747,6 +5882,20 @@ class DitingApp(App):
         self._poller.force_rescan()
 
     def action_cycle_sort(self) -> None:
+        # The `s` key cycles a per-view sort mode. Wi-Fi flips between
+        # `signal` and `ap` clustering; Bonjour flips between the
+        # default `service`-row mode and `by-host` mode that folds a
+        # host's multiple advertised services into one row's services
+        # column. BLE has no sort cycle today; pressing `s` there is
+        # a no-op rather than crashing.
+        if self._view_mode == "mdns":
+            self._bonjour_sort_mode = (
+                "by-host" if self._bonjour_sort_mode == "service"
+                else "service"
+            )
+            self.sub_title = self._build_subtitle()
+            self._refresh_mdns_panel()
+            return
         self._sort_mode = "ap" if self._sort_mode == "signal" else "signal"
         self.sub_title = self._build_subtitle()
         # Rebuild the scan panel immediately so the user sees the change

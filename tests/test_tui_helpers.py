@@ -377,9 +377,12 @@ def test_ble_vendors_line_top_four_plus_unknown():
     text = _ble_vendors_line(devices).plain
     assert "Apple, Inc. 4" in text
     assert "Xiaomi Inc. 2" in text
-    # Unknown (no vendor) gets a separate "? N" tag rather than being
-    # silently dropped, so the user sees the full picture.
-    assert "? 3" in text
+    # Unknown (no vendor) gets a separate "(unknown) N" tag rather
+    # than being silently dropped, so the user sees the full picture.
+    # Previously this was rendered as "? N" — that reads as a typo,
+    # the column convention is "(unknown)".
+    assert "(unknown) 3" in text
+    assert "? 3" not in text
 
 
 def test_ble_vendors_line_annotates_folded_rotation_count():
@@ -1899,3 +1902,306 @@ def test_bonjour_cross_surface_ble_via_hostname_skipped_for_non_apple_host():
     ble = _BLERow(type="Nearby Info", rssi_dbm=-44)
     body = _bonjour_detail_cross_surface(d, latest_ble=[ble])
     assert "Cross-surface" not in body
+
+# --- BLEDetailScreen rendering --------------------------------------
+
+
+def _ble_detail_text(device, history=None):
+    """Construct a BLEDetailScreen and return the rendered body as a
+    plain string. Mirrors `_wifi_detail_text` / `_bonjour_detail_text`.
+    """
+    from diting.tui import BLEDetailScreen
+    screen = BLEDetailScreen(
+        device=device,
+        history=history,
+    )
+    return screen._render_body().plain
+
+
+def test_ble_detail_services_empty_state_has_no_trailing_emdash():
+    """`_section_services` used to call `_label(name, None)` which
+    appends an em-dash for "no value"; the result was the visible
+    string `(none advertised)—`. Now it renders the placeholder as a
+    standalone line and no em-dash should appear on that line."""
+    d = _ble_dev(services=())  # no advertised services
+    body = _ble_detail_text(d)
+    assert "(none advertised)" in body
+    # Find the line carrying the placeholder and assert no em-dash
+    # appears on it. (Em-dashes might exist on OTHER lines, e.g.
+    # the Identity 'type —' row when type is None — those are
+    # legitimately label-with-empty-value.)
+    placeholder_lines = [
+        line for line in body.splitlines() if "(none advertised)" in line
+    ]
+    assert placeholder_lines
+    assert all("—" not in line for line in placeholder_lines)
+
+
+def test_ble_detail_manufacturer_empty_state_has_no_trailing_emdash():
+    """Same em-dash regression on `_section_manufacturer_data`. The
+    section only renders when type or device_class is non-None (else
+    the caller skips it); we set device_class to trigger entry, leave
+    vendor_id / manufacturer_hex None to hit the placeholder branch."""
+    d = _ble_dev(
+        vendor=None, vendor_id=None,
+        device_class="iPhone",
+    )
+    body = _ble_detail_text(d)
+    assert "(no manufacturer-specific data)" in body
+    placeholder_lines = [
+        line for line in body.splitlines()
+        if "(no manufacturer-specific data)" in line
+    ]
+    assert placeholder_lines
+    assert all("—" not in line for line in placeholder_lines)
+
+
+def test_ble_detail_extra_uuids_empty_state_has_no_trailing_emdash():
+    """The Extra UUID lists section is skipped entirely when both
+    solicited and overflow lists are empty. No heading orphan, no
+    label/em-dash artefact."""
+    d = _ble_dev()  # default has no solicited / overflow UUIDs
+    body = _ble_detail_text(d)
+    assert "Extra UUID lists" not in body
+
+
+# --- ConnectionPanel Tx Rate (idle) annotation ----------------------
+
+
+def _render_connection_panel_text(conn, inv=None):
+    """Construct a ConnectionPanel, call its `_paint` directly, and
+    capture whatever was passed to `self.update`. Returns the plain
+    text of the rendered Group."""
+    from diting.tui import ConnectionPanel
+    from diting.network import NetworkInventory
+    panel = ConnectionPanel()
+    captured: list = []
+    panel.update = lambda renderable: captured.append(renderable)  # type: ignore[assignment]
+    panel._paint(conn, inv or NetworkInventory(aps=()))
+    assert captured, "panel._paint did not call self.update"
+    rendered = captured[-1]
+    # The renderable is a Rich Group of Text rows. Flatten it to text.
+    parts: list[str] = []
+    for row in getattr(rendered, "renderables", [rendered]):
+        if hasattr(row, "plain"):
+            parts.append(row.plain)
+        else:
+            parts.append(str(row))
+    return "\n".join(parts)
+
+
+def _conn_full(**overrides):
+    """Connection factory for ConnectionPanel tests — distinct from
+    the smaller `_conn` factory at the top of this file (which is
+    optimised for merge / link-score tests). Renamed to avoid
+    silently shadowing it at module scope."""
+    from diting.models import Connection
+    base = dict(
+        ssid="tedo_5G",
+        bssid="40:fe:95:8a:3c:58",
+        rssi_dbm=-74,
+        noise_dbm=-94,
+        tx_rate_mbps=144.0,
+        channel=40,
+        channel_width_mhz=80,
+        channel_band="5 GHz",
+        phy_mode="802.11ax",
+        security="WPA2 Personal",
+        mcs_index=3,
+        nss=1,
+        timestamp=datetime(2026, 5, 17, 14, 5, tzinfo=timezone.utc),
+        interface_mac="84:2f:57:9b:15:59",
+        country_code="CN",
+        ip_address="192.168.124.5",
+        router_ip="192.168.124.1",
+        max_link_speed_mbps=867,
+        tx_rate_idle=False,
+    )
+    base.update(overrides)
+    return Connection(**base)
+
+
+def test_connection_panel_renders_tx_idle_annotation():
+    """`Connection.tx_rate_idle=True` makes the Tx / Max row append
+    " (idle)" after the Tx value so the field reads
+    `144.0 Mbps (idle)  /  867 Mbps`. Stops the flicker between
+    `144 Mbps` and `n/a` on a stable association."""
+    body = _render_connection_panel_text(_conn_full(tx_rate_idle=True))
+    assert "(idle)" in body
+    assert "144.0 Mbps" in body
+
+
+def test_connection_panel_no_idle_annotation_when_flag_false():
+    body = _render_connection_panel_text(_conn_full(tx_rate_idle=False))
+    assert "(idle)" not in body
+    assert "144.0 Mbps" in body
+
+
+# --- BonjourPanel by-host mode + diagnostics label parity -----------
+
+
+def _bd_mock(*, vendor, name, host, category, service_type, last_seen,
+             addresses=()):
+    """Minimal BonjourDevice-shaped object for panel-mode tests.
+
+    A real `BonjourDevice` has many more fields; the renderer touches
+    just `vendor / name / host / category / service_type / last_seen`
+    (and `addresses` as a fallback host key), so a lightweight namespace
+    is enough."""
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        vendor=vendor,
+        name=name,
+        host=host,
+        category=category,
+        service_type=service_type,
+        last_seen=last_seen,
+        addresses=tuple(addresses),
+    )
+
+
+def test_bonjour_panel_by_host_mode_folds_services_alphabetically():
+    """A host that announces multiple services collapses to one row
+    whose services column starts with the alphabetically-first short
+    name. The services-column width can truncate the tail; the prefix
+    order is the contract."""
+    from diting.tui import _bonjour_by_host_rows
+    now = datetime(2026, 5, 17, 14, 5, tzinfo=timezone.utc)
+    # Two short categories that both fit so we can assert full strings
+    # without the column truncating either.
+    base = dict(
+        vendor="Apple, Inc.", name="Blue Pod._airplay._tcp.local.",
+        host="Blue-Pod.local.", last_seen=now,
+    )
+    devs = [
+        _bd_mock(category="HomeKit",
+                 service_type="_hap._tcp.local.", **base),
+        _bd_mock(category="AirPlay",
+                 service_type="_airplay._tcp.local.", **base),
+    ]
+    rows = _bonjour_by_host_rows(devs, now)
+    assert len(rows) == 1
+    text, key = rows[0]
+    assert key == "Blue-Pod"
+    body = text.plain
+    # Alphabetical: AirPlay before HomeKit.
+    air_idx = body.index("AirPlay")
+    homekit_idx = body.index("HomeKit")
+    assert air_idx < homekit_idx
+
+
+def test_bonjour_panel_by_host_multiple_hosts_freshest_first():
+    """`by-host` mode sorts rows newest-freshest-host first so a
+    re-advertising HomePod surfaces to the top of the panel."""
+    from diting.tui import _bonjour_by_host_rows
+    base_now = datetime(2026, 5, 17, 14, 5, tzinfo=timezone.utc)
+    older = _bd_mock(
+        vendor="Apple, Inc.", name="Red Pod._airplay._tcp.local.",
+        host="Red-Pod.local.", category="AirPlay",
+        service_type="_airplay._tcp.local.",
+        last_seen=base_now - timedelta(seconds=120),
+    )
+    newer = _bd_mock(
+        vendor="Apple, Inc.", name="Blue Pod._airplay._tcp.local.",
+        host="Blue-Pod.local.", category="AirPlay",
+        service_type="_airplay._tcp.local.",
+        last_seen=base_now,
+    )
+    rows = _bonjour_by_host_rows([older, newer], base_now)
+    assert [k for _, k in rows] == ["Blue-Pod", "Red-Pod"]
+
+
+def test_bonjour_panel_by_host_truncates_long_services_with_ellipsis():
+    """A host with many service announces produces a folded services
+    string longer than the column width; `fit_cells` truncates it with
+    an ellipsis instead of overflowing into the next column."""
+    from diting.tui import _bonjour_by_host_rows, _COL_MDNS_SERVICES
+    now = datetime(2026, 5, 17, 14, 5, tzinfo=timezone.utc)
+    long_cats = [
+        "AirPlay", "AirPlay audio", "Apple Companion",
+        "HomeKit", "Printer", "File share", "Remote audio",
+    ]
+    devs = [
+        _bd_mock(
+            vendor="Apple, Inc.",
+            name=f"Pod._svc{i}._tcp.local.",
+            host="Pod.local.",
+            category=cat,
+            service_type=f"_svc{i}._tcp.local.",
+            last_seen=now,
+        )
+        for i, cat in enumerate(long_cats)
+    ]
+    rows = _bonjour_by_host_rows(devs, now)
+    assert len(rows) == 1
+    body = rows[0][0].plain
+    # The full joined string would be > 60 chars; the column is
+    # ~16 cells. Truncated form ends with an ellipsis.
+    assert "…" in body
+
+
+def test_bonjour_panel_s_key_cycles_modes_in_app_state():
+    """The app-level state cycles `service → by-host → service` when
+    the active view is `mdns`. This test exercises the state-machine
+    half of the binding without spinning up Textual's full app loop;
+    the full keystroke path is covered by the snapshot regression."""
+    from diting.tui import DitingApp
+
+    class _StubBackend:
+        def get_connection(self): return None
+        def scan(self): return []
+        def force_reroam(self): return True
+
+    app = DitingApp(_StubBackend(), inv=None)
+    app._view_mode = "mdns"
+    assert app._bonjour_sort_mode == "service"
+    # Patch out the refresh; we only care about state, not Textual
+    # query_one calls.
+    app._refresh_mdns_panel = lambda: None
+    app._build_subtitle = lambda: ""
+    app.action_cycle_sort()
+    assert app._bonjour_sort_mode == "by-host"
+    app.action_cycle_sort()
+    assert app._bonjour_sort_mode == "service"
+
+
+def test_bonjour_panel_s_key_in_wifi_view_does_not_touch_bonjour_mode():
+    """Pressing `s` while on the Wi-Fi view cycles `_sort_mode`
+    (signal ↔ ap), NOT the Bonjour-side mode. Keeps the two cycles
+    independent."""
+    from diting.tui import DitingApp
+
+    class _StubBackend:
+        def get_connection(self): return None
+        def scan(self): return []
+        def force_reroam(self): return True
+
+    app = DitingApp(_StubBackend(), inv=None)
+    app._view_mode = "wifi"
+    app._refresh_scan_panel = lambda: None
+    app._build_subtitle = lambda: ""
+    before = app._bonjour_sort_mode
+    app.action_cycle_sort()
+    assert app._bonjour_sort_mode == before
+
+
+def test_mdns_diagnostics_top_vendors_uses_unknown_label():
+    """The "Top vendors" line labels the unresolved bucket as
+    `(unknown) N` instead of `? N` so it matches the column
+    placeholder and reads as a sensible English sentence."""
+    from diting.tui import _bonjour_diagnostic_lines
+
+    class _D:
+        def __init__(self, vendor, category):
+            self.vendor = vendor
+            self.category = category
+
+    devices = (
+        [_D("Apple, Inc.", "AirPlay") for _ in range(16)]
+        + [_D(None, "HTTP") for _ in range(5)]
+    )
+    rows = _bonjour_diagnostic_lines(devices)
+    joined = "".join(r.plain for r in rows)
+    assert "(unknown) 5" in joined
+    # The literal `?` glyph must not appear in this bucket's label.
+    assert "? 5" not in joined

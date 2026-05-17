@@ -168,6 +168,15 @@ class MacOSWiFiBackend(WiFiBackend):
         # fields like country code that are TCC-redacted in the Python
         # process but visible to the helper bundle.
         self._helper_iface_meta: dict = {}
+        # Last non-zero `transmitRate()` observed for the current
+        # association, scoped to the (ssid, bssid) pair. When the
+        # next poll on the same association reports 0, the backend
+        # substitutes this cached value and flags `tx_rate_idle=True`
+        # so the TUI can render "144.0 Mbps (idle) / 867 Mbps" rather
+        # than flickering to "n/a" when the radio happens to be idle
+        # mid-poll. The cache is invalidated on (ssid, bssid) change.
+        self._last_tx_rate_mbps: float | None = None
+        self._last_tx_rate_key: tuple[str | None, str | None] = (None, None)
 
     def _interface(self):
         return self._client.interface()
@@ -212,12 +221,17 @@ class MacOSWiFiBackend(WiFiBackend):
         mcs = _safe_call(iface, "mcsIndex")
         nss = _safe_call(iface, "numberOfSpatialStreams")
         max_link = _safe_call(iface, "maximumLinkSpeed")
+        tx_rate_mbps, tx_rate_idle = self._resolve_tx_rate(
+            ssid=ssid, bssid=bssid,
+            observed=_maybe_float(iface.transmitRate()),
+        )
         return Connection(
             ssid=ssid,
             bssid=bssid,
             rssi_dbm=_maybe_int(iface.rssiValue()),
             noise_dbm=_maybe_int(iface.noiseMeasurement()),
-            tx_rate_mbps=_maybe_float(iface.transmitRate()),
+            tx_rate_mbps=tx_rate_mbps,
+            tx_rate_idle=tx_rate_idle,
             channel=ch_num,
             channel_width_mhz=ch_width,
             channel_band=ch_band,
@@ -240,6 +254,28 @@ class MacOSWiFiBackend(WiFiBackend):
             router_ip=_get_default_router(),
             max_link_speed_mbps=_maybe_int(max_link),
         )
+
+    def _resolve_tx_rate(
+        self, *, ssid: str | None, bssid: str | None,
+        observed: float | None,
+    ) -> tuple[float | None, bool]:
+        # See wifi-scanning spec, "MacOSWiFiBackend SHALL cache the
+        # last non-zero tx_rate_mbps per association". The cache is
+        # keyed by (ssid, bssid); a roam invalidates it. On the same
+        # association, an observed zero substitutes in the cached
+        # value with tx_rate_idle=True so the Connection panel can
+        # render "(idle)" instead of flickering to "n/a".
+        key = (ssid, bssid)
+        if key != self._last_tx_rate_key:
+            self._last_tx_rate_key = key
+            self._last_tx_rate_mbps = observed if observed else None
+            return observed, False
+        if observed:
+            self._last_tx_rate_mbps = observed
+            return observed, False
+        if self._last_tx_rate_mbps is not None:
+            return self._last_tx_rate_mbps, True
+        return None, False
 
     def force_reroam(self) -> bool:
         """Cycle WiFi power so macOS re-associates with the strongest
@@ -335,10 +371,13 @@ class MacOSWiFiBackend(WiFiBackend):
         out: list[ScanResult] = []
         for net in result:
             ch_num, ch_width, ch_band = _channel_fields(net.wlanChannel())
+            bssid = net.bssid()
+            if isinstance(bssid, str):
+                bssid = bssid.lower() or None
             out.append(
                 ScanResult(
                     ssid=net.ssid(),
-                    bssid=net.bssid(),
+                    bssid=bssid,
                     rssi_dbm=_maybe_int(net.rssiValue()),
                     noise_dbm=_maybe_int(net.noiseMeasurement()),
                     channel=ch_num,
@@ -349,4 +388,4 @@ class MacOSWiFiBackend(WiFiBackend):
                     timestamp=ts,
                 )
             )
-        return out
+        return _helper._dedup_by_bssid(out)

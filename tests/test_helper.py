@@ -133,6 +133,65 @@ def test_scan_lowercases_bssid():
     assert results[0].bssid == "aa:bb:cc:dd:ee:ff"
 
 
+def test_scan_dedup_by_bssid_keeps_strongest_rssi():
+    """CoreWLAN can return the same BSSID multiple times per scan when
+    the radio's dwell crosses the beacon on different channels.
+    `_helper.scan` collapses those to one row, keeping the strongest
+    RSSI."""
+    payload = {
+        "schema": 2,
+        "interface": {"name": "en0"},
+        "networks": [
+            {"ssid": "a", "bssid": "aa:bb:cc:dd:ee:ff", "rssi_dbm": -75},
+            {"ssid": "a", "bssid": "aa:bb:cc:dd:ee:ff", "rssi_dbm": -72},
+            {"ssid": "a", "bssid": "aa:bb:cc:dd:ee:ff", "rssi_dbm": -80},
+        ],
+    }
+    raw = json.dumps(payload)
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
+        results, _ = _helper.scan("/fake/binary")
+    assert len(results) == 1
+    assert results[0].rssi_dbm == -72
+
+
+def test_scan_dedup_preserves_insertion_order():
+    payload = {
+        "schema": 2,
+        "interface": {"name": "en0"},
+        "networks": [
+            {"ssid": "a", "bssid": "aa:bb:cc:dd:ee:01", "rssi_dbm": -60},
+            {"ssid": "b", "bssid": "bb:bb:cc:dd:ee:02", "rssi_dbm": -65},
+            {"ssid": "a", "bssid": "aa:bb:cc:dd:ee:01", "rssi_dbm": -70},
+        ],
+    }
+    raw = json.dumps(payload)
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
+        results, _ = _helper.scan("/fake/binary")
+    assert [r.bssid for r in results] == [
+        "aa:bb:cc:dd:ee:01",
+        "bb:bb:cc:dd:ee:02",
+    ]
+
+
+def test_scan_dedup_skips_none_bssid_rows():
+    """Redacted rows (bssid=None) are anonymous — each one is a
+    distinct scan observation and the dedup key cannot collapse
+    them. All such rows pass through verbatim."""
+    payload = {
+        "schema": 2,
+        "interface": {"name": "en0"},
+        "networks": [
+            {"rssi_dbm": -60, "channel": 36},
+            {"rssi_dbm": -65, "channel": 48},
+        ],
+    }
+    raw = json.dumps(payload)
+    with patch("diting._helper.subprocess.run", return_value=_mock_run(raw)):
+        results, _ = _helper.scan("/fake/binary")
+    assert len(results) == 2
+    assert all(r.bssid is None for r in results)
+
+
 def test_scan_redacted_row_keeps_bssid_none():
     """When the helper has no permission, ssid/bssid keys are absent
     from each network. The dataclass slots stay None."""

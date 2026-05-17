@@ -101,6 +101,7 @@
 | ≥ 2 历史样本时显示 RSSI sparkline | `test_tui_helpers.py::test_rssi_sparkline_empty_history_returns_empty`、`::test_rssi_sparkline_single_sample_returns_empty`、`::test_rssi_sparkline_constant_rssi_renders_flat_line`、`::test_rssi_sparkline_maps_extremes_to_top_and_bottom_blocks`、`::test_rssi_sparkline_renders_one_char_per_sample`（渲染）；`test_ble.py::test_history_records_and_returns_samples_in_order`（数据通路） |
 | Esc / `i` / `q` 关闭 modal 不动选择 | (人工；模态 binding 是声明式的) |
 | 距离估算标 "rough free-space" | `test_tui_helpers.py::test_free_space_distance_m_at_one_meter_returns_one`、`::test_free_space_distance_m_doubles_at_minus_six_db`、`::test_free_space_distance_m_zero_rssi_returns_none` |
+| Services / Extra UUID lists 空状态以独立的 dim-italic 占位行渲染（不走 `_label`，避免拖一个 em-dash 尾巴） | `test_tui_helpers.py::test_ble_detail_services_empty_state_has_no_trailing_emdash`、`::test_ble_detail_extra_uuids_empty_state_has_no_trailing_emdash` |
 
 ### `bonjour-detail-modal`
 
@@ -271,6 +272,8 @@
 | wifi → BLE 这一步就开始预热 Bonjour，使得第二次按 `n`（BLE → mDNS）不再卡顿 | `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |
 | Bonjour 初始化跑在 worker 线程上（`asyncio.to_thread`），import 与 `Zeroconf()` socket 都不阻塞事件循环 | `test_mdns.py::test_start_browser_runs_on_worker_thread`, `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |
 | consumer 任务异常退出时会清掉 `_mdns_poller`，下一次按 `n` 能重建 | `test_tui_smoke.py::test_bonjour_consumer_task_resets_poller_on_unexpected_error` |
+| `BonjourPanel` 支持 `by-host` 排序模式，把同一 host 的多个服务折叠成一列逗号串；`s` 在 `service` → `by-host` → `service` 之间循环 | `test_tui_helpers.py::test_bonjour_panel_by_host_mode_folds_services_alphabetically`、`::test_bonjour_panel_s_key_cycles_modes`、`::test_bonjour_panel_by_host_truncates_long_services_with_ellipsis`；`tui_snapshot.py::bonjour_by_host_mode`（回归） |
+| mDNS "Top vendors" 诊断行的未知厂商桶渲染为 `(unknown) N`，不再写成 `? N` | `test_tui_helpers.py::test_mdns_diagnostics_top_vendors_uses_unknown_label` |
 
 ### `roam-detection`
 
@@ -329,6 +332,9 @@
 | 尊重 CoreWLAN 限流（≥ 7s） | (gap — poller cadence 是配置项，没单测) |
 | 哨兵 RSSI 行在到 panel 之前过滤 | `test_ble.py::test_rssi_unavailable_sentinel_filtered`、`::test_rssi_zero_or_positive_dbm_treated_as_invalid`（BLE 侧；`test_helper.py::test_scan_zero_noise_and_zero_rssi_become_none` Wi-Fi 侧） |
 | CoreWLAN 漏掉的当前 BSSID 由 poller 合并进结果 | `test_tui_helpers.py::test_merge_current_prepends_when_scan_omits_associated_ap`、`::test_merge_current_replaces_when_scan_already_has_ap`、`::test_merge_current_no_op_when_disconnected`、`::test_merge_current_no_op_when_connection_has_no_bssid`、`::test_merge_current_case_insensitive_match` |
+| 扫描结果按 BSSID 去重，相同 BSSID 多次出现时保留最强 RSSI 的行 | `test_helper.py::test_scan_dedup_by_bssid_keeps_strongest_rssi`、`::test_scan_dedup_preserves_insertion_order`、`::test_scan_dedup_skips_none_bssid_rows` |
+| Tx Rate 空闲缓存：当 `transmitRate()` 返回 0 且仍在同一 AP 时回填上一次非零值 | `test_macos_backend.py::test_tx_rate_idle_cache_substitutes_on_zero_same_ap`、`::test_tx_rate_idle_cache_clears_on_bssid_change`、`::test_tx_rate_idle_flag_false_on_first_zero_with_no_history` |
+| Connection 面板在 `tx_rate_idle=True` 时渲染 `（空闲）` 注解 | `test_tui_helpers.py::test_connection_panel_renders_tx_idle_annotation`、`::test_connection_panel_no_idle_annotation_when_flag_false` |
 
 ---
 

@@ -42,6 +42,13 @@ class Connection:
     ip_address: str | None = None
     router_ip: str | None = None
     max_link_speed_mbps: int | None = None
+    # When True, ``tx_rate_mbps`` is a cached value substituted in for
+    # a poll that observed an idle radio (transmitRate() == 0). The
+    # TUI renders this as "144.0 Mbps (idle) / 867 Mbps" instead of
+    # "n/a / 867 Mbps", which flickers on an otherwise-stable
+    # association. Cache lives on the backend, scoped to (ssid, bssid)
+    # — see MacOSWiFiBackend.
+    tx_rate_idle: bool = False
 
 
 @dataclass(frozen=True, slots=True)

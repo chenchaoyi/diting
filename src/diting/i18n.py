@@ -200,10 +200,13 @@ _ZH: dict[str, str] = {
 
     # ---- header subtitle ----
     "sort: {mode}": "排序：{mode}",
+    "  · sort: {mode}": "  · 排序：{mode}",
     "scan {n}s": "扫描间隔 {n}s",
     "PAUSED": "已暂停",
     "ap": "AP",
     "signal": "信号",
+    "service": "service",
+    "by-host": "按 host",
     "view: {mode}": "视图：{mode}",
     "wifi": "Wi-Fi",
     "ble": "BLE",
@@ -216,6 +219,7 @@ _ZH: dict[str, str] = {
     "PHY / Sec": "PHY / 加密",
     "Tx / Max": "Tx / Max",
     "{tx}  /  {max}": "{tx}  /  {max}",
+    "(idle)": "（空闲）",
     "MCS / NSS": "MCS / NSS",
     "{mcs}  ·  {nss}": "{mcs}  ·  {nss}",
     " streams": " 空间流",
@@ -295,7 +299,6 @@ _ZH: dict[str, str] = {
     "Closest  ": "最强  ",
     "(none)": "(无)",
     "(anonymous)": "(匿名)",
-    "? {n}": "? {n}",
     "(+{n} folded)": "(已折叠 {n})",
     "{n} other": "{n} 其他",
     # Service-category labels for ble.py.service_category() return values

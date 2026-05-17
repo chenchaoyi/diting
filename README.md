@@ -195,7 +195,7 @@ With no override, `diting` autodetects the system locale —
 | `q` | quit |
 | `p` | pause / resume polling |
 | `r` | force a rescan now (CoreWLAN ~5 s throttle still applies) |
-| `s` | cycle scan sort: by AP ↔ by signal |
+| `s` | cycle sort — Wi-Fi: by AP ↔ by signal; Bonjour: service ↔ by-host |
 | `n` | cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour |
 | `c` | force re-roam — cycle Wi-Fi off/on so macOS re-picks the strongest BSSID |
 | `m` | open / close the Events modal — last 100 roam / stir / latency / loss / link events |
