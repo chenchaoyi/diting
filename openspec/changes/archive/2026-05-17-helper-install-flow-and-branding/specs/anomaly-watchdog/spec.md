@@ -1,6 +1,6 @@
 ## MODIFIED Requirements
 
-### Requirement: `--notify` SHALL raise a macOS Notification Centre alert for every anomaly event type, dispatched via the diting helper bundle
+### Requirement: `--notify` SHALL raise a macOS Notification Centre alert for every anomaly event type
 With `--notify` set on either `diting monitor` or the default TUI subcommand `diting`, the running process SHALL raise a macOS Notification Centre alert for each of the three anomaly event types — `rf_stir`, `latency_spike`, `loss_burst` — subject to the per-event severity gate and the silence-window debounce defined in subsequent Requirements. The JSONL event stream (emitted by `monitor` to stdout / `--out`, or by the TUI when `--log` is set) SHALL NOT be filtered by the watchdog; only the OS-notification side-effect is debounced. Both entry points SHALL use the same shared watchdog module so behaviour is identical from the user's perspective.
 
 The notification SHALL be dispatched via the `diting-tianer notify` subcommand of the installed helper bundle (not via `osascript`). This ensures the notification carries the diting logo (the bundle's icon) and a stable bundle identity in Notification Centre. If the helper binary cannot be resolved (e.g. the helper bundle is missing or the bundled scan path is broken), the watchdog SHALL silently skip the notification — no fallback to `osascript`, no error propagated into the TUI.
