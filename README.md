@@ -419,6 +419,16 @@ ordering is intent.
 - **Auto-roam mode.** Gated, conservative. When a clearly-better
   same-SSID candidate persists ≥ N seconds, cycle the radio
   automatically — sticky-AP pain hands-free.
+- **Pin-a-BSSID join.** Extend the `j` action on the Wi-Fi detail
+  modal so the user can deliberately associate to one specific
+  BSSID within an ESS (right now CoreWLAN's
+  `associate(toNetwork:password:)` accepts the SSID and the OS
+  picks the BSSID — fine for normal use, useless for "is it this
+  specific radio that's flaky?"). Likely path: temporarily disable
+  auto-join + 802.11r/k/v roaming for the duration of the
+  association, or fall through to a per-BSSID `CWConfiguration`
+  profile. Diagnostics value — lets a user A/B their two ceiling
+  APs without walking between rooms.
 
 ### Further out
 
