@@ -883,6 +883,33 @@ def _regression_scenarios() -> list[Scenario]:
 
 # ---------- runner ----------
 
+
+def _prefer_installed_helper_for_audit() -> None:
+    """For /tui-audit explore mode, pin DITING_HELPER to the installed
+    bundle when one is present.
+
+    Why: ``_helper.find_helper()`` prefers ``<repo>/helper/diting-
+    tianer.app`` (so a contributor's local rebuild wins over a stale
+    /Applications drop). That preference is correct for normal
+    development, but for an audit run it bites: the repo-local bundle
+    has a different cdhash from the released one the user has
+    actually granted Location + Bluetooth to, so ``locationd`` fires
+    a fresh permission prompt on every scan tick.
+
+    Honour an explicit ``DITING_HELPER`` override the user already
+    set; only pin when the env var is empty AND the installer's drop
+    exists at the canonical ``~/Library/Application Support/diting/``
+    path.
+    """
+    if os.environ.get("DITING_HELPER"):
+        return
+    installed = Path(
+        "~/Library/Application Support/diting/diting-tianer.app"
+    ).expanduser()
+    if installed.is_dir():
+        os.environ["DITING_HELPER"] = str(installed)
+
+
 def _explore_scenarios() -> list[Scenario]:
     """Real-backend scenarios for `/tui-audit` exploration runs.
 
@@ -908,6 +935,7 @@ def _explore_scenarios() -> list[Scenario]:
     from diting.network import load_inventory
     from diting.tui import DitingApp
 
+    _prefer_installed_helper_for_audit()
     helper_path = _helper.find_helper() or ""
 
     def _build_live() -> "Any":
