@@ -10,6 +10,41 @@
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-05-17
+
+针对 v1.1.0 真实环境跑 `/tui-audit` 之后的抛光。三个 bug + 两个
+显示改进。
+
+### 修复
+- **Wi-Fi 扫描列表不再把同一个 BSSID 显示多次。** CoreWLAN 的扫描
+  可能在多个 dwell 上看到同一个 beacon 各返回一次；Python 端现在
+  按小写 BSSID 去重，保留 RSSI 最强的那一行。「Nearby BSSIDs (N)」
+  的计数反映的是去重后的数量。
+- **BLE 详情的 Services / Manufacturer data 空状态不再拖一根
+  em-dash 尾巴。** 之前 `(none advertised)` / `(no manufacturer-
+  specific data)` 这类占位文本被当作「label/value」走，
+  helper 在 value 为 None 时会自动追一个 em-dash。现在它们以
+  独立的 dim-italic 行渲染，干净利落。
+- **Connection 面板的 Tx Rate 不再在两次扫描之间闪 `n/a`。**
+  `MacOSWiFiBackend` 现在按 `(ssid, bssid)` 缓存最近一次非零的
+  `transmitRate()`；当下一次 poll 在同一 AP 上返回 0（射频瞬时
+  空闲），把缓存值带回来、附上 `(idle)` 注解。漫游或重连会清掉
+  缓存。
+
+### 新增
+- **Bonjour 面板新增 `by-host` 排序模式。** 在 mDNS 视图按 `s`
+  现在在 `service ↔ by-host` 之间切换。`by-host` 模式把一个 host
+  的多条 announce 折叠成一行，services 列变成逗号串
+  (`AirPlay, AirPlay audio, Apple Companion, HomeKit`)，过长时
+  用 `…` 截断。家里一堆 HomePod、每个广播 4 个服务那种场景
+  特别有用。
+
+### 改动
+- **未知厂商桶的标签统一为 `(unknown) N`。** mDNS 和 BLE
+  「Top vendors」诊断行里的未解析厂商数量，现在写成
+  `(unknown) N`，跟列里那个未解析占位符一致——之前的
+  `? N` 一眼看上去像 typo。
+
 ## [1.1.0] — 2026-05-17
 
 Wi-Fi 面板长出两只手。现在可以直接在某个 SSID 的详情面板里按 `j`

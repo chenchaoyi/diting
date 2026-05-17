@@ -11,6 +11,45 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-05-17
+
+Polish pass driven by a real-environment `/tui-audit` against the
+v1.1.0 build. Three bugs and two display improvements.
+
+### Fixed
+- **Wi-Fi scan no longer shows the same BSSID multiple times.**
+  CoreWLAN's scan can return the same BSSID across multiple
+  scan-dwell instances; the Python side now dedups by lowercase
+  BSSID and keeps the strongest RSSI. The "Nearby BSSIDs (N)"
+  count reflects distinct BSSIDs.
+- **BLE detail Services / Manufacturer-data placeholders no
+  longer carry a stray em-dash.** Empty states like
+  `(none advertised)` and `(no manufacturer-specific data)` were
+  being rendered through the label / value helper, which appends
+  an em-dash when value is None. They're now standalone
+  dim-italic lines.
+- **Connection panel's Tx Rate field no longer flickers to
+  `n/a` between scans.** `MacOSWiFiBackend` caches the last
+  non-zero `transmitRate()` per association; when a poll on the
+  same `(ssid, bssid)` comes back zero (radio idle), the cached
+  value is surfaced with an `(idle)` annotation. The cache
+  invalidates on roam / reassociate.
+
+### Added
+- **`by-host` sort mode for the Bonjour panel.** Pressing `s`
+  while on the mDNS view now cycles `service ↔ by-host`. The
+  by-host mode collapses each host's announces into one row
+  with a comma-joined services column (`AirPlay, AirPlay audio,
+  Apple Companion, HomeKit`), `…`-truncated when long. Useful
+  for an environment full of HomePods that each advertise 4
+  services and clutter the default per-service list.
+
+### Changed
+- **Unknown-vendor bucket label parity.** Both the mDNS and BLE
+  Top-vendors diagnostics line now read `(unknown) N` for
+  unresolved-vendor counts, matching the column placeholder.
+  Previously rendered as `? N`, which read as a typo.
+
 ## [1.1.0] — 2026-05-17
 
 The Wi-Fi panel grows two hands. You can now associate an SSID
