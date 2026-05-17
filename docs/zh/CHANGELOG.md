@@ -8,6 +8,57 @@
 [Semantic Versioning](https://semver.org/)。`v0.x` 阶段允许破坏性的次要
 行为变更。
 
+## [Unreleased]
+
+## [1.1.0] — 2026-05-17
+
+Wi-Fi 面板长出两只手。现在可以直接在某个 SSID 的详情面板里按 `j`
+让 diting 切过去；首次保存密码会落进 **登录钥匙串、并挂上 Touch ID
+ACL**，后续每次连回这个 SSID 只需要一次指纹，不再弹 admin 密码框。
+TUI 顶部也换成了带 logo 的品牌标题栏，外加一堆 helper 抛光和文案
+修复。
+
+### 新增
+- **从 Wi-Fi 详情面板加入网络（`j`）。** Wi-Fi 详情弹窗新加按键，
+  打开一个确认提示——里面会明确写「这一跳不是无缝的，大概有
+  2-5 秒断连」——确认之后由新加的 `diting-tianer associate`
+  helper 子命令完成关联。已保存密码的网络按一次 Touch ID 就连过去；
+  新网络会由 helper bundle 弹一个原生 macOS 密码 sheet（带「记住
+  这个网络」勾选框）。企业 / 802.1X 网络会被拒绝，提示用户先用
+  系统 Wi-Fi 菜单连一次。`c`（强制 re-roam）行为不变。详见
+  `openspec/changes/archive/2026-05-16-wifi-connect-from-detail/`。
+- **Wi-Fi 密码改存登录钥匙串，并由 Touch ID 守门。** helper 把自己
+  那份密码以 `diting Wi-Fi` 作为 service 命名空间存入登录钥匙串，
+  ACL 通过 `SecAccessControlCreateWithFlags(.userPresence, …)`
+  配置。有 Touch ID 的机器解锁时按指纹即可；没有 Touch ID 的机器
+  退回到 **登录密码**（不是 admin 密码）。之前的 PR 尝试直接读
+  Apple 自己的系统钥匙串 AirPort 项目，那条路要求每次都弹 admin
+  sheet，体验不可用。详见
+  `openspec/changes/archive/2026-05-17-wifi-keychain-touch-id/`。
+- **品牌标题栏。** TUI 顶部状态条改成扁平 band，挂上雷达 logo 和
+  `diting v<version>` —— 就是 `assets/logo-mark.svg` 里那只像素兽。
+
+### 修复
+- **网关不可达的文案。** 当网关 ICMP 探测没回应、但 WAN TCP 还能
+  通时，诊断行从误导性的「不可达」改成 `Router (ICMP 无响应)`
+  / `Router (no ICMP reply)`——很多家用路由器默认丢 ICMP echo，
+  但流量是能转发的。
+- **Tuya BLE 别名 + 「samples over <1s」。** Tuya 设备现在能通过
+  vendor 别名表转成短名（不再显示原始 IEEE 注册商字符串）；BLE 详情
+  里 RSSI 历史的页脚，时间跨度不足 1 秒时显示 `samples over <1s`，
+  不再显示 `samples over 0s`。
+- **`diting-tianer associate` 抛光。** `open` 的 outer→inner 重启
+  加上 `-g -n` 标志，连接过程中不再抢焦点；已经在目标 SSID 上时
+  直接 early-exit；CWKeychain 多签名兜底；钥匙串读写从私有
+  `CWKeychain` 选择子换成 `Security.framework` 的 `SecItem*`。
+
+### 迁移说明
+Touch ID 改造把已保存的 Wi-Fi 密码从 Apple 系统钥匙串迁到了 diting
+自己的登录钥匙串命名空间。升级后第一次连之前保存过的 SSID 时，会
+弹回密码 sheet 一次——确认密码（或者从系统 Wi-Fi 偏好里粘过来）
+后重新勾选「记住」就行。同时 `feat(macos-helper)!` 改动让 bundle 的
+cdhash 也变了，所以首次启动要重新授权一次 Location + 蓝牙 + 通知。
+
 ## [1.0.12] — 2026-05-16
 
 针对 v1.0.11 用户反馈的两个相关 helper bundle 修复：TUI 运行期间

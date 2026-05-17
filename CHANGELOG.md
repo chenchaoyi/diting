@@ -11,17 +11,67 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-05-17
+
+The Wi-Fi panel grows two hands. You can now associate an SSID
+directly from its detail modal (`j`), and on first save the
+credential goes into your **login keychain behind a Touch ID
+ACL** — every subsequent join is a single biometric tap rather
+than an admin-password sheet. The TUI also picks up a branded
+title bar, plus a stack of helper polish and display fixes.
+
 ### Added
 - **Join a Wi-Fi network from its detail page (`j`).** New binding
-  on the Wi-Fi detail modal opens a confirmation prompt — including
-  a "not hitless, ~2-5 s gap" warning — and on confirm associates
-  via a new `diting-tianer associate` helper subcommand. Networks
-  with a saved Keychain password join silently; new networks get
-  a native macOS password sheet rendered by the helper bundle
-  (with a "Remember this network" checkbox that writes back to
-  the System Keychain). Enterprise / 802.1X is refused with a
-  hint to use the system Wi-Fi menu once. `c` (force re-roam) is
-  unchanged. See `openspec/changes/wifi-connect-from-detail/`.
+  on the Wi-Fi detail modal opens a confirmation prompt —
+  including a "not hitless, ~2-5 s gap" warning — and on confirm
+  associates via a new `diting-tianer associate` helper
+  subcommand. Networks with a saved password join after a Touch
+  ID tap; new networks get a native macOS password sheet rendered
+  by the helper bundle (with a "Remember this network" checkbox).
+  Enterprise / 802.1X is refused with a hint to use the system
+  Wi-Fi menu once. `c` (force re-roam) is unchanged. See
+  `openspec/changes/archive/2026-05-16-wifi-connect-from-detail/`.
+- **Wi-Fi passwords live in the login keychain behind Touch ID.**
+  The helper persists its own copy of the password under the
+  `diting Wi-Fi` service namespace with a
+  `SecAccessControlCreateWithFlags(.userPresence, …)` ACL.
+  macOS unlocks it with Touch ID on capable hardware and falls
+  back to the **login** password (not the admin password) when
+  biometric is unavailable. Previous PRs tried to read Apple's
+  System-Keychain AirPort items directly — that path requires
+  an admin sheet on every call, which is unusable. See
+  `openspec/changes/archive/2026-05-17-wifi-keychain-touch-id/`.
+- **Branded title bar.** The top status line is now a flat band
+  carrying the radar mark + `diting v<version>` — the same
+  pixel-art beast you see in `assets/logo-mark.svg`.
+
+### Fixed
+- **Router unreachability copy.** When the Router probe gets no
+  ICMP reply but the WAN probe still works, the diagnostics line
+  reads `Router (no ICMP reply)` / `Router (ICMP 无响应)` instead
+  of the misleading "unreachable" — many home routers silently
+  drop ICMP echo but still forward traffic.
+- **Tuya BLE alias + "samples over <1s".** Tuya devices now
+  resolve via the vendor alias map (no more raw IEEE registrant
+  string), and the BLE detail's RSSI-history footer reads
+  `samples over <1s` instead of `samples over 0s` when the
+  history spans less than a second.
+- **`diting-tianer associate` polish.** `-g -n` flags on the
+  `open` outer→inner spawn so the helper doesn't focus-steal
+  during a join; early-exit when already on the target SSID;
+  multiple CWKeychain-signature fallbacks; Keychain READ/WRITE
+  goes through `Security.framework` `SecItem*` rather than the
+  private `CWKeychain` selectors.
+
+### Migration note
+The Touch ID change relocates saved Wi-Fi passwords from Apple's
+System Keychain to diting's own login-keychain namespace. On
+first join after upgrade, every previously-saved SSID will fall
+back to the password sheet once — confirm the password (or paste
+from the system Wi-Fi prefs) and tick "Remember" again. The
+helper bundle's cdhash also moves with the
+`feat(macos-helper)!` change, so first launch re-grants Location
++ Bluetooth + Notifications once.
 
 ## [1.0.12] — 2026-05-16
 
