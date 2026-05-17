@@ -10,12 +10,7 @@ panel, the events log, and the analyzer all assume the scan output
 matches this contract.
 ## Requirements
 ### Requirement: Each scanned BSSID SHALL carry RSSI, channel, band, security mode, and BSSID itself
-A scan result row SHALL include: `rssi_dbm` (int, negative), `channel`
-(int), `band` (one of `2.4G`, `5G`, `6G`), `security` (one of `OPEN`,
-`WPA2`, `WPA3`, `ENT`, `WPA2/WPA3`), `bssid` (lowercase
-colon-separated MAC), and `ssid` (string, possibly empty for hidden
-APs). Optional fields: `channel_width_mhz`, `noise_dbm`,
-`country_code`, `phy_modes`, `tx_rate_mbps`.
+A scan result row SHALL include: `rssi_dbm` (int, negative), `channel` (int), `band` (one of `2.4G`, `5G`, `6G`), `security` (one of `OPEN`, `WPA2`, `WPA3`, `ENT`, `WPA2/WPA3`), `bssid` (lowercase colon-separated MAC), and `ssid` (string, possibly empty for hidden APs). Optional fields: `channel_width_mhz`, `noise_dbm`, `country_code`, `phy_modes`, `tx_rate_mbps`. The associated-interface `Connection` snapshot (separate from scan rows) additionally carries `tx_rate_idle: bool` indicating whether the surfaced `tx_rate_mbps` is a cached value substituted in for an idle-radio poll (see the new `tx_rate` idle-cache requirement below).
 
 #### Scenario: A standard 5 GHz BSSID
 - **WHEN** the scan returns a row for "Meituan" on channel 36
@@ -23,7 +18,7 @@ APs). Optional fields: `channel_width_mhz`, `noise_dbm`,
 
 #### Scenario: A hidden AP
 - **WHEN** the scan returns a row with empty SSID
-- **THEN** `ssid` is `""` and the panel renders `(hidden)`
+- **THEN** the row's `ssid` is `""` (empty string), `bssid` is still populated, and the row participates in dedup like any other
 
 ### Requirement: When the helper is unavailable, scan results SHALL be REDACTED rather than missing
 diting SHALL surface the redacted-scan state explicitly with the
@@ -90,4 +85,19 @@ with the active link.
 #### Scenario: Scan misses the associated AP
 - **WHEN** the scan returns 8 BSSIDs but none match the current `Connection.bssid`
 - **THEN** the Nearby list shows 9 rows — the 8 scanned plus a synthetic "current" row populated from the Connection panel's data
+
+### Requirement: The `MacOSWiFiBackend` SHALL cache the last non-zero `tx_rate_mbps` per association and surface it as an "(idle)" value when the radio reports 0
+On every poll where the associated `(ssid, bssid)` is unchanged, the backend SHALL remember the most recent non-zero `tx_rate_mbps`. If a subsequent poll on the same association reports `0` (or `None`) for `transmitRate()`, the backend SHALL surface the cached value AND set `Connection.tx_rate_idle = True`. On a non-zero poll the backend SHALL clear the flag and surface the current rate verbatim. The cache SHALL be invalidated whenever the associated `(ssid, bssid)` changes (a roam to a different BSSID, association loss, reassociation to a new SSID).
+
+#### Scenario: Idle frame after a 144 Mbps frame on the same AP
+- **WHEN** poll N returns `transmitRate()=144_000_000` and poll N+1 returns `transmitRate()=0` for the same `(ssid, bssid)`
+- **THEN** poll N's `Connection` has `tx_rate_mbps=144.0`, `tx_rate_idle=False`; poll N+1's `Connection` has `tx_rate_mbps=144.0`, `tx_rate_idle=True`
+
+#### Scenario: Roam to a new BSSID drops the cache
+- **WHEN** poll N is on `bssid_a` with `tx_rate=144`, poll N+1 is on `bssid_b` with `transmitRate()=0`
+- **THEN** poll N+1's `Connection` has `tx_rate_mbps=None` and `tx_rate_idle=False` (no cached value to substitute in — the cache was scoped to `bssid_a`)
+
+#### Scenario: First poll on a fresh association with rate=0
+- **WHEN** the first poll after associate / launch reports `transmitRate()=0` and there is no prior non-zero observation
+- **THEN** `Connection.tx_rate_mbps=None`, `tx_rate_idle=False` (the flag is only set when a real cached value is being substituted in; surfacing `n/a` is still the right answer when nothing has ever been observed)
 

@@ -59,31 +59,33 @@ scroll offset are handled correctly.
 - **THEN** nothing happens (no modal opens, selection unchanged)
 
 ### Requirement: The modal SHALL render every `BLEDevice` field plus decoded payload
-The modal layout SHALL be a vertical sequence of sections, in this
-order, with sections omitted when their data is absent:
+The BLE detail modal SHALL surface, in order:
 
-1. **Identity** — name, vendor (with cid in dec/hex), type, device_class,
-   identifier, flags (connected / connectable)
-2. **Signal** — RSSI (with smoothed value when different), tx_power,
-   distance estimate (when both RSSI and tx_power available),
-   RSSI history sparkline (when ≥ 2 history samples)
-3. **Activity** — first seen, last seen (both as "Xs ago"),
-   ad_count + observed inter-ad interval, merged_count when > 1
-4. **Services** — list of service UUIDs with `service_category` resolution
-5. **Extra UUID lists** — solicited / overflow service UUIDs (when present)
-6. **Decoded payload** — output of `decode_all(d)` grouped by
-   protocol prefix (only present if any decoder fires)
-7. **Manufacturer data** — cid + vendor name + decoded type/device_class
-   labels + raw hex dump
-8. **Service data** — per-UUID hex dump
+1. **Identity** — name, vendor (alias + CID), type, device class, identifier (BLE address or RPA), flags (connectable / connected).
+2. **Signal** — RSSI (raw + smoothed), tx power, RSSI sparkline + min..max window.
+3. **Activity** — first seen, last seen, ad count + inter-ad interval, merged-RPA count.
+4. **Services** — list of service UUIDs with `service_category` resolution.
+5. **Decoded payload** — Apple Proximity / Continuity / Nordic-UART / Eddystone fields parsed by the decoder registry.
+6. **Manufacturer data** — CID lookup + hex-formatted raw bytes.
+7. **Extra UUID lists** — solicited / overflow service UUIDs.
+
+Sections with no data SHALL render a dim-italic placeholder line as a single self-contained line, NOT through the `_label(name, None)` helper. The `_label` helper appends an em-dash for "no value" — using it for placeholder strings produces a misleading "(none …)—" suffix. Affected sections: Services, Extra UUID lists, any other "other services on this host" / "no manufacturer data" placeholder text inside a section.
 
 #### Scenario: iPhone Nearby Info row
-- **WHEN** the user opens the modal on a `ccy iPhone 15 Pro Max` row
-- **THEN** all sections render except "Service data" (Apple Nearby Info doesn't use service-data); Decoded payload shows `nearby_info.*` keys
+- **WHEN** the user opens the modal on an iPhone advertising Apple Nearby Info (manufacturer data prefix `0x4c 0x00 0x10 …`)
+- **THEN** the Decoded payload section shows the nearby_info fields (action_code_hi, appleid_hash, class_byte_hex, device_class_lo, flags_lo, os_hint_hi, status_hex)
 
 #### Scenario: Connected Magic Keyboard row
-- **WHEN** the user opens the modal on a connected peripheral
-- **THEN** Signal section shows `—` for RSSI / tx_power (connected peripherals don't expose either), Activity section omits `ad count` (always 0 for connected), Manufacturer / Service data sections are absent
+- **WHEN** the user opens the modal on a connected peripheral with no advertising payload
+- **THEN** the Identity section flag list contains `connected`; the Activity section omits ad_count; Services lists the connected GATT services
+
+#### Scenario: Services section with zero advertised services
+- **WHEN** the device advertises no service UUIDs (typical for an iPhone publishing only Nearby Info)
+- **THEN** the Services section header renders, followed by a single dim-italic line `(none advertised)` with the same 2-space indent as the label rows — and NO trailing em-dash, NO em-dash on its own line
+
+#### Scenario: Extra UUID lists with no solicited or overflow UUIDs
+- **WHEN** the device advertises no solicited and no overflow service UUIDs
+- **THEN** the Extra UUID lists section renders a single dim-italic line `(none)` (or equivalent placeholder) — no trailing em-dash, no `_label`-with-None artefact
 
 ### Requirement: The Activity section SHALL hide ad_count for connected peripherals
 The Activity section SHALL omit the `ad count` row entirely for
