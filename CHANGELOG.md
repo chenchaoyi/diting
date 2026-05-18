@@ -11,6 +11,41 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-05-18
+
+Two fixes / one enhancement driven by real-environment use of v1.1.1.
+
+### Fixed
+- **Bonjour list no longer empties after ~1 minute of stable
+  services.** zeroconf's `update_service` callback is change-driven
+  — a HomePod re-asserting an unchanged AirPlay record fires no
+  callback, so `last_seen` stayed frozen at the first
+  `add_service` time and the 60 s TTL evicted live services even
+  though zeroconf's own DNS cache still held the records. The
+  poller now refreshes liveness from zeroconf's cache each
+  snapshot tick: any entry whose service-instance name still has
+  a non-expired record in `Zeroconf.cache.entries_with_name` gets
+  its `last_seen` bumped. The TTL backstop default also moves
+  from 60 s → 300 s; with the cache-refresh path keeping stable
+  services alive, the TTL is now a last-resort sweep, not the
+  primary eviction mechanism.
+
+### Added
+- **Wi-Fi event lines (roam, RF stir) surface the affected
+  SSID.** Roam lines render `SSID: <name>` when both sides share
+  a network (band switch / same-ESS roam) and `SSID: <prev> →
+  <new>` when they differ; RF stir lines append `· SSID <name>`
+  after the disturbance body. The segment is omitted entirely
+  when both sides are `None` or `""` (hidden). The AP-name half
+  is unchanged — it still comes from `aps.yaml` via
+  `NetworkInventory`, so a fully-populated inventory keeps
+  showing friendly AP names. SSID context is additive and works
+  even when the inventory is empty.
+- JSONL log lines for `RoamEvent` and `RFStirEvent` carry the
+  new `previous_ssid` / `new_ssid` / `ssid` keys when populated;
+  keys are skipped when `None` so old log entries stay
+  diff-stable.
+
 ## [1.1.1] — 2026-05-17
 
 Polish pass driven by a real-environment `/tui-audit` against the
