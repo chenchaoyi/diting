@@ -307,7 +307,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Four stacked panels in fixed order; third slot swaps wifi/ble/mdns | `test_tui_smoke.py::test_app_boots_and_quits` (App composes; panel presence implicit), `::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
 | Third-slot panel border_title carries an always-visible tab indicator listing all three views; detail content moves to border_subtitle | `test_tui_helpers.py::test_view_tabs_border_title_lists_all_three_views`, `::test_view_display_name_maps_internal_tokens_to_user_names`; `test_tui_smoke.py::test_panel_border_title_carries_tab_indicator` |
 | Diagnostics content follows active view | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`, `::test_view_toggle_cycles_wifi_ble_mdns_wifi`, `::test_diagnostics_renders_link_line_when_latency_data_available` |
-| Modals push onto stack, Esc/letter closes | `test_tui_smoke.py::test_help_modal_open_and_close`, `::test_help_modal_h_to_close`, `::test_help_modal_renders_through_pilot_query`, `::test_events_modal_open_and_close`; `tui_snapshot.py::events_modal`, `::help_modal`, `::basics_modal`, `::ble_detail_decoded` (regression) |
+| Modals push onto stack, Esc/letter closes | `test_tui_smoke.py::test_help_modal_open_and_close`, `::test_help_modal_question_mark_to_close`, `::test_help_modal_renders_through_pilot_query`, `::test_pressing_h_is_a_no_op`, `::test_events_modal_open_and_close`; `tui_snapshot.py::events_modal`, `::help_modal`, `::basics_modal`, `::ble_detail_decoded` (regression) |
 | Footer is one GroupedFooter with three semantic groups | (gap — no footer-grouping unit test; visible in regression captures) |
 | Hidden bindings exist for power-user navigation | `test_tui_smoke.py::test_pause_and_resume`, `::test_force_rescan_does_not_crash`, `::test_cycle_sort_modes` (binding firing); footer omission of hidden bindings is review-enforced |
 | Header shows title + clock; subtitle reflects live state | `test_tui_smoke.py::test_brand_header_carries_live_title_and_subtitle` |
@@ -660,7 +660,7 @@ real Mac.
 **Coverage targets:**
 
 - [x] App composes and unmounts cleanly
-- [x] Each binding (`q`, `p`, `r`, `s`, `c`, `h`, `n`) does not raise
+- [x] Each binding (`q`, `p`, `r`, `s`, `c`, `?`, `n`) does not raise; `h` is intentionally unbound (a no-op)
 - [x] Help modal opens and closes via Esc and via `h` again
 - [x] Help modal actually appears in the screen stack
 - [x] `scan_interval` constructor argument threads through to the
@@ -676,9 +676,10 @@ real Mac.
 | `test_pause_and_resume` | Press `p` twice. | Pause mutation does not break rendering on resume. |
 | `test_force_rescan_does_not_crash` | Press `r`. | The poller's `force_rescan` path executes without issues. |
 | `test_cycle_sort_modes` | Press `s` twice. | Both sort modes render to completion. Cross-references `_group_by_ap` from section 5. |
-| `test_help_modal_open_and_close` | Press `h`, then Esc. | Regression — an earlier version used `bold $accent` (Textual CSS variable) in a Rich style and crashed on first show. |
-| `test_help_modal_h_to_close` | Press `h` to open, `h` again to close. | Convenience binding inside the modal. |
+| `test_help_modal_open_and_close` | Press `?`, then Esc. | Regression — an earlier version used `bold $accent` (Textual CSS variable) in a Rich style and crashed on first show. |
+| `test_help_modal_question_mark_to_close` | Press `?` to open, `?` again to close. | Convenience binding inside the modal. |
 | `test_help_modal_renders_through_pilot_query` | Open the modal and assert via `app.screen_stack` that exactly one HelpScreen is on the stack; close and assert zero. | Catches regressions where the binding handler runs but the widget never actually mounts. |
+| `test_pressing_h_is_a_no_op` | Press `h` and assert the screen stack stays at the main view. | Lock the rebind from `h` → `?`; `h` is reserved for a future per-view shortcut. |
 | `test_custom_scan_interval_threads_through` | Construct `DitingApp(..., scan_interval=4.5)` and inspect `app._poller._scan_interval`. | The `DITING_SCAN_INTERVAL` env var lands here; if the kwarg path silently lost it, we'd never know. |
 | `test_toggle_view_swaps_third_panel` | Press `n` to toggle from the Wi-Fi scan view to the BLE view; press again to return. Asserts on the `display` flag of both panels and on `app._view_mode`. | Locks the spec's "toggle in place" behaviour — neither panel ever unmounts, so consumer state on either side survives the swap. |
 | `test_ble_panel_renders_both_connected_and_advertising_sections` | Seed both `_latest_ble` (advertising) and `_latest_ble_connected` (connected), press `n`, and assert the BLEPanel body contains both `Connected (1)` and `Advertising (1)` section headers plus a row from each. | End-to-end proof of the v0.6.0 two-section render through the Textual pilot — rendering bug here breaks the spec's question-2 ("what's actually connected to my Mac?") answer. |

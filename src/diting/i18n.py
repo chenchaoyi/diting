@@ -931,7 +931,7 @@ _ZH: dict[str, str] = {
         "  DITING_WAN=ip             覆盖 WAN 探测目标\n"
         "                                （默认：自动检测的 DNS）。\n",
     "made by ": "作者：",
-    "Esc or h to close": "Esc 或 h 关闭",
+    "Esc or ? to close": "Esc 或 ? 关闭",
 
     # ---- Basics modal ----
     "Wi-Fi Basics": "Wi-Fi 基础知识",
@@ -1007,8 +1007,8 @@ _ZH: dict[str, str] = {
     "Esc or b to close": "Esc 或 b 关闭",
     "↑/↓/PgUp/PgDn to scroll  ·  Esc or b to close":
         "↑/↓/PgUp/PgDn 翻屏  ·  Esc 或 b 关闭",
-    "↑/↓/PgUp/PgDn to scroll  ·  Esc or h to close":
-        "↑/↓/PgUp/PgDn 翻屏  ·  Esc 或 h 关闭",
+    "↑/↓/PgUp/PgDn to scroll  ·  Esc or ? to close":
+        "↑/↓/PgUp/PgDn 翻屏  ·  Esc 或 ? 关闭",
 
     # ---- Basics modal: link health ----
     "Latency / RTT": "延迟 / RTT",

@@ -212,18 +212,18 @@ def test_cycle_sort_modes():
 
 
 def test_help_modal_open_and_close():
-    """Pressing 'h' opens the help modal; Esc closes it. Both code paths
+    """Pressing '?' opens the help modal; Esc closes it. Both code paths
     must render the help body without raising (regression: an earlier
     version used Textual CSS variables in Rich style strings and crashed
     on first show)."""
     import asyncio
-    asyncio.run(_run_pilot("h", "escape"))
+    asyncio.run(_run_pilot("question_mark", "escape"))
 
 
-def test_help_modal_h_to_close():
-    """The 'h' key inside the modal also closes — convenience binding."""
+def test_help_modal_question_mark_to_close():
+    """The '?' key inside the modal also closes — convenience binding."""
     import asyncio
-    asyncio.run(_run_pilot("h", "h"))
+    asyncio.run(_run_pilot("question_mark", "question_mark"))
 
 
 def test_help_modal_renders_through_pilot_query():
@@ -235,12 +235,32 @@ def test_help_modal_renders_through_pilot_query():
         app = DitingApp(_FakeBackend(), _INVENTORY)
         async with app.run_test(size=(140, 50)) as pilot:
             await pilot.pause(0.5)
-            await pilot.press("h")
+            await pilot.press("question_mark")
             await pilot.pause(0.3)
             modals = [s for s in app.screen_stack if isinstance(s, HelpScreen)]
             assert len(modals) == 1
             await pilot.press("escape")
             await pilot.pause(0.2)
+            modals = [s for s in app.screen_stack if isinstance(s, HelpScreen)]
+            assert len(modals) == 0
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_pressing_h_is_a_no_op():
+    """`h` is intentionally unbound after the `?` rebind so the slot
+    is free for a future per-view shortcut. Pressing it must not
+    push HelpScreen (or anything else) onto the stack."""
+    import asyncio
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.5)
+            await pilot.press("h")
+            await pilot.pause(0.3)
+            # Stack contains only the main Screen, no HelpScreen pushed.
             modals = [s for s in app.screen_stack if isinstance(s, HelpScreen)]
             assert len(modals) == 0
             await pilot.press("q")

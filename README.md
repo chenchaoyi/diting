@@ -150,7 +150,7 @@ notifications when the watchdog detects an anomaly.
 > unless the calling process has Location Services. A Python CLI
 > launched from Terminal cannot get on that list, but a tiny `.app`
 > bundle can. `diting` shells out to it for scan data and gets the
-> real values back. Press `h` inside the TUI for the full story.
+> real values back. Press `?` inside the TUI for the full story.
 
 Pin a specific release:
 
@@ -199,7 +199,7 @@ With no override, `diting` autodetects the system locale —
 | `n` | cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour |
 | `c` | force re-roam — cycle Wi-Fi off/on so macOS re-picks the strongest BSSID |
 | `m` | open / close the Events modal — last 100 roam / stir / latency / loss / link events |
-| `h` | open / close the in-app help screen |
+| `?` | open / close the in-app help screen |
 | `b` | open / close Wi-Fi Basics: SSID, BSSID, channel, band, security, roam score |
 | `j` | (in the Wi-Fi detail modal) join the inspected SSID — previously-saved networks confirm via Touch ID (or login password on Macs without a sensor) and join silently; new networks get a native macOS password prompt. Not hitless: a cross-SSID switch tears the current connection down for ~2-5 s. Enterprise / 802.1X is refused with a hint. |
 

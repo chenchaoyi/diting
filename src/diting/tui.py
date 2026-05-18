@@ -463,8 +463,8 @@ class EnvironmentPanel(Static):
 
 class HelpScreen(ModalScreen):
     """Modal overlay that documents the tool, the bindings, and the
-    project. Triggered by the 'h' binding from DitingApp; dismissed
-    by Esc or h again.
+    project. Triggered by the '?' binding from DitingApp; dismissed
+    by Esc or ? again.
 
     The content lives here rather than scattered around the README
     because at the moment a user reaches for help they want it in the
@@ -472,7 +472,7 @@ class HelpScreen(ModalScreen):
     """
 
     BINDINGS = [
-        Binding("escape,h,q", "app.pop_screen", t("Close")),
+        Binding("escape,question_mark,q", "app.pop_screen", t("Close")),
     ]
 
     DEFAULT_CSS = """
@@ -567,7 +567,7 @@ def _help_content() -> tuple[Text, Text]:
     line("n", t("cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour"))
     line("m", t("open the Events browser (filterable list, per-AP σ"))
     body.append(" " * 8 + t("baseline, last-hour σ sparkline)\n"))
-    line("h", t("toggle this help"))
+    line("?", t("toggle this help"))
     line("b", t("open Wi-Fi / BLE basics glossary"))
     # Cross-view list-row navigation. The bindings fire in Wi-Fi, BLE,
     # and Bonjour views — each action no-ops outside its panel, so the
@@ -724,7 +724,7 @@ def _help_content() -> tuple[Text, Text]:
     )
     footer.append("\n")
     footer.append(
-        t("↑/↓/PgUp/PgDn to scroll  ·  Esc or h to close"),
+        t("↑/↓/PgUp/PgDn to scroll  ·  Esc or ? to close"),
         style="dim italic",
     )
     return body, footer
@@ -4891,7 +4891,7 @@ class GroupedFooter(Static):
     1. **App control**: ``q`` quit · ``p`` pause
     2. **Scan / view**: ``r`` rescan · ``s`` sort · ``n`` view-toggle ·
        ``c`` re-roam
-    3. **Info**: ``h`` help · ``b`` basics
+    3. **Info**: ``?`` help · ``b`` basics
 
     The ``n`` binding's description is **dynamic** — it shows the OTHER
     view as the literal target ("→ BLE" while in Wi-Fi view, "→ Wi-Fi"
@@ -4936,7 +4936,7 @@ class GroupedFooter(Static):
                 ("n", t("→ {view}", view=next_view)),
                 ("c", t("Re-roam")),
             ],
-            [("m", t("Events")), ("h", t("Help")), ("b", t("Basics"))],
+            [("m", t("Events")), ("?", t("Help")), ("b", t("Basics"))],
         ]
 
         out = Text()
@@ -5088,7 +5088,7 @@ class DitingApp(App):
         Binding("n", "toggle_view", t("Toggle Wi-Fi / BLE / Bonjour view")),
         Binding("c", "reroam", t("Re-roam")),
         Binding("m", "show_events", t("Events")),
-        Binding("h", "show_help", t("Help")),
+        Binding("question_mark", "show_help", t("Help")),
         Binding("b", "show_basics", t("Basics")),
         # Row-select / inspect bindings — shared by all three list views.
         # Hidden from the footer (show=False) so the grouped footer stays
