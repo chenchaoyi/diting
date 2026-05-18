@@ -617,7 +617,9 @@ def _regression_scenarios() -> list[Scenario]:
 
     async def _open_help(pilot):
         await _seed_link_and_events(pilot)
-        await pilot.press("h")
+        # Help screen rebound from `h` to `?` in PR #90; Textual's
+        # named key for `?` is `question_mark`.
+        await pilot.press("question_mark")
         await pilot.pause(0.3)
 
     async def _open_basics(pilot):
@@ -1058,7 +1060,9 @@ def _explore_scenarios() -> list[Scenario]:
 
     async def _open_help(pilot):
         await pilot.pause(5.0)
-        await pilot.press("h")
+        # Help screen rebound from `h` to `?` in PR #90; Textual's
+        # named key for `?` is `question_mark`.
+        await pilot.press("question_mark")
         await pilot.pause(0.3)
 
     async def _open_basics(pilot):
