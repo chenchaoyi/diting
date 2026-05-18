@@ -41,12 +41,20 @@ class RoamEvent:
     Carries the channel for each side so renderers can label band
     switches (same physical AP, different radio) without re-querying
     the inventory.
+
+    `previous_ssid` / `new_ssid` are the SSID associated with each
+    side at the moment the roam was observed. Default-None for
+    backwards compat with code paths that construct the event
+    without going through the poller; the poller always fills them
+    when it has them.
     """
     timestamp: datetime
     previous_bssid: str
     previous_channel: int | None
     new_bssid: str
     new_channel: int | None
+    previous_ssid: str | None = None
+    new_ssid: str | None = None
 
 
 Event = ConnectionUpdate | ScanUpdate | RoamEvent
@@ -77,6 +85,7 @@ class WiFiPoller:
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
         self._last_bssid: str | None = None
         self._last_channel: int | None = None
+        self._last_ssid: str | None = None
         # Set externally to wake the scan loop early (UI 'r' key).
         self._scan_wakeup: asyncio.Event | None = None
 
@@ -145,6 +154,7 @@ class WiFiPoller:
         if conn is None:
             self._last_bssid = None
             self._last_channel = None
+            self._last_ssid = None
             return
         if conn.bssid is None:
             return
@@ -156,7 +166,10 @@ class WiFiPoller:
                     previous_channel=self._last_channel,
                     new_bssid=conn.bssid,
                     new_channel=conn.channel,
+                    previous_ssid=self._last_ssid,
+                    new_ssid=conn.ssid,
                 )
             )
         self._last_bssid = conn.bssid
         self._last_channel = conn.channel
+        self._last_ssid = conn.ssid

@@ -265,3 +265,68 @@ def test_calibration_round_trip(tmp_path):
 
 def test_load_calibration_returns_empty_dict_on_missing_file(tmp_path):
     assert load_calibration(tmp_path / "does-not-exist.json") == {}
+
+
+def test_rf_stir_event_carries_ssid_from_current_connection():
+    """`EnvironmentMonitor.fire_events` attaches the most recent
+    SSID it saw via `ingest(..., ssid=...)` to the emitted
+    `RFStirEvent`. Letting the renderer label which network the
+    disturbance was on without having to re-resolve via aps.yaml."""
+    monitor = EnvironmentMonitor(inventory=_INV, cooldown_s=0.0)
+    bssid = "aa:bb:cc:11:22:10"
+    base = _now()
+    # Seed 5 min of -55 dBm with SSID labelled — every sample.
+    for i in range(60):
+        monitor.ingest(
+            bssid, -55 + ((i * 7) % 3 - 1),
+            base + timedelta(seconds=i * 5),
+            ssid="tedo_5G",
+        )
+    # 5 s burst of -45..-65 dBm: σ ~8 dB → fires.
+    burst_start = 60 * 5 + 5
+    for offset, rssi in [
+        (burst_start + 0, -45),
+        (burst_start + 1, -65),
+        (burst_start + 2, -47),
+        (burst_start + 3, -63),
+        (burst_start + 4, -50),
+    ]:
+        monitor.ingest(
+            bssid, rssi, base + timedelta(seconds=offset),
+            ssid="tedo_5G",
+        )
+    events = monitor.fire_events(base + timedelta(seconds=burst_start + 4))
+    assert len(events) == 1
+    assert events[0].ssid == "tedo_5G"
+
+
+def test_rf_stir_event_ssid_remembers_last_non_none():
+    """If a later ingest comes through with `ssid=None` (e.g. TCC
+    redaction mid-session), the monitor remembers the latest
+    non-None value rather than erasing the field."""
+    monitor = EnvironmentMonitor(inventory=_INV, cooldown_s=0.0)
+    bssid = "aa:bb:cc:11:22:10"
+    base = _now()
+    for i in range(60):
+        monitor.ingest(
+            bssid, -55 + ((i * 7) % 3 - 1),
+            base + timedelta(seconds=i * 5),
+            ssid="tedo_5G",
+        )
+    # Now ingest a TCC-redacted sample (ssid=None) and a burst.
+    monitor.ingest(
+        bssid, -55, base + timedelta(seconds=60 * 5 + 1),
+        ssid=None,
+    )
+    burst_start = 60 * 5 + 5
+    for offset, rssi in [
+        (burst_start + 0, -45), (burst_start + 1, -65),
+        (burst_start + 2, -47), (burst_start + 3, -63),
+        (burst_start + 4, -50),
+    ]:
+        monitor.ingest(
+            bssid, rssi, base + timedelta(seconds=offset),
+            ssid=None,
+        )
+    events = monitor.fire_events(base + timedelta(seconds=burst_start + 4))
+    assert events[0].ssid == "tedo_5G"

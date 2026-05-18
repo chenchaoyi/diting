@@ -1720,7 +1720,34 @@ def _format_roam_event(event: RoamEvent, inv: NetworkInventory) -> Text:
     line.append(t("[ROAM]") + "  ", style="bold magenta")
     line.append(f"{prev}  ->  {new}   ", style="white")
     line.append(tag, style=style)
+    ssid_segment = _roam_event_ssid_segment(event)
+    if ssid_segment:
+        line.append("   ", style="dim")
+        line.append(ssid_segment, style="cyan")
     return line
+
+
+def _roam_event_ssid_segment(event: RoamEvent) -> str:
+    """Render the SSID half of a roam event line, or ``""`` when both
+    sides are missing (None or hidden).
+
+    - Same SSID on both sides (band switch within an ESS, common
+      inter-AP roam within a single network) → ``SSID: <name>``.
+    - Different SSIDs → ``SSID: <prev> → <new>``.
+    - Both unknown (None) or both hidden ("") → empty string so the
+      caller can skip the segment cleanly.
+    """
+    prev = event.previous_ssid or None
+    new = event.new_ssid or None
+    if prev is None and new is None:
+        return ""
+    if prev == new and prev is not None:
+        return t("SSID: {ssid}", ssid=prev)
+    return t(
+        "SSID: {prev} -> {new}",
+        prev=prev if prev else t("(unknown)"),
+        new=new if new else t("(unknown)"),
+    )
 
 
 def _format_rf_stir_event(event: RFStirEvent) -> Text:
@@ -1738,6 +1765,8 @@ def _format_rf_stir_event(event: RFStirEvent) -> Text:
         f"  σ {event.magnitude_db:.1f} dB  ·  {t(event.confidence)}",
         style="dim",
     )
+    if event.ssid:
+        line.append("  ·  " + t("SSID {ssid}", ssid=event.ssid), style="cyan")
     return line
 
 
@@ -5336,6 +5365,7 @@ class DitingApp(App):
                         event.connection.bssid,
                         event.connection.rssi_dbm,
                         event.connection.timestamp,
+                        ssid=event.connection.ssid,
                     )
                     await self._collect_environment_events(event.connection.timestamp)
                 # Refresh the scan panel too so the synthesised row for
@@ -5355,6 +5385,7 @@ class DitingApp(App):
                         if r.bssid is not None:
                             self._environment_monitor.ingest(
                                 r.bssid, r.rssi_dbm, r.timestamp,
+                                ssid=r.ssid,
                             )
                     await self._collect_environment_events(now)
                 self._refresh_scan_panel()

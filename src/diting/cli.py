@@ -337,7 +337,10 @@ async def _run_monitor(args: list[str]) -> None:
                         name="latency-consumer",
                     )
                 if conn.bssid is not None and conn.rssi_dbm is not None:
-                    monitor.ingest(conn.bssid, conn.rssi_dbm, now)
+                    monitor.ingest(
+                        conn.bssid, conn.rssi_dbm, now,
+                        ssid=conn.ssid,
+                    )
                     for stir in monitor.fire_events(now):
                         logger.emit_rf_stir(stir)
                         await _notify(
@@ -351,7 +354,10 @@ async def _run_monitor(args: list[str]) -> None:
             elif isinstance(event, ScanUpdate):
                 for r in event.results:
                     if r.bssid is not None and r.rssi_dbm is not None:
-                        monitor.ingest(r.bssid, r.rssi_dbm, now)
+                        monitor.ingest(
+                            r.bssid, r.rssi_dbm, now,
+                            ssid=r.ssid,
+                        )
                 for stir in monitor.fire_events(now):
                     logger.emit_rf_stir(stir)
                     await _notify(

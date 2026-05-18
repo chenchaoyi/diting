@@ -167,6 +167,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Cooldown + rearm prevents repeat events | (gap — no direct cooldown / rearm test; behaviour is observed indirectly through fusion-confidence tests) |
 | Calibration loadable from file | `test_environment.py::test_calibration_overrides_adaptive_baseline`, `::test_calibration_round_trip`, `::test_load_calibration_returns_empty_dict_on_missing_file` |
 | Wording: correlation, not presence | (review-enforced — no string in `i18n.py` asserts "person" / "motion" / "presence") |
+| `RFStirEvent` carries the current `Connection.ssid` on emit | `test_environment.py::test_rf_stir_event_carries_ssid_from_current_connection` |
 
 ### `event-log`
 
@@ -190,6 +191,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | JSONL serialisation uses English keys | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
 | Timestamps local-TZ ISO with offset | `test_event_log.py::test_timestamps_are_iso_utc`, `::test_naive_datetime_treated_as_local_not_utc` |
 | `NetworkChangeEvent` is control-plane, not user-visible | `test_event_log.py::test_emit_network_change_carries_router_ip_transition` (the writer accepts it); user-visible-routing absence is review-enforced |
+| `RoamEvent` carries `previous_ssid` / `new_ssid` defaulting to `None`; `RFStirEvent` carries `ssid` defaulting to `None` (schema-shape additive) | `test_event_log.py::test_event_to_jsonl_roundtrip_roam_with_ssid_pair`, `::test_event_to_jsonl_roundtrip_rf_stir_with_ssid`, `::test_event_to_jsonl_omits_ssid_keys_when_none` |
 
 ### `i18n`
 
@@ -293,6 +295,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Surfaced candidate carries score + press-`c` hint | `test_tui_helpers.py::test_score_line_reports_better_same_ssid_candidate` |
 | Press-`c` cycles Wi-Fi off/on | (manual — `force_reroam()` is backend-specific) |
 | Vocabulary aligned between `_health_line` and `_link_score` | (review-enforced — convention; the bug it guards against landed once already) |
+| `WiFiPoller` fills `previous_ssid` / `new_ssid` on emitted `RoamEvent` from the `Connection.ssid` it observed at each side of the BSSID transition | `test_poller.py::test_roam_event_fills_ssid_from_connection_updates` |
 
 ### `tui-shell`
 
@@ -307,6 +310,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Header shows title + clock; subtitle reflects live state | `test_tui_smoke.py::test_brand_header_carries_live_title_and_subtitle` |
 | Brand mark (`docs/design/diting-design/assets/logo-mark.svg`) rendered in the header with Unicode half-blocks in brand orange | `test_tui_smoke.py::test_brand_header_renders_logo_mark`; `tui_snapshot.py::wifi_main_en` (regression captures the orange `fill: #fea62b` styling on the rendered half-blocks) |
 | App title pinned to `diting v<version>` (sourced from importlib.metadata) so the running version is always visible | `test_tui_smoke.py::test_app_title_carries_version` |
+| Wi-Fi event lines (roam, RF stir) surface the associated SSID: single `SSID: <name>` when previous_ssid == new_ssid; `SSID: <prev> → <new>` when they differ; omitted when both are `None` or both are `""` (hidden) | `test_tui_helpers.py::test_format_roam_event_includes_ssid_when_same_on_both_sides`, `::test_format_roam_event_renders_ssid_transition_when_different`, `::test_format_roam_event_omits_ssid_segment_when_both_none`, `::test_format_roam_event_omits_ssid_segment_for_hidden_ssid`, `::test_format_rf_stir_event_includes_ssid_when_present`, `::test_format_rf_stir_event_omits_ssid_segment_when_none` |
 | Every list-style view panel shares the same row-select + inspect gesture (`up` / `down`, `i` / `enter`, mouse-click-to-inspect; modal close `Esc` / `i` / `q` does not mutate selection); deviations require modifying this Requirement | `test_tui_smoke.py::test_wifi_inspect_opens_modal_on_first_press`, `::test_bonjour_inspect_opens_modal_on_first_press` (alongside existing BLE coverage in `tui_snapshot.py::ble_detail_decoded`) |
 
 ### `wifi-detail-modal`

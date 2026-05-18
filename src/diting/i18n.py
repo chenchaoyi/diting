@@ -1149,6 +1149,11 @@ _ZH: dict[str, str] = {
     "[LOSS]": "[丢包]",
     "[LINK]": "[链路]",
     "RF stir at {location}": "{location} 处 RF 扰动",
+    # SSID enrichment for Wi-Fi event lines
+    # (wifi-event-ssid-and-name-enrichment).
+    "SSID: {ssid}": "SSID：{ssid}",
+    "SSID: {prev} -> {new}": "SSID：{prev} → {new}",
+    "SSID {ssid}": "SSID {ssid}",
     "{target} latency spike: {ms} ms": "{target} 延迟尖峰：{ms} ms",
     "{target} loss burst: {loss}%": "{target} 丢包风暴：{loss}%",
     "associated to {ssid}": "已连接至 {ssid}",

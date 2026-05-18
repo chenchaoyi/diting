@@ -158,6 +158,7 @@
 | Cooldown + rearm 防止重复事件 | (gap — 没有专门的 cooldown / rearm 测试；行为在 fusion-confidence 测试里间接覆盖) |
 | 校准从文件加载 | `test_environment.py::test_calibration_overrides_adaptive_baseline`、`::test_calibration_round_trip`、`::test_load_calibration_returns_empty_dict_on_missing_file` |
 | 措辞：相关性，不是「有人」 | (review-enforced — `i18n.py` 没有任何字符串断言 "person" / "motion" / "presence") |
+| `RFStirEvent` 在触发时把当前 `Connection.ssid` 带进事件 | `test_environment.py::test_rf_stir_event_carries_ssid_from_current_connection` |
 
 ### `event-log`
 
@@ -181,6 +182,7 @@
 | JSONL 用英文键 | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
 | 时间戳本地 TZ ISO-8601 带偏移 | `test_event_log.py::test_timestamps_are_iso_utc`、`::test_naive_datetime_treated_as_local_not_utc` |
 | `NetworkChangeEvent` 是控制信号，用户不可见 | `test_event_log.py::test_emit_network_change_carries_router_ip_transition`（writer 接受它）；不进 user-visible-ring 是 review-enforced |
+| `RoamEvent` 新增 `previous_ssid` / `new_ssid`、`RFStirEvent` 新增 `ssid`，均默认 `None`（schema 兼容性追加） | `test_event_log.py::test_event_to_jsonl_roundtrip_roam_with_ssid_pair`、`::test_event_to_jsonl_roundtrip_rf_stir_with_ssid`、`::test_event_to_jsonl_omits_ssid_keys_when_none` |
 
 ### `i18n`
 
@@ -284,6 +286,7 @@
 | 浮出的候选带评分 + 按 c 提示 | `test_tui_helpers.py::test_score_line_reports_better_same_ssid_candidate` |
 | 按 c 切换 Wi-Fi 关再开 | (人工 — `force_reroam()` 是 backend 特定的) |
 | `_health_line` 与 `_link_score` 词汇一致 | (review-enforced — 约定；这条要拦的 bug 之前出过一次) |
+| `WiFiPoller` 在每次 BSSID 切换观察到的 `Connection.ssid` 上填出 `previous_ssid` / `new_ssid` | `test_poller.py::test_roam_event_fills_ssid_from_connection_updates` |
 
 ### `tui-shell`
 
@@ -298,6 +301,7 @@
 | Header 显示 title + 时钟；subtitle 反映实时状态 | `test_tui_smoke.py::test_brand_header_carries_live_title_and_subtitle` |
 | 品牌雷达 mark（`docs/design/diting-design/assets/logo-mark.svg`）以 Unicode 半格字符在 header 中以品牌橙渲染 | `test_tui_smoke.py::test_brand_header_renders_logo_mark`；`tui_snapshot.py::wifi_main_en`（regression 捕获半格字符上 `fill: #fea62b` 的品牌橙样式） |
 | App title 固定为 `diting v<版本>`（取自 importlib.metadata），运行版本号一眼可见 | `test_tui_smoke.py::test_app_title_carries_version` |
+| Wi-Fi 事件行（漫游、RF 扰动）展示相关 SSID：previous_ssid == new_ssid 时单段 `SSID: <名>`；不同时 `SSID: <前> → <后>`；两侧均为 `None` 或 `""`（隐藏 SSID）时整段省略 | `test_tui_helpers.py::test_format_roam_event_includes_ssid_when_same_on_both_sides`、`::test_format_roam_event_renders_ssid_transition_when_different`、`::test_format_roam_event_omits_ssid_segment_when_both_none`、`::test_format_roam_event_omits_ssid_segment_for_hidden_ssid`、`::test_format_rf_stir_event_includes_ssid_when_present`、`::test_format_rf_stir_event_omits_ssid_segment_when_none` |
 | 所有 list-style 视图面板共享同一套行选中 + 查看手势（`up` / `down`、`i` / `enter`、鼠标点击即查看；Esc / `i` / `q` 关 modal 不动选择）；如需偏离该手势必须改本 Requirement | `test_tui_smoke.py::test_wifi_inspect_opens_modal_on_first_press`、`::test_bonjour_inspect_opens_modal_on_first_press`（与既有的 BLE 覆盖 `tui_snapshot.py::ble_detail_decoded` 并列） |
 
 ### `wifi-detail-modal`

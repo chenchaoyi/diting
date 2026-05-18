@@ -332,6 +332,70 @@ def test_emit_roam_includes_vendor_and_ssid_when_supplied(tmp_path):
     assert row["new_vendor"] == "Liteon Technology"
 
 
+def test_event_to_jsonl_roundtrip_roam_with_ssid_pair(tmp_path):
+    """RoamEvent's new `previous_ssid` / `new_ssid` fields land in
+    the JSONL line under English keys after the existing
+    BSSID / channel block. wifi-event-ssid-and-name-enrichment
+    schema change."""
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    ev = RoamEvent(
+        timestamp=datetime(2026, 5, 18, 9, 30, tzinfo=timezone.utc),
+        previous_bssid="40:fe:95:8a:3c:58", previous_channel=1,
+        new_bssid="40:fe:95:8a:3c:59", new_channel=11,
+        previous_ssid="tedo", new_ssid="tedo",
+    )
+    logger.emit_roam(ev)
+    logger.close()
+
+    row = _read_jsonl(path)[0]
+    assert row["previous_ssid"] == "tedo"
+    assert row["new_ssid"] == "tedo"
+
+
+def test_event_to_jsonl_roundtrip_rf_stir_with_ssid(tmp_path):
+    """RFStirEvent.ssid lands in the JSONL line after the existing
+    bssid / location keys."""
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_rf_stir(RFStirEvent(
+        timestamp=datetime(2026, 5, 18, 9, 49, tzinfo=timezone.utc),
+        bssid="1c:28:af:5e:9d:b4", location="?af:5e:9d",
+        magnitude_db=4.8, duration_s=12.0,
+        confidence="medium", mode="spatial_channel",
+        ssid="tedo_5G",
+    ))
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert row["ssid"] == "tedo_5G"
+
+
+def test_event_to_jsonl_omits_ssid_keys_when_none(tmp_path):
+    """When the new SSID fields are None (pre-enrichment construct
+    path, or TCC-redacted runtime), the JSONL line MUST NOT carry
+    the new keys at all — keeps old log entries diff-stable."""
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_roam(RoamEvent(
+        timestamp=datetime(2026, 5, 18, 9, 30, tzinfo=timezone.utc),
+        previous_bssid="aa:bb:cc:dd:ee:01", previous_channel=1,
+        new_bssid="aa:bb:cc:dd:ee:02", new_channel=11,
+    ))
+    logger.emit_rf_stir(RFStirEvent(
+        timestamp=datetime(2026, 5, 18, 9, 49, tzinfo=timezone.utc),
+        bssid="aa:bb:cc:dd:ee:01", location="?aa:bb:cc",
+        magnitude_db=4.8, duration_s=12.0,
+        confidence="medium", mode="spatial_channel",
+    ))
+    logger.close()
+    rows = _read_jsonl(path)
+    roam_row = rows[0]
+    rf_stir_row = rows[1]
+    assert "previous_ssid" not in roam_row
+    assert "new_ssid" not in roam_row
+    assert "ssid" not in rf_stir_row
+
+
 def test_emit_link_state_dataclass_passthrough(tmp_path):
     """The pre-built LinkStateEvent path is for callers that
     have their own state machine. Just verify the field map."""

@@ -280,6 +280,14 @@ class EventLogger:
             payload["kind"] = kind
         if ssid is not None:
             payload["ssid"] = ssid
+        # The new schema carries the SSID on each side of the
+        # roam (added in wifi-event-ssid-and-name-enrichment). Emit
+        # when set; skip when None so old log entries stay
+        # diff-stable against pre-enrichment runs.
+        if event.previous_ssid is not None:
+            payload["previous_ssid"] = event.previous_ssid
+        if event.new_ssid is not None:
+            payload["new_ssid"] = event.new_ssid
         if previous_vendor:
             payload["previous_vendor"] = previous_vendor
         if new_vendor:
@@ -289,7 +297,7 @@ class EventLogger:
     def emit_rf_stir(self, event: RFStirEvent) -> None:
         if self._sink is None:
             return
-        self._write({
+        payload: dict[str, Any] = {
             "ts": _iso(event.timestamp),
             "type": "rf_stir",
             "magnitude_db": event.magnitude_db,
@@ -298,7 +306,13 @@ class EventLogger:
             "duration_s": event.duration_s,
             "confidence": event.confidence,
             "mode": event.mode,
-        })
+        }
+        # SSID added in wifi-event-ssid-and-name-enrichment. Emit
+        # when set; skip when None so old log entries stay
+        # diff-stable against pre-enrichment runs.
+        if event.ssid is not None:
+            payload["ssid"] = event.ssid
+        self._write(payload)
 
     def emit_latency_spike(self, event: LatencySpikeEvent) -> None:
         if self._sink is None:
