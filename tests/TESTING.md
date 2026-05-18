@@ -277,6 +277,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | State map expires on `remove_service` AND falls back to TTL | `test_mdns.py::test_poller_removes_on_remove_service_callback`, `::test_poller_ttl_fallback_when_no_remove_observed` |
 | Cache liveness keeps stable services alive: each tick, entries whose service-instance name still has any non-expired record in `zc.cache` get `last_seen=now`, defeating the "update_service-only-on-change" eviction trap that made HomePods disappear from the panel after 60 s | `test_mdns.py::test_poller_cache_refresh_bumps_last_seen_for_alive_entry`, `::test_poller_cache_refresh_skips_when_only_expired_records`, `::test_poller_cache_refresh_skips_when_no_records` |
 | TTL backstop default is 300 s (was 60 s) | `test_mdns.py::test_poller_ttl_default_is_five_minutes` |
+| Active per-service re-probe every 30 s (fire-and-forget) so devices whose announce TTL is < 300 s don't age out of zeroconf's cache and disappear from our state; a hung probe MUST NOT delay the snapshot yield | `test_mdns.py::test_poller_active_probe_scheduled_per_state_entry_at_cadence`, `::test_poller_active_probe_does_not_block_snapshot_yield`, `::test_poller_active_probe_default_cadence_is_thirty_seconds` |
 | `BonjourPanel` renders vendor / name / services / age / id columns (no RSSI / signal-bar / connected split) | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi`, `tui_snapshot.py` (regression via explore mode; rendering shape) |
 | Diagnostics panel renders mDNS-side rows when view is `mdns` | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
 | `BonjourPoller.stop()` cleanly joins zeroconf background threads | `test_mdns.py::test_poller_stop_joins_background_thread` |
@@ -350,6 +351,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Scan results deduplicated by BSSID, strongest RSSI wins | `test_helper.py::test_scan_dedup_by_bssid_keeps_strongest_rssi`, `::test_scan_dedup_preserves_insertion_order`, `::test_scan_dedup_skips_none_bssid_rows` |
 | Tx Rate idle cache substitutes last non-zero value on same AP | `test_macos_backend.py::test_tx_rate_idle_cache_substitutes_on_zero_same_ap`, `::test_tx_rate_idle_cache_clears_on_bssid_change`, `::test_tx_rate_idle_flag_false_on_first_zero_with_no_history` |
 | Connection panel renders `(idle)` annotation when `tx_rate_idle=True` | `test_tui_helpers.py::test_connection_panel_renders_tx_idle_annotation`, `::test_connection_panel_no_idle_annotation_when_flag_false` |
+| Connection panel hides the Max half of `Tx / Max` when `tx_rate_mbps > max_link_speed_mbps` (CoreWLAN's `maximumLinkSpeed()` returns stale / under-reported values on macOS 26; surfacing both would read as nonsense) | `test_tui_helpers.py::test_connection_panel_hides_max_when_tx_exceeds_it`, `::test_connection_panel_shows_both_when_max_ge_tx` |
 
 ---
 

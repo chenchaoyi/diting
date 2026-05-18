@@ -201,10 +201,14 @@ class ConnectionPanel(Static):
                 # because `transmitRate()` momentarily reported 0
                 # on the same AP. Without it the field flickered to
                 # `n/a` on an otherwise-stable association.
-                t("{tx}  /  {max}",
-                  tx=(_fmt(conn.tx_rate_mbps, " Mbps")
-                      + (" " + t("(idle)") if conn.tx_rate_idle else "")),
-                  max=_fmt(conn.max_link_speed_mbps, " Mbps")),
+                #
+                # Drop the Max half entirely when CoreWLAN reports
+                # Max < Tx (the radio cannot transmit faster than
+                # its negotiated maximum; the inversion is a known
+                # `maximumLinkSpeed()` staleness on macOS 26). The
+                # standalone Tx Mbps reads correctly; rendering
+                # both would say something self-contradictory.
+                _tx_max_row_value(conn),
             ),
             (
                 t("MCS / NSS"),
@@ -1958,6 +1962,24 @@ def _fmt(value, suffix: str = "") -> str:
     if value is None:
         return "n/a"
     return f"{value}{suffix}"
+
+
+def _tx_max_row_value(conn) -> str:
+    # Compose the value half of the Connection panel's "Tx / Max"
+    # row. Hides the Max number when `transmit_rate > max_link_speed`
+    # (a CoreWLAN staleness on macOS 26 where `maximumLinkSpeed()`
+    # under-reports while `transmitRate()` returns the current
+    # higher PHY rate — surfacing both reads as self-contradictory).
+    tx_str = _fmt(conn.tx_rate_mbps, " Mbps")
+    if conn.tx_rate_idle:
+        tx_str = tx_str + " " + t("(idle)")
+    tx = conn.tx_rate_mbps
+    max_ = conn.max_link_speed_mbps
+    if (
+        tx is not None and max_ is not None and tx > max_
+    ):
+        return tx_str
+    return t("{tx}  /  {max}", tx=tx_str, max=_fmt(max_, " Mbps"))
 
 
 def _environment_lines(

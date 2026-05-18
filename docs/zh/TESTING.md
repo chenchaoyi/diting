@@ -268,6 +268,7 @@
 | 状态表在 `remove_service` 回调时清理，并以 TTL 兜底 | `test_mdns.py::test_poller_removes_on_remove_service_callback`、`::test_poller_ttl_fallback_when_no_remove_observed` |
 | 缓存活性保活：每次 tick 时，state 里那些 service-instance 名仍在 `zc.cache` 中存活（有任一未过期记录）的条目都会被刷新 `last_seen=now`，避免 HomePod 这种「info 不变 → 不触发 update_service → 60 s 后被 TTL 误删」的陷阱 | `test_mdns.py::test_poller_cache_refresh_bumps_last_seen_for_alive_entry`、`::test_poller_cache_refresh_skips_when_only_expired_records`、`::test_poller_cache_refresh_skips_when_no_records` |
 | TTL 兜底默认值从 60 s 上调到 300 s | `test_mdns.py::test_poller_ttl_default_is_five_minutes` |
+| 每 30 s 对每个 state 条目发起一次主动 re-probe（fire-and-forget），让那些 announce TTL < 300 s 的设备记录不会从 zeroconf 缓存里老化掉；任何卡住的 probe 不允许阻塞 snapshot 输出 | `test_mdns.py::test_poller_active_probe_scheduled_per_state_entry_at_cadence`、`::test_poller_active_probe_does_not_block_snapshot_yield`、`::test_poller_active_probe_default_cadence_is_thirty_seconds` |
 | `BonjourPanel` 渲染 vendor / name / services / age / id 列（无 RSSI / 信号条 / connected 分割） | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi`、`tui_snapshot.py`（explore 模式真机回归） |
 | 诊断面板在 mDNS 视图下渲染 Bonjour 侧汇总 | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
 | `BonjourPoller.stop()` 会清理 zeroconf 后台线程 | `test_mdns.py::test_poller_stop_joins_background_thread` |
@@ -341,6 +342,7 @@
 | 扫描结果按 BSSID 去重，相同 BSSID 多次出现时保留最强 RSSI 的行 | `test_helper.py::test_scan_dedup_by_bssid_keeps_strongest_rssi`、`::test_scan_dedup_preserves_insertion_order`、`::test_scan_dedup_skips_none_bssid_rows` |
 | Tx Rate 空闲缓存：当 `transmitRate()` 返回 0 且仍在同一 AP 时回填上一次非零值 | `test_macos_backend.py::test_tx_rate_idle_cache_substitutes_on_zero_same_ap`、`::test_tx_rate_idle_cache_clears_on_bssid_change`、`::test_tx_rate_idle_flag_false_on_first_zero_with_no_history` |
 | Connection 面板在 `tx_rate_idle=True` 时渲染 `（空闲）` 注解 | `test_tui_helpers.py::test_connection_panel_renders_tx_idle_annotation`、`::test_connection_panel_no_idle_annotation_when_flag_false` |
+| Connection 面板在 `tx_rate_mbps > max_link_speed_mbps` 时隐藏 `Tx / Max` 行的 Max 半段（macOS 26 上 CoreWLAN 的 `maximumLinkSpeed()` 偶尔会返回过期 / 偏低的值；两个数都展示就成自相矛盾） | `test_tui_helpers.py::test_connection_panel_hides_max_when_tx_exceeds_it`、`::test_connection_panel_shows_both_when_max_ge_tx` |
 
 ---
 

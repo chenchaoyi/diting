@@ -22,6 +22,7 @@ import json
 import logging
 import re
 import threading
+import time as _time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -267,9 +268,19 @@ class BonjourPoller:
         *,
         snapshot_interval_s: float = 2.0,
         ttl_s: float = 300.0,
+        active_probe_interval_s: float = 30.0,
     ) -> None:
         self._snapshot_interval_s = snapshot_interval_s
         self._ttl_s = ttl_s
+        # How often (in seconds) the poller fires an mDNS query
+        # against every tracked service. Devices whose announce TTL
+        # is shorter than `_ttl_s` (typical: 60-120 s on some
+        # HomePods / printers) would otherwise age out of zeroconf's
+        # own DNS cache, leaving the passive cache-refresh path with
+        # nothing to keep alive. The active probe re-asserts them on
+        # the wire so the cache (and our state) stays populated.
+        self._active_probe_interval_s = active_probe_interval_s
+        self._last_active_probe_monotonic: float = 0.0
         self._zc: Zeroconf | None = None
         self._browser: ServiceBrowser | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -289,6 +300,11 @@ class BonjourPoller:
         invocations of the same generator continue ticking.
         """
         self._loop = asyncio.get_running_loop()
+        # Defer the first active probe by `_active_probe_interval_s`
+        # — the first few ticks process listener-driven add/remove
+        # callbacks and stabilise state. Probing on tick 1 races
+        # the listener path on freshly-added entries.
+        self._last_active_probe_monotonic = _time.monotonic()
         if self._zc is None:
             # `Zeroconf()` opens a UDP multicast socket and joins
             # 224.0.0.251:5353; that handshake can take 100 – 500 ms
@@ -307,6 +323,14 @@ class BonjourPoller:
                         break
                     await self._apply_callback(op, type_, name)
                 now = datetime.now(timezone.utc)
+                # Active per-service probe. Fires every
+                # `_active_probe_interval_s` and is fire-and-forget
+                # (one task per entry; we don't await any of them).
+                # Devices with short announce TTLs (~60-120 s on
+                # some HomePods / printers) would otherwise age out
+                # of zeroconf's cache, and the passive refresh
+                # below would have nothing to keep alive.
+                self._maybe_kick_active_probes()
                 # Bump last_seen for entries that zeroconf's own DNS
                 # cache still considers alive — defeats the
                 # "update_service-only-on-change" eviction trap.
@@ -419,6 +443,34 @@ class BonjourPoller:
         )
         vendor, trace = resolve_vendor_with_trace(candidate)
         self._state[key] = replace(candidate, vendor=vendor, vendor_trace=trace)
+
+    def _maybe_kick_active_probes(self) -> None:
+        # zeroconf's DNS cache holds each record only for the
+        # announce-published TTL — many Bonjour devices use 60-120 s,
+        # shorter than our 300 s last-resort window. Without an
+        # active probe, even the cache-refresh path runs out of
+        # records to keep alive and the panel empties out. Every
+        # `_active_probe_interval_s` we fire an mDNS `QM` query
+        # against each tracked service via `AsyncServiceInfo.async_
+        # request` (re-using the `_apply_callback("update", ...)`
+        # path that already merges results into `_state`). The
+        # probes are fire-and-forget — `create_task` returns
+        # immediately so a slow / unresponsive device can never
+        # delay the snapshot yield.
+        if self._zc is None or self._loop is None:
+            return
+        if not self._state:
+            return
+        now_mono = _time.monotonic()
+        if (now_mono - self._last_active_probe_monotonic
+                < self._active_probe_interval_s):
+            return
+        self._last_active_probe_monotonic = now_mono
+        for type_, name in list(self._state.keys()):
+            self._loop.create_task(
+                self._apply_callback("update", type_, name),
+                name=f"mdns-active-probe-{name[:32]}",
+            )
 
     def _refresh_liveness_from_cache(self, now: datetime) -> None:
         # zeroconf's ServiceListener is change-driven: `update_service`

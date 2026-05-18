@@ -2121,6 +2121,39 @@ def test_connection_panel_no_idle_annotation_when_flag_false():
     assert "144.0 Mbps" in body
 
 
+def test_connection_panel_hides_max_when_tx_exceeds_it():
+    """CoreWLAN's `maximumLinkSpeed()` returns stale / under-reported
+    values on macOS 26; surfacing both Tx and Max when Max < Tx
+    reads as nonsense (the radio cannot transmit faster than its
+    negotiated maximum). The renderer drops the Max half in that
+    case."""
+    body = _render_connection_panel_text(_conn_full(
+        tx_rate_mbps=286.0, max_link_speed_mbps=229,
+    ))
+    assert "286.0 Mbps" in body
+    # The trailing `/ <smaller> Mbps` segment is omitted entirely.
+    assert "229 Mbps" not in body
+    assert "286.0 Mbps  /  229 Mbps" not in body
+
+
+def test_connection_panel_shows_both_when_max_ge_tx():
+    """Legacy path: Max >= Tx renders both numbers, slash-separated."""
+    body = _render_connection_panel_text(_conn_full(
+        tx_rate_mbps=144.0, max_link_speed_mbps=867,
+    ))
+    assert "144.0 Mbps" in body
+    assert "867 Mbps" in body
+
+
+def test_connection_panel_shows_tx_only_when_max_is_none():
+    """Pre-existing fallback: Max unknown renders `n/a` after Tx."""
+    body = _render_connection_panel_text(_conn_full(
+        tx_rate_mbps=144.0, max_link_speed_mbps=None,
+    ))
+    assert "144.0 Mbps" in body
+    assert "n/a" in body
+
+
 # --- BonjourPanel by-host mode + diagnostics label parity -----------
 
 
