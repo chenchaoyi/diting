@@ -439,6 +439,23 @@ ordering is intent.
   term, hardware-assisted, deliberate. See
   [`docs/explainers/wifi-sensing.md`](docs/explainers/wifi-sensing.md)
   for the honest read on what's possible.
+- **Dedicated edge-hardware companion.** Pair diting with a small
+  always-on box (Raspberry Pi-class) for the two things a
+  foreground macOS TUI inherently can't do: **24/7 persistent
+  observation** (a stranger joined the LAN at 3 a.m. for five
+  minutes — your Mac was asleep) and **Wi-Fi sensing on a
+  stationary radio in monitor mode** (prerequisite for Tier-1+
+  in the sensing explainer). Separate product / codebase
+  (Linux + Python), macOS TUI stays the front end and subscribes
+  to the edge box over Bonjour. See also
+  [`docs/explainers/lan-inventory-arp.md`](docs/explainers/lan-inventory-arp.md)
+  for the LAN-inventory half that doesn't need the edge box.
+- **Any-device LAN inventory (ARP-based).** A fourth panel
+  listing every host on the local /24 — IP, MAC, vendor (via
+  OUI), hostname (via reverse DNS), Bonjour cross-reference,
+  first/last seen. Answers "who's on my Wi-Fi?" from a normal
+  Mac client, no router login. Designed in
+  [`docs/explainers/lan-inventory-arp.md`](docs/explainers/lan-inventory-arp.md).
 - **Optional menu-bar app** for ambient awareness without keeping
   a terminal open.
 - **Linux backend.** `nl80211` via `pyroute2` or shelling out to
