@@ -759,6 +759,90 @@ def test_event_format_line_rf_stir_confidence_translates_to_chinese():
         i18n.set_lang(saved)
 
 
+def _roam_event_with_ssids(prev_ssid: str | None, new_ssid: str | None) -> RoamEvent:
+    return RoamEvent(
+        timestamp=datetime(2026, 5, 18, 9, 49),
+        previous_bssid="aa:bb:cc:11:22:50",
+        previous_channel=36,
+        new_bssid="aa:bb:cc:33:44:10",
+        new_channel=48,
+        previous_ssid=prev_ssid,
+        new_ssid=new_ssid,
+    )
+
+
+def test_format_roam_event_includes_ssid_when_same_on_both_sides():
+    """Band switch / inter-AP roam keeping the same network: the
+    rendered line carries `SSID: <name>` exactly once."""
+    text = _event_format_line(
+        _roam_event_with_ssids("tedo", "tedo"),
+        NetworkInventory(),
+    ).plain
+    assert "SSID: tedo" in text
+    # No transition arrow alongside the SSID; the BSSID arrow is
+    # separate.
+    assert "SSID: tedo -> " not in text
+
+
+def test_format_roam_event_renders_ssid_transition_when_different():
+    text = _event_format_line(
+        _roam_event_with_ssids("home", "office"),
+        NetworkInventory(),
+    ).plain
+    assert "SSID: home -> office" in text
+
+
+def test_format_roam_event_omits_ssid_segment_when_both_none():
+    text = _event_format_line(
+        _roam_event_with_ssids(None, None),
+        NetworkInventory(),
+    ).plain
+    assert "SSID" not in text
+
+
+def test_format_roam_event_omits_ssid_segment_for_hidden_ssid():
+    """Both sides hidden (empty string from CoreWLAN) — no SSID
+    segment. We don't render `SSID: ` with nothing after."""
+    text = _event_format_line(
+        _roam_event_with_ssids("", ""),
+        NetworkInventory(),
+    ).plain
+    assert "SSID" not in text
+
+
+def test_format_rf_stir_event_includes_ssid_when_present():
+    """When event.ssid is non-empty, the line appends `· SSID <name>`
+    after the location body."""
+    event = RFStirEvent(
+        timestamp=datetime(2026, 5, 18, 9, 49),
+        bssid="1c:28:af:5e:9d:b4",
+        location="?af:5e:9d",
+        magnitude_db=4.8,
+        duration_s=12.0,
+        confidence="medium",
+        mode="spatial_channel",
+        ssid="tedo_5G",
+    )
+    text = _event_format_line(event, NetworkInventory()).plain
+    assert "SSID tedo_5G" in text
+
+
+def test_format_rf_stir_event_omits_ssid_segment_when_none():
+    """No SSID known — the rendered line is unchanged from the
+    legacy pre-enrichment shape."""
+    event = RFStirEvent(
+        timestamp=datetime(2026, 5, 18, 9, 49),
+        bssid="1c:28:af:5e:9d:b4",
+        location="?af:5e:9d",
+        magnitude_db=4.8,
+        duration_s=12.0,
+        confidence="medium",
+        mode="spatial_channel",
+    )
+    text = _event_format_line(event, NetworkInventory()).plain
+    assert "SSID" not in text
+
+
 def test_event_format_line_latency_spike():
     text = _event_format_line(_spike_event(), NetworkInventory()).plain
     assert "[LATENCY]" in text

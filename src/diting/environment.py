@@ -71,7 +71,14 @@ DEFAULT_REARM_DB = 1.5
 
 @dataclass(frozen=True, slots=True)
 class RFStirEvent:
-    """One rolling-σ threshold crossing."""
+    """One rolling-σ threshold crossing.
+
+    `ssid` is the SSID associated with the BSSID at the moment the
+    threshold crossed. Default-None for backwards compat with code
+    paths that construct the event without going through the
+    environment monitor; the monitor always fills it from the
+    current `Connection` when it has one.
+    """
     timestamp: datetime
     bssid: str
     location: str         # AP name (inventory) or cluster_label
@@ -79,6 +86,7 @@ class RFStirEvent:
     duration_s: float     # how long σ has been above threshold
     confidence: str       # 'low' | 'medium' | 'high'
     mode: str             # 'co_located' | 'spatial_channel'
+    ssid: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +152,13 @@ class EnvironmentMonitor:
         self._median_rssi: dict[str, int] = {}
         self._calibration = calibration or {}
 
-    def ingest(self, bssid: str, rssi_dbm: int | None, now: datetime) -> None:
+    def ingest(
+        self,
+        bssid: str,
+        rssi_dbm: int | None,
+        now: datetime,
+        ssid: str | None = None,
+    ) -> None:
         """Record one (timestamp, rssi) sample for ``bssid``.
 
         Called at WiFi-poll cadence for the currently-associated BSSID
@@ -152,6 +166,13 @@ class EnvironmentMonitor:
         the scan list (~7 s). Samples with ``rssi_dbm is None`` are
         silently dropped — we cannot reason about variance from
         missing data.
+
+        ``ssid`` is the network name broadcast by ``bssid`` at this
+        sample's moment. Optional + default-None for backward compat
+        with callers that don't have an SSID handy (TCC-redacted
+        path). The latest non-None value SHALL be remembered so the
+        fired ``RFStirEvent`` can carry the SSID even when the most
+        recent ingest dropped through with None.
         """
         if rssi_dbm is None or not bssid:
             return
@@ -163,9 +184,12 @@ class EnvironmentMonitor:
             "last_above_threshold_at": None,
             "last_rssi": None,
             "armed": True,
+            "ssid": None,
         })
         state["history"].append((now, rssi_dbm))
         state["last_rssi"] = rssi_dbm
+        if ssid is not None and ssid != "":
+            state["ssid"] = ssid
         # Trim out anything older than the baseline window.
         cutoff = now - self._baseline_window
         history = state["history"]
@@ -238,6 +262,7 @@ class EnvironmentMonitor:
                 duration_s=round(duration_s, 1),
                 confidence=confidence,
                 mode=mode,
+                ssid=state.get("ssid"),
             ))
             state["last_event_at"] = now
             state["armed"] = False
