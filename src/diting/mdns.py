@@ -266,7 +266,7 @@ class BonjourPoller:
         self,
         *,
         snapshot_interval_s: float = 2.0,
-        ttl_s: float = 60.0,
+        ttl_s: float = 300.0,
     ) -> None:
         self._snapshot_interval_s = snapshot_interval_s
         self._ttl_s = ttl_s
@@ -306,7 +306,12 @@ class BonjourPoller:
                     except asyncio.QueueEmpty:
                         break
                     await self._apply_callback(op, type_, name)
-                self._expire_stale(datetime.now(timezone.utc))
+                now = datetime.now(timezone.utc)
+                # Bump last_seen for entries that zeroconf's own DNS
+                # cache still considers alive — defeats the
+                # "update_service-only-on-change" eviction trap.
+                self._refresh_liveness_from_cache(now)
+                self._expire_stale(now)
                 yield BonjourScanUpdate(
                     devices=sorted(
                         self._state.values(),
@@ -414,6 +419,39 @@ class BonjourPoller:
         )
         vendor, trace = resolve_vendor_with_trace(candidate)
         self._state[key] = replace(candidate, vendor=vendor, vendor_trace=trace)
+
+    def _refresh_liveness_from_cache(self, now: datetime) -> None:
+        # zeroconf's ServiceListener is change-driven: `update_service`
+        # only fires when a service's *info* (TXT / port / addresses)
+        # changes. A HomePod re-asserting an unchanged AirPlay record
+        # fires no callback at all, even though the record is alive on
+        # the wire and refreshing zeroconf's internal DNS cache. Before
+        # the TTL backstop kicks in, walk state and bump last_seen on
+        # any entry whose service-instance name still has a non-expired
+        # record in zeroconf.cache. Without this, every stable service
+        # ages out after the TTL window and the panel goes empty.
+        if self._zc is None:
+            return
+        for key, dev in list(self._state.items()):
+            _, name = key
+            try:
+                records = self._zc.cache.entries_with_name(name.lower())
+            except Exception:
+                continue
+            if not records:
+                continue
+            alive = False
+            for record in records:
+                try:
+                    if not record.is_expired(now.timestamp() * 1000):
+                        alive = True
+                        break
+                except Exception:
+                    # Defensive: a malformed cache entry shouldn't
+                    # crash the snapshot loop.
+                    continue
+            if alive:
+                self._state[key] = replace(dev, last_seen=now)
 
     def _expire_stale(self, now: datetime) -> None:
         cutoff = now.timestamp() - self._ttl_s

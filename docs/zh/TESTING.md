@@ -264,6 +264,8 @@
 | `BonjourDevice` 携带广播解析后的所有字段（service_type、name、host、port、addresses、txt、vendor、category、first/last_seen） | `test_mdns.py::test_poller_emits_snapshot_after_first_announce`、`::test_txt_decode_drops_non_utf8_values` |
 | 厂商解析走 5 步链（TXT vendor → OUI → 主机名模式 → 服务类型 hint → 放弃） | `test_mdns.py::test_resolve_vendor_txt_field_wins`、`::test_resolve_vendor_hostname_pattern_falls_through_to_apple`、`::test_resolve_vendor_service_hint_catches_chromecast`、`::test_resolve_vendor_all_steps_abstain_returns_none` |
 | 状态表在 `remove_service` 回调时清理，并以 TTL 兜底 | `test_mdns.py::test_poller_removes_on_remove_service_callback`、`::test_poller_ttl_fallback_when_no_remove_observed` |
+| 缓存活性保活：每次 tick 时，state 里那些 service-instance 名仍在 `zc.cache` 中存活（有任一未过期记录）的条目都会被刷新 `last_seen=now`，避免 HomePod 这种「info 不变 → 不触发 update_service → 60 s 后被 TTL 误删」的陷阱 | `test_mdns.py::test_poller_cache_refresh_bumps_last_seen_for_alive_entry`、`::test_poller_cache_refresh_skips_when_only_expired_records`、`::test_poller_cache_refresh_skips_when_no_records` |
+| TTL 兜底默认值从 60 s 上调到 300 s | `test_mdns.py::test_poller_ttl_default_is_five_minutes` |
 | `BonjourPanel` 渲染 vendor / name / services / age / id 列（无 RSSI / 信号条 / connected 分割） | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi`、`tui_snapshot.py`（explore 模式真机回归） |
 | 诊断面板在 mDNS 视图下渲染 Bonjour 侧汇总 | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
 | `BonjourPoller.stop()` 会清理 zeroconf 后台线程 | `test_mdns.py::test_poller_stop_joins_background_thread` |

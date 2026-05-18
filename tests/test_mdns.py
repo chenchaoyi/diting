@@ -526,3 +526,120 @@ def test_start_browser_runs_on_worker_thread():
         "dispatched via asyncio.to_thread so the multicast socket "
         "setup does not block the event loop"
     )
+
+
+# --- cache-liveness path (bonjour-list-empties-after-ttl) -----------
+
+
+class _StubRecord:
+    """Minimal DNS-record stub for cache-liveness tests. Carries a
+    flag controlling its `is_expired(now_ms)` return value."""
+    def __init__(self, expired: bool = False) -> None:
+        self.expired = expired
+
+    def is_expired(self, now_ms):
+        return self.expired
+
+
+def test_poller_cache_refresh_bumps_last_seen_for_alive_entry(
+    patched_async_service_info,
+):
+    """zeroconf's update_service callback fires only on info changes;
+    a stable HomePod re-announcing the same record produces no
+    callback and would age out via the old 60 s TTL. The cache-
+    refresh path bumps last_seen when zeroconf still holds the
+    record in its DNS cache."""
+    patched_async_service_info.info_to_return = _StubInfo()
+
+    async def go():
+        poller = BonjourPoller(snapshot_interval_s=0.05, ttl_s=0.1)
+        fake_zc = MagicMock()
+        fake_zc.cache.entries_with_name.return_value = [
+            _StubRecord(expired=False),
+        ]
+        poller._zc = fake_zc
+
+        await poller._apply_callback("add", "_airplay._tcp.local.", "X")
+        agen = poller.events()
+        snap1 = await anext(agen)
+        assert len(snap1.devices) == 1
+        first_last_seen = snap1.devices[0].last_seen
+
+        # Wait well past the (deliberately short) TTL. Without the
+        # cache-refresh path, the entry would expire here. With it,
+        # last_seen gets bumped on every snapshot tick.
+        await asyncio.sleep(0.25)
+        snap2 = await anext(agen)
+        poller.stop()
+        await agen.aclose()
+        return snap1, snap2, first_last_seen
+
+    snap1, snap2, first_last_seen = asyncio.run(go())
+    assert len(snap2.devices) == 1
+    assert snap2.devices[0].last_seen > first_last_seen
+
+
+def test_poller_cache_refresh_skips_when_only_expired_records(
+    patched_async_service_info,
+):
+    """If zeroconf's cache only returns expired records, the entry is
+    on its way out — the cache-refresh path must NOT bump last_seen,
+    so the TTL backstop can do its job."""
+    patched_async_service_info.info_to_return = _StubInfo()
+
+    async def go():
+        poller = BonjourPoller(snapshot_interval_s=0.05, ttl_s=0.1)
+        fake_zc = MagicMock()
+        fake_zc.cache.entries_with_name.return_value = [
+            _StubRecord(expired=True),
+        ]
+        poller._zc = fake_zc
+
+        await poller._apply_callback("add", "_airplay._tcp.local.", "X")
+        agen = poller.events()
+        snap1 = await anext(agen)
+        assert len(snap1.devices) == 1
+        await asyncio.sleep(0.25)  # past the short TTL
+        snap2 = await anext(agen)
+        poller.stop()
+        await agen.aclose()
+        return snap2
+
+    snap = asyncio.run(go())
+    assert snap.devices == []
+
+
+def test_poller_cache_refresh_skips_when_no_records(
+    patched_async_service_info,
+):
+    """Cache returns an empty list — the service has fully aged out of
+    zeroconf's view. Don't bump last_seen; let the TTL handle it."""
+    patched_async_service_info.info_to_return = _StubInfo()
+
+    async def go():
+        poller = BonjourPoller(snapshot_interval_s=0.05, ttl_s=0.1)
+        fake_zc = MagicMock()
+        fake_zc.cache.entries_with_name.return_value = []
+        poller._zc = fake_zc
+
+        await poller._apply_callback("add", "_airplay._tcp.local.", "X")
+        agen = poller.events()
+        snap1 = await anext(agen)
+        assert len(snap1.devices) == 1
+        await asyncio.sleep(0.25)
+        snap2 = await anext(agen)
+        poller.stop()
+        await agen.aclose()
+        return snap2
+
+    snap = asyncio.run(go())
+    assert snap.devices == []
+
+
+def test_poller_ttl_default_is_five_minutes():
+    """The default TTL is 300 s now, not the old 60 s. With the
+    cache-refresh path keeping stable services alive, the TTL is a
+    last-resort sweep, not the primary eviction mechanism — a
+    longer window keeps borderline cases from churning."""
+    poller = BonjourPoller()
+    assert poller._ttl_s == 300.0
