@@ -10,6 +10,35 @@
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-05-18
+
+针对 v1.1.1 真实使用反馈的两个修复 + 一个增强。
+
+### 修复
+- **Bonjour 列表不再在大约 1 分钟稳定服务后清空。** zeroconf 的
+  `update_service` 回调是「变化驱动」的——一个 HomePod 持续广播同
+  一条 AirPlay 记录，info 没变就不会触发回调，于是 `last_seen`
+  始终停留在第一次 `add_service` 的那一刻，60 秒 TTL 把还活着的
+  服务给清掉了——尽管 zeroconf 自己的 DNS cache 里那些记录还在。
+  现在 poller 每个 snapshot tick 都会从 zeroconf 的 cache 里读
+  存活状态：只要 service-instance 名在
+  `Zeroconf.cache.entries_with_name` 里还有任何未过期记录，
+  对应条目的 `last_seen` 就被刷成 `now`。TTL 兜底默认值也从
+  60 s 上调到 300 s；有了 cache-refresh 之后，TTL 退化成兜底
+  机制，不再是主要的清理路径。
+
+### 新增
+- **Wi-Fi 事件行（漫游、RF 扰动）现在带上对应的 SSID。** 漫游事件
+  在两侧属于同一个网络时（band 切换 / 同 ESS 漫游）显示单段
+  `SSID: <名字>`；两侧 SSID 不同时显示 `SSID: <前> → <后>`；
+  两侧都是 `None` 或 `""`（隐藏 SSID）时整段省略。AP 名字部分没变
+  ——仍由 `aps.yaml` 经 `NetworkInventory` 解析，所以充分填好
+  inventory 的话事件行还能继续展示友好 AP 名。SSID 上下文是
+  「额外的」，inventory 为空也能用。
+- `RoamEvent` 和 `RFStirEvent` 的 JSONL 日志行现在带上新增的
+  `previous_ssid` / `new_ssid` / `ssid` 键；为 `None` 时不输出，
+  保持旧日志条目 diff 稳定。
+
 ## [1.1.1] — 2026-05-17
 
 针对 v1.1.0 真实环境跑 `/tui-audit` 之后的抛光。三个 bug + 两个
