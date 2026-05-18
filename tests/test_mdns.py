@@ -643,3 +643,112 @@ def test_poller_ttl_default_is_five_minutes():
     longer window keeps borderline cases from churning."""
     poller = BonjourPoller()
     assert poller._ttl_s == 300.0
+
+
+# --- active per-service re-probe (tui-audit-2026-05-18) -------------
+
+
+def test_poller_active_probe_scheduled_per_state_entry_at_cadence(
+    patched_async_service_info,
+):
+    """Every `_active_probe_interval_s` the poller schedules a
+    fire-and-forget `_apply_callback("update", ...)` for each
+    tracked entry. The probe re-asserts the service on the wire so
+    its zeroconf-cache record gets refreshed before our state's
+    `last_seen` ages out.
+    """
+    patched_async_service_info.info_to_return = _StubInfo()
+
+    async def go():
+        poller = BonjourPoller(
+            snapshot_interval_s=0.05,
+            ttl_s=10.0,
+            active_probe_interval_s=0.15,  # short for the test
+        )
+        poller._zc = MagicMock()
+
+        # Seed an entry the listener way.
+        await poller._apply_callback("add", "_airplay._tcp.local.", "X")
+
+        probes: list[tuple[str, str, str]] = []
+        original_apply = poller._apply_callback
+
+        async def spy(op, type_, name):
+            probes.append((op, type_, name))
+            await original_apply(op, type_, name)
+        poller._apply_callback = spy  # type: ignore[method-assign]
+
+        agen = poller.events()
+        await anext(agen)  # tick 1 — no probe yet (interval deferred)
+        await asyncio.sleep(0.20)  # past the 0.15 s interval
+        await anext(agen)  # tick 2 — should schedule a probe
+        # Let any scheduled tasks settle.
+        await asyncio.sleep(0.05)
+
+        poller.stop()
+        await agen.aclose()
+        return probes
+
+    probes = asyncio.run(go())
+    update_probes = [p for p in probes if p[0] == "update"]
+    assert any(
+        type_ == "_airplay._tcp.local." and name == "X"
+        for _, type_, name in update_probes
+    ), f"expected at least one update probe for X; got {probes!r}"
+
+
+def test_poller_active_probe_does_not_block_snapshot_yield(
+    patched_async_service_info,
+):
+    """The active probe is fire-and-forget — a hung
+    `AsyncServiceInfo.async_request` MUST NOT delay the next yield
+    of the events generator.
+    """
+    class _HangingStubInfo(_StubInfo):
+        async def async_request(self, zc, timeout):
+            await asyncio.sleep(2.0)
+            return True
+    patched_async_service_info.info_to_return = _HangingStubInfo()
+
+    async def go():
+        poller = BonjourPoller(
+            snapshot_interval_s=0.05,
+            ttl_s=10.0,
+            active_probe_interval_s=0.05,
+        )
+        poller._zc = MagicMock()
+        # Seed via direct state insert so we don't go through
+        # _apply_callback("add", ...) which would itself await the
+        # hanging async_request.
+        from datetime import datetime, timezone
+        from diting.mdns import BonjourDevice
+        seed_now = datetime.now(timezone.utc)
+        poller._state[("_airplay._tcp.local.", "X")] = BonjourDevice(
+            service_type="_airplay._tcp.local.",
+            name="X", host="x.local.", port=8009,
+            addresses=(), txt={}, vendor=None, category=None,
+            first_seen=seed_now, last_seen=seed_now,
+        )
+        agen = poller.events()
+        start = asyncio.get_event_loop().time()
+        await anext(agen)
+        await asyncio.sleep(0.08)  # past the interval; probe scheduled
+        await anext(agen)
+        elapsed = asyncio.get_event_loop().time() - start
+        poller.stop()
+        await agen.aclose()
+        return elapsed
+
+    elapsed = asyncio.run(go())
+    # Two snapshot ticks + a 0.08 s sleep ≈ 0.18 s in the clean
+    # path. If the probe had blocked the yield, elapsed would be
+    # >= 2.0 s (the hanging request timeout).
+    assert elapsed < 1.0, (
+        f"snapshot yield was delayed by a hung active probe; elapsed={elapsed:.2f}s"
+    )
+
+
+def test_poller_active_probe_default_cadence_is_thirty_seconds():
+    """Sanity-check the constructor default."""
+    poller = BonjourPoller()
+    assert poller._active_probe_interval_s == 30.0
