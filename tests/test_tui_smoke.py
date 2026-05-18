@@ -275,11 +275,11 @@ def test_custom_scan_interval_threads_through():
 
 
 def test_toggle_view_swaps_third_panel():
-    """Press `n` to advance through the wifi → ble → mdns → wifi cycle.
-    All three panels stay mounted; only display flips, so each swap
-    is instant and consumer state is preserved."""
+    """Press `n` to advance through the wifi → ble → mdns → lan → wifi
+    cycle. All four panels stay mounted; only display flips, so each
+    swap is instant and consumer state is preserved."""
     import asyncio
-    from diting.tui import BLEPanel, BonjourPanel
+    from diting.tui import BLEPanel, BonjourPanel, LANPanel
 
     async def go():
         app = DitingApp(_FakeBackend(), _INVENTORY)
@@ -288,9 +288,11 @@ def test_toggle_view_swaps_third_panel():
             scan = app.query_one("#scan")
             ble = app.query_one("#ble", BLEPanel)
             mdns = app.query_one("#mdns", BonjourPanel)
+            lan = app.query_one("#lan", LANPanel)
             assert scan.display is True
             assert ble.display is False
             assert mdns.display is False
+            assert lan.display is False
             assert app._view_mode == "wifi"
             # wifi → ble
             await pilot.press("n")
@@ -299,6 +301,7 @@ def test_toggle_view_swaps_third_panel():
             assert scan.display is False
             assert ble.display is True
             assert mdns.display is False
+            assert lan.display is False
             # ble → mdns
             await pilot.press("n")
             await pilot.pause(0.2)
@@ -306,31 +309,41 @@ def test_toggle_view_swaps_third_panel():
             assert scan.display is False
             assert ble.display is False
             assert mdns.display is True
-            # mdns → wifi (cycle wraps)
+            assert lan.display is False
+            # mdns → lan
+            await pilot.press("n")
+            await pilot.pause(0.2)
+            assert app._view_mode == "lan"
+            assert scan.display is False
+            assert ble.display is False
+            assert mdns.display is False
+            assert lan.display is True
+            # lan → wifi (cycle wraps)
             await pilot.press("n")
             await pilot.pause(0.2)
             assert app._view_mode == "wifi"
             assert scan.display is True
             assert ble.display is False
             assert mdns.display is False
+            assert lan.display is False
             await pilot.press("q")
 
     asyncio.run(go())
 
 
-def test_view_toggle_cycles_wifi_ble_mdns_wifi():
+def test_view_toggle_cycles_wifi_ble_mdns_lan_wifi():
     """Alias of test_toggle_view_swaps_third_panel — kept under the
     name referenced by the TESTING.md row so future readers can find
-    the citation directly. Three presses return to wifi."""
+    the citation directly. Four presses return to wifi."""
     import asyncio
-    from diting.tui import BLEPanel, BonjourPanel
+    from diting.tui import BLEPanel, BonjourPanel, LANPanel
 
     async def go():
         app = DitingApp(_FakeBackend(), _INVENTORY)
         async with app.run_test(size=(140, 50)) as pilot:
             await pilot.pause(0.4)
             assert app._view_mode == "wifi"
-            for expected in ("ble", "mdns", "wifi"):
+            for expected in ("ble", "mdns", "lan", "wifi"):
                 await pilot.press("n")
                 await pilot.pause(0.2)
                 assert app._view_mode == expected
@@ -947,6 +960,33 @@ def test_bonjour_inspect_opens_modal_on_first_press():
             await pilot.press("escape")
             await pilot.pause(0.2)
             assert app._bonjour_selected_key is not None
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_lan_poller_lazy_starts_on_third_n_press():
+    """The LANInventoryPoller is NOT constructed at mount; it
+    lazy-starts the first time the user cycles into the LAN view
+    (four `n` presses from wifi: wifi → ble → mdns → lan)."""
+    import asyncio
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.5)
+            # Not yet on LAN view — poller must not exist.
+            assert app._lan_inventory_poller is None
+            for _ in range(3):
+                await pilot.press("n")
+                await pilot.pause(0.2)
+            assert app._view_mode == "lan"
+            # Lazy-start happens via run_worker; give the worker a beat.
+            await pilot.pause(0.6)
+            assert (
+                app._lan_inventory_poller is not None
+                or app._lan_inventory_starting
+            )
             await pilot.press("q")
 
     asyncio.run(go())

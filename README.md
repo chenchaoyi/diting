@@ -102,6 +102,11 @@ BSSID. Same path as menu-off-then-on, in one keystroke.
   Where's that AirTag? The BLE list resolves vendor + protocol on
   every advertising device; the detail modal's RSSI sparkline lets
   you walk a target down by signal strength.
+- **See who's on your Wi-Fi.** The fourth panel (cycle to it via
+  `n`) lists every host on your local subnet — IP, MAC, vendor,
+  hostname, Bonjour name. ARP cache + ICMP sweep; no router
+  login needed. Default /24 sweep; `DITING_LAN_INVENTORY_WIDE=1`
+  unlocks a /22 sweep for wider home subnets.
 - **Catch anomalous signals.** Latency spikes, loss bursts,
   unexplained RF variance — diting names what changed and when.
   Long-running sessions land in `--log` JSONL for after-the-fact
@@ -196,7 +201,7 @@ With no override, `diting` autodetects the system locale —
 | `p` | pause / resume polling |
 | `r` | force a rescan now (CoreWLAN ~5 s throttle still applies) |
 | `s` | cycle sort — Wi-Fi: by AP ↔ by signal; Bonjour: service ↔ by-host |
-| `n` | cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour |
+| `n` | cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour → LAN |
 | `c` | force re-roam — cycle Wi-Fi off/on so macOS re-picks the strongest BSSID |
 | `m` | open / close the Events modal — last 100 roam / stir / latency / loss / link events |
 | `?` | open / close the in-app help screen |
@@ -279,6 +284,7 @@ somewhere other than the current working directory.
 | `DITING_HELPER` | searched in `/Applications`, `~/Applications`, repo `helper/` | Path to the `diting-tianer.app` bundle or its binary. |
 | `DITING_SCAN_INTERVAL` | `7` | Seconds between scans. CoreWLAN throttles around 5 s, so values below ~6 yield empty scans every other call. Floor 3. |
 | `DITING_LATENCY_WAN_TARGET` | autodetected from `scutil --dns` | IP for the WAN latency anchor. Default picks the first non-gateway nameserver from `SCDynamicStoreCopyValue("State:/Network/Global/DNS")`; if the only configured DNS *is* the gateway, the WAN probe is skipped and the diagnostic line reads `WAN n/a (DNS == gateway)`. Override to pin an explicit IP (e.g. `1.1.1.1` for networks that allow it). |
+| `DITING_LAN_INVENTORY_WIDE` | unset | When set to `1`, the LAN view sweeps a /22 (1022 hosts) around your interface IP instead of the default /24 (254 hosts). Useful on home subnets wider than /24; on corporate /16+ VLANs the sweep is still capped at /22 around your IP. |
 
 ## macOS caveats
 
@@ -450,11 +456,13 @@ ordering is intent.
   to the edge box over Bonjour. See also
   [`docs/explainers/lan-inventory-arp.md`](docs/explainers/lan-inventory-arp.md)
   for the LAN-inventory half that doesn't need the edge box.
-- **Any-device LAN inventory (ARP-based).** A fourth panel
-  listing every host on the local /24 — IP, MAC, vendor (via
-  OUI), hostname (via reverse DNS), Bonjour cross-reference,
-  first/last seen. Answers "who's on my Wi-Fi?" from a normal
-  Mac client, no router login. Designed in
+- ~~**Any-device LAN inventory (ARP-based).**~~ **[shipped]**
+  A fourth panel listing every host on the local /24 — IP,
+  MAC, vendor (via OUI), hostname (via reverse DNS), Bonjour
+  cross-reference, first/last seen. Cycle to it via `n`
+  (fourth view). Default /24 sweep; set
+  `DITING_LAN_INVENTORY_WIDE=1` for a /22 sweep on wider home
+  subnets. Design lives in
   [`docs/explainers/lan-inventory-arp.md`](docs/explainers/lan-inventory-arp.md).
 - **Optional menu-bar app** for ambient awareness without keeping
   a terminal open.

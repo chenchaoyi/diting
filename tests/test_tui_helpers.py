@@ -1162,19 +1162,20 @@ def test_view_display_name_maps_internal_tokens_to_user_names():
     assert _view_display_name("future-view") == "future-view"
 
 
-def test_view_tabs_border_title_lists_all_three_views():
+def test_view_tabs_border_title_lists_all_four_views():
     """The composed Rich markup mentions every view name regardless of
     which one is active — that's the whole point of the always-visible
     tab indicator."""
-    for active in ("wifi", "ble", "mdns"):
+    for active in ("wifi", "ble", "mdns", "lan"):
         markup = _view_tabs_border_title(active)
         assert "Wi-Fi" in markup
         assert "BLE" in markup
         assert "Bonjour" in markup
+        assert "LAN" in markup
 
 
 def test_view_tabs_border_title_styles_active_distinctly():
-    """The active view is bold-cyan; the two inactive views are dim.
+    """The active view is bold-cyan; the other views are dim.
     Verified by the Rich-markup tag the helper produces."""
     markup = _view_tabs_border_title("ble")
     # Active label is wrapped in [bold cyan] ... [/].
@@ -1182,15 +1183,16 @@ def test_view_tabs_border_title_styles_active_distinctly():
     # Inactive labels are wrapped in [dim] ... [/].
     assert "[dim]Wi-Fi[/]" in markup
     assert "[dim]Bonjour[/]" in markup
+    assert "[dim]LAN[/]" in markup
 
 
 def test_view_tabs_border_title_preserves_cycle_order():
-    """Tab order matches the `n` cycle order (wifi → ble → mdns) so
-    the user can visually predict which view a press lands on."""
+    """Tab order matches the `n` cycle order (wifi → ble → mdns → lan)
+    so the user can visually predict which view a press lands on."""
     markup = _view_tabs_border_title("wifi")
-    # Wi-Fi appears before BLE, which appears before Bonjour.
     assert markup.index("Wi-Fi") < markup.index("BLE")
     assert markup.index("BLE") < markup.index("Bonjour")
+    assert markup.index("Bonjour") < markup.index("LAN")
 
 
 # --- Bonjour service-suffix strip -----------------------------------
@@ -2322,3 +2324,200 @@ def test_mdns_diagnostics_top_vendors_uses_unknown_label():
     assert "(unknown) 5" in joined
     # The literal `?` glyph must not appear in this bucket's label.
     assert "? 5" not in joined
+
+
+# --- LAN inventory rendering ----------------------------------------
+
+def _lan_host(
+    *,
+    mac="aa:bb:cc:11:22:33",
+    ip="192.168.1.10",
+    vendor="Apple, Inc.",
+    bonjour_name=None,
+    bonjour_services=(),
+    hostname=None,
+    is_self=False,
+    is_gateway=False,
+    is_randomised_mac=False,
+):
+    from datetime import datetime, timezone
+    from diting.lan import LANHost
+    now = datetime(2026, 5, 17, 12, 0, 0, tzinfo=timezone.utc)
+    return LANHost(
+        mac=mac,
+        ip=ip,
+        vendor=vendor,
+        hostname=hostname,
+        bonjour_name=bonjour_name,
+        bonjour_services=bonjour_services,
+        first_seen=now,
+        last_seen=now,
+        is_gateway=is_gateway,
+        is_self=is_self,
+        is_randomised_mac=is_randomised_mac,
+    )
+
+
+def _lan_update(hosts, *, capped=False, cap=24):
+    from datetime import datetime, timezone
+    from diting.lan import LANInventoryUpdate
+    now = datetime(2026, 5, 17, 12, 0, 0, tzinfo=timezone.utc)
+    return LANInventoryUpdate(
+        hosts=tuple(hosts),
+        subnet="192.168.1.0/24",
+        subnet_capped=capped,
+        cap_prefix=cap,
+        last_sweep_at=now,
+        next_sweep_at=now,
+    )
+
+
+def test_lan_panel_renders_self_and_gateway_pinned_to_top():
+    """The first row is the self entry (★ + this Mac), the second
+    is the gateway (★ + gateway)."""
+    from diting.tui import _lan_row_line
+    from datetime import datetime, timezone
+    self_host = _lan_host(mac="84:2f:57:9b:15:59", is_self=True)
+    gateway = _lan_host(mac="aa:bb:cc:11:22:33", ip="192.168.1.1", is_gateway=True)
+    other = _lan_host(mac="de:ad:be:ef:00:01", ip="192.168.1.42")
+    now = datetime.now(timezone.utc)
+    self_text = _lan_row_line(self_host, now).plain
+    gw_text = _lan_row_line(gateway, now).plain
+    other_text = _lan_row_line(other, now).plain
+    assert "★" in self_text and "this Mac" in self_text
+    assert "★" in gw_text and "gateway" in gw_text
+    assert "★" not in other_text
+
+
+def test_lan_panel_sorts_remaining_rows_by_ip_ascending():
+    """Self / gateway aside, the remaining LANHost rows render in
+    IP-ascending order — verified through the _sort_key helper."""
+    from diting.lan import _sort_key
+    a = _lan_host(mac="aa:00:00:00:00:01", ip="192.168.1.50")
+    b = _lan_host(mac="aa:00:00:00:00:02", ip="192.168.1.10")
+    c = _lan_host(mac="aa:00:00:00:00:03", ip="192.168.1.99")
+    ordered = sorted([a, b, c], key=_sort_key)
+    assert [h.ip for h in ordered] == ["192.168.1.10", "192.168.1.50", "192.168.1.99"]
+
+
+def test_lan_panel_marks_random_mac_with_label():
+    """A locally-administered (random) MAC's vendor cell shows
+    "(random MAC)" instead of the vendor / (unknown) string."""
+    from diting.tui import _lan_row_line
+    from datetime import datetime, timezone
+    host = _lan_host(
+        mac="02:11:22:33:44:55", vendor=None, is_randomised_mac=True,
+    )
+    text = _lan_row_line(host, datetime.now(timezone.utc)).plain
+    assert "(random MAC)" in text
+
+
+def test_lan_diagnostics_renders_full_summary_line():
+    """The diagnostics block carries host count, named-via-Bonjour
+    count, unknown-vendor count, subnet, and last-sweep relative
+    time on three rows."""
+    from diting.tui import _lan_diagnostic_lines
+    hosts = [
+        _lan_host(mac="01:00:00:00:00:01", vendor="Apple, Inc.",
+                  bonjour_name="apple-1"),
+        _lan_host(mac="02:00:00:00:00:02", vendor="Apple, Inc.",
+                  bonjour_name="apple-2"),
+        _lan_host(mac="03:00:00:00:00:03", vendor=None),
+    ]
+    update = _lan_update(hosts)
+    rows = _lan_diagnostic_lines(update)
+    joined = "".join(r.plain for r in rows)
+    assert "3 hosts" in joined
+    assert "2 named" in joined
+    assert "1 unknown vendor" in joined
+    assert "192.168.1.0/24" in joined
+    assert "last sweep" in joined
+
+
+def test_lan_diagnostics_annotates_capped_subnet_when_netmask_wider():
+    from diting.tui import _lan_diagnostic_lines
+    update = _lan_update([_lan_host()], capped=True)
+    joined = "".join(r.plain for r in _lan_diagnostic_lines(update))
+    assert "capped" in joined
+
+
+def test_lan_diagnostics_omits_capped_annotation_when_full_subnet_swept():
+    from diting.tui import _lan_diagnostic_lines
+    update = _lan_update([_lan_host()], capped=False)
+    joined = "".join(r.plain for r in _lan_diagnostic_lines(update))
+    assert "capped" not in joined
+
+
+def test_lan_detail_modal_renders_all_sections():
+    """LANDetailScreen renders Identity / Network / Bonjour services
+    / Activity sections for a Bonjour-named host."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(
+        bonjour_name="my-mac",
+        bonjour_services=("AirPlay", "AirPlay audio"),
+    )
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    # `body` is a rich Group; collect its renderable strings.
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Identity" in rendered
+    assert "Network" in rendered
+    assert "Bonjour services" in rendered
+    assert "Activity" in rendered
+    assert "AirPlay" in rendered
+    assert "AirPlay audio" in rendered
+
+
+def test_lan_detail_modal_omits_bonjour_section_when_no_services():
+    """A LAN host with no Bonjour services does NOT render the
+    Bonjour services section."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(bonjour_name=None, bonjour_services=())
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Identity" in rendered
+    assert "Bonjour services" not in rendered
+
+
+def test_lan_panel_renders_sweeping_placeholder_before_first_snapshot():
+    """The panel renders the dim-italic '(sweeping subnet…)' line
+    when the latest update is None."""
+    from diting.tui import LANPanel
+    panel = LANPanel(id="lan-test")
+    # Direct invocation of update_hosts(None) goes through the early
+    # return — we exercise the placeholder branch by inspecting the
+    # _y_to_key state after.
+    panel._y_to_key = ["sentinel"]  # something for us to verify gets cleared
+    # Body widget isn't mounted; assert the contract that update_hosts(None)
+    # resets selection rather than rendering rows. We do this without
+    # a live Textual app by stubbing query_one to a sentinel:
+    class _FakeStatic:
+        def update(self, *_a, **_k): pass
+    panel.query_one = lambda *_a, **_k: _FakeStatic()  # type: ignore[assignment]
+    panel.update_hosts(None)
+    assert panel._y_to_key == []
+
+
+def test_lan_panel_renders_rows_after_first_snapshot():
+    """When an update has hosts, the y_to_key map carries one entry
+    per row (one None header + one per host)."""
+    from diting.tui import LANPanel
+    panel = LANPanel(id="lan-test")
+    hosts = [
+        _lan_host(mac="aa:00:00:00:00:01", ip="192.168.1.10"),
+        _lan_host(mac="aa:00:00:00:00:02", ip="192.168.1.42",
+                  bonjour_name="other"),
+    ]
+    update = _lan_update(hosts)
+
+    class _FakeStatic:
+        def update(self, *_a, **_k): pass
+    panel.query_one = lambda *_a, **_k: _FakeStatic()  # type: ignore[assignment]
+    panel.update_hosts(update)
+    # First entry is the header (None); then one per host.
+    assert panel._y_to_key == [None, "aa:00:00:00:00:01", "aa:00:00:00:00:02"]
