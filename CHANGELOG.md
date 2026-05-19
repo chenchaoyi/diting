@@ -11,6 +11,59 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-05-19
+
+Minor release. Headline: a new fourth panel that answers "who's on
+my Wi-Fi?" from a regular Mac client, no router login. Two smaller
+UX changes also ride along.
+
+### Added
+- **LAN inventory panel.** Cycle to it via `n` (fourth view after
+  Wi-Fi → BLE → Bonjour). Each tick the new `LANInventoryPoller`
+  ICMP-pings every IP in the local /24 around your interface
+  (30-way concurrency, 200 ms per host) and reads the kernel ARP
+  cache via `arp -an`, then enriches each entry with OUI vendor,
+  reverse DNS, and a **Bonjour cross-reference** for friendly
+  names. Rows pin `this Mac` first with ★, then `gateway` with ★,
+  then sort by IP ascending. Locally-administered (random) MACs
+  are flagged with `(random MAC)` in place of a vendor. State is
+  keyed by lowercase MAC so `first_seen` is preserved across DHCP
+  IP rotation. Default-on; lazy-constructs on first LAN-view
+  entry so users who never cycle in pay zero cost. See
+  [`docs/explainers/lan-inventory-arp.md`](docs/explainers/lan-inventory-arp.md)
+  for the design.
+- **`DITING_LAN_INVENTORY_WIDE=1` env var.** Relaxes the default
+  /24 cap to /22 (1022 hosts) for users on wider home subnets.
+  Corporate /16+ VLANs are still narrowed to a /22 around the
+  interface IP; diting never sweeps the full broadcast domain.
+- **LANDetailScreen modal** (priority `i` from the LAN view).
+  Identity / Network / Bonjour services / Activity sections.
+  Arrow-keys passthrough so `up` / `down` walks the LAN table
+  with the modal tracking. Closes on `Esc` / `i` / `q`.
+- **LAN-view diagnostics block.** `LAN inventory  N hosts ·
+  M named (Bonjour) · K unknown vendor · subnet … [· capped] ·
+  last sweep Xs ago`.
+
+### Changed
+- **Help screen rebound from `h` to `?`.** `h` is now an
+  intentional no-op so it stays free for a future per-view binding
+  without colliding with the global help shortcut. The `?` key
+  matches the convention every other CLI uses for "show help".
+- **Help text + bindings now reflect the four-view cycle.**
+
+### Fixed
+- **mDNS list no longer empties when no zeroconf callback fires.**
+  The poller now actively re-probes every tracked service-type at
+  a 30 s cadence so devices that re-assert unchanged records (the
+  common HomePod / printer case) keep their `last_seen` fresh
+  even when zeroconf's change-driven callbacks stay quiet.
+- **Hide Tx / Max when CoreWLAN reports `Max < Tx`.** macOS 26
+  `maximumLinkSpeed()` returns a stale value in some scenarios
+  that makes Tx look faster than the radio's maximum (which
+  cannot happen physically). The Tx half stands alone correctly;
+  showing both produces a self-contradiction, so the Max half is
+  suppressed in that case.
+
 ## [1.1.2] — 2026-05-18
 
 Two fixes / one enhancement driven by real-environment use of v1.1.1.
