@@ -45,6 +45,12 @@ class LANHost:
 
     Keyed by ``mac`` (lowercase). ``first_seen`` is preserved across
     DHCP IP rotation; ``last_seen`` updates on every observation.
+
+    ``last_rtt_ms`` and ``last_reachable_at`` track ICMP-reachability
+    separately from ARP-observation (``last_seen``). A host that's
+    still in the kernel ARP cache but has gone offline will have a
+    fresh ``last_seen`` but a stale ``last_reachable_at`` — the
+    detail modal surfaces both so the user can spot the gap.
     """
 
     mac: str
@@ -58,6 +64,8 @@ class LANHost:
     is_gateway: bool
     is_self: bool
     is_randomised_mac: bool
+    last_rtt_ms: float | None = None
+    last_reachable_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +91,12 @@ _ARP_LINE_RE = re.compile(
     r"\(([\d.]+)\)\s+at\s+([0-9a-f:]+)\s+on\s+(\w+)",
     flags=re.IGNORECASE,
 )
+
+# macOS `ping -c 1` writes a single sample line containing
+# `time=X.XXX ms` (decimal varies; some locales use `,` decimal
+# separator but macOS pings always print `.`). This regex pulls the
+# RTT in milliseconds.
+_PING_RTT_RE = re.compile(r"time=([\d.]+)\s*ms", flags=re.IGNORECASE)
 
 
 def _ip_in_network(ip: str, network: ipaddress.IPv4Network) -> bool:
@@ -183,8 +197,19 @@ def _detect_subnet(
     return hosts, str(network), cap_prefix, was_capped
 
 
-async def _ping_one(ip: str, *, timeout_ms: int = _PING_TIMEOUT_MS) -> bool:
-    """Send one ICMP echo via unprivileged ``ping``. True iff exit 0."""
+async def _ping_one(
+    ip: str, *, timeout_ms: int = _PING_TIMEOUT_MS,
+) -> tuple[bool, float | None]:
+    """Send one ICMP echo via unprivileged ``ping``.
+
+    Returns ``(reachable, rtt_ms)``:
+    - ``(True, <rtt>)`` when ``ping`` exits 0 and stdout contains a
+      parseable ``time=X.XXX ms`` segment
+    - ``(True, None)`` when ``ping`` exits 0 but stdout is
+      unparseable (locale quirk, weird build)
+    - ``(False, None)`` when ``ping`` exits non-zero or the
+      subprocess errors out
+    """
     try:
         proc = await asyncio.create_subprocess_exec(
             "/sbin/ping",
@@ -193,13 +218,23 @@ async def _ping_one(ip: str, *, timeout_ms: int = _PING_TIMEOUT_MS) -> bool:
             "-W",
             str(timeout_ms),
             ip,
-            stdout=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        rc = await proc.wait()
+        stdout_bytes, _ = await proc.communicate()
+        rc = proc.returncode
     except (OSError, asyncio.CancelledError):
-        return False
-    return rc == 0
+        return False, None
+    if rc != 0:
+        return False, None
+    text = stdout_bytes.decode("ascii", errors="replace")
+    m = _PING_RTT_RE.search(text)
+    if not m:
+        return True, None
+    try:
+        return True, float(m.group(1))
+    except ValueError:
+        return True, None
 
 
 async def _sweep(
@@ -207,19 +242,30 @@ async def _sweep(
     *,
     concurrency: int = _PING_CONCURRENCY,
     timeout_ms: int = _PING_TIMEOUT_MS,
-) -> None:
+) -> dict[str, tuple[bool, float | None]]:
     """Ping every IP in ``hosts`` with bounded concurrency.
 
-    Return value is ignored; the side-effect we care about is the
-    populated kernel ARP cache.
+    Returns ``{ip: (reachable, rtt_ms)}``. The side-effect we ALSO
+    care about is the populated kernel ARP cache; the merge step in
+    ``LANInventoryPoller`` reads ``arp -an`` after the sweep
+    completes.
     """
     sem = asyncio.Semaphore(concurrency)
 
-    async def _one(ip: str) -> None:
+    async def _one(ip: str) -> tuple[str, tuple[bool, float | None]]:
         async with sem:
-            await _ping_one(ip, timeout_ms=timeout_ms)
+            result = await _ping_one(ip, timeout_ms=timeout_ms)
+            return ip, result
 
-    await asyncio.gather(*[_one(ip) for ip in hosts], return_exceptions=True)
+    pairs = await asyncio.gather(
+        *[_one(ip) for ip in hosts], return_exceptions=True,
+    )
+    out: dict[str, tuple[bool, float | None]] = {}
+    for p in pairs:
+        if isinstance(p, tuple) and len(p) == 2:
+            ip, result = p
+            out[ip] = result
+    return out
 
 
 def _read_arp_cache(*, runner=None) -> list[tuple[str, str, str]]:
@@ -393,7 +439,9 @@ class LANInventoryPoller:
         if conn.router_ip and conn.router_ip not in hosts_to_probe:
             hosts_to_probe.append(conn.router_ip)
 
-        await _sweep(hosts_to_probe, timeout_ms=self._ping_timeout_ms)
+        sweep_results = await _sweep(
+            hosts_to_probe, timeout_ms=self._ping_timeout_ms,
+        )
 
         # Filter ARP cache entries down to the sweep's network. The
         # kernel ARP cache also holds entries from outside our /24 (or
@@ -418,7 +466,9 @@ class LANInventoryPoller:
             triples = all_triples
 
         now = datetime.now(timezone.utc)
-        await self._merge_arp_into_state(triples, conn=conn, now=now)
+        await self._merge_arp_into_state(
+            triples, conn=conn, now=now, sweep_results=sweep_results,
+        )
 
         update = LANInventoryUpdate(
             hosts=tuple(sorted(self._state.values(), key=_sort_key)),
@@ -439,6 +489,7 @@ class LANInventoryPoller:
         *,
         conn: Connection,
         now: datetime,
+        sweep_results: dict[str, tuple[bool, float | None]] | None = None,
     ) -> None:
         if self._ouis is None:
             self._ouis = load_ouis()
@@ -466,11 +517,45 @@ class LANInventoryPoller:
 
         iface_mac_lc = (conn.interface_mac or "").lower()
         router_ip = conn.router_ip
+        sweep_results = sweep_results or {}
+
+        def _rtt_for(existing_entry, ip_addr):
+            """Return (last_rtt_ms, last_reachable_at) for this tick.
+
+            Pulls from the sweep result if the host responded; falls
+            back to the existing entry's values when the host was
+            silent this sweep (so a temporarily-quiet host's
+            last-known RTT stays visible in the modal). Returns
+            (None, None) for never-reached hosts.
+            """
+            sweep_entry = sweep_results.get(ip_addr)
+            if sweep_entry is not None:
+                reachable, rtt_ms = sweep_entry
+                if reachable:
+                    return rtt_ms, now
+            # Sweep got no reply this tick — preserve existing
+            # last-known values if we have them.
+            if existing_entry is not None:
+                return existing_entry.last_rtt_ms, existing_entry.last_reachable_at
+            return None, None
 
         # Snapshot self too: we don't appear in our own ARP cache,
         # but the user wants to see "this Mac" pinned at the top.
         if iface_mac_lc and conn.ip_address:
             self_entry = self._state.get(iface_mac_lc)
+            # We don't ping our own IP in the sweep (sweep targets
+            # /24 around iface_ip, which includes our IP, but ping to
+            # self on macOS is trivially ~0.1 ms and informative).
+            # If the sweep happens to have a result for our IP, use
+            # it; otherwise mark self as reachable=now with no RTT.
+            self_sweep = sweep_results.get(conn.ip_address)
+            if self_sweep is not None and self_sweep[0]:
+                self_rtt, self_reach = self_sweep[1], now
+            else:
+                self_rtt = self_entry.last_rtt_ms if self_entry else None
+                self_reach = (
+                    now if self_entry is None else self_entry.last_reachable_at
+                )
             self._state[iface_mac_lc] = LANHost(
                 mac=iface_mac_lc,
                 ip=conn.ip_address,
@@ -487,6 +572,8 @@ class LANInventoryPoller:
                 is_gateway=False,
                 is_self=True,
                 is_randomised_mac=_is_randomised_mac(iface_mac_lc),
+                last_rtt_ms=self_rtt,
+                last_reachable_at=self_reach,
             )
 
         for ip, mac, _iface in triples:
@@ -500,6 +587,7 @@ class LANInventoryPoller:
             )
             bonjour_host, bonjour_cats = bonjour_index.get(ip, (None, ()))
             hostname = rdns_results.get(ip, existing.hostname if existing else None)
+            last_rtt_ms, last_reachable_at = _rtt_for(existing, ip)
             host_entry = LANHost(
                 mac=mac_lc,
                 ip=ip,
@@ -512,6 +600,8 @@ class LANInventoryPoller:
                 is_gateway=(router_ip is not None and ip == router_ip),
                 is_self=(mac_lc == iface_mac_lc),
                 is_randomised_mac=randomised,
+                last_rtt_ms=last_rtt_ms,
+                last_reachable_at=last_reachable_at,
             )
             # Special-case: self may also appear in ARP (rare; mostly
             # not, since we ARP others). If it does, merge — keep
@@ -524,6 +614,10 @@ class LANInventoryPoller:
                         ip=ip,
                         last_seen=now,
                         hostname=hostname or existing_self.hostname,
+                        last_rtt_ms=last_rtt_ms or existing_self.last_rtt_ms,
+                        last_reachable_at=(
+                            last_reachable_at or existing_self.last_reachable_at
+                        ),
                     )
                 continue
             self._state[mac_lc] = host_entry

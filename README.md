@@ -473,6 +473,10 @@ ordering is intent.
   Mac-specific integrations surfaced in Diagnostics where they're
   load-bearing for "why is my network weird right now".
 
+## Acknowledgements
+
+- **MAC-OUI vendor names** come from the [IEEE Registration Authority](https://standards.ieee.org/products-programs/regauth/) MA-L (24-bit) registry. The bundled snapshot in `src/diting/data/*_ouis.json` is refreshed per release via `uv run python scripts/refresh_ouis.py`, which pulls the canonical CSV from `https://standards-oui.ieee.org/oui/oui.csv`.
+
 ## License
 
 MIT. See [`LICENSE`](LICENSE).

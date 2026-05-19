@@ -5303,22 +5303,36 @@ class LANDetailScreen(ModalScreen):
             rows.append(_kv_line(t("Role"), t("gateway")))
 
         # Network section.
+        now = datetime.now(timezone.utc)
         rows.append(Text(""))
         rows.append(Text(t("Network"), style="bold"))
         rows.append(_kv_line(t("IP"), h.ip))
         rows.append(_kv_line(t("MAC"), h.mac))
         if h.hostname:
             rows.append(_kv_line(t("Reverse DNS"), h.hostname))
+        if h.last_rtt_ms is not None:
+            rows.append(_kv_line(
+                t("Latency"), f"{h.last_rtt_ms:.1f} ms",
+            ))
+        rows.append(_kv_line(
+            t("Reachable"),
+            _format_reachable(h.last_reachable_at, now),
+        ))
 
-        # Bonjour services section — omit when empty.
+        # Bonjour services section — always rendered so the user
+        # sees this channel was checked; placeholder when empty.
+        rows.append(Text(""))
+        rows.append(Text(t("Bonjour services"), style="bold"))
         if h.bonjour_services:
-            rows.append(Text(""))
-            rows.append(Text(t("Bonjour services"), style="bold"))
             for cat in h.bonjour_services:
                 rows.append(Text("  · " + t(cat), style="white"))
+        else:
+            rows.append(Text(
+                "  " + t("(no Bonjour services)"),
+                style="dim italic",
+            ))
 
         # Activity section.
-        now = datetime.now(timezone.utc)
         rows.append(Text(""))
         rows.append(Text(t("Activity"), style="bold"))
         first_ago = (now - h.first_seen).total_seconds()
@@ -5330,6 +5344,26 @@ class LANDetailScreen(ModalScreen):
             t("Last seen"), _format_duration_short(last_ago) + t(" ago"),
         ))
         return Group(*rows)
+
+
+def _format_reachable(
+    last_reachable_at: datetime | None,
+    now: datetime,
+    *,
+    this_sweep_window_s: float = 5.0,
+) -> str:
+    """Render the Reachable row's value:
+
+    - ``this sweep`` when last reach is within the sweep window
+    - ``Xs ago`` for older successful pings
+    - ``never`` when ICMP has never replied for this host
+    """
+    if last_reachable_at is None:
+        return t("never")
+    delta = (now - last_reachable_at).total_seconds()
+    if delta <= this_sweep_window_s:
+        return t("this sweep")
+    return _format_duration_short(delta) + t(" ago")
 
 
 def _kv_line(label: str, value: str) -> Text:

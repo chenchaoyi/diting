@@ -748,6 +748,8 @@ def _regression_scenarios() -> list[Scenario]:
                 is_gateway=True,
                 is_self=False,
                 is_randomised_mac=False,
+                last_rtt_ms=1.8,
+                last_reachable_at=now,
             ),
             LANHost(
                 mac="de:ad:be:ef:00:01",
@@ -800,6 +802,21 @@ def _regression_scenarios() -> list[Scenario]:
         pilot.app._latest_lan = update
         pilot.app._refresh_lan_panel()
         await pilot.pause(0.2)
+
+    async def _open_lan_detail(pilot):
+        """Cycle to LAN view, inject the synthetic 5-host snapshot,
+        then walk the cursor to the gateway row and press `i`.
+
+        Walking takes two presses: `down` from no-selection lands on
+        row 0 (self); a second `down` advances to row 1 (gateway).
+        That's the row with the seeded `last_rtt_ms=1.8`."""
+        await _switch_to_lan_inventory(pilot)
+        await pilot.press("down")
+        await pilot.pause(0.05)
+        await pilot.press("down")
+        await pilot.pause(0.05)
+        await pilot.press("i")
+        await pilot.pause(0.3)
 
     async def _open_bonjour_detail(pilot):
         """Cycle to Bonjour view, inject a few representative
@@ -1022,6 +1039,35 @@ def _regression_scenarios() -> list[Scenario]:
             inspectors=(),
         ),
         Scenario(
+            id="lan_detail_modal",
+            description=(
+                "LANDetailScreen modal on the gateway row — pins the "
+                "Latency / Reachable / Bonjour-empty-state contract."
+            ),
+            lang="en",
+            setup=lambda: _build_good(lang="en"),
+            after_mount=_open_lan_detail,
+            assertions=(
+                ("Identity section header",
+                 lambda t: "Identity" in t),
+                ("Network section header",
+                 lambda t: "Network" in t),
+                ("Bonjour services section header",
+                 lambda t: "Bonjour services" in t),
+                ("Activity section header",
+                 lambda t: "Activity" in t),
+                ("Latency row rendered with the seeded RTT",
+                 lambda t: "Latency" in t and "1.8 ms" in t),
+                ("Reachable row rendered (this sweep or relative)",
+                 lambda t: "Reachable" in t),
+                ("Gateway has no Bonjour services — placeholder visible",
+                 lambda t: "(no Bonjour services)" in t),
+                ("Close hint visible",
+                 lambda t: "Esc" in t),
+            ),
+            inspectors=(),
+        ),
+        Scenario(
             id="ble_unknown_heavy",
             description="BLE view stress test — most rows lack vendor.",
             lang="en",
@@ -1219,6 +1265,19 @@ def _explore_scenarios() -> list[Scenario]:
         await pilot.press("p")
         await pilot.pause(0.5)
 
+    async def _open_lan_detail(pilot):
+        """Live LAN detail modal. Cycle to LAN, give the sweep time
+        to populate, advance to the gateway row, then press `i`."""
+        await _switch_to_lan_inventory(pilot)
+        # `down` twice from no-selection lands on row 1 (gateway —
+        # self is row 0 because is_self pins it). `i` opens detail.
+        await pilot.press("down")
+        await pilot.pause(0.05)
+        await pilot.press("down")
+        await pilot.pause(0.05)
+        await pilot.press("i")
+        await pilot.pause(0.5)
+
     async def _open_ble_detail(pilot):
         # Switch to BLE first, let the list populate, then push the
         # cursor past the Connected section (typically 2-3 paired
@@ -1320,6 +1379,15 @@ def _explore_scenarios() -> list[Scenario]:
             lang="auto",
             setup=_build_live,
             after_mount=_switch_to_lan_inventory,
+            assertions=(),
+            inspectors=(),
+        ),
+        Scenario(
+            id="live_lan_detail",
+            description="Live LAN detail modal on the gateway row.",
+            lang="auto",
+            setup=_build_live,
+            after_mount=_open_lan_detail,
             assertions=(),
             inspectors=(),
         ),

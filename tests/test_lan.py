@@ -200,45 +200,67 @@ def test_effective_cap_prefix_reads_env_flag(monkeypatch):
 
 # ---------- _ping_one ----------
 
-def test_ping_one_returns_true_on_zero_exit(monkeypatch):
-    async def _go() -> bool:
-        class _FakeProc:
-            async def wait(self) -> int:
-                return 0
+def _fake_ping_proc(rc: int, stdout: bytes):
+    class _FakeProc:
+        def __init__(self) -> None:
+            self.returncode = rc
 
-        async def _fake_exec(*_args, **_kwargs) -> _FakeProc:
-            return _FakeProc()
+        async def communicate(self):
+            self.returncode = rc
+            return stdout, b""
 
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
-        return await _ping_one("192.168.1.1")
-
-    assert asyncio.run(_go()) is True
+    return _FakeProc()
 
 
-def test_ping_one_returns_false_on_nonzero_exit(monkeypatch):
-    async def _go() -> bool:
-        class _FakeProc:
-            async def wait(self) -> int:
-                return 2
-
-        async def _fake_exec(*_args, **_kwargs) -> _FakeProc:
-            return _FakeProc()
+def test_ping_one_returns_rtt_on_zero_exit(monkeypatch):
+    async def _go():
+        async def _fake_exec(*_args, **_kwargs):
+            return _fake_ping_proc(
+                0,
+                b"PING 192.168.1.1 (192.168.1.1): 56 data bytes\n"
+                b"64 bytes from 192.168.1.1: icmp_seq=0 ttl=64 time=2.439 ms\n",
+            )
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
         return await _ping_one("192.168.1.1")
 
-    assert asyncio.run(_go()) is False
+    reachable, rtt = asyncio.run(_go())
+    assert reachable is True
+    assert rtt == pytest.approx(2.439, abs=0.001)
 
 
-def test_ping_one_returns_false_on_oserror(monkeypatch):
-    async def _go() -> bool:
+def test_ping_one_returns_none_rtt_on_nonzero_exit(monkeypatch):
+    async def _go():
+        async def _fake_exec(*_args, **_kwargs):
+            return _fake_ping_proc(2, b"")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+        return await _ping_one("192.168.1.1")
+
+    assert asyncio.run(_go()) == (False, None)
+
+
+def test_ping_one_returns_true_none_when_stdout_unparseable(monkeypatch):
+    async def _go():
+        async def _fake_exec(*_args, **_kwargs):
+            # Exit 0 but stdout has no "time=X ms" segment.
+            return _fake_ping_proc(0, b"weird-build-output-without-rtt")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+        return await _ping_one("192.168.1.1")
+
+    assert asyncio.run(_go()) == (True, None)
+
+
+def test_ping_one_returns_false_none_on_oserror(monkeypatch):
+    async def _go():
         async def _fake_exec(*_args, **_kwargs):
             raise OSError("ENOENT")
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
         return await _ping_one("192.168.1.1")
 
-    assert asyncio.run(_go()) is False
+    assert asyncio.run(_go()) == (False, None)
 
 
 # ---------- _sweep ----------
@@ -253,7 +275,10 @@ def test_sweep_caps_concurrency_at_thirty(monkeypatch):
         nonlocal max_inflight, inflight
 
         class _FakeProc:
-            async def wait(self) -> int:
+            def __init__(self) -> None:
+                self.returncode = 0
+
+            async def communicate(self):
                 nonlocal max_inflight, inflight
                 async with lock:
                     inflight += 1
@@ -264,7 +289,11 @@ def test_sweep_caps_concurrency_at_thirty(monkeypatch):
                 await asyncio.sleep(0.01)
                 async with lock:
                     inflight -= 1
-                return 0
+                self.returncode = 0
+                # No RTT in the canned output; sweep result tuple
+                # becomes (True, None) which is irrelevant to the
+                # concurrency assertion.
+                return b"", b""
 
         async def _fake_exec(*_args, **_kwargs) -> _FakeProc:
             return _FakeProc()
@@ -413,7 +442,251 @@ def test_gateway_ip_appears_when_outside_sweep_cap(monkeypatch):
 
 
 async def _stub_sweep(hosts, **_kwargs):
-    return None
+    return {ip: (True, 1.0) for ip in hosts}
+
+
+def test_sweep_returns_per_ip_results_dict(monkeypatch):
+    """`_sweep` must return ``{ip: (reachable, rtt_ms)}`` not None.
+    The merge step reads this dict to populate `last_rtt_ms` /
+    `last_reachable_at` on each LANHost."""
+    from diting.lan import _sweep
+
+    async def _go():
+        async def _fake_exec(*_args, **_kwargs):
+            return _fake_ping_proc(
+                0,
+                b"PING 192.168.1.1 (192.168.1.1): 56 data bytes\n"
+                b"64 bytes from 192.168.1.1: icmp_seq=0 ttl=64 time=2.0 ms\n",
+            )
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+        return await _sweep(["192.168.1.1", "192.168.1.2"])
+
+    result = asyncio.run(_go())
+    assert isinstance(result, dict)
+    assert "192.168.1.1" in result
+    assert "192.168.1.2" in result
+    reachable, rtt = result["192.168.1.1"]
+    assert reachable is True
+    assert rtt == pytest.approx(2.0, abs=0.001)
+
+
+def test_lan_host_last_rtt_ms_populated_from_sweep(monkeypatch):
+    """After a successful ping, the LANHost's last_rtt_ms must equal
+    the sweep result's RTT and last_reachable_at must be set to the
+    sweep tick's `now`."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    conn = _make_conn()
+
+    async def _go():
+        now = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "de:ad:be:ef:00:01", "en0")],
+            conn=conn,
+            now=now,
+            sweep_results={"192.168.1.42": (True, 3.14)},
+        )
+        return poller._state["de:ad:be:ef:00:01"], now
+
+    host, now = asyncio.run(_go())
+    assert host.last_rtt_ms == pytest.approx(3.14, abs=0.001)
+    assert host.last_reachable_at == now
+
+
+def test_lan_host_last_rtt_ms_preserved_when_silent_tick(monkeypatch):
+    """Host responded on tick N then went silent on tick N+1 —
+    `last_rtt_ms` and `last_reachable_at` must NOT be reset to None
+    when ARP still has the entry."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    conn = _make_conn()
+
+    async def _go():
+        first_now = datetime.now(timezone.utc)
+        # Tick 1: host responds, RTT 2.4 ms.
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "de:ad:be:ef:00:01", "en0")],
+            conn=conn,
+            now=first_now,
+            sweep_results={"192.168.1.42": (True, 2.4)},
+        )
+        first_host = poller._state["de:ad:be:ef:00:01"]
+        # Tick 2: ARP still has the entry, but ping got no reply.
+        second_now = first_now
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "de:ad:be:ef:00:01", "en0")],
+            conn=conn,
+            now=second_now,
+            sweep_results={"192.168.1.42": (False, None)},
+        )
+        return first_host, poller._state["de:ad:be:ef:00:01"]
+
+    first_host, second_host = asyncio.run(_go())
+    assert first_host.last_rtt_ms == pytest.approx(2.4, abs=0.001)
+    assert second_host.last_rtt_ms == pytest.approx(2.4, abs=0.001)
+    assert second_host.last_reachable_at == first_host.last_reachable_at
+
+
+def test_lan_host_last_reachable_at_set_on_successful_ping(monkeypatch):
+    """Distinguished from last_seen: last_reachable_at advances only
+    when ICMP got a reply."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    conn = _make_conn()
+
+    async def _go():
+        now = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "de:ad:be:ef:00:01", "en0")],
+            conn=conn,
+            now=now,
+            sweep_results={"192.168.1.42": (True, 1.0)},
+        )
+        return poller._state["de:ad:be:ef:00:01"], now
+
+    host, now = asyncio.run(_go())
+    assert host.last_seen == now
+    assert host.last_reachable_at == now
+
+
+def test_lan_host_last_reachable_at_preserved_when_silent(monkeypatch):
+    """ARP cache still has the entry; ping got no reply this sweep.
+    last_seen advances; last_reachable_at stays at the prior value."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    conn = _make_conn()
+
+    async def _go():
+        t1 = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "de:ad:be:ef:00:01", "en0")],
+            conn=conn,
+            now=t1,
+            sweep_results={"192.168.1.42": (True, 1.5)},
+        )
+        # ~10ms later, ping silent.
+        from datetime import timedelta
+
+        t2 = t1 + timedelta(milliseconds=10)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "de:ad:be:ef:00:01", "en0")],
+            conn=conn,
+            now=t2,
+            sweep_results={"192.168.1.42": (False, None)},
+        )
+        return t1, poller._state["de:ad:be:ef:00:01"]
+
+    t1, host = asyncio.run(_go())
+    assert host.last_reachable_at == t1  # frozen at the original
+    assert host.last_seen > t1  # advanced
+
+
+def test_oui_refresh_script_parses_csv_to_aabbcc_keys():
+    """`parse_csv` normalises 24-bit OUIs to the canonical lowercase
+    colon-separated form the existing JSON file uses."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    from refresh_ouis import parse_csv  # type: ignore
+
+    csv_text = (
+        "Registry,Assignment,Organization Name,Organization Address\n"
+        'MA-L,001D0F,"TP-LINK TECHNOLOGIES CO.,LTD.","example address"\n'
+        'MA-L,00038F,"Wave Wireless Networking","123 Example St"\n'
+    )
+    out = parse_csv(csv_text)
+    assert out["00:1d:0f"] == "TP-LINK TECHNOLOGIES CO.,LTD."
+    assert out["00:03:8f"] == "Wave Wireless Networking"
+
+
+def test_oui_refresh_script_skips_non_ma_l_rows():
+    """MA-M (28-bit) and MA-S (36-bit) sub-allocations are not used
+    by our lookup function today — they would have keys longer than
+    6 hex characters and would never match `lookup_oui_vendor`.
+    `parse_csv` must filter them out so the resulting JSON stays
+    consistent with the lookup contract."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    from refresh_ouis import parse_csv  # type: ignore
+
+    csv_text = (
+        "Registry,Assignment,Organization Name,Organization Address\n"
+        'MA-L,AABBCC,"Vendor A","addr"\n'
+        'MA-M,DDEEFF0,"Vendor B (MA-M)","addr"\n'
+        'MA-S,11223345678,"Vendor C (MA-S)","addr"\n'
+    )
+    out = parse_csv(csv_text)
+    assert out == {"aa:bb:cc": "Vendor A"}
+
+
+def test_oui_refresh_script_dedupes_repeated_assignments():
+    """IEEE occasionally lists the same OUI twice under slight
+    naming variations. First wins; second is dropped."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    from refresh_ouis import parse_csv  # type: ignore
+
+    csv_text = (
+        "Registry,Assignment,Organization Name,Organization Address\n"
+        'MA-L,AABBCC,"First Variant Inc","addr1"\n'
+        'MA-L,AABBCC,"Second Variant LLC","addr2"\n'
+    )
+    out = parse_csv(csv_text)
+    assert out == {"aa:bb:cc": "First Variant Inc"}
+
+
+def test_lan_host_last_reachable_at_none_when_never_reached(monkeypatch):
+    """Host appeared in the kernel ARP cache (e.g. from before diting
+    started) but the sweep has never gotten a ping reply.
+    last_reachable_at stays None — the modal renders 'never'."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    conn = _make_conn()
+
+    async def _go():
+        now = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.99", "aa:bb:cc:00:00:01", "en0")],
+            conn=conn,
+            now=now,
+            sweep_results={"192.168.1.99": (False, None)},
+        )
+        return poller._state["aa:bb:cc:00:00:01"]
+
+    host = asyncio.run(_go())
+    assert host.last_rtt_ms is None
+    assert host.last_reachable_at is None
 
 
 def test_arp_parse_returns_empty_on_subprocess_failure():
