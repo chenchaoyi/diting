@@ -15,18 +15,18 @@
 
 ## 3. TUI rendering (`tui-shell`)
 
-- [ ] 3.1 `src/diting/tui.py::DitingApp` — instantiate `LANInventoryPoller` lazily the first time `_view_mode` transitions to `"lan"` (mirrors the existing BonjourPoller lazy-start pattern). Track `_lan_inventory_started: bool` flag.
-- [ ] 3.2 `src/diting/tui.py` — new `LANPanel(VerticalScroll)` widget with `update_hosts(hosts, snapshot_meta, *, selected_mac=None)`. Row sort: `is_self` first, then `is_gateway`, then by IP ascending. Self/gateway rows prefixed with `★`. Random-MAC rows show `(random MAC)` instead of vendor. Before first snapshot lands, render one dim-italic line `(sweeping subnet…)`.
-- [ ] 3.3 `src/diting/tui.py::DitingApp` — extend `action_toggle_view` so `n` cycles through `("wifi", "ble", "mdns", "lan")`. Existing wifi/ble/mdns subtitle and Diagnostics dispatch SHALL gain a fourth branch for `lan`.
-- [ ] 3.4 `src/diting/tui.py::DitingApp.compose` — mount `LANPanel(id="lan")` alongside the existing three; `display=False` until `_view_mode == "lan"`.
-- [ ] 3.5 `src/diting/tui.py::_environment_lines` (or wherever Diagnostics rendering switches on view) — new LAN-side summary block when `view == "lan"`: visible-LAN line + subnet line + last-sweep line (or `(sweeping subnet…)` before first snapshot).
-- [ ] 3.6 `src/diting/tui.py::LANDetailScreen` — new modal mirroring `BLEDetailScreen` shape: Identity / Network / Bonjour services / Activity sections. Close keys `escape,i,q`. Cursor passthrough so `up` / `down` while the modal is open advances the LAN panel's selection (same as the BLE detail modal already does).
-- [ ] 3.7 `src/diting/tui.py` — extend `action_inspect` (priority `i` binding) to dispatch to `LANDetailScreen` when `_view_mode == "lan"`.
-- [ ] 3.8 `src/diting/tui.py::action_rescan` — when `_view_mode == "lan"` AND poller exists, call `poller.force_now()` in addition to (or instead of) the existing Wi-Fi rescan dispatch.
+- [x] 3.1 `src/diting/tui.py::DitingApp` — instantiate `LANInventoryPoller` lazily the first time `_view_mode` transitions to `"lan"` (mirrors the existing BonjourPoller lazy-start pattern). Track `_lan_inventory_started: bool` flag.
+- [x] 3.2 `src/diting/tui.py` — new `LANPanel(VerticalScroll)` widget with `update_hosts(hosts, snapshot_meta, *, selected_mac=None)`. Row sort: `is_self` first, then `is_gateway`, then by IP ascending. Self/gateway rows prefixed with `★`. Random-MAC rows show `(random MAC)` instead of vendor. Before first snapshot lands, render one dim-italic line `(sweeping subnet…)`.
+- [x] 3.3 `src/diting/tui.py::DitingApp` — extend `action_toggle_view` so `n` cycles through `("wifi", "ble", "mdns", "lan")`. Existing wifi/ble/mdns subtitle and Diagnostics dispatch SHALL gain a fourth branch for `lan`.
+- [x] 3.4 `src/diting/tui.py::DitingApp.compose` — mount `LANPanel(id="lan")` alongside the existing three; `display=False` until `_view_mode == "lan"`.
+- [x] 3.5 `src/diting/tui.py::_environment_lines` (or wherever Diagnostics rendering switches on view) — new LAN-side summary block when `view == "lan"`: visible-LAN line + subnet line + last-sweep line (or `(sweeping subnet…)` before first snapshot).
+- [x] 3.6 `src/diting/tui.py::LANDetailScreen` — new modal mirroring `BLEDetailScreen` shape: Identity / Network / Bonjour services / Activity sections. Close keys `escape,i,q`. Cursor passthrough so `up` / `down` while the modal is open advances the LAN panel's selection (same as the BLE detail modal already does).
+- [x] 3.7 `src/diting/tui.py` — extend `action_inspect` (priority `i` binding) to dispatch to `LANDetailScreen` when `_view_mode == "lan"`.
+- [x] 3.8 `src/diting/tui.py::action_rescan` — when `_view_mode == "lan"` AND poller exists, call `poller.force_now()` in addition to (or instead of) the existing Wi-Fi rescan dispatch.
 
 ## 4. i18n
 
-- [ ] 4.1 `src/diting/i18n.py` — EN+ZH entries for:
+- [x] 4.1 `src/diting/i18n.py` — EN+ZH entries for:
   - `"LAN"` → `"LAN"` (no translation — acronym, untranslated convention)
   - `"(sweeping subnet…)"` → `"(正在扫描子网…)"`
   - `"LAN inventory  "` → `"LAN 清单  "` (diagnostics row prefix)
@@ -44,16 +44,16 @@
 
 ## 5. tui_snapshot.py regression scenario
 
-- [ ] 5.1 `scripts/tui_snapshot.py` — add a synthetic `_LANInventoryBackend` returning a fixed `LANInventoryUpdate` with 5 hosts (1 self, 1 gateway, 1 Bonjour-named, 1 random-MAC, 1 unknown-vendor). Build a regression scenario `lan_view` that toggles to the LAN view + asserts panel shape.
+- [x] 5.1 `scripts/tui_snapshot.py` — add a synthetic `_LANInventoryBackend` returning a fixed `LANInventoryUpdate` with 5 hosts (1 self, 1 gateway, 1 Bonjour-named, 1 random-MAC, 1 unknown-vendor). Build a regression scenario `lan_view` that toggles to the LAN view + asserts panel shape.
 
 ## 6. Docs
 
-- [ ] 6.1 `README.md` — add an LAN-inventory bullet to the headline feature list near the top + a note under the keybindings table that `DITING_LAN_INVENTORY_WIDE=1` unlocks a /22 sweep for wider home subnets. Roadmap entry for "Any-device LAN inventory" gets a `[shipped]` / "moved to shipped" marker.
-- [ ] 6.2 `docs/zh/README.md` — mirror.
+- [x] 6.1 `README.md` — add an LAN-inventory bullet to the headline feature list near the top + a note under the keybindings table that `DITING_LAN_INVENTORY_WIDE=1` unlocks a /22 sweep for wider home subnets. Roadmap entry for "Any-device LAN inventory" gets a `[shipped]` / "moved to shipped" marker.
+- [x] 6.2 `docs/zh/README.md` — mirror.
 
 ## 7. CI gates
 
-- [ ] 7.1 `uv run pytest`
-- [ ] 7.2 `uv run python scripts/tui_snapshot.py --mode regression`
-- [ ] 7.3 `openspec validate --specs --strict`
-- [ ] 7.4 `openspec validate lan-inventory-arp --strict`
+- [x] 7.1 `uv run pytest`
+- [x] 7.2 `uv run python scripts/tui_snapshot.py --mode regression`
+- [x] 7.3 `openspec validate --specs --strict`
+- [x] 7.4 `openspec validate lan-inventory-arp --strict`
