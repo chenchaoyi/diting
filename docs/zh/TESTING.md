@@ -219,6 +219,22 @@
 | `DITING_VERSION=vX.Y.Z` 环境变量锁版本 | `test_install.py::test_install_script_uses_diting_version_override` |
 | 冻结二进制与 `uv run diting` 开发流共存 | （review-enforced — 搜索路径优先级把 in-repo 开发构建排在前；通过 `test_helper.py::test_find_helper_repo_dev_build_shadows_application_support` 验证） |
 
+### `lan-inventory`
+
+| Requirement | 测试 |
+|---|---|
+| 能力默认开启；`LANInventoryPoller` 在用户首次进入 LAN 视图时延迟构造 | `test_lan.py::test_poller_not_constructed_before_lan_view_entry`、`::test_poller_constructed_on_first_lan_view_entry`；TUI 接线：`test_tui_smoke.py::test_lan_poller_lazy_starts_on_third_n_press` |
+| 子网推导：netmask 比 /24 宽时，默认 cap 到 `iface_ip` 周围的 /24 | `test_lan.py::test_subnet_from_ifconfig_parses_typical_home_24`、`::test_subnet_caps_at_24_when_netmask_wider`、`::test_subnet_uses_full_subnet_when_netmask_is_25_or_narrower` |
+| `DITING_LAN_INVENTORY_WIDE=1` 把 cap 放宽到 /22（仍强制） | `test_lan.py::test_subnet_caps_at_22_when_wide_flag_set`、`::test_subnet_still_caps_at_22_when_wide_flag_set_and_netmask_is_16`、`::test_subnet_uses_full_subnet_when_native_22_and_wide_flag_set` |
+| ICMP sweep — 非特权 `ping -c 1 -W <ms>`，30 并发 `asyncio.Semaphore` | `test_lan.py::test_ping_one_returns_true_on_zero_exit`、`::test_ping_one_returns_false_on_nonzero_exit`、`::test_sweep_caps_concurrency_at_thirty` |
+| `arp -an` 解析提取 MAC ↔ IP 三元组；`<incomplete>` 行跳过 | `test_lan.py::test_arp_parse_extracts_mac_and_ip`、`::test_arp_parse_skips_incomplete_entries`、`::test_arp_parse_handles_mixed_format_lines` |
+| `LANHost` 以小写 MAC 为 key；DHCP IP 轮转时 `first_seen` 保留 | `test_lan.py::test_lan_host_keyed_by_mac_keeps_first_seen_across_ip_change`、`::test_lan_host_last_seen_updates_on_every_observation` |
+| 本地管理（随机）MAC 通过首字节 0x02 位标记 | `test_lan.py::test_is_randomised_mac_detects_locally_administered_bit`、`::test_is_randomised_mac_clears_for_universal_macs` |
+| OUI 厂商查询复用现有 `wifi_ouis.json`；随机 MAC 返回 `None` | `test_lan.py::test_vendor_lookup_for_universal_mac_returns_vendor`、`::test_vendor_lookup_for_random_mac_returns_none` |
+| Bonjour 交叉引用走 `BonjourPoller._state` 填充 `bonjour_name` / `bonjour_services` | `test_lan.py::test_bonjour_cross_ref_pulls_name_from_state`、`::test_bonjour_cross_ref_aggregates_categories`、`::test_bonjour_cross_ref_leaves_name_none_when_no_match` |
+| Poller 不做 port scan / SSDP / NetBIOS / banner grab | (review-enforced — `src/diting/lan.py` 里只有 `ping` 和 `arp` 子进程；可 grep 检查) |
+| `LANInventoryUpdate` 每 tick 发射；`r` 触发 `force_now()` 立即扫描 | `test_lan.py::test_force_now_schedules_immediate_sweep`、`::test_update_carries_cap_prefix_and_subnet_capped_flags` |
+
 ### `link-health`
 
 | Requirement | 测试 |
@@ -269,8 +285,8 @@
 | 缓存活性保活：每次 tick 时，state 里那些 service-instance 名仍在 `zc.cache` 中存活（有任一未过期记录）的条目都会被刷新 `last_seen=now`，避免 HomePod 这种「info 不变 → 不触发 update_service → 60 s 后被 TTL 误删」的陷阱 | `test_mdns.py::test_poller_cache_refresh_bumps_last_seen_for_alive_entry`、`::test_poller_cache_refresh_skips_when_only_expired_records`、`::test_poller_cache_refresh_skips_when_no_records` |
 | TTL 兜底默认值从 60 s 上调到 300 s | `test_mdns.py::test_poller_ttl_default_is_five_minutes` |
 | 每 30 s 对每个 state 条目发起一次主动 re-probe（fire-and-forget），让那些 announce TTL < 300 s 的设备记录不会从 zeroconf 缓存里老化掉；任何卡住的 probe 不允许阻塞 snapshot 输出 | `test_mdns.py::test_poller_active_probe_scheduled_per_state_entry_at_cadence`、`::test_poller_active_probe_does_not_block_snapshot_yield`、`::test_poller_active_probe_default_cadence_is_thirty_seconds` |
-| `BonjourPanel` 渲染 vendor / name / services / age / id 列（无 RSSI / 信号条 / connected 分割） | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi`、`tui_snapshot.py`（explore 模式真机回归） |
-| 诊断面板在 mDNS 视图下渲染 Bonjour 侧汇总 | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
+| `BonjourPanel` 渲染 vendor / name / services / age / id 列（无 RSSI / 信号条 / connected 分割） | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_lan_wifi`、`tui_snapshot.py`（explore 模式真机回归） |
+| 诊断面板在 mDNS 视图下渲染 Bonjour 侧汇总 | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_lan_wifi` |
 | `BonjourPoller.stop()` 会清理 zeroconf 后台线程 | `test_mdns.py::test_poller_stop_joins_background_thread` |
 | `BonjourDevice.vendor_trace` 记录解析链中生效的那一步（`txt-vendor` / `oui` / `hostname-pattern` / `service-type-hint`；abstain 时两者都是 None） | `test_mdns.py::test_resolve_vendor_with_trace_records_txt_step`、`::test_resolve_vendor_with_trace_records_oui_step`、`::test_resolve_vendor_with_trace_records_hostname_step`、`::test_resolve_vendor_with_trace_records_service_hint_step`、`::test_resolve_vendor_with_trace_abstain_returns_none_pair` |
 | `zeroconf` 懒加载——只要用户没离开 Wi-Fi 视图就不 import | `test_tui_smoke.py::test_app_constructs_bonjour_panel_lazily` |
@@ -295,9 +311,14 @@
 
 | Requirement | 测试 |
 |---|---|
-| 四个垂直堆叠面板，固定顺序；第三槽 wifi/ble/mdns 三态切换 | `test_tui_smoke.py::test_app_boots_and_quits`（App composes；面板存在隐含验证）、`::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
-| 第三槽面板 border_title 始终显示三视图标签页，详情内容移到 border_subtitle | `test_tui_helpers.py::test_view_tabs_border_title_lists_all_three_views`、`::test_view_display_name_maps_internal_tokens_to_user_names`；`test_tui_smoke.py::test_panel_border_title_carries_tab_indicator` |
-| Diagnostics 内容跟随激活视图 | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`、`::test_view_toggle_cycles_wifi_ble_mdns_wifi`、`::test_diagnostics_renders_link_line_when_latency_data_available` |
+| 四个垂直堆叠面板，固定顺序；第三槽四态轮转 wifi/ble/mdns/lan | `test_tui_smoke.py::test_app_boots_and_quits`（App composes；面板存在隐含验证）、`::test_view_toggle_cycles_wifi_ble_mdns_lan_wifi` |
+| 第三槽面板 border_title 始终显示四视图标签页，详情内容移到 border_subtitle | `test_tui_helpers.py::test_view_tabs_border_title_lists_all_four_views`、`::test_view_display_name_maps_internal_tokens_to_user_names`；`test_tui_smoke.py::test_panel_border_title_carries_tab_indicator` |
+| LAN 视图在首次 `LANInventoryUpdate` 落地前渲染 `(正在扫描子网…)` 占位行；落地后渲染行表 | `test_tui_helpers.py::test_lan_panel_renders_sweeping_placeholder_before_first_snapshot`、`::test_lan_panel_renders_rows_after_first_snapshot`；`tui_snapshot.py::lan_view`（regression-only） |
+| LAN 面板把 `is_self` 用 `★` 钉到顶，然后 `is_gateway` 同样带 `★`，余下按 IP 升序 | `test_tui_helpers.py::test_lan_panel_renders_self_and_gateway_pinned_to_top`、`::test_lan_panel_sorts_remaining_rows_by_ip_ascending` |
+| LAN 面板对本地管理 MAC 行标 `(随机 MAC)` 替代厂商 | `test_tui_helpers.py::test_lan_panel_marks_random_mac_with_label` |
+| LAN Diagnostics 摘要行带 hosts / named / 厂商未知计数 + 子网（被截断时带 `· 截自 /N` 注解）+ `上次扫描` 相对时间 | `test_tui_helpers.py::test_lan_diagnostics_renders_full_summary_line`、`::test_lan_diagnostics_annotates_capped_subnet_when_netmask_wider`、`::test_lan_diagnostics_omits_capped_annotation_when_full_subnet_swept` |
+| LANDetailScreen 模态渲染 Identity / Network / Bonjour services / Activity 段；关键 `Esc` / `i` / `q` | `test_tui_helpers.py::test_lan_detail_modal_renders_all_sections`、`::test_lan_detail_modal_omits_bonjour_section_when_no_services` |
+| Diagnostics 内容跟随激活视图 | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`、`::test_view_toggle_cycles_wifi_ble_mdns_lan_wifi`、`::test_diagnostics_renders_link_line_when_latency_data_available` |
 | 模态压栈、Esc/同字母关 | `test_tui_smoke.py::test_help_modal_open_and_close`、`::test_help_modal_question_mark_to_close`、`::test_help_modal_renders_through_pilot_query`、`::test_pressing_h_is_a_no_op`、`::test_events_modal_open_and_close`；`tui_snapshot.py::events_modal`、`::help_modal`、`::basics_modal`、`::ble_detail_decoded`（regression） |
 | Footer 是单一 GroupedFooter 三段 | (gap — 没有 footer 分组的单元测试；regression 捕获里可见) |
 | 隐藏 binding 为高级用户存在 | `test_tui_smoke.py::test_pause_and_resume`、`::test_force_rescan_does_not_crash`、`::test_cycle_sort_modes`（绑定能触发）；footer 不显示隐藏 binding 是 review-enforced |

@@ -707,6 +707,100 @@ def _regression_scenarios() -> list[Scenario]:
         await pilot.press("s")
         await pilot.pause(0.2)
 
+    async def _switch_to_lan_inventory(pilot):
+        """Cycle to LAN view (4 `n` presses from wifi: wifi → ble →
+        mdns → lan), then inject a synthetic ``LANInventoryUpdate``
+        with five hosts covering self, gateway, Bonjour-named,
+        random-MAC, and unknown-vendor cases."""
+        from datetime import datetime, timezone
+        from diting.lan import LANHost, LANInventoryUpdate
+        await _seed_link_and_events(pilot)
+        await pilot.press("n")  # wifi → ble
+        await pilot.pause(0.1)
+        await pilot.press("n")  # ble → mdns
+        await pilot.pause(0.1)
+        await pilot.press("n")  # mdns → lan
+        await pilot.pause(0.2)
+        now = datetime.now(timezone.utc)
+        hosts = (
+            LANHost(
+                mac="84:2f:57:9b:15:59",
+                ip="192.168.1.20",
+                vendor="Apple, Inc.",
+                hostname=None,
+                bonjour_name=None,
+                bonjour_services=(),
+                first_seen=now,
+                last_seen=now,
+                is_gateway=False,
+                is_self=True,
+                is_randomised_mac=False,
+            ),
+            LANHost(
+                mac="aa:bb:cc:11:22:33",
+                ip="192.168.1.1",
+                vendor="TP-Link Tech.",
+                hostname="router.local",
+                bonjour_name=None,
+                bonjour_services=(),
+                first_seen=now,
+                last_seen=now,
+                is_gateway=True,
+                is_self=False,
+                is_randomised_mac=False,
+            ),
+            LANHost(
+                mac="de:ad:be:ef:00:01",
+                ip="192.168.1.42",
+                vendor="Apple, Inc.",
+                hostname=None,
+                bonjour_name="ccy-MBP24-M4-Office",
+                bonjour_services=("AirPlay", "AirPlay audio", "Apple Companion"),
+                first_seen=now,
+                last_seen=now,
+                is_gateway=False,
+                is_self=False,
+                is_randomised_mac=False,
+            ),
+            LANHost(
+                mac="f4:5c:89:11:22:33",
+                ip="192.168.1.55",
+                vendor=None,
+                hostname=None,
+                bonjour_name=None,
+                bonjour_services=(),
+                first_seen=now,
+                last_seen=now,
+                is_gateway=False,
+                is_self=False,
+                is_randomised_mac=False,
+            ),
+            LANHost(
+                mac="02:11:22:33:44:55",
+                ip="192.168.1.81",
+                vendor=None,
+                hostname=None,
+                bonjour_name=None,
+                bonjour_services=(),
+                first_seen=now,
+                last_seen=now,
+                is_gateway=False,
+                is_self=False,
+                is_randomised_mac=True,
+            ),
+        )
+        update = LANInventoryUpdate(
+            hosts=hosts,
+            subnet="192.168.1.0/24",
+            subnet_capped=False,
+            cap_prefix=24,
+            last_sweep_at=now,
+            next_sweep_at=now,
+        )
+        pilot.app._latest_lan = update
+        pilot.app._refresh_lan_panel()
+        await pilot.pause(0.2)
+
     async def _open_bonjour_detail(pilot):
         """Cycle to Bonjour view, inject a few representative
         services, then open the detail modal on the first row."""
@@ -904,6 +998,30 @@ def _regression_scenarios() -> list[Scenario]:
             inspectors=(),
         ),
         Scenario(
+            id="lan_view",
+            description="LAN inventory view, synthetic 5-host snapshot.",
+            lang="en",
+            setup=lambda: _build_good(lang="en"),
+            after_mount=_switch_to_lan_inventory,
+            assertions=(
+                ("LAN tab is active",
+                 lambda t: "LAN" in t),
+                ("Self row pinned with star + label",
+                 lambda t: "this Mac" in t and "★" in t),
+                ("Gateway row labelled",
+                 lambda t: "gateway" in t),
+                ("Bonjour-named row carries friendly name",
+                 lambda t: "ccy-MBP24-M4-Office" in t),
+                ("Random MAC marked",
+                 lambda t: "(random MAC)" in t),
+                ("Diagnostics line carries host count",
+                 lambda t: "LAN inventory" in t and "5 hosts" in t),
+                ("Subnet line present",
+                 lambda t: "192.168.1.0/24" in t),
+            ),
+            inspectors=(),
+        ),
+        Scenario(
             id="ble_unknown_heavy",
             description="BLE view stress test — most rows lack vendor.",
             lang="en",
@@ -1082,6 +1200,20 @@ def _explore_scenarios() -> list[Scenario]:
         await pilot.press("n")  # ble → mdns
         await pilot.pause(20.0)  # let Bonjour announces accumulate
 
+    async def _switch_to_lan_inventory(pilot):
+        # Cycle wifi → ble → mdns → lan. Wait the first ICMP sweep
+        # window (default cadence ~60 s, but the first tick fires
+        # immediately on lazy-construction). A healthy /24 sweep at
+        # 30-way concurrency completes in ~3-10 s; wait 20 s so a
+        # quiet network has time to surface stragglers.
+        await pilot.pause(3.0)
+        await pilot.press("n")  # wifi → ble
+        await pilot.pause(0.3)
+        await pilot.press("n")  # ble → mdns
+        await pilot.pause(0.3)
+        await pilot.press("n")  # mdns → lan
+        await pilot.pause(20.0)
+
     async def _pause_polling(pilot):
         await pilot.pause(15.0)
         await pilot.press("p")
@@ -1179,6 +1311,15 @@ def _explore_scenarios() -> list[Scenario]:
             lang="auto",
             setup=_build_live,
             after_mount=_switch_to_mdns,
+            assertions=(),
+            inspectors=(),
+        ),
+        Scenario(
+            id="live_lan",
+            description="Live LAN inventory view (ARP + ICMP sweep).",
+            lang="auto",
+            setup=_build_live,
+            after_mount=_switch_to_lan_inventory,
             assertions=(),
             inspectors=(),
         ),

@@ -228,6 +228,22 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | `DITING_VERSION=vX.Y.Z` env var pins the install to a specific tag | `test_install.py::test_install_script_uses_diting_version_override` |
 | Frozen-binary install coexists with `uv run diting` developer flow | (review-enforced — search-path priority pins the in-repo dev build first; tested via `test_helper.py::test_find_helper_repo_dev_build_shadows_application_support`) |
 
+### `lan-inventory`
+
+| Requirement | Test |
+|---|---|
+| Capability enabled by default; `LANInventoryPoller` constructed lazily on first LAN-view entry | `test_lan.py::test_poller_not_constructed_before_lan_view_entry`, `::test_poller_constructed_on_first_lan_view_entry`; TUI wire-up: `test_tui_smoke.py::test_lan_poller_lazy_starts_on_third_n_press` |
+| Subnet derivation: default /24 cap around `iface_ip` when netmask is wider | `test_lan.py::test_subnet_from_ifconfig_parses_typical_home_24`, `::test_subnet_caps_at_24_when_netmask_wider`, `::test_subnet_uses_full_subnet_when_netmask_is_25_or_narrower` |
+| `DITING_LAN_INVENTORY_WIDE=1` relaxes cap to /22 (still enforced) | `test_lan.py::test_subnet_caps_at_22_when_wide_flag_set`, `::test_subnet_still_caps_at_22_when_wide_flag_set_and_netmask_is_16`, `::test_subnet_uses_full_subnet_when_native_22_and_wide_flag_set` |
+| ICMP sweep — unprivileged `ping -c 1 -W <ms>`, 30-way concurrency via `asyncio.Semaphore` | `test_lan.py::test_ping_one_returns_true_on_zero_exit`, `::test_ping_one_returns_false_on_nonzero_exit`, `::test_sweep_caps_concurrency_at_thirty` |
+| `arp -an` parse extracts MAC ↔ IP triples; `<incomplete>` lines skipped | `test_lan.py::test_arp_parse_extracts_mac_and_ip`, `::test_arp_parse_skips_incomplete_entries`, `::test_arp_parse_handles_mixed_format_lines` |
+| `LANHost` keyed by lowercase MAC; `first_seen` preserved across DHCP IP rotation | `test_lan.py::test_lan_host_keyed_by_mac_keeps_first_seen_across_ip_change`, `::test_lan_host_last_seen_updates_on_every_observation` |
+| Locally-administered (random) MAC flagged via bit 0x02 of first octet | `test_lan.py::test_is_randomised_mac_detects_locally_administered_bit`, `::test_is_randomised_mac_clears_for_universal_macs` |
+| OUI vendor lookup reuses existing `wifi_ouis.json`; random MACs return `None` | `test_lan.py::test_vendor_lookup_for_universal_mac_returns_vendor`, `::test_vendor_lookup_for_random_mac_returns_none` |
+| Bonjour cross-reference walks `BonjourPoller._state` to populate `bonjour_name` / `bonjour_services` | `test_lan.py::test_bonjour_cross_ref_pulls_name_from_state`, `::test_bonjour_cross_ref_aggregates_categories`, `::test_bonjour_cross_ref_leaves_name_none_when_no_match` |
+| Poller SHALL NOT perform port scanning / SSDP / NetBIOS / banner grabs | (review-enforced — only `ping` and `arp` subprocesses; greppable in `src/diting/lan.py`) |
+| `LANInventoryUpdate` emitted per tick; `r` triggers `force_now()` immediate sweep | `test_lan.py::test_force_now_schedules_immediate_sweep`, `::test_update_carries_cap_prefix_and_subnet_capped_flags` |
+
 ### `link-health`
 
 | Requirement | Test |
@@ -278,8 +294,8 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Cache liveness keeps stable services alive: each tick, entries whose service-instance name still has any non-expired record in `zc.cache` get `last_seen=now`, defeating the "update_service-only-on-change" eviction trap that made HomePods disappear from the panel after 60 s | `test_mdns.py::test_poller_cache_refresh_bumps_last_seen_for_alive_entry`, `::test_poller_cache_refresh_skips_when_only_expired_records`, `::test_poller_cache_refresh_skips_when_no_records` |
 | TTL backstop default is 300 s (was 60 s) | `test_mdns.py::test_poller_ttl_default_is_five_minutes` |
 | Active per-service re-probe every 30 s (fire-and-forget) so devices whose announce TTL is < 300 s don't age out of zeroconf's cache and disappear from our state; a hung probe MUST NOT delay the snapshot yield | `test_mdns.py::test_poller_active_probe_scheduled_per_state_entry_at_cadence`, `::test_poller_active_probe_does_not_block_snapshot_yield`, `::test_poller_active_probe_default_cadence_is_thirty_seconds` |
-| `BonjourPanel` renders vendor / name / services / age / id columns (no RSSI / signal-bar / connected split) | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi`, `tui_snapshot.py` (regression via explore mode; rendering shape) |
-| Diagnostics panel renders mDNS-side rows when view is `mdns` | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
+| `BonjourPanel` renders vendor / name / services / age / id columns (no RSSI / signal-bar / connected split) | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_lan_wifi`, `tui_snapshot.py` (regression via explore mode; rendering shape) |
+| Diagnostics panel renders mDNS-side rows when view is `mdns` | `test_tui_smoke.py::test_view_toggle_cycles_wifi_ble_mdns_lan_wifi` |
 | `BonjourPoller.stop()` cleanly joins zeroconf background threads | `test_mdns.py::test_poller_stop_joins_background_thread` |
 | `BonjourDevice.vendor_trace` records which of the 5 resolver steps produced `vendor` (`txt-vendor` / `oui` / `hostname-pattern` / `service-type-hint`; both None on abstain) | `test_mdns.py::test_resolve_vendor_with_trace_records_txt_step`, `::test_resolve_vendor_with_trace_records_oui_step`, `::test_resolve_vendor_with_trace_records_hostname_step`, `::test_resolve_vendor_with_trace_records_service_hint_step`, `::test_resolve_vendor_with_trace_abstain_returns_none_pair` |
 | `zeroconf` import is lazy — never imported while the user stays in Wi-Fi view | `test_tui_smoke.py::test_app_constructs_bonjour_panel_lazily` |
@@ -304,9 +320,14 @@ When a new Requirement lands in any spec, an entry MUST be added here
 
 | Requirement | Test |
 |---|---|
-| Four stacked panels in fixed order; third slot swaps wifi/ble/mdns | `test_tui_smoke.py::test_app_boots_and_quits` (App composes; panel presence implicit), `::test_view_toggle_cycles_wifi_ble_mdns_wifi` |
-| Third-slot panel border_title carries an always-visible tab indicator listing all three views; detail content moves to border_subtitle | `test_tui_helpers.py::test_view_tabs_border_title_lists_all_three_views`, `::test_view_display_name_maps_internal_tokens_to_user_names`; `test_tui_smoke.py::test_panel_border_title_carries_tab_indicator` |
-| Diagnostics content follows active view | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`, `::test_view_toggle_cycles_wifi_ble_mdns_wifi`, `::test_diagnostics_renders_link_line_when_latency_data_available` |
+| Four stacked panels in fixed order; third slot cycles through wifi/ble/mdns/lan (four views) | `test_tui_smoke.py::test_app_boots_and_quits` (App composes; panel presence implicit), `::test_view_toggle_cycles_wifi_ble_mdns_lan_wifi` |
+| Third-slot panel border_title carries an always-visible tab indicator listing all four views; detail content moves to border_subtitle | `test_tui_helpers.py::test_view_tabs_border_title_lists_all_four_views`, `::test_view_display_name_maps_internal_tokens_to_user_names`; `test_tui_smoke.py::test_panel_border_title_carries_tab_indicator` |
+| LAN view's panel renders `(sweeping subnet…)` placeholder before first `LANInventoryUpdate` lands; rows table after | `test_tui_helpers.py::test_lan_panel_renders_sweeping_placeholder_before_first_snapshot`, `::test_lan_panel_renders_rows_after_first_snapshot`; `tui_snapshot.py::lan_view` (regression-only) |
+| LAN panel pins `is_self` to top with `★`, then `is_gateway` with `★`, then sorts by IP ascending | `test_tui_helpers.py::test_lan_panel_renders_self_and_gateway_pinned_to_top`, `::test_lan_panel_sorts_remaining_rows_by_ip_ascending` |
+| LAN panel marks locally-administered MAC rows with `(random MAC)` instead of vendor | `test_tui_helpers.py::test_lan_panel_marks_random_mac_with_label` |
+| LAN Diagnostics summary line carries hosts / named / unknown-vendor counts + subnet (with `· capped from /N` annotation when truncated) + `last sweep` relative time | `test_tui_helpers.py::test_lan_diagnostics_renders_full_summary_line`, `::test_lan_diagnostics_annotates_capped_subnet_when_netmask_wider`, `::test_lan_diagnostics_omits_capped_annotation_when_full_subnet_swept` |
+| LANDetailScreen modal renders Identity / Network / Bonjour services / Activity sections; close keys `Esc` / `i` / `q` | `test_tui_helpers.py::test_lan_detail_modal_renders_all_sections`, `::test_lan_detail_modal_omits_bonjour_section_when_no_services` |
+| Diagnostics content follows active view | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`, `::test_view_toggle_cycles_wifi_ble_mdns_lan_wifi`, `::test_diagnostics_renders_link_line_when_latency_data_available` |
 | Modals push onto stack, Esc/letter closes | `test_tui_smoke.py::test_help_modal_open_and_close`, `::test_help_modal_question_mark_to_close`, `::test_help_modal_renders_through_pilot_query`, `::test_pressing_h_is_a_no_op`, `::test_events_modal_open_and_close`; `tui_snapshot.py::events_modal`, `::help_modal`, `::basics_modal`, `::ble_detail_decoded` (regression) |
 | Footer is one GroupedFooter with three semantic groups | (gap — no footer-grouping unit test; visible in regression captures) |
 | Hidden bindings exist for power-user navigation | `test_tui_smoke.py::test_pause_and_resume`, `::test_force_rescan_does_not_crash`, `::test_cycle_sort_modes` (binding firing); footer omission of hidden bindings is review-enforced |

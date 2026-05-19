@@ -76,18 +76,20 @@ from .poller import (
 # Cycle order for the `n` toggle. Lives next to the display map so
 # the order is documented in one place. Kept as a tuple so callers
 # can `list(VIEW_CYCLE).index(mode)` for "next mode" math.
-VIEW_CYCLE: tuple[str, ...] = ("wifi", "ble", "mdns")
+VIEW_CYCLE: tuple[str, ...] = ("wifi", "ble", "mdns", "lan")
 
 # Internal mode tokens → user-facing display names. The internal
-# tokens (`wifi`, `ble`, `mdns`) stay everywhere in code for grep-
-# ability and stability; the display map exists so the user sees
-# `Bonjour` instead of `mdns` and `Wi-Fi` instead of `wifi`. Used
+# tokens (`wifi`, `ble`, `mdns`, `lan`) stay everywhere in code for
+# grep-ability and stability; the display map exists so the user
+# sees `Bonjour` instead of `mdns` and `Wi-Fi` instead of `wifi`.
+# `lan` is an acronym so its display name matches the token. Used
 # by the header subtitle, the third-slot panel's border-title tab
 # indicator, and the GroupedFooter's `n  → <next>` label.
 _VIEW_DISPLAY_NAMES: dict[str, str] = {
     "wifi": "Wi-Fi",
     "ble": "BLE",
     "mdns": "Bonjour",
+    "lan": "LAN",
 }
 
 
@@ -101,17 +103,17 @@ def _view_display_name(mode: str) -> str:
 
 
 def _view_tabs_border_title(active: str) -> str:
-    """Compose the always-visible 3-segment tab indicator that lives
-    in the third-slot panel's `border_title`.
+    """Compose the always-visible tab indicator that lives in the
+    third-slot panel's `border_title`.
 
     Renders as Rich markup so per-segment styling lands when Textual
-    paints the border. The active view is bold-cyan; the other two
-    are dimmed. The user can see from any single screen that three
-    views exist and which one is active.
+    paints the border. The active view is bold-cyan; the others are
+    dimmed. The user can see from any single screen which views
+    exist and which one is active.
 
     Example outputs:
-    - active="wifi":  "[bold cyan]Wi-Fi[/]  ·  [dim]BLE[/]  ·  [dim]Bonjour[/]"
-    - active="mdns":  "[dim]Wi-Fi[/]  ·  [dim]BLE[/]  ·  [bold cyan]Bonjour[/]"
+    - active="wifi": "[bold cyan]Wi-Fi[/]  ·  [dim]BLE[/]  ·  [dim]Bonjour[/]  ·  [dim]LAN[/]"
+    - active="lan":  "[dim]Wi-Fi[/]  ·  [dim]BLE[/]  ·  [dim]Bonjour[/]  ·  [bold cyan]LAN[/]"
     """
     parts: list[str] = []
     for mode in VIEW_CYCLE:
@@ -460,6 +462,24 @@ class EnvironmentPanel(Static):
             return
         self.update(Group(*_bonjour_diagnostic_lines(devices)))
 
+    def update_environment_lan(self, update) -> None:
+        """Render LAN-inventory-side diagnostics. Used while the user
+        is on the LAN view.
+
+        ``update`` is a ``LANInventoryUpdate`` or ``None``. When None,
+        the first sweep hasn't landed yet; show the same "sweeping…"
+        placeholder the LAN panel renders below us so the two halves
+        of the screen stay coherent.
+        """
+        self.border_title = t("Diagnostics")
+        if update is None:
+            self.update(Text(
+                t("(sweeping subnet…)"),
+                style="dim italic",
+            ))
+            return
+        self.update(Group(*_lan_diagnostic_lines(update)))
+
 
 class HelpScreen(ModalScreen):
     """Modal overlay that documents the tool, the bindings, and the
@@ -554,7 +574,7 @@ def _help_content() -> tuple[Text, Text]:
     line(t("Scan"),  t("every BSSID in range, grouped by physical AP"))
     line(t("Diag."), t("Link (gateway / WAN latency, loss, jitter) and"))
     body.append(" " * 8 + t("Environment (RSSI σ across nearby APs)\n"))
-    line(t("Nearby"), t("BSSIDs near you, BLE devices, or Bonjour services (cycle: n)"))
+    line(t("Nearby"), t("BSSIDs near you, BLE devices, Bonjour services, or LAN hosts (cycle: n)"))
     line(t("Events"), t("strip at the bottom; full browser via m"))
 
     section(t("Bindings"))
@@ -564,7 +584,7 @@ def _help_content() -> tuple[Text, Text]:
     line("s", t("cycle scan sort:  by AP  ↔  by signal"))
     line("c", t("force re-roam (cycle Wi-Fi off/on so the OS re-picks the"))
     body.append(" " * 8 + t("strongest BSSID — fixes sticky associations)\n"))
-    line("n", t("cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour"))
+    line("n", t("cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour → LAN"))
     line("m", t("open the Events browser (filterable list, per-AP σ"))
     body.append(" " * 8 + t("baseline, last-hour σ sparkline)\n"))
     line("?", t("toggle this help"))
@@ -574,7 +594,7 @@ def _help_content() -> tuple[Text, Text]:
     # same physical keys are safe to surface here as a single hint.
     # Listed in this help block because they don't show in the footer
     # (priority + show=False).
-    line("↑/↓", t("list cursor — move selection up / down (Wi-Fi / BLE / Bonjour)"))
+    line("↑/↓", t("list cursor — move selection up / down (Wi-Fi / BLE / Bonjour / LAN)"))
     line("enter / i", t("inspect the selected row (open detail modal)"))
 
     section(t("Events modal (m)"))
@@ -1639,6 +1659,180 @@ class BonjourPanel(VerticalScroll):
                 row.stylize("reverse")
             lines.append(row)
             y_map.append(key)
+        body.update(Group(*lines))
+        self._y_to_key = y_map
+
+
+# ---------- LAN-inventory column widths ----------
+
+# Vendor / name / IP / MAC / age column widths. Keep these snug
+# enough that a 100-col terminal fits a row without wrapping, but
+# wide enough for typical content (Apple, Inc., 192.168.255.255,
+# 84:2f:57:9b:15:59).
+_COL_LAN_VENDOR = 18
+_COL_LAN_NAME = 22
+_COL_LAN_IP = 15
+_COL_LAN_MAC = 18
+_COL_LAN_AGE = 9
+
+
+def _lan_header_line() -> Text:
+    """Column-header row for the LAN panel."""
+    line = Text()
+    line.append("  ")
+    line.append(pad_cells(t("vendor"), _COL_LAN_VENDOR) + "  ", style="bold dim")
+    line.append(pad_cells(t("name"), _COL_LAN_NAME) + "  ", style="bold dim")
+    line.append(pad_cells(t("IP"), _COL_LAN_IP) + "  ", style="bold dim")
+    line.append(pad_cells(t("MAC"), _COL_LAN_MAC) + "  ", style="bold dim")
+    line.append(pad_cells(t("last seen"), _COL_LAN_AGE), style="bold dim")
+    return line
+
+
+def _lan_age_text(host, now: datetime) -> str:
+    """Relative ``last_seen`` text for one LAN row."""
+    ago = (now - host.last_seen).total_seconds()
+    if ago < 2:
+        return t("now")
+    return _format_duration_short(ago) + t(" ago")
+
+
+def _lan_row_line(host, now: datetime) -> Text:
+    """Render one LANHost as a single-line row."""
+    if host.is_randomised_mac:
+        vendor_cell = t("(random MAC)")
+        vendor_style = "dim italic"
+    elif host.vendor:
+        vendor_cell = host.vendor
+        vendor_style = "white"
+    else:
+        vendor_cell = t("(unknown)")
+        vendor_style = "dim"
+
+    if host.is_self:
+        name_cell = t("this Mac")
+        name_style = "bold cyan"
+        star = "★ "
+    elif host.is_gateway:
+        name_cell = t("gateway")
+        name_style = "bold cyan"
+        star = "★ "
+    elif host.bonjour_name:
+        name_cell = host.bonjour_name
+        name_style = "white"
+        star = "  "
+    elif host.hostname:
+        name_cell = host.hostname
+        name_style = "dim"
+        star = "  "
+    else:
+        name_cell = t("—")
+        name_style = "dim"
+        star = "  "
+
+    line = Text()
+    line.append(star, style="yellow")
+    line.append(
+        fit_cells(vendor_cell, _COL_LAN_VENDOR) + "  ",
+        style=vendor_style,
+    )
+    line.append(
+        fit_cells(name_cell, _COL_LAN_NAME) + "  ", style=name_style,
+    )
+    line.append(
+        fit_cells(host.ip, _COL_LAN_IP) + "  ", style="dim",
+    )
+    line.append(
+        fit_cells(host.mac, _COL_LAN_MAC) + "  ", style="dim",
+    )
+    line.append(_lan_age_text(host, now), style="dim")
+    return line
+
+
+class LANPanel(VerticalScroll):
+    """Nearby LAN hosts (ARP + ICMP discovery), swapped into the
+    third panel slot when the user toggles to the LAN view via the
+    `n` binding (fourth position in the wifi → ble → mdns → lan cycle).
+
+    Before the first ``LANInventoryUpdate`` lands, the panel shows a
+    `(sweeping subnet…)` placeholder. After, one row per host
+    sorted self → gateway → IP ascending.
+    """
+
+    DEFAULT_CSS = """
+    LANPanel {
+        height: 1fr;
+        border: heavy $accent;
+        padding: 0 1;
+    }
+    LANPanel > #lan-body {
+        height: auto;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            Text(t("(sweeping subnet…)"), style="dim italic"),
+            id="lan-body",
+        )
+
+    def on_mount(self) -> None:
+        self.border_title = _view_tabs_border_title("lan")
+        self.border_subtitle = t("Nearby LAN hosts")
+        # Per-line key map for mouse click → select-and-inspect.
+        self._y_to_key: list[str | None] = []
+
+    def on_click(self, event) -> None:
+        try:
+            body = self.query_one("#lan-body", Static)
+        except Exception:
+            return
+        offset = event.get_content_offset(body)
+        if offset is None:
+            return
+        line = offset.y
+        if line < 0 or line >= len(self._y_to_key):
+            return
+        key = self._y_to_key[line]
+        if key is None:
+            return
+        app = self.app
+        if hasattr(app, "_lan_set_selected"):
+            app._lan_set_selected(key, inspect=True)
+
+    def update_hosts(
+        self,
+        update,
+        *,
+        selected_mac: str | None = None,
+    ) -> None:
+        """Refresh the panel from a ``LANInventoryUpdate``.
+
+        ``update`` is ``None`` before the first sweep returns; the
+        panel then renders only the sweeping placeholder.
+        """
+        body = self.query_one("#lan-body", Static)
+        base_title = t("Nearby LAN hosts")
+        self.border_title = _view_tabs_border_title("lan")
+        if update is None or not update.hosts:
+            self.border_subtitle = base_title
+            body.update(Text(
+                t("(sweeping subnet…)"),
+                style="dim italic",
+            ))
+            self._y_to_key = []
+            return
+        now = datetime.now(timezone.utc)
+        self.border_subtitle = (
+            base_title + f" ({len(update.hosts)})"
+        )
+        lines: list[Text] = [_lan_header_line()]
+        y_map: list[str | None] = [None]
+        for host in update.hosts:
+            row = _lan_row_line(host, now)
+            if selected_mac is not None and host.mac == selected_mac:
+                row.stylize("reverse")
+            lines.append(row)
+            y_map.append(host.mac)
         body.update(Group(*lines))
         self._y_to_key = y_map
 
@@ -3413,6 +3607,63 @@ def _bonjour_diagnostic_lines(devices) -> list[Text]:
     return rows
 
 
+def _lan_diagnostic_lines(update) -> list[Text]:
+    """Three-row LAN-inventory diagnostic summary for the Diagnostics
+    panel when the active view is `lan`.
+
+    ``update`` is a ``LANInventoryUpdate`` (never None — the caller
+    handles None by showing the sweeping placeholder instead).
+    """
+    hosts = update.hosts
+    n = len(hosts)
+    named = sum(1 for h in hosts if h.bonjour_name)
+    unknown_vendor = sum(1 for h in hosts if h.vendor is None and not h.is_randomised_mac)
+    random_macs = sum(1 for h in hosts if h.is_randomised_mac)
+
+    rows: list[Text] = []
+
+    # Row 1: visible total + named + unknown-vendor counts.
+    line = Text()
+    line.append(t("LAN inventory  "), style="bold dim")
+    line.append(t("{n} hosts", n=n), style="white")
+    if named:
+        line.append("  ·  ", style="dim")
+        line.append(t("{n} named (Bonjour)", n=named), style="dim")
+    if unknown_vendor:
+        line.append("  ·  ", style="dim")
+        line.append(t("{n} unknown vendor", n=unknown_vendor), style="dim")
+    if random_macs:
+        line.append("  ·  ", style="dim")
+        line.append(t("{n} random MAC", n=random_macs), style="dim")
+    rows.append(line)
+
+    # Row 2: subnet + cap annotation.
+    line = Text()
+    line.append(t("Subnet  "), style="bold dim")
+    line.append(t("subnet {cidr}", cidr=update.subnet), style="white")
+    if update.subnet_capped:
+        # Derive the original netmask width from the visible
+        # difference: we cap at /cap_prefix; the original was
+        # something wider. We don't carry the original width on the
+        # update (would just be cosmetic), so the annotation just
+        # says "capped" without the numeric original.
+        line.append(t("  · capped"), style="dim")
+    rows.append(line)
+
+    # Row 3: last-sweep relative time.
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    ago = (now - update.last_sweep_at).total_seconds()
+    line = Text()
+    line.append(t("Last sweep  "), style="bold dim")
+    line.append(
+        t("last sweep {ago}", ago=_format_duration_short(ago)),
+        style="white",
+    )
+    rows.append(line)
+    return rows
+
+
 def _format_duration_short(seconds: float) -> str:
     """Compact human duration: ``35s``, ``4m 12s``, ``1h 03m``."""
     s = int(seconds)
@@ -4951,6 +5202,145 @@ class GroupedFooter(Static):
         self.update(out)
 
 
+class LANDetailScreen(ModalScreen):
+    """Detail view for a single LAN host (one row in the LAN panel).
+
+    Renders Identity / Network / Bonjour services / Activity
+    sections. ``up`` / ``down`` while open advance the underlying
+    LAN panel's selection and re-render the modal body, the same way
+    BonjourDetailScreen does.
+    """
+
+    BINDINGS = [
+        Binding("escape,i,q", "app.pop_screen", t("Close")),
+    ]
+
+    DEFAULT_CSS = """
+    LANDetailScreen {
+        align: center middle;
+    }
+    LANDetailScreen > #lan-detail-box {
+        width: 100;
+        height: 90%;
+        border: heavy $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+    LANDetailScreen #lan-detail-scroll {
+        height: 1fr;
+    }
+    LANDetailScreen #lan-detail-content {
+        height: auto;
+    }
+    LANDetailScreen #lan-detail-footer {
+        height: auto;
+    }
+    """
+
+    def __init__(self, *, host) -> None:
+        super().__init__()
+        self._host = host
+
+    def compose(self) -> ComposeResult:
+        body = Static(self._render_body(), id="lan-detail-content")
+        footer = Static(
+            Text(t("Esc / i to close"), style="dim"),
+            id="lan-detail-footer",
+        )
+        yield Vertical(
+            VerticalScroll(body, id="lan-detail-scroll"),
+            footer,
+            id="lan-detail-box",
+        )
+
+    def on_mount(self) -> None:
+        self._update_title()
+
+    def _update_title(self) -> None:
+        h = self._host
+        head = h.bonjour_name or h.hostname or h.ip
+        self.query_one("#lan-detail-box").border_title = (
+            t("LAN host") + "  ·  " + head
+        )
+
+    def sync_to_app_selection(self) -> None:
+        """Re-render against the App's latest LAN selection so the
+        arrow keys walk through the table with the modal tracking."""
+        mac = getattr(self.app, "_lan_selected_mac", None)
+        if mac is None:
+            return
+        lookup = getattr(self.app, "_lan_lookup", None)
+        if lookup is None:
+            return
+        host = lookup(mac)
+        if host is None:
+            return
+        self._host = host
+        self._update_title()
+        try:
+            body = self.query_one("#lan-detail-content", Static)
+        except Exception:
+            return
+        body.update(self._render_body())
+
+    def _render_body(self) -> Group:
+        h = self._host
+        rows: list[Text] = []
+
+        # Identity section.
+        rows.append(Text(t("Identity"), style="bold"))
+        rows.append(_kv_line(t("Name"),
+            h.bonjour_name or h.hostname or t("—")))
+        if h.vendor:
+            rows.append(_kv_line(t("Vendor"), h.vendor))
+        elif h.is_randomised_mac:
+            rows.append(_kv_line(t("Vendor"), t("(random MAC)")))
+        else:
+            rows.append(_kv_line(t("Vendor"), t("(unknown)")))
+        if h.is_self:
+            rows.append(_kv_line(t("Role"), t("this Mac")))
+        elif h.is_gateway:
+            rows.append(_kv_line(t("Role"), t("gateway")))
+
+        # Network section.
+        rows.append(Text(""))
+        rows.append(Text(t("Network"), style="bold"))
+        rows.append(_kv_line(t("IP"), h.ip))
+        rows.append(_kv_line(t("MAC"), h.mac))
+        if h.hostname:
+            rows.append(_kv_line(t("Reverse DNS"), h.hostname))
+
+        # Bonjour services section — omit when empty.
+        if h.bonjour_services:
+            rows.append(Text(""))
+            rows.append(Text(t("Bonjour services"), style="bold"))
+            for cat in h.bonjour_services:
+                rows.append(Text("  · " + t(cat), style="white"))
+
+        # Activity section.
+        now = datetime.now(timezone.utc)
+        rows.append(Text(""))
+        rows.append(Text(t("Activity"), style="bold"))
+        first_ago = (now - h.first_seen).total_seconds()
+        last_ago = (now - h.last_seen).total_seconds()
+        rows.append(_kv_line(
+            t("First seen"), _format_duration_short(first_ago) + t(" ago"),
+        ))
+        rows.append(_kv_line(
+            t("Last seen"), _format_duration_short(last_ago) + t(" ago"),
+        ))
+        return Group(*rows)
+
+
+def _kv_line(label: str, value: str) -> Text:
+    """Helper for ``label  value`` rows in the LANDetailScreen body."""
+    line = Text()
+    line.append(pad_cells(label, 14), style="bold dim")
+    line.append("  ")
+    line.append(value, style="white")
+    return line
+
+
 def _import_bonjour_poller():
     """Lazy module-import wrapper for `asyncio.to_thread`.
 
@@ -5085,7 +5475,7 @@ class DitingApp(App):
         Binding("p", "toggle_pause", t("Pause")),
         Binding("r", "rescan", t("Rescan")),
         Binding("s", "cycle_sort", t("Sort")),
-        Binding("n", "toggle_view", t("Toggle Wi-Fi / BLE / Bonjour view")),
+        Binding("n", "toggle_view", t("Toggle Wi-Fi / BLE / Bonjour / LAN view")),
         Binding("c", "reroam", t("Re-roam")),
         Binding("m", "show_events", t("Events")),
         Binding("question_mark", "show_help", t("Help")),
@@ -5259,6 +5649,13 @@ class DitingApp(App):
         # host's announces into a single row with the services column
         # comma-joined. Cycled via `s` while the view is `mdns`.
         self._bonjour_sort_mode: str = "service"
+        # LAN inventory — lazy-constructed on first transition into
+        # the LAN view (fourth `n` press). Default-on; no env-var
+        # gate. State mirrors the Bonjour pattern.
+        self._lan_inventory_poller = None
+        self._lan_inventory_starting: bool = False
+        self._latest_lan: object | None = None  # LANInventoryUpdate
+        self._lan_selected_mac: str | None = None
         # Header shows `diting v<version>` so users always know the
         # running version without pressing a key. __version__ is
         # sourced from importlib.metadata at package import; falls
@@ -5274,15 +5671,18 @@ class DitingApp(App):
         yield ScanPanel(id="scan")
         yield BLEPanel(id="ble")
         yield BonjourPanel(id="mdns")
+        yield LANPanel(id="lan")
         yield EventsPanel(id="roam")
         yield GroupedFooter(id="footer")
 
     async def on_mount(self) -> None:
-        # The BLE / mDNS panels share the same vertical slot as the
-        # Wi-Fi scan panel; only one is visible at a time. Hide both
-        # on mount so the default 'wifi' view shows the scan panel.
+        # The BLE / mDNS / LAN panels share the same vertical slot as
+        # the Wi-Fi scan panel; only one is visible at a time. Hide
+        # the other three on mount so the default 'wifi' view shows
+        # the scan panel.
         self.query_one("#ble", BLEPanel).display = False
         self.query_one("#mdns", BonjourPanel).display = False
+        self.query_one("#lan", LANPanel).display = False
         # EnvironmentMonitor: instantiated on mount so tests can opt
         # out via enable_environment=False (preview captures, smoke
         # tests). Calibration is loaded lazily from the configured
@@ -5333,6 +5733,9 @@ class DitingApp(App):
         # zeroconf background threads so the process exits cleanly.
         if self._mdns_poller is not None:
             self._mdns_poller.stop()
+        # Stop the LAN inventory poller if it was started.
+        if self._lan_inventory_poller is not None:
+            self._lan_inventory_poller.stop()
 
     async def _consume_events(self) -> None:
         async for event in self._poller.events():
@@ -5829,6 +6232,81 @@ class DitingApp(App):
         if self._view_mode == "mdns":
             self._refresh_environment_panel()
 
+    def _ensure_lan_inventory_poller(self) -> None:
+        """Lazy-start the LANInventoryPoller + its consumer task.
+
+        Triggered the first time ``action_toggle_view`` lands on the
+        LAN view (fourth `n` press). Idempotent — second + call is a
+        no-op once the poller is constructed.
+        """
+        if self._lan_inventory_poller is not None or self._lan_inventory_starting:
+            return
+        self._lan_inventory_starting = True
+        self.run_worker(
+            self._consume_lan_inventory_events(),
+            exclusive=False,
+            name="lan-inventory",
+        )
+
+    async def _consume_lan_inventory_events(self) -> None:
+        """Prewarm + drain. Mirrors ``_consume_mdns_events``: the
+        poller's events() generator yields one ``LANInventoryUpdate``
+        per sweep tick; the consumer caches it and refreshes the
+        panel when the user is on the LAN view.
+
+        On any unexpected error the poller is torn down and
+        ``_lan_inventory_poller`` is reset to None so the next ``n``
+        press can rebuild it.
+        """
+        try:
+            from .lan import LANInventoryPoller
+            poller = LANInventoryPoller(
+                connection_provider=lambda: self._latest_connection,
+                bonjour_poller=self._mdns_poller,
+            )
+            self._lan_inventory_poller = poller
+        finally:
+            self._lan_inventory_starting = False
+        try:
+            async for update in poller.events():
+                if self._paused:
+                    continue
+                self._latest_lan = update
+                if self._view_mode == "lan":
+                    self._refresh_lan_panel()
+                    # Modal-sync so the open detail tracks the latest
+                    # snapshot (preserves selection across re-sort).
+                    self._sync_open_detail_modal()
+        except (asyncio.CancelledError, GeneratorExit):
+            raise
+        except Exception:
+            try:
+                poller.stop()
+            finally:
+                if self._lan_inventory_poller is poller:
+                    self._lan_inventory_poller = None
+
+    def _refresh_lan_panel(self) -> None:
+        try:
+            panel = self.query_one("#lan", LANPanel)
+        except Exception:
+            return
+        # Prune stale selection if the MAC dropped out of the latest
+        # snapshot.
+        if (
+            self._lan_selected_mac is not None
+            and self._latest_lan is not None
+        ):
+            macs = {h.mac for h in self._latest_lan.hosts}
+            if self._lan_selected_mac not in macs:
+                self._lan_selected_mac = None
+        panel.update_hosts(
+            self._latest_lan,
+            selected_mac=self._lan_selected_mac,
+        )
+        if self._view_mode == "lan":
+            self._refresh_environment_panel()
+
     def _refresh_ble_panel(self) -> None:
         try:
             panel = self.query_one("#ble", BLEPanel)
@@ -5897,6 +6375,8 @@ class DitingApp(App):
             )
         elif self._view_mode == "mdns":
             panel.update_environment_mdns(self._latest_mdns)
+        elif self._view_mode == "lan":
+            panel.update_environment_lan(self._latest_lan)
         else:
             merged = _merge_current(
                 self._cached_scan, self._latest_connection,
@@ -5933,6 +6413,11 @@ class DitingApp(App):
 
     def action_rescan(self) -> None:
         self._poller.force_rescan()
+        # When the user is on the LAN view, `r` also triggers an
+        # immediate LAN re-sweep so the panel updates faster than the
+        # 60 s cadence.
+        if self._view_mode == "lan" and self._lan_inventory_poller is not None:
+            self._lan_inventory_poller.force_now()
 
     def action_cycle_sort(self) -> None:
         # The `s` key cycles a per-view sort mode. Wi-Fi flips between
@@ -5956,36 +6441,45 @@ class DitingApp(App):
         self._refresh_scan_panel()
 
     def action_toggle_view(self) -> None:
-        """Cycle the third panel slot through Wi-Fi → BLE → mDNS → Wi-Fi.
+        """Cycle the third panel slot through Wi-Fi → BLE → mDNS → LAN → Wi-Fi.
 
-        All three pollers keep running in the background once started;
-        only the visible widget changes. The mDNS poller is lazy: the
-        first cycle into `mdns` instantiates `BonjourPoller` and
+        All four pollers keep running in the background once started;
+        only the visible widget changes. The mDNS and LAN pollers are
+        lazy: the first cycle into each instantiates the poller and
         starts its consumer task. Subsequent cycles reuse it.
         """
-        cycle = ("wifi", "ble", "mdns")
+        cycle = VIEW_CYCLE
         i = cycle.index(self._view_mode) if self._view_mode in cycle else 0
         self._view_mode = cycle[(i + 1) % len(cycle)]
         scan = self.query_one("#scan", ScanPanel)
         ble = self.query_one("#ble", BLEPanel)
         mdns = self.query_one("#mdns", BonjourPanel)
+        lan = self.query_one("#lan", LANPanel)
         scan.display = self._view_mode == "wifi"
         ble.display = self._view_mode == "ble"
         mdns.display = self._view_mode == "mdns"
+        lan.display = self._view_mode == "lan"
         # Pre-warm Bonjour as soon as the user leaves Wi-Fi. This
         # absorbs the ~300 ms – 1 s startup cost (zeroconf import +
         # multicast-socket join) while the user is reading the BLE
         # panel, so the second `n` press (BLE → mDNS) feels instant.
         # _ensure_mdns_poller is idempotent — calling it from both
         # the BLE step and the mDNS step is safe.
-        if self._view_mode in ("ble", "mdns"):
+        if self._view_mode in ("ble", "mdns", "lan"):
             self._ensure_mdns_poller()
+        # LAN poller lazy-starts only when the user actually lands on
+        # the LAN view — keeps the ICMP sweep traffic gated behind a
+        # deliberate gesture.
+        if self._view_mode == "lan":
+            self._ensure_lan_inventory_poller()
         if self._view_mode == "wifi":
             self._refresh_scan_panel()
         elif self._view_mode == "ble":
             self._refresh_ble_panel()
-        else:  # mdns
+        elif self._view_mode == "mdns":
             self._refresh_mdns_panel()
+        else:  # lan
+            self._refresh_lan_panel()
         # Diagnostics panel content has to follow the view too, even
         # on the snapshot the toggle does not trigger a poller event
         # for. Calling the dispatcher unconditionally is cheap and
@@ -6336,18 +6830,98 @@ class DitingApp(App):
         self.action_wifi_select_prev()
         self.action_ble_select_prev()
         self.action_bonjour_select_prev()
+        self.action_lan_select_prev()
         self._sync_open_detail_modal()
 
     def action_select_next(self) -> None:
         self.action_wifi_select_next()
         self.action_ble_select_next()
         self.action_bonjour_select_next()
+        self.action_lan_select_next()
         self._sync_open_detail_modal()
 
     def action_inspect_selected(self) -> None:
         self.action_wifi_inspect()
         self.action_ble_inspect()
         self.action_bonjour_inspect()
+        self.action_lan_inspect()
+
+    # ------------------------------------------------------------------
+    # LAN row navigation + inspect
+    # ------------------------------------------------------------------
+
+    def _lan_ordered_macs(self) -> list[str]:
+        if self._latest_lan is None:
+            return []
+        return [h.mac for h in self._latest_lan.hosts]
+
+    def _lan_lookup(self, mac: str):
+        if self._latest_lan is None:
+            return None
+        for h in self._latest_lan.hosts:
+            if h.mac == mac:
+                return h
+        return None
+
+    def _lan_set_selected(self, mac: str, *, inspect: bool = False) -> None:
+        if mac not in self._lan_ordered_macs():
+            return
+        self._lan_selected_mac = mac
+        self._refresh_lan_panel()
+        if inspect:
+            host = self._lan_lookup(mac)
+            if host is not None:
+                self.push_screen(LANDetailScreen(host=host))
+
+    def action_lan_select_prev(self) -> None:
+        if self._view_mode != "lan":
+            return
+        order = self._lan_ordered_macs()
+        if not order:
+            return
+        if (
+            self._lan_selected_mac is None
+            or self._lan_selected_mac not in order
+        ):
+            self._lan_selected_mac = order[0]
+        else:
+            i = order.index(self._lan_selected_mac)
+            self._lan_selected_mac = order[max(0, i - 1)]
+        self._refresh_lan_panel()
+
+    def action_lan_select_next(self) -> None:
+        if self._view_mode != "lan":
+            return
+        order = self._lan_ordered_macs()
+        if not order:
+            return
+        if (
+            self._lan_selected_mac is None
+            or self._lan_selected_mac not in order
+        ):
+            self._lan_selected_mac = order[0]
+        else:
+            i = order.index(self._lan_selected_mac)
+            self._lan_selected_mac = order[min(len(order) - 1, i + 1)]
+        self._refresh_lan_panel()
+
+    def action_lan_inspect(self) -> None:
+        if self._view_mode != "lan":
+            return
+        order = self._lan_ordered_macs()
+        if not order:
+            return
+        mac = (
+            self._lan_selected_mac
+            if self._lan_selected_mac in order
+            else order[0]
+        )
+        host = self._lan_lookup(mac)
+        if host is None:
+            return
+        self._lan_selected_mac = mac
+        self._refresh_lan_panel()
+        self.push_screen(LANDetailScreen(host=host))
 
     def _sync_open_detail_modal(self) -> None:
         """If a detail modal is currently on the screen stack, ask it
