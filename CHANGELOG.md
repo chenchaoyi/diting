@@ -11,6 +11,66 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-05-19
+
+Minor release. Two real-environment audit findings on a Meituan
+corp network drove a vendor-lookup upgrade and a LAN-host detail
+modal enrichment; one smaller UX fix rides along.
+
+### Added
+- **Full IEEE OUI registry (~250 entries → 39,444).** The bundled
+  `*_ouis.json` data files were a hand-curated subset; replaced
+  with the full IEEE Registration Authority MA-L (24-bit) registry.
+  Both `bluetooth_ouis.json` (used by BLE and the LAN host list)
+  and `wifi_ouis.json` (used by Wi-Fi BSSID resolution) now ship
+  the same canonical 39 k-entry dataset. On corp networks, gateway
+  / enterprise-switch OUIs (Cisco, Aruba, H3C, HPE, Huawei, etc.)
+  now resolve to vendor names instead of `(unknown)`. File size:
+  ~20 KB → ~1.5 MB each; in-memory heap +~5 MB; lookup speed O(1)
+  unchanged.
+- **`scripts/refresh_ouis.py`.** New CLI that pulls the canonical
+  CSV from `https://standards-oui.ieee.org/oui/oui.csv`, parses +
+  dedupes, and rewrites both data files. Run before each release
+  to pick up newly-registered OUIs. IEEE attribution added in
+  `_meta` and README.
+- **`LANHost.last_rtt_ms` and `LANHost.last_reachable_at`.** New
+  fields populated from each sweep's per-host ICMP results.
+  `last_seen` (ARP cache observation) and `last_reachable_at`
+  (most recent successful ICMP echo) are tracked separately so a
+  host that's in ARP but offline shows the freshness gap. Fields
+  are preserved across silent ticks — a temporarily-quiet host's
+  last-known RTT stays visible in the modal.
+- **LANDetailScreen Network section: Latency + Reachable rows.**
+  `Latency  X.X ms` (omitted when last_rtt_ms is None);
+  `Reachable  this sweep | Xs ago | never` (always rendered).
+  Parsed from the new `_ping_one` return tuple
+  `(reachable, rtt_ms | None)`.
+- **LANDetailScreen Bonjour services empty-state placeholder.**
+  When the host has no Bonjour services, the section now renders
+  `(no Bonjour services)` instead of being hidden entirely —
+  users had no signal that the cross-reference channel was
+  checked.
+
+### Changed
+- **`_ping_one` and `_sweep` return shape.** `_ping_one` now
+  returns `tuple[bool, float | None]` parsed from `time=X.XXX ms`
+  in macOS ping stdout. `_sweep` returns
+  `dict[str, tuple[bool, float | None]]` so the merge step can
+  populate per-host RTT and reachability without re-running probes.
+
+### Fixed
+- **Duplicate ZH labels in LAN diagnostics.** `子网 子网
+  11.10.158.0/24` and `上次扫描 上次扫描 38s` doubled because both
+  the row prefix and the value template translated to the same ZH
+  word. Dropped the lowercase prefix from the value templates;
+  the row label alone identifies the row.
+- **Title bar showed `扫描间隔 7s` on every view.** That's the
+  Wi-Fi CoreWLAN scan interval — but on the LAN view the user
+  could reasonably think LAN swept at 7s, when it actually sweeps
+  at 60s. Made the cadence view-specific: `scan 7s` on wifi,
+  `sweep 60s` on lan, dropped entirely on BLE / Bonjour
+  (push-driven pollers).
+
 ## [1.2.0] — 2026-05-19
 
 Minor release. Headline: a new fourth panel that answers "who's on

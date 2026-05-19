@@ -10,6 +10,56 @@
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-05-19
+
+Minor release。来自一台 Meituan 公司网真实环境审计的两个反馈
+驱动了厂商查询升级 + LAN 主机详情模态信息扩容；再带一个 UX 修复。
+
+### 新增
+- **完整 IEEE OUI 注册表（~250 → 39,444 条）。** Bundle 的
+  `*_ouis.json` 之前是人工精选子集；换成 IEEE Registration
+  Authority MA-L（24-bit）注册表全量。`bluetooth_ouis.json`
+  （BLE + LAN 主机列表用）和 `wifi_ouis.json`（Wi-Fi BSSID 解析
+  用）现在共用同一份 39k 条权威数据。在企业网络上，网关 /
+  企业交换机 OUI（Cisco / Aruba / H3C / HPE / Huawei 等）从
+  `(未知)` 变成实际厂商名。文件大小：~20 KB → ~1.5 MB 每个；
+  内存 +~5 MB；查询速度仍是 O(1)。
+- **`scripts/refresh_ouis.py`。** 新的 CLI，从
+  `https://standards-oui.ieee.org/oui/oui.csv` 拉权威 CSV，解析
+  + 去重 + 重写两个数据文件。每次发布前跑一次，把新增 OUI 收
+  进来。IEEE 出处在 `_meta` 和 README 里说明。
+- **`LANHost.last_rtt_ms` 和 `LANHost.last_reachable_at`。** 两个
+  新字段，由每次 sweep 的 per-host ICMP 结果填充。`last_seen`
+  （ARP 缓存观察）和 `last_reachable_at`（最近一次成功 ICMP 应
+  答）分开追踪，所以一台在 ARP 里但已经下线的主机能看出新鲜
+  度差。这两个字段在静默 tick 里保留——临时不响的主机最近一
+  次已知 RTT 仍然在详情页可见。
+- **LANDetailScreen 网络段：延迟 + 可达 两行。** `延迟 X.X ms`
+  （last_rtt_ms 为空时省略）；`可达 此次扫描 | Xs前 | 从未`
+  （始终渲染）。值来自 `_ping_one` 新的 `(reachable, rtt_ms)`
+  返回元组。
+- **LANDetailScreen Bonjour 服务空状态占位。** 主机没有任何
+  Bonjour 服务时，这一段现在渲染 `（无 Bonjour 服务）`，不再
+  整段隐藏——之前用户无法判断这条交叉关联通道有没有被检查过。
+
+### 变更
+- **`_ping_one` 与 `_sweep` 返回值形状。** `_ping_one` 现在返
+  回 `tuple[bool, float | None]`，从 macOS ping stdout 里 parse
+  `time=X.XXX ms`。`_sweep` 返回 `dict[str, tuple[bool,
+  float | None]]`，merge 步骤直接读这个字典填 per-host RTT /
+  可达字段，不再重复探测。
+
+### 修复
+- **LAN 诊断行 ZH 标签重复。** `子网 子网 11.10.158.0/24` 和
+  `上次扫描 上次扫描 38s`——行前缀标签和值模板都翻译成同一
+  个 ZH 词所以重复了。把值模板里多余的前缀词去掉；行标签本身
+  就能识别这是哪一行。
+- **标题栏在所有视图都显示 `扫描间隔 7s`。** 这是 Wi-Fi
+  CoreWLAN 扫描间隔——但用户在 LAN 视图看着它，可能误以为
+  LAN 每 7s 扫一次，实际是 60s。把扫描间隔显示改成视图相关：
+  wifi 显示 `scan 7s`、lan 显示 `sweep 60s`、BLE 和 Bonjour
+  直接不显示（推驱动的 poller，没有有意义的间隔）。
+
 ## [1.2.0] — 2026-05-19
 
 Minor release。亮点：新增第四个面板，回答「谁在用我的 Wi-Fi」——
