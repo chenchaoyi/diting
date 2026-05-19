@@ -10,96 +10,62 @@ specs for the panel CONTENTS (wifi-scanning, bluetooth-scanning,
 link-health, etc.) ride on top of this layout contract.
 ## Requirements
 ### Requirement: The TUI SHALL have exactly four stacked panels in a fixed order
-`DitingApp.compose()` SHALL yield, top to bottom: Header,
-ConnectionPanel (`#conn`), EnvironmentPanel (`#env`), then ONE OF
-ScanPanel (`#scan`), BLEPanel (`#ble`), or BonjourPanel (`#mdns`)
-depending on view, then EventsPanel (`#roam`), then GroupedFooter
-(`#footer`). All three view-toggle panels SHALL be mounted on launch
-when their respective subsystems are available; toggling SHALL flip
-their `display` attribute, never mount/unmount, so the widget tree
-stays stable for tests.
+The third-slot panel SHALL cycle through four views in this order: **Wi-Fi** → **BLE** → **Bonjour** → **LAN**, wrapping back to Wi-Fi. The `n` keystroke advances the cycle by one. The current view's panel SHALL be visible; the other three SHALL have `display=False` so the layout never reflows on toggle.
 
-The `n` key binding cycles the view across `wifi` → `ble` → `mdns`
-→ `wifi`, in that order.
+The fourth view's panel header is `LAN`. The cycle's stop labels (in both EN and ZH catalogs) are: `Wi-Fi`, `BLE`, `Bonjour`, `LAN`.
 
-The active third-slot panel's `border_title` SHALL render an
-always-visible three-segment tab indicator listing every view name
-in cycle order: `Wi-Fi · BLE · Bonjour`. The active view's label
-SHALL be styled bold-cyan and the two inactive labels SHALL be
-dimmed, so the user can see from any single screen that three
-views exist and which one is active. The panel-specific status
-detail (count, sort hint, last-scan timestamp) SHALL move to the
-panel's `border_subtitle` (bottom of frame) so no information is
-lost.
+The LAN view's content rendering follows the existing lazy-poller pattern:
 
-The footer label for `n` SHALL continue to read the literal name of
-the NEXT view in the cycle (e.g., `→ BLE` while in Wi-Fi, `→ Bonjour`
-while in BLE, `→ Wi-Fi` while in mDNS) so the user knows where the
-next press lands.
+- **Before the first snapshot lands:** the panel renders a single dim-italic placeholder line `(sweeping subnet…)` (EN) / `(正在扫描子网…)` (ZH). The placeholder disappears as soon as the first `LANInventoryUpdate` snapshot lands.
+- **After the first snapshot lands:** the panel renders one row per `LANHost` from the latest snapshot, sorted by IP ascending, with `is_self` and `is_gateway` hosts pinned to the top in that order with a `★` star marker.
 
-#### Scenario: User toggles from Wi-Fi to BLE
-- **WHEN** the user is in `wifi` view and presses `n`
-- **THEN** ScanPanel.display goes False, BLEPanel.display goes True, BonjourPanel.display stays False; the events strip and connection panel are unchanged
+#### Scenario: User cycles through all four views
+- **WHEN** the user presses `n` four times starting from the Wi-Fi view
+- **THEN** the third-slot panel cycles Wi-Fi → BLE → Bonjour → LAN → Wi-Fi; each panel renders its own contents; the Diagnostics panel's content tracks the active view
 
-#### Scenario: User toggles from BLE to mDNS
-- **WHEN** the user is in `ble` view and presses `n`
-- **THEN** BLEPanel.display goes False, BonjourPanel.display goes True, ScanPanel.display stays False
-
-#### Scenario: User toggles from mDNS back to Wi-Fi (cycle wraps)
-- **WHEN** the user is in `mdns` view and presses `n`
-- **THEN** BonjourPanel.display goes False, ScanPanel.display goes True, BLEPanel.display stays False
-
-#### Scenario: All three panels mounted at launch
-- **WHEN** the App composes its widget tree
-- **THEN** ScanPanel, BLEPanel, and BonjourPanel are all present in the tree (no widgets are mounted or unmounted during view toggles)
-
-#### Scenario: Tab indicator visible in every view
-- **WHEN** the user is in any of `wifi` / `ble` / `mdns` view
-- **THEN** the active third-slot panel's `border_title` contains all three view labels (`Wi-Fi`, `BLE`, `Bonjour`) separated by `·`
-- **AND** the label matching the active mode is styled distinctly (bold-cyan) while the other two are dimmed
-
-#### Scenario: Panel detail moves to the border subtitle
-- **WHEN** the user is in `wifi` view
-- **THEN** the panel's `border_subtitle` carries the Wi-Fi-specific detail (`Nearby BSSIDs (N) · sort: AP` or equivalent) and the `border_title` carries the tab indicator
-- **AND** the equivalent split applies in BLE view (`border_subtitle` shows `Nearby BLE devices (N)`) and mDNS view (`Nearby Bonjour (N)`)
+#### Scenario: User cycles into the LAN view before the first snapshot
+- **WHEN** the user lands on the LAN view and the first sweep is still in flight
+- **THEN** the LAN panel body shows a single dim-italic line `(sweeping subnet…)`; the line is replaced by the rows table as soon as the first snapshot arrives
 
 ### Requirement: Diagnostics panel content SHALL follow the active view
-`_refresh_environment_panel()` SHALL render Wi-Fi-side diagnostic
-content (visible BSSIDs, things-to-notice, link, environment) when
-the view is `wifi`, BLE-side content (visible BLE / vendors /
-categories / closest / connected) when the view is `ble`, and
-mDNS-side content (visible Bonjour / top services / top vendors)
-when the view is `mdns`. The panel SHALL refresh both on view-toggle
-AND on each event for the active view.
+When the active view is `lan`, the Diagnostics panel SHALL render a LAN-side summary:
 
-#### Scenario: BLE view, BLE event arrives
-- **WHEN** the user is in BLE view and a fresh BLE snapshot lands
-- **THEN** the diagnostics panel re-renders with the new BLE-side stats
+1. **Visible LAN inventory** — total host count, named-via-Bonjour count, unknown-vendor count.
+2. **Subnet** — CIDR notation, with `· capped from /N` annotation when the netmask was wider than the effective cap (/24 by default, /22 with `DITING_LAN_INVENTORY_WIDE=1`).
+3. **Last sweep** — relative time since the most recent ARP read.
 
-#### Scenario: mDNS view, Bonjour snapshot lands
-- **WHEN** the user is in mDNS view and a fresh `BonjourScanUpdate` snapshot lands
-- **THEN** the diagnostics panel re-renders with the new mDNS-side stats (visible Bonjour count, top services, top vendors)
+Before the first snapshot lands the Diagnostics panel SHALL show a single dim-italic line `(sweeping subnet…)` instead of any of the above.
 
-#### Scenario: Wi-Fi view ignores mDNS updates
-- **WHEN** the user is in Wi-Fi view and a fresh `BonjourScanUpdate` snapshot lands
-- **THEN** the diagnostics panel does NOT re-render (the snapshot is held for when the user toggles back)
+#### Scenario: User in LAN view, first snapshot has arrived
+- **WHEN** the LAN poller has snapshot `hosts=17`, `named=4`, `unknown_vendor=2`, `subnet=192.168.1.0/24`, `last_sweep_at=8s ago`
+- **THEN** Diagnostics renders `LAN inventory  17 hosts · 4 named (Bonjour) · 2 unknown vendor · subnet 192.168.1.0/24 · last sweep 8s ago`
+
+#### Scenario: User in LAN view, no snapshot yet
+- **WHEN** the LAN poller has been constructed but no `LANInventoryUpdate` has been emitted yet
+- **THEN** Diagnostics renders one dim-italic line `(sweeping subnet…)`
 
 ### Requirement: Modal screens SHALL push onto a stack and Esc / their own letter SHALL close
-Each modal SHALL be opened via `app.push_screen(...)` and SHALL
-close on Esc, `q`, or the same letter that opened it. The four
-bundled modals — HelpScreen (`h`), BasicsScreen (`b`),
-EventsScreen (`m`), BLEDetailScreen (`i`) — all follow this
-convention. Modals
-SHALL render center-middle with a heavy-bordered box and a footer
-hint listing the close keys.
+Each modal SHALL be opened via `app.push_screen(...)` and SHALL close on Esc, `q`, or the same key that opened it. The five bundled modals — HelpScreen (`?`), BasicsScreen (`b`), EventsScreen (`m`), BLEDetailScreen (`i`), **LANDetailScreen (`i`)** — all follow this convention. Modals SHALL render center-middle with a heavy-bordered box and a footer hint listing the close keys.
+
+The `h` key SHALL NOT be bound to any action; the slot is reserved for a future per-view binding without colliding with the global help shortcut.
+
+The `i` keystroke is **view-contextual**: on Wi-Fi it opens `WifiDetailScreen`, on BLE it opens `BLEDetailScreen`, on Bonjour it opens `BonjourDetailScreen`, on **LAN** it opens `LANDetailScreen`. Each detail modal closes via `Esc` / `i` / `q`.
+
+#### Scenario: User opens LAN detail on a row
+- **WHEN** the user is on the LAN view, presses `down` to land on a row, then presses `i`
+- **THEN** `LANDetailScreen` pushes onto the stack; the underlying view stays mounted; pressing `i` or `Esc` closes the modal back to the LAN view with the cursor row preserved
 
 #### Scenario: User opens help, reads, closes
-- **WHEN** the user presses `h` then `Esc`
+- **WHEN** the user presses `?` then `Esc`
 - **THEN** HelpScreen pushes onto the stack, the underlying view stays mounted underneath, Esc pops it back to the main view
 
 #### Scenario: User opens BLE detail, presses `i` to close
-- **WHEN** the user presses `i` to open the modal then `i` again
-- **THEN** the modal closes; `i`-to-toggle is documented as a convenience identical to Esc
+- **WHEN** the user presses `i` on a BLE row, then `i` again
+- **THEN** BLEDetailScreen pushes, then pops; the cursor row is unchanged
+
+#### Scenario: Pressing `h` is a no-op
+- **WHEN** the user presses `h` from any view
+- **THEN** nothing happens; the key is intentionally unbound so it is free for a future shortcut without colliding with the global help binding
 
 ### Requirement: The footer SHALL be a single GroupedFooter with three semantic groups
 `GroupedFooter` SHALL split the App's bindings into three groups
@@ -216,43 +182,22 @@ require a spec amendment — the canonical file is the contract.
 - **AND** the contributor SHALL either drop the icon or, if the surface genuinely needs a mark, use `docs/design/diting-design/assets/logo-mark.svg` for brand placement only
 
 ### Requirement: Each list-style view panel SHALL share the same row-select + inspect gesture contract
-The TUI SHALL guarantee that every list-style panel in the third panel slot (Wi-Fi scan list, BLE devices, Bonjour services, and any future analogue) exposes the same input contract to the user. The following bindings MUST behave identically across every such view:
+All four list-style view panels — Wi-Fi, BLE, Bonjour, **LAN** — SHALL implement the same row-cursor + inspect contract:
 
-- `up` / `down` move selection within the active view, registered
-  priority=True so they fire before `VerticalScroll`'s scroll
-  handler.
-- `i` and `enter` open a panel-specific detail modal for the
-  current selection.
-- Mouse click on a data row sets selection to that row AND opens
-  the detail modal in the same gesture; clicks on header /
-  placeholder / spacer rows are no-ops.
-- Modal close binds `escape`, `i`, and `q`; closing does NOT
-  mutate the panel's selection state.
-- The action methods backing `up` / `down` / `i` / `enter` SHALL
-  no-op when the active view does not match the action's panel.
-  This keeps the same physical key safe across views (e.g. ↓ in
-  Wi-Fi view does not also act on BLE selection state).
-- Selection state SHALL be keyed by a stable identifier (BSSID,
-  BLE peripheral identifier, Bonjour service-instance FQDN), NOT
-  by row index. Selected targets that drop out of the next snapshot
-  SHALL clear the selection.
+- `up` / `down` move the cursor among the panel's rows; the cursor highlights via row-level `reverse` styling.
+- `enter` or `i` opens the detail modal for the selected row.
+- A mouse click on a row selects + opens the modal in one gesture.
+- The modal closes on `Esc` / `i` / `q`; the cursor row is preserved.
 
-The specific section layout, field set, and behavioural edge cases
-for each modal are defined in that panel's capability spec
-(`wifi-detail-modal`, `ble-detail-modal`, `bonjour-detail-modal`).
-This requirement only pins the cross-cutting input contract.
+The LAN panel's row key for cursor tracking SHALL be the host's MAC (`mac.lower()`). When a tracked MAC drops out of the latest snapshot, the cursor SHALL clear gracefully — the next render's row is not assumed to exist.
 
-#### Scenario: User switches views, gesture works identically in each
-- **WHEN** the user presses `n` to cycle Wi-Fi → BLE → Bonjour and presses `↓` `↓` `i` in each
-- **THEN** in each view the cursor moves down twice and the same row's detail modal opens
+#### Scenario: LAN cursor stable across re-sort
+- **WHEN** the user selects a LAN row, then the next snapshot reshuffles row order (e.g. a host's `last_seen` updates and changes ordering)
+- **THEN** the cursor stays on the same MAC's row, wherever it now sits
 
-#### Scenario: Mouse click in any list view
-- **WHEN** the user clicks a data row in any of the three list views
-- **THEN** that row gets selected AND its detail modal opens, with no separate keypress needed
-
-#### Scenario: Adding a fourth list panel
-- **WHEN** a future change introduces another selectable list panel
-- **THEN** that panel inherits the same contract; deviating from the contract requires explicitly modifying this Requirement
+#### Scenario: LAN cursor target drops out of snapshot
+- **WHEN** the selected MAC is not present in the next snapshot (host went silent and aged out)
+- **THEN** the cursor clears; no exception is raised; the panel renders the new snapshot with no selection
 
 ### Requirement: The App title SHALL include the running version
 `DitingApp.title` SHALL be set to `"diting v<version>"` where `<version>` is the value of `importlib.metadata.version("diting")`. The Textual header renders this on the left of the screen, so the user always sees the running version without pressing any key.
