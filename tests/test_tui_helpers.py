@@ -2470,9 +2470,11 @@ def test_lan_detail_modal_renders_all_sections():
     assert "AirPlay audio" in rendered
 
 
-def test_lan_detail_modal_omits_bonjour_section_when_no_services():
-    """A LAN host with no Bonjour services does NOT render the
-    Bonjour services section."""
+def test_lan_detail_modal_renders_bonjour_empty_state_when_no_services():
+    """A LAN host with no Bonjour services renders the section
+    header followed by a `(no Bonjour services)` placeholder. We
+    keep the section visible so users see the cross-reference
+    channel was checked."""
     from diting.tui import LANDetailScreen
     host = _lan_host(bonjour_name=None, bonjour_services=())
     screen = LANDetailScreen(host=host)
@@ -2481,7 +2483,110 @@ def test_lan_detail_modal_omits_bonjour_section_when_no_services():
         getattr(r, "plain", str(r)) for r in body.renderables
     )
     assert "Identity" in rendered
-    assert "Bonjour services" not in rendered
+    assert "Bonjour services" in rendered
+    assert "(no Bonjour services)" in rendered
+
+
+def test_lan_detail_modal_renders_bonjour_services_when_present():
+    """Sanity: when services exist, the section header is followed
+    by one row per category and the placeholder is absent."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(
+        bonjour_name="my-mac",
+        bonjour_services=("AirPlay", "AirPlay audio"),
+    )
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Bonjour services" in rendered
+    assert "AirPlay" in rendered
+    assert "AirPlay audio" in rendered
+    assert "(no Bonjour services)" not in rendered
+
+
+def test_lan_detail_modal_renders_latency_row_when_rtt_known():
+    """`Latency  2.4 ms` row appears in the Network section when
+    last_rtt_ms is known."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(bonjour_services=())
+    from dataclasses import replace as _replace
+    host = _replace(host, last_rtt_ms=2.4)
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Latency" in rendered
+    assert "2.4 ms" in rendered
+
+
+def test_lan_detail_modal_omits_latency_row_when_rtt_unknown():
+    """When last_rtt_ms is None the Latency row is omitted (no info
+    to surface)."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(bonjour_services=())
+    assert host.last_rtt_ms is None
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Latency" not in rendered
+
+
+def test_lan_detail_modal_renders_reachable_row_this_sweep():
+    """`Reachable  this sweep` when last_reachable_at is within the
+    sweep window."""
+    from diting.tui import LANDetailScreen
+    from datetime import datetime, timezone
+    host = _lan_host(bonjour_services=())
+    from dataclasses import replace as _replace
+    host = _replace(host, last_reachable_at=datetime.now(timezone.utc))
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Reachable" in rendered
+    assert "this sweep" in rendered
+
+
+def test_lan_detail_modal_renders_reachable_row_with_relative_time_when_older():
+    """Older last_reachable_at renders as `Xm Ys ago` via the
+    existing duration helper."""
+    from diting.tui import LANDetailScreen
+    from datetime import datetime, timedelta, timezone
+    host = _lan_host(bonjour_services=())
+    from dataclasses import replace as _replace
+    host = _replace(
+        host,
+        last_reachable_at=datetime.now(timezone.utc) - timedelta(seconds=125),
+    )
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Reachable" in rendered
+    assert "ago" in rendered
+    assert "this sweep" not in rendered
+
+
+def test_lan_detail_modal_renders_never_when_never_reachable():
+    """last_reachable_at None → `never` (host is in ARP cache but
+    diting has not seen a ping reply for it yet)."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(bonjour_services=())
+    assert host.last_reachable_at is None
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Reachable" in rendered
+    assert "never" in rendered
 
 
 def test_lan_panel_renders_sweeping_placeholder_before_first_snapshot():

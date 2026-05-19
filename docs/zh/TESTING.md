@@ -227,8 +227,13 @@
 | 子网推导：netmask 比 /24 宽时，默认 cap 到 `iface_ip` 周围的 /24 | `test_lan.py::test_subnet_from_ifconfig_parses_typical_home_24`、`::test_subnet_caps_at_24_when_netmask_wider`、`::test_subnet_uses_full_subnet_when_netmask_is_25_or_narrower` |
 | `DITING_LAN_INVENTORY_WIDE=1` 把 cap 放宽到 /22（仍强制） | `test_lan.py::test_subnet_caps_at_22_when_wide_flag_set`、`::test_subnet_still_caps_at_22_when_wide_flag_set_and_netmask_is_16`、`::test_subnet_uses_full_subnet_when_native_22_and_wide_flag_set` |
 | ICMP sweep — 非特权 `ping -c 1 -W <ms>`，30 并发 `asyncio.Semaphore` | `test_lan.py::test_ping_one_returns_true_on_zero_exit`、`::test_ping_one_returns_false_on_nonzero_exit`、`::test_sweep_caps_concurrency_at_thirty` |
+| `_ping_one` 解析 `time=X.XXX ms` 返回 `(reachable, rtt_ms \| None)`；stdout 解析不出时 `(True, None)`；非零退出 `(False, None)` | `test_lan.py::test_ping_one_returns_rtt_on_zero_exit`、`::test_ping_one_returns_none_rtt_on_nonzero_exit`、`::test_ping_one_returns_true_none_when_stdout_unparseable` |
+| `_sweep` 返回 `{ip: (reachable, rtt_ms)}` 字典 | `test_lan.py::test_sweep_returns_per_ip_results_dict` |
 | `arp -an` 解析提取 MAC ↔ IP 三元组；`<incomplete>` 行跳过 | `test_lan.py::test_arp_parse_extracts_mac_and_ip`、`::test_arp_parse_skips_incomplete_entries`、`::test_arp_parse_handles_mixed_format_lines` |
 | `LANHost` 以小写 MAC 为 key；DHCP IP 轮转时 `first_seen` 保留 | `test_lan.py::test_lan_host_keyed_by_mac_keeps_first_seen_across_ip_change`、`::test_lan_host_last_seen_updates_on_every_observation` |
+| `LANHost.last_rtt_ms` 由 sweep 填充；静默 tick 中保留 | `test_lan.py::test_lan_host_last_rtt_ms_populated_from_sweep`、`::test_lan_host_last_rtt_ms_preserved_when_silent_tick` |
+| `LANHost.last_reachable_at` 与 `last_seen` 区分；主机静默时保留 | `test_lan.py::test_lan_host_last_reachable_at_set_on_successful_ping`、`::test_lan_host_last_reachable_at_preserved_when_silent`、`::test_lan_host_last_reachable_at_none_when_never_reached` |
+| OUI refresh 脚本将 IEEE MA-L CSV 解析为标准 JSON 形式 | `test_lan.py::test_oui_refresh_script_parses_csv_to_aabbcc_keys`、`::test_oui_refresh_script_skips_non_ma_l_rows`、`::test_oui_refresh_script_dedupes_repeated_assignments` |
 | 本地管理（随机）MAC 通过首字节 0x02 位标记 | `test_lan.py::test_is_randomised_mac_detects_locally_administered_bit`、`::test_is_randomised_mac_clears_for_universal_macs` |
 | OUI 厂商查询复用现有 `wifi_ouis.json`；随机 MAC 返回 `None` | `test_lan.py::test_vendor_lookup_for_universal_mac_returns_vendor`、`::test_vendor_lookup_for_random_mac_returns_none` |
 | Bonjour 交叉引用走 `BonjourPoller._state` 填充 `bonjour_name` / `bonjour_services` | `test_lan.py::test_bonjour_cross_ref_pulls_name_from_state`、`::test_bonjour_cross_ref_aggregates_categories`、`::test_bonjour_cross_ref_leaves_name_none_when_no_match` |
@@ -317,7 +322,10 @@
 | LAN 面板把 `is_self` 用 `★` 钉到顶，然后 `is_gateway` 同样带 `★`，余下按 IP 升序 | `test_tui_helpers.py::test_lan_panel_renders_self_and_gateway_pinned_to_top`、`::test_lan_panel_sorts_remaining_rows_by_ip_ascending` |
 | LAN 面板对本地管理 MAC 行标 `(随机 MAC)` 替代厂商 | `test_tui_helpers.py::test_lan_panel_marks_random_mac_with_label` |
 | LAN Diagnostics 摘要行带 hosts / named / 厂商未知计数 + 子网（被截断时带 `· 截自 /N` 注解）+ `上次扫描` 相对时间 | `test_tui_helpers.py::test_lan_diagnostics_renders_full_summary_line`、`::test_lan_diagnostics_annotates_capped_subnet_when_netmask_wider`、`::test_lan_diagnostics_omits_capped_annotation_when_full_subnet_swept` |
-| LANDetailScreen 模态渲染 Identity / Network / Bonjour services / Activity 段；关键 `Esc` / `i` / `q` | `test_tui_helpers.py::test_lan_detail_modal_renders_all_sections`、`::test_lan_detail_modal_omits_bonjour_section_when_no_services` |
+| LANDetailScreen 模态渲染 Identity / Network / Bonjour services / Activity 段；关键 `Esc` / `i` / `q` | `test_tui_helpers.py::test_lan_detail_modal_renders_all_sections` |
+| LANDetailScreen Network 段在 `last_rtt_ms` 已知时新增 Latency 行；未知时该行省略 | `test_tui_helpers.py::test_lan_detail_modal_renders_latency_row_when_rtt_known`、`::test_lan_detail_modal_omits_latency_row_when_rtt_unknown` |
+| LANDetailScreen Network 段始终渲染 Reachable 行：`此次扫描` / 相对时间 / `从未` | `test_tui_helpers.py::test_lan_detail_modal_renders_reachable_row_this_sweep`、`::test_lan_detail_modal_renders_reachable_row_with_relative_time_when_older`、`::test_lan_detail_modal_renders_never_when_never_reachable` |
+| LANDetailScreen Bonjour services 段始终渲染；为空时显示 `（无 Bonjour 服务）` 占位 | `test_tui_helpers.py::test_lan_detail_modal_renders_bonjour_empty_state_when_no_services`、`::test_lan_detail_modal_renders_bonjour_services_when_present` |
 | Diagnostics 内容跟随激活视图 | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`、`::test_view_toggle_cycles_wifi_ble_mdns_lan_wifi`、`::test_diagnostics_renders_link_line_when_latency_data_available` |
 | 模态压栈、Esc/同字母关 | `test_tui_smoke.py::test_help_modal_open_and_close`、`::test_help_modal_question_mark_to_close`、`::test_help_modal_renders_through_pilot_query`、`::test_pressing_h_is_a_no_op`、`::test_events_modal_open_and_close`；`tui_snapshot.py::events_modal`、`::help_modal`、`::basics_modal`、`::ble_detail_decoded`（regression） |
 | Footer 是单一 GroupedFooter 三段 | (gap — 没有 footer 分组的单元测试；regression 捕获里可见) |

@@ -296,9 +296,11 @@ def test_resolve_config_path_no_env_falls_through_to_default(monkeypatch):
 # ---- AP vendor lookup ----
 
 def test_lookup_ap_vendor_known_oui_returns_name():
-    """User-specific case from the overnight log: 40:fe:95 → Xiaomi.
-    Verifies the bundled curated map covers the home AP OUI."""
-    assert lookup_ap_vendor("40:fe:95:89:c7:e3") == "Xiaomi Communications"
+    """Spot-check that a well-known AP-vendor OUI resolves. Cisco
+    OUI 00:0b:85 has been registered for two decades and is in the
+    IEEE MA-L registry; the bundled snapshot is sourced from IEEE so
+    the resolution is deterministic across refreshes."""
+    assert lookup_ap_vendor("00:0b:85:11:22:33") == "Cisco Systems, Inc"
 
 
 def test_lookup_ap_vendor_unknown_oui_returns_none():
@@ -321,7 +323,14 @@ def test_lookup_ap_vendor_accepts_custom_map():
     assert lookup_ap_vendor("11:22:33:44:55:66", ouis=custom) is None
 
 
-def test_load_wifi_ouis_ships_xiaomi():
-    """Sanity check that the bundled JSON made it into the wheel."""
+def test_load_wifi_ouis_ships_full_ieee_registry():
+    """Sanity check that the bundled JSON made it into the wheel and
+    that it's the full IEEE MA-L registry, not a curated subset. The
+    full registry has ~35-40k entries; a curated set was ~250.
+    Threshold (>5000) catches both file-shape regressions and partial
+    fetches."""
     ouis = load_wifi_ouis()
-    assert ouis.get("40:fe:95") == "Xiaomi Communications"
+    assert len(ouis) > 5000
+    # Two long-stable OUIs we expect to find in every IEEE snapshot.
+    assert ouis.get("00:0b:85") == "Cisco Systems, Inc"
+    assert ouis.get("00:1d:0f") == "TP-LINK TECHNOLOGIES CO.,LTD."
