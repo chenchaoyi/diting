@@ -2431,7 +2431,10 @@ def test_lan_diagnostics_renders_full_summary_line():
     assert "2 named" in joined
     assert "1 unknown vendor" in joined
     assert "192.168.1.0/24" in joined
-    assert "last sweep" in joined
+    # Last-sweep row carries a relative-time value. The exact value
+    # depends on `datetime.now() - update.last_sweep_at`; here both
+    # are "now" so the rendered text is "0s ago".
+    assert "0s ago" in joined or "ago" in joined
 
 
 def test_lan_diagnostics_annotates_capped_subnet_when_netmask_wider():
