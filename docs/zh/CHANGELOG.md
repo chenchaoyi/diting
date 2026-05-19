@@ -10,6 +10,47 @@
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-05-19
+
+Minor release。亮点：新增第四个面板，回答「谁在用我的 Wi-Fi」——
+从一台普通 Mac 客户端就能查清楚，不用登录路由器。还顺带两个小的
+UX 调整。
+
+### 新增
+- **LAN 设备清单面板。** 按 `n` 切到第四个视图（Wi-Fi → BLE →
+  Bonjour → LAN）。每 tick 新的 `LANInventoryPoller` 对本机所在
+  /24 子网的每个 IP 发 ICMP echo（30 并发，单台超时 200 ms），
+  然后读 `arp -an` 的内核 ARP 缓存，并对每条记录补全 OUI 厂商、
+  反向 DNS、以及 **Bonjour 交叉引用**（拿到友好名字）。行排序：
+  `本机` ★ 钉顶，`网关` ★ 钉第二，其余按 IP 升序。本地管理（随机）
+  MAC 在厂商列标 `(随机 MAC)`。状态以小写 MAC 为 key，DHCP 轮换
+  IP 时 `first_seen` 保留。默认开启；首次切到 LAN 视图才 lazy
+  构造 poller，从不进入这个视图的用户零开销。设计稿见
+  [`docs/zh/explainers/lan-inventory-arp.md`](explainers/lan-inventory-arp.md)。
+- **`DITING_LAN_INVENTORY_WIDE=1` 环境变量。** 把默认的 /24 上限
+  放宽到 /22（最多 1022 台）；对企业 /16 及以上子网仍然截断到本机
+  IP 周围的 /22，diting 永远不扫整个广播域。
+- **LANDetailScreen 详情模态**（在 LAN 视图按 `i`）。Identity /
+  Network / Bonjour services / Activity 四段。上下方向键穿透，模态
+  会跟着 LAN 表格的选择走。`Esc` / `i` / `q` 关闭。
+- **LAN 视图诊断行。** `LAN 清单  N 台主机 · M 台有名字 (Bonjour)
+  · K 台厂商未知 · 子网 … [· 已截断] · 上次扫描 Xs`。
+
+### 变更
+- **帮助界面从 `h` 改为 `?`。** `h` 现在故意是 no-op，留给将来的
+  分视图绑定；`?` 是几乎所有 CLI 都用的「显示帮助」约定。
+- **帮助文档与 binding 描述更新到四视图轮转。**
+
+### 修复
+- **mDNS 列表不再因为 zeroconf 不回调就清空。** poller 现在以 30
+  秒为周期主动再探测每个已知 service-type；像 HomePod / 打印机这种
+  「持续广播但内容没变」的设备，即便 zeroconf 的变化驱动回调长时间
+  不响，它们的 `last_seen` 也能被刷新。
+- **CoreWLAN 报 `Max < Tx` 时隐藏 Tx / Max 行的 Max 部分。** macOS 26
+  的 `maximumLinkSpeed()` 在某些场景下返回旧值，看起来比当前 Tx
+  还慢（物理上不可能）。Tx 单独显示是对的；两个一起渲染会自相
+  矛盾，所以这种情况下 Max 被隐藏。
+
 ## [1.1.2] — 2026-05-18
 
 针对 v1.1.1 真实使用反馈的两个修复 + 一个增强。
