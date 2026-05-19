@@ -3637,29 +3637,32 @@ def _lan_diagnostic_lines(update) -> list[Text]:
         line.append(t("{n} random MAC", n=random_macs), style="dim")
     rows.append(line)
 
-    # Row 2: subnet + cap annotation.
+    # Row 2: subnet + cap annotation. The label is the bold-dim
+    # prefix; the value is just the CIDR — earlier drafts had
+    # "subnet {cidr}" but it doubled "子网 子网" in ZH because both
+    # the label and the prefix translate to 子网. The EN side also
+    # reads cleaner without the redundant lowercase word.
     line = Text()
     line.append(t("Subnet  "), style="bold dim")
-    line.append(t("subnet {cidr}", cidr=update.subnet), style="white")
+    line.append(update.subnet, style="white")
     if update.subnet_capped:
-        # Derive the original netmask width from the visible
-        # difference: we cap at /cap_prefix; the original was
-        # something wider. We don't carry the original width on the
-        # update (would just be cosmetic), so the annotation just
-        # says "capped" without the numeric original.
+        # We cap at /cap_prefix; the original netmask was wider. We
+        # don't carry the original width on the update (would just
+        # be cosmetic), so the annotation just says "capped" without
+        # the numeric original.
         line.append(t("  · capped"), style="dim")
     rows.append(line)
 
-    # Row 3: last-sweep relative time.
+    # Row 3: last-sweep relative time. Same shape as Row 2 — the
+    # label tells the user this is "Last sweep"; the value is just
+    # the relative time. ZH was doubling "上次扫描 上次扫描" for the
+    # same root cause as Row 2.
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     ago = (now - update.last_sweep_at).total_seconds()
     line = Text()
     line.append(t("Last sweep  "), style="bold dim")
-    line.append(
-        t("last sweep {ago}", ago=_format_duration_short(ago)),
-        style="white",
-    )
+    line.append(_format_duration_short(ago) + t(" ago"), style="white")
     rows.append(line)
     return rows
 
@@ -6301,6 +6304,10 @@ class DitingApp(App):
             self._lan_inventory_poller = poller
         finally:
             self._lan_inventory_starting = False
+        # Refresh the subtitle now that the poller exists — the "sweep
+        # Ns" segment depends on _lan_inventory_poller being non-None.
+        if self._view_mode == "lan":
+            self.sub_title = self._build_subtitle()
         try:
             async for update in poller.events():
                 if self._paused:
@@ -7093,16 +7100,28 @@ class DitingApp(App):
 
     def _build_subtitle(self) -> str:
         # Header subtitle is for state the user can't otherwise see at
-        # a glance: which view is active, the scan cadence, paused-or-
-        # not. Sort mode used to live here too, but it is already
-        # echoed in the Nearby BSSIDs panel's border title (· sort: ap)
-        # so duplicating it in the header was just clutter.
-        scan_s = int(getattr(self._poller, "_scan_interval", 0))
+        # a glance: which view is active, that view's poll cadence,
+        # paused-or-not. Sort mode used to live here too, but it is
+        # already echoed in each panel's border subtitle so duplicating
+        # it in the header was just clutter.
+        #
+        # Cadence is view-specific:
+        # - wifi: WiFiPoller._scan_interval (CoreWLAN BSSID scan)
+        # - ble / mdns: poller is push-driven, no meaningful interval
+        # - lan: LANInventoryPoller._sweep_interval_s (ICMP sweep)
+        # Showing the Wi-Fi cadence on every view is misleading — it
+        # made users think LAN was sweeping at the Wi-Fi rate.
         bits = [
             t("view: {mode}", mode=_view_display_name(self._view_mode))
         ]
-        if scan_s:
-            bits.append(t("scan {n}s", n=scan_s))
+        if self._view_mode == "wifi":
+            scan_s = int(getattr(self._poller, "_scan_interval", 0))
+            if scan_s:
+                bits.append(t("scan {n}s", n=scan_s))
+        elif self._view_mode == "lan" and self._lan_inventory_poller is not None:
+            sweep_s = int(getattr(self._lan_inventory_poller, "_sweep_interval_s", 0))
+            if sweep_s:
+                bits.append(t("sweep {n}s", n=sweep_s))
         if self._paused:
             bits.append(t("PAUSED"))
         return " · ".join(bits)
