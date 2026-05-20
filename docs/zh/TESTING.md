@@ -133,6 +133,7 @@
 | Categories 诊断行排除协议工具类 GATT 服务 | `test_ble.py::test_service_category_category_only_excludes_protocol_services` |
 | Vendors 诊断行标注 RPA 轮换折叠数 | `test_tui_helpers.py::test_ble_vendors_line_annotates_folded_rotation_count`、`::test_ble_vendors_line_skips_annotation_when_nothing_folded` |
 | BLE 行 Name 列在 helper 没给名字时依次回落到 `type` / `device_class`，最后才显示 `(未知)`；Services 列只保留 service-category（不再重复展示 `type` / `device_class`） | `test_tui_helpers.py::test_ble_row_line_name_uses_helper_name_when_present`、`::test_ble_row_line_name_falls_back_to_type`、`::test_ble_row_line_name_falls_back_to_device_class`、`::test_ble_row_line_name_unknown_when_no_signal`、`::test_ble_label_summary_services_only` |
+| `BLEPoller` 首次看到 identifier 时发 `BLEDeviceSeenEvent`；TTL 失效时发 `BLEDeviceLeftEvent`；不防抖、后续观察不再 re-emit | `test_ble.py::test_poller_emits_seen_event_on_first_observation`、`::test_poller_does_not_re_emit_seen_for_known_identifier`、`::test_poller_emits_left_event_on_ttl_eviction`、`::test_poller_connected_peripheral_does_not_re_emit_seen` |
 
 ### `cli`
 
@@ -171,12 +172,17 @@
 | 时间戳本地时区 ISO-8601 带偏移 | `test_event_log.py::test_timestamps_are_iso_utc`、`::test_naive_datetime_treated_as_local_not_utc` |
 | writer 接受 `None` 作 no-op | `test_event_log.py::test_disabled_logger_is_a_no_op` |
 | `connection_update` 只进日志，不入 EventRing | `test_event_log.py::test_connection_update_emits_associated_on_first_poll`、`::test_connection_update_silent_when_first_poll_is_disassociated`、`::test_connection_update_emits_disassociate_on_drop`、`::test_connection_update_does_not_emit_on_bssid_to_bssid_change` |
+| 七个新 emit 方法（`emit_ble_device_seen` / `emit_ble_device_left` / `emit_bonjour_service_seen` / `emit_bonjour_service_left` / `emit_lan_host_seen` / `emit_lan_host_left` / `emit_lan_host_dhcp_rotation`），每个 flush；no-op logger 全部吞掉 | `test_event_log.py::test_emit_ble_device_seen_writes_locale_stable_type`、`::test_emit_ble_device_left_includes_seen_for_seconds`、`::test_emit_bonjour_service_seen_writes_locale_stable_type`、`::test_emit_lan_host_dhcp_rotation_writes_previous_and_new_ip`、`::test_disabled_logger_swallows_all_seven_new_methods` |
 
 ### `events`
 
 | Requirement | 测试 |
 |---|---|
-| 五事件共享 schema 与 ring | `test_event_log.py::test_emit_roam_includes_kind_when_supplied`、`::test_emit_latency_spike_carries_target_and_rtt`、`::test_emit_loss_burst_carries_lost_in_window`、`::test_emit_link_state_dataclass_passthrough`、`::test_emit_network_change_carries_router_ip_transition` |
+| 十二事件共享 schema 与 ring（从 5 扩到 12；新增 7 个 BLE / Bonjour / LAN 转移事件） | `test_event_log.py::test_emit_roam_includes_kind_when_supplied`、`::test_emit_latency_spike_carries_target_and_rtt`、`::test_emit_loss_burst_carries_lost_in_window`、`::test_emit_link_state_dataclass_passthrough`、`::test_emit_network_change_carries_router_ip_transition`；新增类型：`test_events.py::test_ble_device_seen_round_trip`、`::test_ble_device_left_round_trip`、`::test_bonjour_service_seen_round_trip`、`::test_bonjour_service_left_round_trip`、`::test_lan_host_seen_round_trip`、`::test_lan_host_left_round_trip`、`::test_lan_host_dhcp_rotation_round_trip` |
+| BLE 转移事件携带 rotation-folded 身份（identifier、name、vendor、service_categories）+ RSSI / `last_rssi_dbm` + 离开时 `seen_for_seconds` | `test_events.py::test_ble_device_seen_carries_identity`、`::test_ble_device_left_carries_seen_for_seconds` |
+| Bonjour 转移事件携带 (service_type, name, host, category, vendor) + 出现时 addresses + 离开时 `seen_for_seconds` | `test_events.py::test_bonjour_service_seen_carries_addresses`、`::test_bonjour_service_left_carries_seen_for_seconds` |
+| LAN 转移事件：seen / left / dhcp_rotation 带 MAC 身份；轮换事件带 previous_ip / new_ip | `test_events.py::test_lan_host_seen_carries_mac_identity`、`::test_lan_host_dhcp_rotation_carries_previous_and_new_ip`、`::test_lan_host_left_carries_last_reachable_ago` |
+| 新事件 JSONL：None 字段省略；空 tuple 序列化为 `[]` | `test_events.py::test_new_events_omit_none_fields_from_jsonl`、`::test_new_events_serialise_empty_tuple_as_empty_list` |
 | 每个事件是 frozen dataclass + timestamp | (compiler / dataclass 层强制；构造该事件的测试间接验证) |
 | EventRing 有限大小、单线程 async | (gap — 没有 EventRing 限长的直接测试；ring 在产环境由 App 持有) |
 | JSONL 用英文键 | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
@@ -239,6 +245,7 @@
 | Bonjour 交叉引用走 `BonjourPoller._state` 填充 `bonjour_name` / `bonjour_services` | `test_lan.py::test_bonjour_cross_ref_pulls_name_from_state`、`::test_bonjour_cross_ref_aggregates_categories`、`::test_bonjour_cross_ref_leaves_name_none_when_no_match` |
 | Poller 不做 port scan / SSDP / NetBIOS / banner grab | (review-enforced — `src/diting/lan.py` 里只有 `ping` 和 `arp` 子进程；可 grep 检查) |
 | `LANInventoryUpdate` 每 tick 发射；`r` 触发 `force_now()` 立即扫描 | `test_lan.py::test_force_now_schedules_immediate_sweep`、`::test_update_carries_cap_prefix_and_subnet_capped_flags` |
+| `LANInventoryPoller` 对新增非本机非网关 MAC 发 `LANHostSeenEvent`；同 MAC 换 IP 时在 merge 前发 `LANHostDHCPRotationEvent`；静默超过 `_HOST_LEFT_TIMEOUT_S` 时发 `LANHostLeftEvent`；本机 + 网关绝不发 seen | `test_lan.py::test_poller_emits_seen_on_new_non_self_non_gateway_mac`、`::test_poller_skips_seen_for_self_and_gateway`、`::test_poller_emits_dhcp_rotation_before_ip_update`、`::test_poller_emits_left_after_host_left_timeout`、`::test_poller_does_not_re_emit_seen_for_known_mac` |
 
 ### `link-health`
 
@@ -298,6 +305,7 @@
 | wifi → BLE 这一步就开始预热 Bonjour，使得第二次按 `n`（BLE → mDNS）不再卡顿 | `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |
 | Bonjour 初始化跑在 worker 线程上（`asyncio.to_thread`），import 与 `Zeroconf()` socket 都不阻塞事件循环 | `test_mdns.py::test_start_browser_runs_on_worker_thread`, `test_tui_smoke.py::test_bonjour_prewarms_on_first_wifi_to_ble_switch` |
 | consumer 任务异常退出时会清掉 `_mdns_poller`，下一次按 `n` 能重建 | `test_tui_smoke.py::test_bonjour_consumer_task_resets_poller_on_unexpected_error` |
+| `BonjourPoller` 在 `add_service`（及 cache-warmup race 的 `update_service`）发 `BonjourServiceSeenEvent`；在 `remove_service` 与 TTL backstop 都发 `BonjourServiceLeftEvent`；active probe 不会重发 seen | `test_mdns.py::test_poller_emits_seen_on_add_service`、`::test_poller_emits_left_on_remove_service`、`::test_poller_emits_left_on_ttl_backstop`、`::test_poller_active_probe_refresh_does_not_re_emit_seen` |
 | `BonjourPanel` 支持 `by-host` 排序模式，把同一 host 的多个服务折叠成一列逗号串；`s` 在 `service` → `by-host` → `service` 之间循环 | `test_tui_helpers.py::test_bonjour_panel_by_host_mode_folds_services_alphabetically`、`::test_bonjour_panel_s_key_cycles_modes`、`::test_bonjour_panel_by_host_truncates_long_services_with_ellipsis`；`tui_snapshot.py::bonjour_by_host_mode`（回归） |
 | mDNS "Top vendors" 诊断行的未知厂商桶渲染为 `(unknown) N`，不再写成 `? N` | `test_tui_helpers.py::test_mdns_diagnostics_top_vendors_uses_unknown_label` |
 
@@ -326,6 +334,8 @@
 | LANDetailScreen Network 段在 `last_rtt_ms` 已知时新增 Latency 行；未知时该行省略 | `test_tui_helpers.py::test_lan_detail_modal_renders_latency_row_when_rtt_known`、`::test_lan_detail_modal_omits_latency_row_when_rtt_unknown` |
 | LANDetailScreen Network 段始终渲染 Reachable 行：`此次扫描` / 相对时间 / `从未` | `test_tui_helpers.py::test_lan_detail_modal_renders_reachable_row_this_sweep`、`::test_lan_detail_modal_renders_reachable_row_with_relative_time_when_older`、`::test_lan_detail_modal_renders_never_when_never_reachable` |
 | LANDetailScreen Bonjour services 段始终渲染；为空时显示 `（无 Bonjour 服务）` 占位 | `test_tui_helpers.py::test_lan_detail_modal_renders_bonjour_empty_state_when_no_services`、`::test_lan_detail_modal_renders_bonjour_services_when_present` |
+| EventsScreen 过滤循环改为八桶：`all` / `roam` / `rf_stir` / `latency` / `link_state` / `ble` / `bonjour` / `lan`（按键 `0`-`7`）；HelpScreen 列出全部八个 | `test_tui_helpers.py::test_events_screen_filter_cycle_has_eight_buckets`、`::test_events_screen_filter_keys_map_to_buckets_in_order`；HelpScreen 文本 review-enforced |
+| EventsPanel 渲染七种新事件类型，前缀标签 `[BLE]` / `[BJ]` / `[LAN]` 与每种事件的格式 | `test_tui_helpers.py::test_events_panel_renders_ble_device_seen_line`、`::test_events_panel_renders_ble_device_left_line_with_duration`、`::test_events_panel_renders_bonjour_service_seen_line`、`::test_events_panel_renders_bonjour_service_left_line_with_duration`、`::test_events_panel_renders_lan_host_seen_line`、`::test_events_panel_renders_lan_host_left_line_with_duration`、`::test_events_panel_renders_lan_dhcp_rotation_line` |
 | Diagnostics 内容跟随激活视图 | `test_tui_smoke.py::test_toggle_view_swaps_third_panel`、`::test_view_toggle_cycles_wifi_ble_mdns_lan_wifi`、`::test_diagnostics_renders_link_line_when_latency_data_available` |
 | 模态压栈、Esc/同字母关 | `test_tui_smoke.py::test_help_modal_open_and_close`、`::test_help_modal_question_mark_to_close`、`::test_help_modal_renders_through_pilot_query`、`::test_pressing_h_is_a_no_op`、`::test_events_modal_open_and_close`；`tui_snapshot.py::events_modal`、`::help_modal`、`::basics_modal`、`::ble_detail_decoded`（regression） |
 | Footer 是单一 GroupedFooter 三段 | (gap — 没有 footer 分组的单元测试；regression 捕获里可见) |

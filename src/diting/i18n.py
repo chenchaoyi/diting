@@ -1192,6 +1192,22 @@ _ZH: dict[str, str] = {
     "[LATENCY]": "[延迟]",
     "[LOSS]": "[丢包]",
     "[LINK]": "[链路]",
+    # BLE / Bonjour / LAN transition tags
+    "[BLE]": "[BLE]",
+    "[BJ]": "[BJ]",
+    "[LAN]": "[LAN]",
+    "device joined: ": "设备出现：",
+    "device left: ": "设备消失：",
+    "service joined: ": "服务出现：",
+    "service left: ": "服务消失：",
+    "host joined: ": "主机出现：",
+    "host left: ": "主机消失：",
+    " moved ": " 换地址 ",
+    "(anonymous)": "(匿名)",
+    # EventsScreen filter-bucket labels (acronyms; ZH unchanged)
+    "ble": "BLE",
+    "bonjour": "Bonjour",
+    "lan": "LAN",
     "RF stir at {location}": "{location} 处 RF 扰动",
     # SSID enrichment for Wi-Fi event lines
     # (wifi-event-ssid-and-name-enrichment).

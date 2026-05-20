@@ -37,6 +37,7 @@ from zeroconf import (
 from zeroconf.asyncio import AsyncServiceInfo
 
 from .ble import _NAME_PATTERN_VENDORS, load_ouis, lookup_oui_vendor
+from .events import BonjourServiceLeftEvent, BonjourServiceSeenEvent
 
 # Cached OUI table for the vendor-resolution chain. Loaded lazily on
 # first vendor lookup so module import stays cheap.
@@ -118,6 +119,21 @@ class BonjourDevice:
 @dataclass(frozen=True, slots=True)
 class BonjourScanUpdate:
     devices: list[BonjourDevice]
+
+
+def _strip_local_dot(host: str | None) -> str | None:
+    """Drop trailing `.local.` / `.local` from a Bonjour host name.
+
+    Matches the rendering convention used by `BonjourPanel` and the
+    LAN-host modal so transition-event `host` fields look like
+    `LivingRoom-HomePod` (not `LivingRoom-HomePod.local.`).
+    """
+    if not host:
+        return None
+    h = host.rstrip(".")
+    if h.endswith(".local"):
+        h = h[: -len(".local")]
+    return h or None
 
 
 def _decode_txt(raw_txt: Mapping[bytes, bytes | None]) -> dict[str, str]:
@@ -292,9 +308,30 @@ class BonjourPoller:
         # processed in the snapshot tick to keep state ops single-
         # threaded.
         self._queue: asyncio.Queue[tuple[str, str, str]] = asyncio.Queue()
+        # Transition events accumulated during a tick (BonjourServiceSeenEvent
+        # / BonjourServiceLeftEvent). Drained at the top of each
+        # `events()` iteration so the consumer sees them BEFORE the
+        # corresponding `BonjourScanUpdate` snapshot.
+        self._pending_transitions: list[Any] = []
+
+    def drain_transitions(self) -> list[Any]:
+        """Pop transition events (``BonjourServiceSeenEvent`` /
+        ``BonjourServiceLeftEvent``) accumulated during recent ticks.
+        Consumer calls this after each `BonjourScanUpdate` to pull
+        them — keeps `events()` mono-typed for tests and existing
+        consumers."""
+        out = self._pending_transitions
+        self._pending_transitions = []
+        return out
 
     async def events(self) -> AsyncIterator[BonjourScanUpdate]:
         """Yield one ``BonjourScanUpdate`` per snapshot interval.
+
+        Transition events (``BonjourServiceSeenEvent`` /
+        ``BonjourServiceLeftEvent``) accumulate during each tick and
+        are pulled via ``drain_transitions()`` — they do NOT ride
+        the same iterator (so existing iterator-only consumers and
+        snapshot-only tests stay mono-typed).
 
         Idempotent: the first invocation starts the browser; later
         invocations of the same generator continue ticking.
@@ -405,7 +442,20 @@ class BonjourPoller:
     ) -> None:
         key = (type_, name)
         if op == "remove":
-            self._state.pop(key, None)
+            existing = self._state.pop(key, None)
+            if existing is not None:
+                now = datetime.now(timezone.utc)
+                self._pending_transitions.append(BonjourServiceLeftEvent(
+                    timestamp=now,
+                    service_type=type_,
+                    name=name,
+                    host=_strip_local_dot(existing.host),
+                    category=existing.category,
+                    vendor=existing.vendor,
+                    seen_for_seconds=(
+                        existing.last_seen - existing.first_seen
+                    ).total_seconds(),
+                ))
             return
         if self._zc is None:
             return
@@ -442,7 +492,21 @@ class BonjourPoller:
             last_seen=now,
         )
         vendor, trace = resolve_vendor_with_trace(candidate)
-        self._state[key] = replace(candidate, vendor=vendor, vendor_trace=trace)
+        finalised = replace(candidate, vendor=vendor, vendor_trace=trace)
+        self._state[key] = finalised
+        # Emit `BonjourServiceSeenEvent` ONLY when this is a fresh key
+        # (no prior entry). `update_service` callbacks refresh existing
+        # entries and must not re-emit seen.
+        if existing is None:
+            self._pending_transitions.append(BonjourServiceSeenEvent(
+                timestamp=now,
+                service_type=type_,
+                name=name,
+                host=_strip_local_dot(finalised.host),
+                category=finalised.category,
+                vendor=finalised.vendor,
+                addresses=finalised.addresses,
+            ))
 
     def _maybe_kick_active_probes(self) -> None:
         # zeroconf's DNS cache holds each record only for the
@@ -512,4 +576,17 @@ class BonjourPoller:
             if d.last_seen.timestamp() < cutoff
         ]
         for key in stale:
-            self._state.pop(key, None)
+            evicted = self._state.pop(key, None)
+            if evicted is not None:
+                type_, name = key
+                self._pending_transitions.append(BonjourServiceLeftEvent(
+                    timestamp=now,
+                    service_type=type_,
+                    name=name,
+                    host=_strip_local_dot(evicted.host),
+                    category=evicted.category,
+                    vendor=evicted.vendor,
+                    seen_for_seconds=(
+                        evicted.last_seen - evicted.first_seen
+                    ).total_seconds(),
+                ))

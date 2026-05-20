@@ -50,8 +50,15 @@ from .environment import (
 )
 from .event_log import EventLogger
 from .events import (
+    BLEDeviceLeftEvent,
+    BLEDeviceSeenEvent,
+    BonjourServiceLeftEvent,
+    BonjourServiceSeenEvent,
     Event as MonitorEvent,
     EventRing,
+    LANHostDHCPRotationEvent,
+    LANHostLeftEvent,
+    LANHostSeenEvent,
     LatencySpikeEvent,
     LinkStateEvent,
     LossBurstEvent,
@@ -772,6 +779,9 @@ class EventsScreen(ModalScreen):
         Binding("2", "set_filter('stir')", show=False),
         Binding("3", "set_filter('latency')", show=False),
         Binding("4", "set_filter('link')", show=False),
+        Binding("5", "set_filter('ble')", show=False),
+        Binding("6", "set_filter('bonjour')", show=False),
+        Binding("7", "set_filter('lan')", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -830,7 +840,11 @@ class EventsScreen(ModalScreen):
         )
 
     def action_set_filter(self, mode: str) -> None:
-        self._filter = mode if mode in {"all", "roam", "stir", "latency", "loss", "link"} else "all"
+        valid = {
+            "all", "roam", "stir", "latency", "loss", "link",
+            "ble", "bonjour", "lan",
+        }
+        self._filter = mode if mode in valid else "all"
         if self._body is not None:
             self._body.update(self._render_body())
         if self._footer_static is not None:
@@ -885,6 +899,17 @@ def _events_filter_match(event: object, mode: str) -> bool:
         return isinstance(event, LossBurstEvent)
     if mode == "link":
         return isinstance(event, LinkStateEvent)
+    if mode == "ble":
+        return isinstance(event, (BLEDeviceSeenEvent, BLEDeviceLeftEvent))
+    if mode == "bonjour":
+        return isinstance(
+            event, (BonjourServiceSeenEvent, BonjourServiceLeftEvent),
+        )
+    if mode == "lan":
+        return isinstance(
+            event,
+            (LANHostSeenEvent, LANHostLeftEvent, LANHostDHCPRotationEvent),
+        )
     return True
 
 
@@ -1894,7 +1919,112 @@ def _event_format_line(event: object, inv: NetworkInventory) -> Text | None:
         return _format_loss_burst_event(event)
     if isinstance(event, LinkStateEvent):
         return _format_link_state_event(event)
+    if isinstance(event, BLEDeviceSeenEvent):
+        return _format_ble_device_seen_event(event)
+    if isinstance(event, BLEDeviceLeftEvent):
+        return _format_ble_device_left_event(event)
+    if isinstance(event, BonjourServiceSeenEvent):
+        return _format_bonjour_service_seen_event(event)
+    if isinstance(event, BonjourServiceLeftEvent):
+        return _format_bonjour_service_left_event(event)
+    if isinstance(event, LANHostSeenEvent):
+        return _format_lan_host_seen_event(event)
+    if isinstance(event, LANHostLeftEvent):
+        return _format_lan_host_left_event(event)
+    if isinstance(event, LANHostDHCPRotationEvent):
+        return _format_lan_host_dhcp_rotation_event(event)
     return None
+
+
+def _ev_ts(event: object) -> str:
+    return event.timestamp.strftime("%H:%M:%S")  # type: ignore[union-attr]
+
+
+def _format_ble_device_seen_event(event: BLEDeviceSeenEvent) -> Text:
+    line = Text()
+    line.append(f"{_ev_ts(event)}  ", style="dim")
+    line.append(t("[BLE]") + "  ", style="bold blue")
+    line.append(t("device joined: "), style="white")
+    vendor = event.vendor or t("(unknown)")
+    name = event.name or t("(anonymous)")
+    line.append(f"{vendor}  ·  {name}", style="white")
+    return line
+
+
+def _format_ble_device_left_event(event: BLEDeviceLeftEvent) -> Text:
+    line = Text()
+    line.append(f"{_ev_ts(event)}  ", style="dim")
+    line.append(t("[BLE]") + "  ", style="blue")
+    line.append(t("device left: "), style="white")
+    vendor = event.vendor or t("(unknown)")
+    name = event.name or t("(anonymous)")
+    duration = _format_duration_short(event.seen_for_seconds)
+    line.append(f"{vendor}  ·  {name}  ·  {duration}", style="dim")
+    return line
+
+
+def _format_bonjour_service_seen_event(event: BonjourServiceSeenEvent) -> Text:
+    line = Text()
+    line.append(f"{_ev_ts(event)}  ", style="dim")
+    line.append(t("[BJ]") + "  ", style="bold green")
+    line.append(t("service joined: "), style="white")
+    cat = event.category or t("(unknown)")
+    host = event.host or t("(anonymous)")
+    line.append(f"{cat}  ·  {host}", style="white")
+    return line
+
+
+def _format_bonjour_service_left_event(event: BonjourServiceLeftEvent) -> Text:
+    line = Text()
+    line.append(f"{_ev_ts(event)}  ", style="dim")
+    line.append(t("[BJ]") + "  ", style="green")
+    line.append(t("service left: "), style="white")
+    cat = event.category or t("(unknown)")
+    host = event.host or t("(anonymous)")
+    duration = _format_duration_short(event.seen_for_seconds)
+    line.append(f"{cat}  ·  {host}  ·  {duration}", style="dim")
+    return line
+
+
+def _format_lan_host_seen_event(event: LANHostSeenEvent) -> Text:
+    line = Text()
+    line.append(f"{_ev_ts(event)}  ", style="dim")
+    line.append(t("[LAN]") + "  ", style="bold cyan")
+    line.append(t("host joined: "), style="white")
+    vendor = event.vendor or (
+        t("(random MAC)") if event.is_randomised_mac else t("(unknown)")
+    )
+    name = event.bonjour_name or event.hostname or event.ip
+    line.append(f"{vendor}  ·  {name}", style="white")
+    return line
+
+
+def _format_lan_host_left_event(event: LANHostLeftEvent) -> Text:
+    line = Text()
+    line.append(f"{_ev_ts(event)}  ", style="dim")
+    line.append(t("[LAN]") + "  ", style="cyan")
+    line.append(t("host left: "), style="white")
+    vendor = event.vendor or (
+        t("(random MAC)") if event.is_randomised_mac else t("(unknown)")
+    )
+    name = event.bonjour_name or event.hostname or event.ip
+    duration = _format_duration_short(event.seen_for_seconds)
+    line.append(f"{vendor}  ·  {name}  ·  {duration}", style="dim")
+    return line
+
+
+def _format_lan_host_dhcp_rotation_event(
+    event: LANHostDHCPRotationEvent,
+) -> Text:
+    line = Text()
+    line.append(f"{_ev_ts(event)}  ", style="dim")
+    line.append(t("[LAN]") + "  ", style="cyan")
+    vendor = event.vendor or t("(unknown)")
+    name = event.bonjour_name or event.hostname or event.mac
+    line.append(f"{vendor}  ·  {name}", style="white")
+    line.append(t(" moved "), style="dim")
+    line.append(f"{event.previous_ip} → {event.new_ip}", style="yellow")
+    return line
 
 
 def _format_roam_event(event: RoamEvent, inv: NetworkInventory) -> Text:
@@ -6165,27 +6295,38 @@ class DitingApp(App):
             async for event in self._ble_poller.events():
                 if self._paused:
                     continue
-                if isinstance(event, BLEScanUpdate):
-                    self._latest_ble = event.devices
-                    self._latest_ble_connected = event.connected
-                    self._ble_permission_state = event.permission_state
-                    # Record one sample per device per snapshot so the
-                    # detail modal's sparkline has something to draw.
-                    # Connected peripherals have no RSSI; BLEHistory
-                    # silently drops those.
-                    snap_ids: set[str] = set()
-                    for d in event.devices:
-                        snap_ids.add(d.identifier)
-                        self._ble_history.record(
-                            d.identifier, d.last_seen, d.rssi_dbm,
-                        )
-                    for d in event.connected:
-                        snap_ids.add(d.identifier)
-                    # Prune history for devices that have left the
-                    # snapshot — keeps memory bounded across long
-                    # sessions in busy environments.
-                    self._ble_history.expire(snap_ids)
-                    self._refresh_ble_panel()
+                # Drain transition events emitted during this tick
+                # BEFORE the snapshot is processed — they belong to
+                # the same `now` the snapshot was built against.
+                for t_ev in self._ble_poller.drain_transitions():
+                    self._events_ring.push(t_ev)
+                    self.query_one("#roam", EventsPanel).append_event(
+                        t_ev, self._inv,
+                    )
+                    if isinstance(t_ev, BLEDeviceSeenEvent):
+                        self._event_logger.emit_ble_device_seen(t_ev)
+                    elif isinstance(t_ev, BLEDeviceLeftEvent):
+                        self._event_logger.emit_ble_device_left(t_ev)
+                self._latest_ble = event.devices
+                self._latest_ble_connected = event.connected
+                self._ble_permission_state = event.permission_state
+                # Record one sample per device per snapshot so the
+                # detail modal's sparkline has something to draw.
+                # Connected peripherals have no RSSI; BLEHistory
+                # silently drops those.
+                snap_ids: set[str] = set()
+                for d in event.devices:
+                    snap_ids.add(d.identifier)
+                    self._ble_history.record(
+                        d.identifier, d.last_seen, d.rssi_dbm,
+                    )
+                for d in event.connected:
+                    snap_ids.add(d.identifier)
+                # Prune history for devices that have left the
+                # snapshot — keeps memory bounded across long
+                # sessions in busy environments.
+                self._ble_history.expire(snap_ids)
+                self._refresh_ble_panel()
         except Exception:
             # Don't let a poller hiccup tear down the whole TUI.
             pass
@@ -6236,6 +6377,17 @@ class DitingApp(App):
             async for snap in poller.events():
                 if self._paused:
                     continue
+                # Drain transition events accumulated during this
+                # tick (Bonjour add / remove / TTL).
+                for t_ev in poller.drain_transitions():
+                    self._events_ring.push(t_ev)
+                    self.query_one("#roam", EventsPanel).append_event(
+                        t_ev, self._inv,
+                    )
+                    if isinstance(t_ev, BonjourServiceSeenEvent):
+                        self._event_logger.emit_bonjour_service_seen(t_ev)
+                    elif isinstance(t_ev, BonjourServiceLeftEvent):
+                        self._event_logger.emit_bonjour_service_left(t_ev)
                 self._latest_mdns = snap.devices
                 if self._view_mode == "mdns":
                     self._refresh_mdns_panel()
@@ -6312,6 +6464,19 @@ class DitingApp(App):
             async for update in poller.events():
                 if self._paused:
                     continue
+                # Drain transition events emitted during this sweep
+                # (new host / dhcp rotation / departed host).
+                for t_ev in poller.drain_transitions():
+                    self._events_ring.push(t_ev)
+                    self.query_one("#roam", EventsPanel).append_event(
+                        t_ev, self._inv,
+                    )
+                    if isinstance(t_ev, LANHostSeenEvent):
+                        self._event_logger.emit_lan_host_seen(t_ev)
+                    elif isinstance(t_ev, LANHostLeftEvent):
+                        self._event_logger.emit_lan_host_left(t_ev)
+                    elif isinstance(t_ev, LANHostDHCPRotationEvent):
+                        self._event_logger.emit_lan_host_dhcp_rotation(t_ev)
                 self._latest_lan = update
                 if self._view_mode == "lan":
                     self._refresh_lan_panel()

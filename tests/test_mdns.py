@@ -752,3 +752,121 @@ def test_poller_active_probe_default_cadence_is_thirty_seconds():
     """Sanity-check the constructor default."""
     poller = BonjourPoller()
     assert poller._active_probe_interval_s == 30.0
+
+
+# ------------------------------------------------------------------
+# Transition events: BonjourServiceSeenEvent / BonjourServiceLeftEvent
+# ------------------------------------------------------------------
+
+def test_poller_emits_seen_on_add_service(patched_async_service_info):
+    """`add_service` callback → exactly one `BonjourServiceSeenEvent`
+    accumulated on `_pending_transitions`; consumer drains via
+    `drain_transitions()`."""
+    from diting.events import BonjourServiceSeenEvent
+    patched_async_service_info.info_to_return = _StubInfo(
+        server="Living-Room-AppleTV.local.",
+        port=7000,
+        properties={b"model": b"AppleTV3,2"},
+    )
+
+    async def go():
+        poller = BonjourPoller(snapshot_interval_s=0.05, ttl_s=60)
+        poller._zc = MagicMock()
+        await poller._apply_callback(
+            "add", "_airplay._tcp.local.", "Living Room",
+        )
+        return poller.drain_transitions()
+
+    out = asyncio.run(go())
+    assert len(out) == 1
+    ev = out[0]
+    assert isinstance(ev, BonjourServiceSeenEvent)
+    assert ev.service_type == "_airplay._tcp.local."
+    assert ev.name == "Living Room"
+    assert ev.host == "Living-Room-AppleTV"  # .local. stripped
+    assert ev.category == "AirPlay"
+
+
+def test_poller_emits_left_on_remove_service(patched_async_service_info):
+    """`remove_service` callback → `BonjourServiceLeftEvent` with
+    `seen_for_seconds`."""
+    from diting.events import BonjourServiceLeftEvent
+    patched_async_service_info.info_to_return = _StubInfo(
+        server="x.local.", port=7000,
+    )
+
+    async def go():
+        poller = BonjourPoller(snapshot_interval_s=0.05, ttl_s=60)
+        poller._zc = MagicMock()
+        await poller._apply_callback("add", "_airplay._tcp.local.", "X")
+        # Drop the seen event so we only inspect what `remove` emits.
+        poller.drain_transitions()
+        await poller._apply_callback("remove", "_airplay._tcp.local.", "X")
+        return poller.drain_transitions()
+
+    out = asyncio.run(go())
+    assert len(out) == 1
+    ev = out[0]
+    assert isinstance(ev, BonjourServiceLeftEvent)
+    assert ev.name == "X"
+    assert ev.seen_for_seconds >= 0.0
+
+
+def test_poller_emits_left_on_ttl_backstop(patched_async_service_info):
+    """A tracked entry whose `last_seen` exceeds `_BROWSE_TTL_S`
+    → `BonjourServiceLeftEvent` emitted via the TTL backstop path."""
+    from diting.events import BonjourServiceLeftEvent
+    patched_async_service_info.info_to_return = _StubInfo(
+        server="x.local.", port=7000,
+    )
+
+    async def go():
+        poller = BonjourPoller(snapshot_interval_s=0.05, ttl_s=0.1)
+        poller._zc = MagicMock()
+        await poller._apply_callback("add", "_airplay._tcp.local.", "X")
+        poller.drain_transitions()  # discard seen
+        agen = poller.events()
+        try:
+            await anext(agen)
+            # Wait past the TTL so the next snapshot's `_expire_stale`
+            # path evicts the entry and emits the left event.
+            await asyncio.sleep(0.25)
+            await anext(agen)
+        finally:
+            poller.stop()
+            await agen.aclose()
+        return poller.drain_transitions()
+
+    out = asyncio.run(go())
+    left = [e for e in out if isinstance(e, BonjourServiceLeftEvent)]
+    assert len(left) >= 1
+
+
+def test_poller_active_probe_refresh_does_not_re_emit_seen(
+    patched_async_service_info,
+):
+    """The active-probe path that refreshes existing entries must
+    NOT re-fire `BonjourServiceSeenEvent` for entries that already
+    exist in `_state`."""
+    from diting.events import BonjourServiceSeenEvent
+    patched_async_service_info.info_to_return = _StubInfo(
+        server="x.local.", port=7000,
+    )
+
+    async def go():
+        poller = BonjourPoller(snapshot_interval_s=0.05, ttl_s=60)
+        poller._zc = MagicMock()
+        await poller._apply_callback("add", "_airplay._tcp.local.", "X")
+        # One seen so far.
+        first = poller.drain_transitions()
+        # Active probe path re-applies "update" against the same key.
+        await poller._apply_callback("update", "_airplay._tcp.local.", "X")
+        second = poller.drain_transitions()
+        return first, second
+
+    first, second = asyncio.run(go())
+    assert len(first) == 1
+    assert isinstance(first[0], BonjourServiceSeenEvent)
+    # Second drain must be empty — update on an existing key is not
+    # a re-seen.
+    assert second == []

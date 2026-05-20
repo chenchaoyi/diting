@@ -40,6 +40,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .events import BLEDeviceLeftEvent, BLEDeviceSeenEvent
+
 
 # ---------- public dataclasses ----------
 
@@ -571,6 +573,23 @@ _PROTOCOL_UTILITY_SERVICES = frozenset({
     "1801",  # Generic Attribute
     "180A",  # Device Information
 })
+
+
+def _ble_service_categories(dev: "BLEDevice") -> tuple[str, ...]:
+    """Resolve a BLEDevice's service UUIDs to friendly category labels.
+
+    Used by the transition-event emitters so a `BLEDeviceSeenEvent`
+    can carry `service_categories=("HID",)` or `("HID", "Battery")`.
+    Filters out protocol-utility services (Generic Access etc.) the
+    way the BLE diagnostics row does. Returns an empty tuple when
+    the device advertises no resolvable services.
+    """
+    cats: list[str] = []
+    for uuid in dev.services:
+        cat = service_category(uuid, category_only=True)
+        if cat and cat not in cats:
+            cats.append(cat)
+    return tuple(cats)
 
 
 def service_category(
@@ -1309,12 +1328,37 @@ class BLEPoller:
         # rather than the advertising-side TTL, and (c) merge_for_display
         # never sees them — they have stable identities.
         self._connected: dict[str, BLEDevice] = {}
+        # Identifiers we've already emitted a `seen` event for this
+        # session. Used to gate `BLEDeviceSeenEvent` so a single
+        # advertisement → exactly one seen event regardless of how
+        # many subsequent snapshot ticks observe the same device.
+        # Includes BOTH the advertising path and the connected path
+        # so a peripheral that connects then disappears doesn't
+        # double-emit.
+        self._seen_identifiers: set[str] = set()
+        # Transition events (BLEDeviceSeenEvent / BLEDeviceLeftEvent)
+        # accumulated during a tick. Consumers call `drain_transitions()`
+        # after receiving each `BLEScanUpdate` to pull them — keeps
+        # `events()` mono-typed (snapshots only) so existing tests /
+        # consumers don't have to filter the iterator.
+        self._pending_transitions: list[Any] = []
         self._queue: asyncio.Queue[BLEScanUpdate] = asyncio.Queue()
         self._proc: Any = None
         self._permission_state: str = "unknown"
         self._tasks: list[asyncio.Task[Any]] = []
         self._stopped = False
         self._spawn_override = _spawn
+
+    def drain_transitions(self) -> list[Any]:
+        """Pop the transition events accumulated during the most-recent
+        tick (or any unconsumed earlier ticks). Consumer calls this
+        after each `BLEScanUpdate` to pull `BLEDeviceSeenEvent` /
+        `BLEDeviceLeftEvent` for routing to the EventRing + JSONL
+        log. Returning a list (not an iterator) makes the contract
+        explicit: each call empties the queue."""
+        out = self._pending_transitions
+        self._pending_transitions = []
+        return out
 
     async def events(self) -> AsyncIterator[BLEScanUpdate]:
         loop = asyncio.get_running_loop()
@@ -1421,6 +1465,68 @@ class BLEPoller:
             if self._permission_state in ("granted", "unknown"):
                 self._permission_state = "error"
 
+    def _detect_transitions(self, now: datetime) -> None:
+        """Compute BLE seen / left transitions for this tick.
+
+        Pure sync helper extracted from `_snapshot_loop` so unit tests
+        can exercise the transition logic by populating `_devices`
+        directly and calling this method, without spinning up the
+        full async events() pipeline.
+
+        Side effects: appends transition events to
+        `_pending_transitions`, expires stale entries from
+        `_devices` (via `expire_devices`), and updates
+        `_seen_identifiers` with first-time observations.
+        """
+        # Newcomers BEFORE expire so an advert that arrived just
+        # before this tick AND aged out in the same tick still fires
+        # its seen event. (User chose "record everything" — no debounce.)
+        for ident in list(self._devices.keys()):
+            if ident not in self._seen_identifiers:
+                dev = self._devices[ident]
+                self._pending_transitions.append(BLEDeviceSeenEvent(
+                    timestamp=now,
+                    identifier=ident,
+                    name=dev.name,
+                    vendor=dev.vendor,
+                    rssi_dbm=dev.rssi_dbm,
+                    service_categories=_ble_service_categories(dev),
+                ))
+                self._seen_identifiers.add(ident)
+        for ident in list(self._connected.keys()):
+            if ident not in self._seen_identifiers:
+                dev = self._connected[ident]
+                self._pending_transitions.append(BLEDeviceSeenEvent(
+                    timestamp=now,
+                    identifier=ident,
+                    name=dev.name,
+                    vendor=dev.vendor,
+                    rssi_dbm=dev.rssi_dbm,
+                    service_categories=_ble_service_categories(dev),
+                ))
+                self._seen_identifiers.add(ident)
+        # Expire TTL'd advertising entries. Emit left for each.
+        before = self._devices
+        self._devices = expire_devices(
+            self._devices, now=now, ttl_s=self._ttl_s,
+        )
+        for ident, dev in before.items():
+            if ident in self._devices:
+                continue
+            self._pending_transitions.append(BLEDeviceLeftEvent(
+                timestamp=now,
+                identifier=ident,
+                name=dev.name,
+                vendor=dev.vendor,
+                last_rssi_dbm=dev.rssi_dbm,
+                service_categories=_ble_service_categories(dev),
+                seen_for_seconds=(
+                    (dev.last_seen - dev.first_seen).total_seconds()
+                    if dev.last_seen and dev.first_seen
+                    else 0.0
+                ),
+            ))
+
     async def _snapshot_loop(self) -> None:
         # Always emit at least one snapshot promptly so consumers see
         # the initial "(scanning…)" state without waiting a full
@@ -1428,9 +1534,7 @@ class BLEPoller:
         try:
             while not self._stopped:
                 now = datetime.now(timezone.utc)
-                self._devices = expire_devices(
-                    self._devices, now=now, ttl_s=self._ttl_s,
-                )
+                self._detect_transitions(now)
                 merged = merge_for_display(list(self._devices.values()))
                 # Connected entries sort alphabetically by name (per spec
                 # layout B); RSSI sort would be meaningless given they

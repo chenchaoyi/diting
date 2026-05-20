@@ -2629,3 +2629,167 @@ def test_lan_panel_renders_rows_after_first_snapshot():
     panel.update_hosts(update)
     # First entry is the header (None); then one per host.
     assert panel._y_to_key == [None, "aa:00:00:00:00:01", "aa:00:00:00:00:02"]
+
+
+# --- EventsPanel rendering for the 7 new transition events ----------
+
+def _tui_inv():
+    from diting.network import NetworkInventory
+    return NetworkInventory(aps=[])
+
+
+def _event_text(event):
+    """Helper: render via the same code path the panel uses."""
+    from diting.tui import _event_format_line
+    line = _event_format_line(event, _tui_inv())
+    return line.plain if line is not None else ""
+
+
+def test_events_panel_renders_ble_device_seen_line():
+    from datetime import datetime, timezone
+    from diting.events import BLEDeviceSeenEvent
+    ev = BLEDeviceSeenEvent(
+        timestamp=datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc),
+        identifier="abc",
+        name="Magic Keyboard", vendor="Apple, Inc.",
+        rssi_dbm=-55, service_categories=("HID",),
+    )
+    text = _event_text(ev)
+    assert "[BLE]" in text
+    assert "device joined" in text
+    assert "Apple, Inc." in text
+    assert "Magic Keyboard" in text
+
+
+def test_events_panel_renders_ble_device_left_line_with_duration():
+    from datetime import datetime, timezone
+    from diting.events import BLEDeviceLeftEvent
+    ev = BLEDeviceLeftEvent(
+        timestamp=datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc),
+        identifier="abc",
+        name="Magic Keyboard", vendor="Apple, Inc.",
+        last_rssi_dbm=-80, service_categories=("HID",),
+        seen_for_seconds=3600.0,
+    )
+    text = _event_text(ev)
+    assert "[BLE]" in text
+    assert "device left" in text
+    assert "1h" in text
+
+
+def test_events_panel_renders_bonjour_service_seen_line():
+    from datetime import datetime, timezone
+    from diting.events import BonjourServiceSeenEvent
+    ev = BonjourServiceSeenEvent(
+        timestamp=datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc),
+        service_type="_airplay._tcp.local.",
+        name="Blue Pod._airplay._tcp.local.",
+        host="Blue-Pod", category="AirPlay", vendor="Apple, Inc.",
+        addresses=("192.168.1.42",),
+    )
+    text = _event_text(ev)
+    assert "[BJ]" in text
+    assert "service joined" in text
+    assert "AirPlay" in text
+    assert "Blue-Pod" in text
+
+
+def test_events_panel_renders_bonjour_service_left_line_with_duration():
+    from datetime import datetime, timezone
+    from diting.events import BonjourServiceLeftEvent
+    ev = BonjourServiceLeftEvent(
+        timestamp=datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc),
+        service_type="_raop._tcp.local.",
+        name="HomePod._raop._tcp.local.",
+        host="HomePod", category="AirPlay audio", vendor=None,
+        seen_for_seconds=86400.0,
+    )
+    text = _event_text(ev)
+    assert "[BJ]" in text
+    assert "service left" in text
+    assert "HomePod" in text
+
+
+def test_events_panel_renders_lan_host_seen_line():
+    from datetime import datetime, timezone
+    from diting.events import LANHostSeenEvent
+    ev = LANHostSeenEvent(
+        timestamp=datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc),
+        mac="de:ad:be:ef:00:01", ip="192.168.1.42",
+        vendor="Apple, Inc.", hostname=None,
+        bonjour_name="ccy-MBP24-M4-Office",
+        is_randomised_mac=False,
+    )
+    text = _event_text(ev)
+    assert "[LAN]" in text
+    assert "host joined" in text
+    assert "Apple, Inc." in text
+    assert "ccy-MBP24-M4-Office" in text
+
+
+def test_events_panel_renders_lan_host_left_line_with_duration():
+    from datetime import datetime, timezone
+    from diting.events import LANHostLeftEvent
+    ev = LANHostLeftEvent(
+        timestamp=datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc),
+        mac="de:ad:be:ef:00:01", ip="192.168.1.42",
+        vendor="Apple, Inc.", hostname=None, bonjour_name=None,
+        is_randomised_mac=False,
+        seen_for_seconds=7200.0,
+        last_reachable_ago_seconds=305.0,
+    )
+    text = _event_text(ev)
+    assert "[LAN]" in text
+    assert "host left" in text
+    assert "2h" in text
+
+
+def test_events_panel_renders_lan_dhcp_rotation_line():
+    from datetime import datetime, timezone
+    from diting.events import LANHostDHCPRotationEvent
+    ev = LANHostDHCPRotationEvent(
+        timestamp=datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc),
+        mac="de:ad:be:ef:00:01",
+        previous_ip="192.168.1.42", new_ip="192.168.1.77",
+        vendor="Apple, Inc.", hostname=None,
+        bonjour_name="ccy-MBP24-M4-Office",
+    )
+    text = _event_text(ev)
+    assert "[LAN]" in text
+    assert "192.168.1.42" in text
+    assert "192.168.1.77" in text
+    assert "moved" in text
+
+
+# --- EventsScreen filter cycle ---------------------------------------
+
+def test_events_screen_filter_cycle_has_eight_buckets():
+    """`_events_filter_match` accepts the eight buckets specified by
+    the tui-shell spec delta."""
+    from diting.tui import _events_filter_match
+    from datetime import datetime, timezone
+    from diting.events import BLEDeviceSeenEvent
+    ev = BLEDeviceSeenEvent(
+        timestamp=datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc),
+        identifier="x", name=None, vendor=None, rssi_dbm=None,
+        service_categories=(),
+    )
+    assert _events_filter_match(ev, "all") is True
+    assert _events_filter_match(ev, "ble") is True
+    assert _events_filter_match(ev, "bonjour") is False
+    assert _events_filter_match(ev, "lan") is False
+    assert _events_filter_match(ev, "roam") is False
+
+
+def test_events_screen_filter_keys_map_to_buckets_in_order():
+    """The spec pins keys `0`-`7` to the eight buckets in order."""
+    from diting.tui import EventsScreen
+    bindings_by_action = {b.action: b.key for b in EventsScreen.BINDINGS}
+    assert bindings_by_action["set_filter('all')"] == "0"
+    assert bindings_by_action["set_filter('roam')"] == "1"
+    assert bindings_by_action["set_filter('stir')"] == "2"
+    assert bindings_by_action["set_filter('latency')"] == "3"
+    assert bindings_by_action["set_filter('link')"] == "4"
+    assert bindings_by_action["set_filter('ble')"] == "5"
+    assert bindings_by_action["set_filter('bonjour')"] == "6"
+    assert bindings_by_action["set_filter('lan')"] == "7"

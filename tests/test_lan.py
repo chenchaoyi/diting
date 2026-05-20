@@ -1039,3 +1039,200 @@ def test_poller_constructed_on_first_lan_view_entry():
         await agen.aclose()
 
     asyncio.run(_go())
+
+
+# ------------------------------------------------------------------
+# Transition events: LANHostSeenEvent / LANHostLeftEvent /
+# LANHostDHCPRotationEvent
+# ------------------------------------------------------------------
+
+def test_poller_emits_seen_on_new_non_self_non_gateway_mac(monkeypatch):
+    """A new MAC (not self, not gateway) entering the merge path
+    accumulates one `LANHostSeenEvent` on `_pending_transitions`."""
+    from diting.events import LANHostSeenEvent
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    conn = _make_conn(
+        ip="192.168.1.20",
+        router="192.168.1.1",
+        mac="84:2f:57:9b:15:59",
+    )
+
+    async def _go():
+        now = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "de:ad:be:ef:00:01", "en0")],
+            conn=conn,
+            now=now,
+            sweep_results={"192.168.1.42": (True, 2.0)},
+        )
+        return poller.drain_transitions()
+
+    out = asyncio.run(_go())
+    seen = [e for e in out if isinstance(e, LANHostSeenEvent)]
+    assert len(seen) == 1
+    assert seen[0].mac == "de:ad:be:ef:00:01"
+    assert seen[0].ip == "192.168.1.42"
+
+
+def test_poller_skips_seen_for_self_and_gateway(monkeypatch):
+    """Self injection AND gateway-row creation do NOT emit
+    `LANHostSeenEvent` — those are noise on every diting launch."""
+    from diting.events import LANHostSeenEvent
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    conn = _make_conn(
+        ip="192.168.1.20",
+        router="192.168.1.1",
+        mac="84:2f:57:9b:15:59",
+    )
+
+    async def _go():
+        now = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [
+                # Gateway IP → is_gateway = True
+                ("192.168.1.1", "aa:bb:cc:11:22:33", "en0"),
+                # Self MAC
+                ("192.168.1.20", "84:2f:57:9b:15:59", "en0"),
+            ],
+            conn=conn,
+            now=now,
+            sweep_results={
+                "192.168.1.1": (True, 1.0),
+                "192.168.1.20": (True, 0.1),
+            },
+        )
+        return poller.drain_transitions()
+
+    out = asyncio.run(_go())
+    seen = [e for e in out if isinstance(e, LANHostSeenEvent)]
+    # Neither self nor gateway should be in seen events.
+    assert seen == []
+
+
+def test_poller_emits_dhcp_rotation_before_ip_update(monkeypatch):
+    """When a known MAC reappears at a new IP, the rotation event
+    carries `previous_ip` (the old value) BEFORE the state entry's
+    `ip` field gets updated."""
+    from diting.events import LANHostDHCPRotationEvent
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    conn = _make_conn()
+
+    async def _go():
+        now = datetime.now(timezone.utc)
+        # Tick 1: first observation at IP A.
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "de:ad:be:ef:00:01", "en0")],
+            conn=conn, now=now,
+            sweep_results={"192.168.1.42": (True, 2.0)},
+        )
+        poller.drain_transitions()  # discard seen
+        # Tick 2: same MAC, new IP.
+        await poller._merge_arp_into_state(
+            [("192.168.1.77", "de:ad:be:ef:00:01", "en0")],
+            conn=conn, now=now,
+            sweep_results={"192.168.1.77": (True, 2.4)},
+        )
+        return poller.drain_transitions()
+
+    out = asyncio.run(_go())
+    rotations = [e for e in out if isinstance(e, LANHostDHCPRotationEvent)]
+    assert len(rotations) == 1
+    assert rotations[0].previous_ip == "192.168.1.42"
+    assert rotations[0].new_ip == "192.168.1.77"
+
+
+def test_poller_emits_left_after_host_left_timeout(monkeypatch):
+    """A tracked host whose `last_reachable_at` is older than
+    `_HOST_LEFT_TIMEOUT_S` AND who is absent from the latest ARP
+    triples → `LANHostLeftEvent` once; entry then removed."""
+    from datetime import timedelta
+    from diting.events import LANHostLeftEvent
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+    # Shorten the timeout for the test.
+    monkeypatch.setattr("diting.lan._HOST_LEFT_TIMEOUT_S", 1.0)
+
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    conn = _make_conn()
+
+    async def _go():
+        t1 = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "de:ad:be:ef:00:01", "en0")],
+            conn=conn, now=t1,
+            sweep_results={"192.168.1.42": (True, 2.0)},
+        )
+        poller.drain_transitions()  # discard seen
+        # Time advances past the timeout AND the host disappears
+        # from ARP. Self-only triples → host is missing.
+        t2 = t1 + timedelta(seconds=10)
+        await poller._merge_arp_into_state(
+            [],
+            conn=conn, now=t2,
+            sweep_results={},
+        )
+        return poller.drain_transitions(), poller._state
+
+    out, state = asyncio.run(_go())
+    left = [e for e in out if isinstance(e, LANHostLeftEvent)]
+    assert len(left) == 1
+    assert left[0].mac == "de:ad:be:ef:00:01"
+    assert "de:ad:be:ef:00:01" not in state  # entry removed
+
+
+def test_poller_does_not_re_emit_seen_for_known_mac(monkeypatch):
+    """A known MAC observed again on a subsequent tick must NOT
+    re-fire `LANHostSeenEvent`."""
+    from diting.events import LANHostSeenEvent
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    conn = _make_conn()
+
+    async def _go():
+        now = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "de:ad:be:ef:00:01", "en0")],
+            conn=conn, now=now,
+            sweep_results={"192.168.1.42": (True, 2.0)},
+        )
+        first = poller.drain_transitions()
+        # Same observation again.
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "de:ad:be:ef:00:01", "en0")],
+            conn=conn, now=now,
+            sweep_results={"192.168.1.42": (True, 2.0)},
+        )
+        second = poller.drain_transitions()
+        return first, second
+
+    first, second = asyncio.run(_go())
+    seen1 = [e for e in first if isinstance(e, LANHostSeenEvent)]
+    seen2 = [e for e in second if isinstance(e, LANHostSeenEvent)]
+    assert len(seen1) == 1
+    assert seen2 == []

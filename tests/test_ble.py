@@ -1439,3 +1439,118 @@ def test_history_expire_drops_devices_not_in_set():
     assert h.get("dev-A") != []
     assert h.get("dev-B") == []
     assert h.get("dev-C") != []
+
+
+# ------------------------------------------------------------------
+# Transition events: BLEDeviceSeenEvent / BLEDeviceLeftEvent
+#
+# These tests exercise `_detect_transitions` directly — the sync
+# helper extracted from `_snapshot_loop` — by populating
+# `_devices` / `_connected` manually. That avoids the full async
+# events() pipeline (reader_loop + snapshot_loop + queue plumbing)
+# and keeps the tests fast and deterministic.
+# ------------------------------------------------------------------
+
+
+def _build_ble_device(
+    identifier: str,
+    *,
+    name: str | None = "Magic Keyboard",
+    vendor: str | None = "Apple, Inc.",
+    rssi_dbm: int | None = -55,
+    first_seen: datetime | None = None,
+    last_seen: datetime | None = None,
+    services: tuple[str, ...] = (),
+) -> BLEDevice:
+    t = first_seen or datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+    t_last = last_seen or t
+    return BLEDevice(
+        identifier=identifier,
+        name=name,
+        vendor=vendor,
+        vendor_id=76,
+        services=services,
+        rssi_dbm=rssi_dbm,
+        is_connectable=True,
+        first_seen=t,
+        last_seen=t_last,
+        ad_count=1,
+    )
+
+
+def test_poller_emits_seen_event_on_first_observation():
+    """First-time observation of an identifier in `_devices` →
+    exactly one `BLEDeviceSeenEvent` on `_pending_transitions`."""
+    from diting.events import BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake")
+    poller._devices["MAC_A"] = _build_ble_device("MAC_A")
+    now = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+    poller._detect_transitions(now)
+
+    seen = [t for t in poller.drain_transitions() if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seen) == 1
+    assert seen[0].identifier == "MAC_A"
+    assert seen[0].vendor == "Apple, Inc."
+
+
+def test_poller_does_not_re_emit_seen_for_known_identifier():
+    """`_seen_identifiers` guards against re-emit on subsequent ticks."""
+    from diting.events import BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake")
+    poller._devices["MAC_A"] = _build_ble_device("MAC_A")
+    now = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+    poller._detect_transitions(now)
+    poller.drain_transitions()  # discard first seen
+
+    # Second tick with the same identifier still in state.
+    poller._detect_transitions(now)
+    seen = [t for t in poller.drain_transitions() if isinstance(t, BLEDeviceSeenEvent)]
+    assert seen == []
+
+
+def test_poller_emits_left_event_on_ttl_eviction():
+    """A tracked device whose `last_seen` exceeds TTL is removed
+    and emits `BLEDeviceLeftEvent` with seen_for_seconds."""
+    from datetime import timedelta
+    from diting.events import BLEDeviceLeftEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0)
+    t0 = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+    # Device first seen at t0, last_seen at t0 + 5s
+    poller._devices["MAC_A"] = _build_ble_device(
+        "MAC_A", first_seen=t0, last_seen=t0 + timedelta(seconds=5),
+    )
+    # First tick: device is still within TTL → emits seen, no left.
+    poller._detect_transitions(t0 + timedelta(seconds=10))
+    poller.drain_transitions()
+    # Second tick: now > last_seen + ttl → device evicted.
+    poller._detect_transitions(t0 + timedelta(seconds=40))
+    out = poller.drain_transitions()
+    left = [t for t in out if isinstance(t, BLEDeviceLeftEvent)]
+    assert len(left) == 1
+    assert left[0].identifier == "MAC_A"
+    assert left[0].seen_for_seconds == 5.0
+
+
+def test_poller_connected_peripheral_does_not_re_emit_seen():
+    """A connected peripheral fires its seen event once and stays
+    in `_connected` across subsequent ticks."""
+    from diting.events import BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake")
+    poller._connected["UUID_1"] = _build_ble_device(
+        "UUID_1", name="Magic Keyboard",
+    )
+    now = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+    poller._detect_transitions(now)
+    first = poller.drain_transitions()
+    # Second tick — same connected peripheral.
+    poller._detect_transitions(now)
+    second = poller.drain_transitions()
+
+    seen_first = [t for t in first if isinstance(t, BLEDeviceSeenEvent)]
+    seen_second = [t for t in second if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seen_first) == 1
+    assert seen_second == []

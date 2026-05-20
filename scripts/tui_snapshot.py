@@ -592,8 +592,19 @@ def _regression_scenarios() -> list[Scenario]:
 
     async def _open_events_modal(pilot):
         await _seed_link_and_events(pilot)
-        # Inject a richer event mix into the ring before opening.
+        # Inject a richer event mix into the ring before opening,
+        # covering the original five types PLUS the seven new BLE /
+        # Bonjour / LAN transition events.
         from diting.tui import EventsPanel
+        from diting.events import (
+            BLEDeviceLeftEvent,
+            BLEDeviceSeenEvent,
+            BonjourServiceLeftEvent,
+            BonjourServiceSeenEvent,
+            LANHostDHCPRotationEvent,
+            LANHostLeftEvent,
+            LANHostSeenEvent,
+        )
         events_panel = pilot.app.query_one("#roam", EventsPanel)
         now = datetime.now()
         for ev in (
@@ -609,6 +620,55 @@ def _regression_scenarios() -> list[Scenario]:
             LossBurstEvent(
                 timestamp=now, target="wan", target_ip="1.1.1.1",
                 loss_pct=80.0, lost_in_window=4,
+            ),
+            BLEDeviceSeenEvent(
+                timestamp=now, identifier="abc",
+                name="Magic Keyboard", vendor="Apple, Inc.",
+                rssi_dbm=-55, service_categories=("HID",),
+            ),
+            BLEDeviceLeftEvent(
+                timestamp=now, identifier="def",
+                name="AirPods Pro", vendor="Apple, Inc.",
+                last_rssi_dbm=-80, service_categories=(),
+                seen_for_seconds=600.0,
+            ),
+            BonjourServiceSeenEvent(
+                timestamp=now,
+                service_type="_airplay._tcp.local.",
+                name="Blue Pod._airplay._tcp.local.",
+                host="Blue-Pod", category="AirPlay",
+                vendor="Apple, Inc.",
+                addresses=("192.168.1.42",),
+            ),
+            BonjourServiceLeftEvent(
+                timestamp=now,
+                service_type="_ipp._tcp.local.",
+                name="OfficePrinter._ipp._tcp.local.",
+                host="OfficePrinter", category="Printer",
+                vendor="HP", seen_for_seconds=3600.0,
+            ),
+            LANHostSeenEvent(
+                timestamp=now,
+                mac="de:ad:be:ef:00:01", ip="192.168.1.42",
+                vendor="Apple, Inc.", hostname=None,
+                bonjour_name="ccy-MBP24-M4-Office",
+                is_randomised_mac=False,
+            ),
+            LANHostLeftEvent(
+                timestamp=now,
+                mac="f4:5c:89:11:22:33", ip="192.168.1.55",
+                vendor="Roku, Inc.", hostname="living-room-tv.local",
+                bonjour_name=None, is_randomised_mac=False,
+                seen_for_seconds=86400.0,
+                last_reachable_ago_seconds=305.0,
+            ),
+            LANHostDHCPRotationEvent(
+                timestamp=now,
+                mac="de:ad:be:ef:00:01",
+                previous_ip="192.168.1.42",
+                new_ip="192.168.1.77",
+                vendor="Apple, Inc.", hostname=None,
+                bonjour_name="ccy-MBP24-M4-Office",
             ),
         ):
             events_panel.append_event(ev, _INVENTORY)
