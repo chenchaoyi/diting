@@ -11,6 +11,8 @@
 ## [Unreleased]
 
 ### 修复
+- **事件面板英文写「joined」、但事件其实是 `*_seen`。** EN UI 把 `ble_device_seen` / `bonjour_service_seen` / `lan_host_seen` 渲染成 `[BLE] device joined:` / `[BJ] service joined:` / `[LAN] host joined:`，但 ZH 一直是 `设备出现 / 服务出现 / 主机出现`，JSONL `type` 字段一直是 `*_seen`。"joined" 还会让人误以为「配对 / 关联」—— 实际事件触发的是首次被动观察到，包括路过的陌生人手机。把三个 EN i18n key 改为 `device seen: ` / `service seen: ` / `host seen: `；ZH 不变。
+- **事件过滤页脚仍写 `1/2/3/4/0`，A1 早就加了 `5/6/7`。** EventsScreen 过滤循环自 A1 起已经是八桶（`ble` / `bonjour` / `lan` 绑定到 `5` / `6` / `7`），按键也接好了，但事件弹窗页脚 + 帮助弹窗里的「Events modal (m)」段落（EN + ZH 共四处）还在只列旧的五个键。统一改为 `1/2/3/4/5/6/7/0`，让新加的过滤桶在 TUI 里就能被发现。
 - **BLE `ble_device_left` 重复发送的 bug。** 范围边缘的设备如果广播被 macOS 蓝牙栈短暂卡掉一次，会触发 TTL 失效；紧接着下一条广播又把 `_devices` 填回去、再失效、再发 `BLEDeviceLeftEvent`，循环不止。真实 5.6 小时抓取里有一个 identifier 从单个 seen 派生了 **229** 个 left 事件，整个会话产出 67,548 个 BLE 事件 / 13 MB JSONL。`BLEPoller._detect_transitions` 现在用会话级 `_departed_identifiers` 集合给 left-emission 加门：一个 seen 最多对应一个 left，发完之后该 identifier 本会话内静音。该抓取的 JSONL 体积下降约 63%。
 
 ## [1.4.0] — 2026-05-21

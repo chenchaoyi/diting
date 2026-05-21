@@ -2656,7 +2656,7 @@ def test_events_panel_renders_ble_device_seen_line():
     )
     text = _event_text(ev)
     assert "[BLE]" in text
-    assert "device joined" in text
+    assert "device seen" in text
     assert "Apple, Inc." in text
     assert "Magic Keyboard" in text
 
@@ -2689,7 +2689,7 @@ def test_events_panel_renders_bonjour_service_seen_line():
     )
     text = _event_text(ev)
     assert "[BJ]" in text
-    assert "service joined" in text
+    assert "service seen" in text
     assert "AirPlay" in text
     assert "Blue-Pod" in text
 
@@ -2722,7 +2722,7 @@ def test_events_panel_renders_lan_host_seen_line():
     )
     text = _event_text(ev)
     assert "[LAN]" in text
-    assert "host joined" in text
+    assert "host seen" in text
     assert "Apple, Inc." in text
     assert "ccy-MBP24-M4-Office" in text
 

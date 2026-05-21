@@ -609,9 +609,10 @@ def _help_content() -> tuple[Text, Text]:
         "  Filterable scroll of every event the dashboard has detected:\n"
         "  ROAM (AP switches), STIR (RF disturbance from σ baseline),\n"
         "  LATENCY / LOSS (link probe spikes), LINK (associate /\n"
-        "  disassociate). Use 1/2/3/4/0 to filter by category. Below\n"
-        "  the list: a per-AP σ table summarising which APs are stable\n"
-        "  vs stirring, plus a σ sparkline covering the trailing hour.\n"
+        "  disassociate), plus BLE / BJ / LAN seen-and-left transitions.\n"
+        "  Use 1/2/3/4/5/6/7/0 to filter by category. Below the list: a\n"
+        "  per-AP σ table summarising which APs are stable vs stirring,\n"
+        "  plus a σ sparkline covering the trailing hour.\n"
     ))
 
     section(t("BLE view"))
@@ -881,7 +882,7 @@ class EventsScreen(ModalScreen):
 
     def _render_footer(self) -> Text:
         line = Text()
-        line.append(t("Press 1/2/3/4/0 to filter; m or Esc to close"),
+        line.append(t("Press 1/2/3/4/5/6/7/0 to filter; m or Esc to close"),
                     style="dim italic")
         return line
 
@@ -1944,7 +1945,7 @@ def _format_ble_device_seen_event(event: BLEDeviceSeenEvent) -> Text:
     line = Text()
     line.append(f"{_ev_ts(event)}  ", style="dim")
     line.append(t("[BLE]") + "  ", style="bold blue")
-    line.append(t("device joined: "), style="white")
+    line.append(t("device seen: "), style="white")
     vendor = event.vendor or t("(unknown)")
     name = event.name or t("(anonymous)")
     line.append(f"{vendor}  ·  {name}", style="white")
@@ -1967,7 +1968,7 @@ def _format_bonjour_service_seen_event(event: BonjourServiceSeenEvent) -> Text:
     line = Text()
     line.append(f"{_ev_ts(event)}  ", style="dim")
     line.append(t("[BJ]") + "  ", style="bold green")
-    line.append(t("service joined: "), style="white")
+    line.append(t("service seen: "), style="white")
     cat = event.category or t("(unknown)")
     host = event.host or t("(anonymous)")
     line.append(f"{cat}  ·  {host}", style="white")
@@ -1990,7 +1991,7 @@ def _format_lan_host_seen_event(event: LANHostSeenEvent) -> Text:
     line = Text()
     line.append(f"{_ev_ts(event)}  ", style="dim")
     line.append(t("[LAN]") + "  ", style="bold cyan")
-    line.append(t("host joined: "), style="white")
+    line.append(t("host seen: "), style="white")
     vendor = event.vendor or (
         t("(random MAC)") if event.is_randomised_mac else t("(unknown)")
     )

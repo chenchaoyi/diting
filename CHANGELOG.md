@@ -12,6 +12,8 @@ behaviours between releases.
 ## [Unreleased]
 
 ### Fixed
+- **Events panel said "joined" but the events are `*_seen`.** EN UI rendered `ble_device_seen` / `bonjour_service_seen` / `lan_host_seen` as `[BLE] device joined:` / `[BJ] service joined:` / `[LAN] host joined:`. ZH already said `设备出现 / 服务出现 / 主机出现` (appeared / seen). The JSONL `type` field always said `*_seen`. The EN wording also lied about semantics — "joined" reads like *paired / associated*, but the event fires on the first passive observation, including strangers' phones walking past. Renamed three EN i18n keys to `device seen: ` / `service seen: ` / `host seen: `; ZH unchanged.
+- **Events filter footer claimed `1/2/3/4/0`; A1 added `5/6/7`.** The EventsScreen filter cycle has eight buckets since A1 (`ble` / `bonjour` / `lan` on keys `5` / `6` / `7`), the bindings work, but four user-facing strings — events-modal footer and help-modal "Events modal (m)" paragraph, EN + ZH — still listed only the legacy five keys. Extended to `1/2/3/4/5/6/7/0` in both locales so the new filters are discoverable from the TUI alone.
 - **BLE `ble_device_left` re-emission bug.** A device at the edge of range whose adverts the macOS Bluetooth stack briefly stopped delivering would TTL-evict, re-populate `_devices` from the next advert, evict again, and re-emit `BLEDeviceLeftEvent` on every cycle. One identifier in a real 5.6 h capture produced 229 left events from a single seen — 67,548 BLE events / 13 MB JSONL for the session. `BLEPoller._detect_transitions` now gates left-emission on a per-session `_departed_identifiers` set: at most one left per seen, identifier silent for the rest of the session after departure. JSONL size for the captured session drops ~63%.
 
 ## [1.4.0] — 2026-05-21

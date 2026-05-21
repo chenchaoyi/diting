@@ -877,14 +877,16 @@ _ZH: dict[str, str] = {
     "  Filterable scroll of every event the dashboard has detected:\n"
     "  ROAM (AP switches), STIR (RF disturbance from σ baseline),\n"
     "  LATENCY / LOSS (link probe spikes), LINK (associate /\n"
-    "  disassociate). Use 1/2/3/4/0 to filter by category. Below\n"
-    "  the list: a per-AP σ table summarising which APs are stable\n"
-    "  vs stirring, plus a σ sparkline covering the trailing hour.\n":
+    "  disassociate), plus BLE / BJ / LAN seen-and-left transitions.\n"
+    "  Use 1/2/3/4/5/6/7/0 to filter by category. Below the list: a\n"
+    "  per-AP σ table summarising which APs are stable vs stirring,\n"
+    "  plus a σ sparkline covering the trailing hour.\n":
         "  仪表盘检测到的所有事件可过滤滚动列表：\n"
         "  ROAM（AP 切换）、STIR（基于 σ 基线的 RF 扰动）、\n"
-        "  LATENCY / LOSS（链路探测尖峰）、LINK（关联 / 断开）。\n"
-        "  按 1/2/3/4/0 切换过滤。列表下方：各 AP σ 表，标出哪些 AP\n"
-        "  稳定 / 哪些抖动，以及最近一小时 σ 走势图。\n",
+        "  LATENCY / LOSS（链路探测尖峰）、LINK（关联 / 断开），\n"
+        "  以及 BLE / BJ / LAN 的出现与消失。按 1/2/3/4/5/6/7/0\n"
+        "  切换过滤。列表下方：各 AP σ 表，标出哪些 AP 稳定 / 哪些\n"
+        "  抖动，以及最近一小时 σ 走势图。\n",
     "  Toggle with n. Two sections: Connected (system-paired\n"
     "  peripherals you're actively using — keyboards, AirPods, Magic\n"
     "  Trackpad) and Advertising (everything broadcasting nearby).\n"
@@ -1196,11 +1198,11 @@ _ZH: dict[str, str] = {
     "[BLE]": "[BLE]",
     "[BJ]": "[BJ]",
     "[LAN]": "[LAN]",
-    "device joined: ": "设备出现：",
+    "device seen: ": "设备出现：",
     "device left: ": "设备消失：",
-    "service joined: ": "服务出现：",
+    "service seen: ": "服务出现：",
     "service left: ": "服务消失：",
-    "host joined: ": "主机出现：",
+    "host seen: ": "主机出现：",
     "host left: ": "主机消失：",
     " moved ": " 换地址 ",
     "(anonymous)": "(匿名)",
@@ -1245,8 +1247,8 @@ _ZH: dict[str, str] = {
     "data ~{n}m": "数据 ~{n}m",
     "(σ history outside the last hour)":
         "(无最近一小时内的 σ 历史)",
-    "Press 1/2/3/4/0 to filter; m or Esc to close":
-        "按 1/2/3/4/0 切换过滤；m 或 Esc 关闭",
+    "Press 1/2/3/4/5/6/7/0 to filter; m or Esc to close":
+        "按 1/2/3/4/5/6/7/0 切换过滤；m 或 Esc 关闭",
 
     # ---- Calibration CLI ----
     "Calibrating environment baseline ({n}s remaining)...":
