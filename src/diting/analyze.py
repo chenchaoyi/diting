@@ -408,8 +408,14 @@ def aggregate_hour_of_day(
         ts = _parse_ts(ev.get("ts", ""))
         if ts is None:
             continue
-        local = ts.astimezone()
-        hour = local.hour
+        # Use the timestamp's OWN offset (already encoded in the
+        # JSONL `ts` string) — NOT `.astimezone()`, which would
+        # convert to whatever local TZ the machine running
+        # `diting analyze` is in. We want "what hour of the user's
+        # day did this happen", not "what hour of the analyzer's
+        # day". CI runners (macOS / Linux) are typically UTC, so
+        # astimezone() would smear cross-TZ data on CI vs locally.
+        hour = ts.hour
         typ = ev.get("type") or "unknown"
         bucket = out[hour]
         bucket[typ] = bucket.get(typ, 0) + 1
@@ -424,14 +430,16 @@ def aggregate_day_of_week_x_hour(
     Outer index: weekday (Mon=0). Inner: hour 0-23. Cell value:
     total events that landed in (weekday, hour). Returned as nested
     tuples so it's hashable / frozen-friendly.
+
+    Uses the timestamp's OWN offset (no `.astimezone()`) — see the
+    same note in `aggregate_hour_of_day`.
     """
     grid: list[list[int]] = [[0] * 24 for _ in range(7)]
     for ev in events:
         ts = _parse_ts(ev.get("ts", ""))
         if ts is None:
             continue
-        local = ts.astimezone()
-        grid[local.weekday()][local.hour] += 1
+        grid[ts.weekday()][ts.hour] += 1
     return tuple(tuple(row) for row in grid)
 
 
@@ -522,7 +530,10 @@ def aggregate_daily_trend(
         ts = _parse_ts(ev.get("ts", ""))
         if ts is None:
             continue
-        d = ts.astimezone().date().isoformat()
+        # Bucket by the date encoded in the event's own offset, NOT
+        # by the analyzer-machine's local TZ — see the same note in
+        # `aggregate_hour_of_day`.
+        d = ts.date().isoformat()
         daily[d] = daily.get(d, 0) + 1
 
     if not daily:
