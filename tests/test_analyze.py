@@ -586,3 +586,180 @@ def test_render_daily_trend_emits_one_sparkline_per_family():
     report = analyze(events, source_paths=["a.jsonl", "b.jsonl"])
     rendered = render(report)
     assert "Daily trend" in rendered
+
+# ------------------------------------------------------------------
+# Track B: LLM-bridge export — anonymizer + markdown + prompt
+# ------------------------------------------------------------------
+
+from diting.analyze import (  # noqa: E402
+    Anonymizer,
+    _is_rfc1918,
+    build_llm_prompt,
+    render_markdown,
+)
+
+
+def test_is_rfc1918_recognises_private_ranges():
+    assert _is_rfc1918("192.168.1.42") is True
+    assert _is_rfc1918("10.0.0.1") is True
+    assert _is_rfc1918("172.16.5.5") is True
+    assert _is_rfc1918("172.31.255.255") is True
+    assert _is_rfc1918("172.15.0.1") is False
+    assert _is_rfc1918("172.32.0.1") is False
+    assert _is_rfc1918("8.8.8.8") is False
+    assert _is_rfc1918("1.1.1.1") is False
+    assert _is_rfc1918("") is False
+
+
+def test_anonymizer_assigns_stable_handles():
+    a = Anonymizer()
+    assert a.map("ssid", "home-5G") == "SSID_1"
+    assert a.map("ssid", "Meituan") == "SSID_2"
+    assert a.map("bssid", "aa:bb:cc:11:22:33") == "AP_1"
+    assert a.map("bssid", "aa:bb:cc:99:88:77") == "AP_2"
+    assert a.map("ble", "abc-def") == "BLE_1"
+    assert a.map("mac", "de:ad:be:ef:00:01") == "MAC_1"
+    assert a.map("host", "my-mac.local") == "HOST_1"
+
+
+def test_anonymizer_same_value_returns_same_handle():
+    a = Anonymizer()
+    h1 = a.map("ssid", "Meituan")
+    h2 = a.map("ssid", "Meituan")
+    h3 = a.map("ssid", "Meituan")
+    assert h1 == h2 == h3 == "SSID_1"
+
+
+def test_anonymizer_preserves_public_ip_addresses():
+    a = Anonymizer()
+    assert a.map("ip", "8.8.8.8") == "8.8.8.8"
+    assert a.map("ip", "1.1.1.1") == "1.1.1.1"
+    assert a.map("ip", "114.114.114.114") == "114.114.114.114"
+
+
+def test_anonymizer_replaces_rfc1918_addresses():
+    a = Anonymizer()
+    assert a.map("ip", "192.168.1.42") == "IP_1"
+    assert a.map("ip", "10.0.0.5") == "IP_2"
+    assert a.map("ip", "172.16.1.1") == "IP_3"
+
+
+def test_anonymizer_passes_through_vendor_names():
+    a = Anonymizer()
+    assert a.map("vendor", "Apple, Inc.") == "Apple, Inc."
+    assert a.map("category", "AirPlay") == "AirPlay"
+
+
+def test_anonymizer_handles_none_and_empty():
+    a = Anonymizer()
+    assert a.map("ssid", None) is None
+    assert a.map("ssid", "") == ""
+
+
+def test_anonymizer_mapping_lists_in_kind_then_index_order():
+    a = Anonymizer()
+    a.map("bssid", "aa:bb:cc:11:22:33")
+    a.map("ssid", "home")
+    a.map("ssid", "office")
+    a.map("bssid", "aa:bb:cc:44:55:66")
+    mapping = a.mapping()
+    handles = [h for h, _ in mapping]
+    assert "AP_1" in handles
+    assert "AP_2" in handles
+    assert "SSID_1" in handles
+    assert "SSID_2" in handles
+
+
+def _ev_b(day: int, hour: int = 9, type_: str = "roam", **extra) -> dict:
+    ts = f"2026-05-{day:02d}T{hour:02d}:00:00+08:00"
+    return {"ts": ts, "type": type_, **extra}
+
+
+def test_render_markdown_includes_glossary():
+    events = [_ev_b(20), _ev_b(21)]
+    report = analyze(events, source_paths=["a.jsonl", "b.jsonl"])
+    md = render_markdown(report)
+    assert "## Glossary" in md
+    assert "rf_stir" in md
+    assert "lan_host_seen" in md
+
+
+def test_render_markdown_wraps_ascii_in_fenced_blocks():
+    events = [_ev_b(20), _ev_b(21)]
+    report = analyze(events, source_paths=["a.jsonl", "b.jsonl"])
+    md = render_markdown(report)
+    assert "```text" in md
+
+
+def test_render_markdown_renders_per_network_as_table():
+    events = [
+        _ev_b(20, type_="link_state", state="associated",
+              bssid="aa:bb:cc:11:22:33", ssid="Meituan"),
+        _ev_b(20, type_="roam", new_bssid="aa:bb:cc:11:22:33"),
+        _ev_b(20, type_="roam", new_bssid="aa:bb:cc:11:22:33"),
+    ]
+    report = analyze(events, source_paths=["a.jsonl", "b.jsonl"])
+    md = render_markdown(report)
+    assert "## Top networks by event volume" in md
+    assert "| Network | Events | Breakdown |" in md
+
+
+def test_render_markdown_anonymization_section_is_placeholder():
+    a = Anonymizer()
+    events = [
+        _ev_b(20, type_="link_state", state="associated",
+              bssid="aa:bb:cc:11:22:33", ssid="uniqueSSID42"),
+    ]
+    report = analyze(events, source_paths=["a.jsonl", "b.jsonl"])
+    md = render_markdown(report, anonymizer=a)
+    assert "## Anonymization" in md
+    assert "uniqueSSID42" not in md.split("## Anonymization")[1]
+
+
+def test_render_markdown_without_anonymizer_keeps_identifiers():
+    events = [
+        _ev_b(20, type_="link_state", state="associated",
+              bssid="aa:bb:cc:11:22:33", ssid="home-5G"),
+    ]
+    report = analyze(events, source_paths=["a.jsonl", "b.jsonl"])
+    md = render_markdown(report)
+    assert "## Anonymization" not in md
+
+
+def test_render_markdown_with_anonymize_replaces_identifiers():
+    a = Anonymizer()
+    events = [
+        _ev_b(20, type_="link_state", state="associated",
+              bssid="aa:bb:cc:11:22:33", ssid="uniqueSSID42"),
+        _ev_b(20, type_="roam", new_bssid="aa:bb:cc:11:22:33"),
+        _ev_b(20, type_="ble_device_seen", identifier="xyz",
+              vendor="Apple, Inc.", name="Magic Keyboard"),
+    ]
+    report = analyze(events, source_paths=["a.jsonl", "b.jsonl"])
+    md = render_markdown(report, anonymizer=a)
+    assert "uniqueSSID42" not in md
+    assert "aa:bb:cc:11:22:33" not in md
+    # At least one handle appears in the body.
+    assert "SSID_" in md or "AP_" in md or "BLE_" in md
+
+
+def test_build_llm_prompt_includes_all_five_sections():
+    events = [_ev_b(20), _ev_b(21)]
+    report = analyze(events, source_paths=["a.jsonl", "b.jsonl"])
+    prompt = build_llm_prompt(report)
+    assert "diting" in prompt
+    assert "analyst" in prompt
+    for n in ("1.", "2.", "3.", "4.", "5."):
+        assert n in prompt
+    assert "markdown" in prompt.lower()
+    assert "speculate" in prompt.lower() or "hypothesis" in prompt.lower()
+    assert "Anonymization" in prompt or "handles" in prompt.lower()
+
+
+def test_build_llm_prompt_substitutes_span_and_files():
+    events = [_ev_b(20), _ev_b(21)]
+    report = analyze(events, source_paths=["a.jsonl", "b.jsonl"])
+    prompt = build_llm_prompt(report)
+    assert "2026-05-20" in prompt
+    assert "2026-05-21" in prompt
+    assert "2 session" in prompt

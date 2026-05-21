@@ -89,6 +89,7 @@ class NetworkAggregate:
     bssid: str | None
     total: int
     counts_by_type: dict[str, int]
+    ssid: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -516,6 +517,7 @@ def aggregate_per_network(
             bssid=bssid,
             total=total,
             counts_by_type=buckets[key],
+            ssid=ssid,
         ))
     out.sort(key=lambda n: n.total, reverse=True)
     return tuple(out)
@@ -974,6 +976,414 @@ def _scaled_loss_pct(report: Report) -> float | None:
     if 0 < pct < 1.0:
         return pct * 100.0
     return pct
+
+
+# ---------- LLM bridge (Track B): Anonymizer + Markdown renderer + prompt ----------
+
+_RFC1918_PREFIXES = ("10.", "192.168.")
+_RFC1918_172 = tuple(f"172.{n}." for n in range(16, 32))
+
+
+def _is_rfc1918(ip: str) -> bool:
+    """True iff `ip` is in a private RFC1918 range (LAN address)."""
+    if not isinstance(ip, str):
+        return False
+    if ip.startswith(_RFC1918_PREFIXES):
+        return True
+    if ip.startswith(_RFC1918_172):
+        return True
+    return False
+
+
+class Anonymizer:
+    """Assigns stable first-seen handles to privacy-sensitive identifiers.
+
+    Same value → same handle across the entire report. Different
+    kinds use different prefixes so handles can't accidentally
+    collide (`SSID_1` is a different namespace from `AP_1`).
+
+    Handles are deterministic given fixed event ordering — a
+    re-run on the same input produces the same handles, which
+    lets the user store the mapping for cross-reference.
+
+    Vendor names, service categories, event-type names, magnitudes,
+    timestamps, and aggregation counts are NOT anonymized — they
+    flow through callers verbatim.
+    """
+
+    _PREFIXES = {
+        "ssid": "SSID",
+        "bssid": "AP",
+        "ip": "IP",
+        "host": "HOST",
+        "ble": "BLE",
+        "mac": "MAC",
+    }
+
+    def __init__(self) -> None:
+        self._maps: dict[str, dict[str, str]] = {k: {} for k in self._PREFIXES}
+        self._counters: dict[str, int] = {k: 0 for k in self._PREFIXES}
+
+    def map(self, kind: str, value: str | None) -> str | None:
+        """Return the stable handle for `value` of the given `kind`.
+
+        `None` returns `None`. Empty string returns empty string.
+        IP `kind` skips public IPs (returns them unchanged) so
+        `8.8.8.8` / `1.1.1.1` survive verbatim in the report.
+        """
+        if value is None or value == "":
+            return value
+        if kind == "ip" and not _is_rfc1918(value):
+            return value
+        if kind not in self._maps:
+            return value
+        bucket = self._maps[kind]
+        if value in bucket:
+            return bucket[value]
+        self._counters[kind] += 1
+        handle = f"{self._PREFIXES[kind]}_{self._counters[kind]}"
+        bucket[value] = handle
+        return handle
+
+    def mapping(self) -> list[tuple[str, str]]:
+        """Flat ordered list of `(handle, original)` pairs for the
+        terminal printout. Order: handles by kind (SSID first, then
+        AP, IP, HOST, BLE, MAC), within each kind by first-seen
+        index (1, 2, 3, ...)."""
+        out: list[tuple[str, str]] = []
+        for kind in self._PREFIXES:
+            for original, handle in self._maps[kind].items():
+                out.append((handle, original))
+        # Stable sort by (prefix, numeric-index).
+        def _key(pair: tuple[str, str]) -> tuple[str, int]:
+            handle, _ = pair
+            prefix, _, idx = handle.partition("_")
+            try:
+                return (prefix, int(idx))
+            except ValueError:
+                return (prefix, 0)
+        out.sort(key=_key)
+        return out
+
+
+def render_markdown(
+    report: Report,
+    *,
+    anonymizer: "Anonymizer | None" = None,
+) -> str:
+    """Markdown rendition of the report, intended for LLM consumption.
+
+    Mirrors the terminal `render()` content but uses Markdown
+    headings, fenced code blocks for ASCII charts, and tables for
+    ranked data so an LLM can navigate sections cleanly.
+
+    When `anonymizer` is non-None, identifying fields are replaced
+    with stable handles before being written to the Markdown
+    output. The handle-↔-original mapping does NOT appear in the
+    Markdown — only the CLI prints it to stdout (see the
+    `## Anonymization` placeholder).
+    """
+    a = anonymizer
+    def ax(kind: str, value: str | None) -> str:
+        if a is None or value is None:
+            return value or ""
+        return a.map(kind, value) or ""
+
+    lines: list[str] = []
+    lines.append("# diting analysis report")
+    lines.append("")
+    enable_cross = (
+        len(report.source_paths) > 1 or report.since is not None
+    )
+
+    # ---- Scope
+    if enable_cross:
+        if report.span_start and report.span_end:
+            span_days = (report.span_end - report.span_start).days
+            span_str = (
+                f"{report.span_start.date().isoformat()} → "
+                f"{report.span_end.date().isoformat()} ({span_days} days)"
+            )
+        else:
+            span_str = "(no events)"
+        since_str = (
+            _format_duration(report.since.total_seconds())
+            if report.since is not None else "none"
+        )
+        lines.append(
+            f"**Scope:** {len(report.source_paths) or 1} files · "
+            f"{span_str} · `--since {since_str}`",
+        )
+        lines.append("")
+
+    # ---- Counts
+    if report.counts_by_type:
+        lines.append("## Total events by type")
+        lines.append("")
+        lines.append("| Type | Count |")
+        lines.append("|---|---:|")
+        for k, v in sorted(report.counts_by_type.items()):
+            lines.append(f"| `{k}` | {v} |")
+        lines.append(f"| **total** | **{report.total_events}** |")
+        lines.append("")
+
+    # ---- Connection summary
+    if report.associations:
+        ssid, bssid = report.associations[-1]
+        lines.append("## Latest association")
+        lines.append("")
+        lines.append(
+            f"- SSID: `{ax('ssid', ssid) or '?'}`"
+        )
+        lines.append(
+            f"- BSSID: `{ax('bssid', bssid) or '?'}`"
+        )
+        lines.append("")
+
+    # ---- Heuristic insights
+    if report.insights:
+        lines.append("## Per-session heuristic insights")
+        lines.append("")
+        for ins in report.insights:
+            lines.append(f"### {ins.title}")
+            lines.append("")
+            lines.append(f"**Severity:** {ins.severity}")
+            lines.append("")
+            for line in ins.detail.splitlines() or [""]:
+                lines.append(line)
+            if ins.todo:
+                lines.append("")
+                lines.append(f"**TODO:** {ins.todo}")
+            lines.append("")
+
+    # ---- Cross-session blocks
+    if enable_cross and report.hour_of_day:
+        lines.append("## Events by hour-of-day")
+        lines.append("")
+        totals = {
+            h: sum(report.hour_of_day[h].values()) for h in range(24)
+        }
+        lines.append("| Hour | Total | Top type |")
+        lines.append("|---:|---:|---|")
+        for h in range(24):
+            top = (
+                max(report.hour_of_day[h].items(), key=lambda kv: kv[1])[0]
+                if report.hour_of_day[h] else "—"
+            )
+            lines.append(f"| {h:02d} | {totals[h]} | `{top}` |")
+        lines.append("")
+
+    if enable_cross and report.day_of_week_x_hour:
+        lines.append("## Day × hour heatmap (density)")
+        lines.append("")
+        lines.append("```text")
+        max_cell = max(
+            (max(row) for row in report.day_of_week_x_hour),
+            default=0,
+        )
+        if max_cell > 0:
+            names = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+            for i, row in enumerate(report.day_of_week_x_hour):
+                cells = "".join(
+                    _density_char(v, max_cell) for v in row
+                )
+                lines.append(f"  {names[i]}  {cells}")
+            lines.append("       0   6   12  18  23")
+        lines.append("```")
+        lines.append("")
+
+    if enable_cross and report.per_network:
+        lines.append("## Top networks by event volume")
+        lines.append("")
+        lines.append("| Network | Events | Breakdown |")
+        lines.append("|---|---:|---|")
+        for n in report.per_network[:10]:
+            if a is not None and n.network_label != "(unknown network)":
+                # Rebuild from anonymized parts so both SSID and
+                # BSSID get scrubbed, not just one.
+                a_ssid = ax("ssid", n.ssid) if n.ssid else None
+                a_bssid = ax("bssid", n.bssid) if n.bssid else None
+                if a_ssid and a_bssid:
+                    label = f"{a_ssid} ({a_bssid})"
+                elif a_ssid:
+                    label = a_ssid
+                elif a_bssid:
+                    label = a_bssid
+                else:
+                    label = n.network_label
+            else:
+                label = n.network_label
+            bd = " · ".join(
+                f"{k} {v}" for k, v in sorted(n.counts_by_type.items())
+            )
+            lines.append(f"| {label} | {n.total} | {bd} |")
+        lines.append("")
+
+    if enable_cross and report.daily_trend:
+        lines.append(
+            f"## Daily trend ({len(report.daily_trend)}-day window)"
+        )
+        lines.append("")
+        lines.append("```text")
+        max_total = max((d.total for d in report.daily_trend), default=0)
+        spark = "".join(
+            _density_char(d.total, max_total)
+            for d in report.daily_trend
+        )
+        lines.append(f"  total  {spark}")
+        lines.append("```")
+        lines.append("")
+        lines.append("| Date | Total | 7-day avg |")
+        lines.append("|---|---:|---:|")
+        for d in report.daily_trend:
+            lines.append(
+                f"| {d.date} | {d.total} | {d.rolling_7d_avg:.1f} |"
+            )
+        lines.append("")
+
+    if enable_cross and report.top_contributors is not None:
+        tc = report.top_contributors
+        lines.append("## Top contributors")
+        lines.append("")
+        if tc.bssids:
+            lines.append("### BSSIDs (by `roam` + `rf_stir` count)")
+            lines.append("")
+            lines.append("| BSSID | roam + stir |")
+            lines.append("|---|---:|")
+            for b in tc.bssids:
+                lines.append(
+                    f"| `{ax('bssid', b.bssid)}` "
+                    f"| {b.roam_count + b.stir_count} |"
+                )
+            lines.append("")
+        if tc.ble_identifiers:
+            lines.append("### BLE identifiers (by `ble_device_seen` count)")
+            lines.append("")
+            lines.append("| Identifier | Seen |")
+            lines.append("|---|---:|")
+            for ble in tc.ble_identifiers:
+                label = (
+                    ax("ble", ble.identifier)
+                    if a is not None
+                    else ble.label
+                )
+                lines.append(f"| `{label}` | {ble.seen_count} |")
+            lines.append("")
+        if tc.lan_hosts:
+            lines.append(
+                "### LAN hosts (by `lan_host_dhcp_rotation` count)",
+            )
+            lines.append("")
+            lines.append("| MAC | DHCP rotations |")
+            lines.append("|---|---:|")
+            for lan in tc.lan_hosts:
+                label = (
+                    ax("mac", lan.mac) if a is not None else lan.label
+                )
+                lines.append(f"| `{label}` | {lan.rotation_count} |")
+            lines.append("")
+
+    # ---- Glossary (always included — LLM benefits regardless of mode)
+    lines.append("## Glossary")
+    lines.append("")
+    lines.append(
+        "- `rf_stir` — RSSI variance crossed a threshold; the "
+        "ambient RF environment is moving. Modes: `co_located` "
+        "(multiple BSSIDs of the same physical AP both stirred — "
+        "likely real motion); `spatial_channel` (one BSSID "
+        "stirred, neighbours quiet — likely interference or "
+        "client-side hardware quirk)."
+    )
+    lines.append(
+        "- `roam` — the client's associated BSSID changed. "
+        "`kind=band_switch` is between two radios of the same "
+        "physical AP (e.g. 2.4 → 5 GHz on the same hardware); "
+        "`kind=inter_ap` is between physically distinct APs."
+    )
+    lines.append(
+        "- `latency_spike` / `loss_burst` — gateway- or "
+        "WAN-anchored RTT exceeded thresholds (>200 ms AND >5× "
+        "median for spikes; 3 of last 5 probes lost for bursts)."
+    )
+    lines.append(
+        "- `link_state` — `associated` / `disassociated` "
+        "transitions on the active Wi-Fi interface."
+    )
+    lines.append(
+        "- `ble_device_seen` / `ble_device_left` — a BLE device "
+        "(advertising OR connected) entered or aged out of the "
+        "tracked-state map. No debounce; even single-advertisement "
+        "ghost MACs fire one event each."
+    )
+    lines.append(
+        "- `bonjour_service_seen` / `bonjour_service_left` — an "
+        "mDNS service-instance was first observed or removed."
+    )
+    lines.append(
+        "- `lan_host_seen` / `lan_host_left` / "
+        "`lan_host_dhcp_rotation` — a LAN host (non-self / "
+        "non-gateway) joined / departed / changed IP within "
+        "the local /24 sweep."
+    )
+    lines.append("")
+
+    # ---- Anonymization appendix (placeholder)
+    if a is not None:
+        lines.append("## Anonymization")
+        lines.append("")
+        lines.append(
+            "Anonymization is active. The handle ↔ original "
+            "mappings were printed to your terminal when this "
+            "report was generated. **Keep that mapping private** — "
+            "pasting it into a public LLM chat defeats the "
+            "anonymization purpose."
+        )
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def build_llm_prompt(report: Report) -> str:
+    """Compose the analyst prompt for `prompt.txt`.
+
+    Substitutes `<span>` and `<files>` from the report context.
+    The rest of the text is constant.
+    """
+    if report.span_start and report.span_end:
+        span_str = (
+            f"{report.span_start.date().isoformat()} → "
+            f"{report.span_end.date().isoformat()}"
+        )
+    else:
+        span_str = "an unknown span"
+    files = len(report.source_paths) or 1
+    return (
+        f"You are a wireless / network analyst reviewing a "
+        f"`diting` report (macOS terminal Wi-Fi / BLE / LAN "
+        f"monitor). The report covers {span_str} across {files} "
+        f"session log(s).\n\n"
+        f"Your task:\n\n"
+        f"1. Identify the top 3 patterns the data supports.\n"
+        f"2. For each pattern, name the most likely root cause "
+        f"and the evidence in the report that supports it.\n"
+        f"3. Suggest concrete follow-up investigations the user "
+        f"could run with diting (e.g. \"capture during Tuesday "
+        f"14:00-15:00 with --log and re-analyze\").\n"
+        f"4. Where ASCII charts in the report suggest a trend, "
+        f"restate the trend as a one-line claim and tag it with "
+        f"one of: \"supported by data\", \"weak signal\", "
+        f"\"speculative\".\n"
+        f"5. If the report includes an Anonymization appendix, "
+        f"do NOT try to decode the handles — analyze using the "
+        f"handles as opaque identifiers.\n\n"
+        f"Output format: markdown. Don't repeat the report data "
+        f"verbatim — interpret it. Lead with conclusions, then "
+        f"evidence. Mark any inference beyond what the data "
+        f"shows as \"hypothesis\".\n\n"
+        f"Important: don't speculate about causes the data "
+        f"doesn't touch. If something looks suspicious but you "
+        f"can't point to specific events in the report, say so.\n"
+    )
 
 
 def render(report: Report) -> str:
