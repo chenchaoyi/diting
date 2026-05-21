@@ -111,6 +111,24 @@ BSSID. Same path as menu-off-then-on, in one keystroke.
   unexplained RF variance — diting names what changed and when.
   Long-running sessions land in `--log` JSONL for after-the-fact
   analysis with `diting analyze`.
+- **See patterns across weeks of sessions.** Point `diting
+  analyze` at multiple JSONL files (shell glob) with an optional
+  `--since 7d` window and it surfaces the patterns single-session
+  reports miss: an hour-of-day chart, a day×hour heatmap, a
+  per-network event-volume ranking, a daily trend with 7-day
+  rolling average, and a top-contributors block — which BSSIDs /
+  BLE devices / LAN hosts caused the most churn over the window.
+  The JSONL log itself captures BLE / Bonjour / LAN transition
+  events alongside the Wi-Fi state, so the aggregations work over
+  the full event vocabulary.
+- **Hand it to ChatGPT or Claude for richer interpretation.**
+  `diting analyze --for-llm` writes a Markdown report + a paste-
+  ready analyst prompt; drag the report into chat.openai.com or
+  claude.ai, paste the prompt, get back pattern clustering and
+  hypothesis-ranking. Add `--anonymize` to scrub SSIDs / BSSIDs /
+  RFC1918 IPs / hostnames / BLE identifiers before pasting into
+  a public LLM. The handle↔original mapping prints to your
+  terminal only — never into the bundle.
 - **(Future) Room-presence sensing.** Long-term, hardware-assisted
   flagship. See [Roadmap](#roadmap).
 
@@ -182,6 +200,81 @@ uv run diting
 same machine — the developer flow keeps picking up the in-repo
 helper, the installed binary uses its own copy under Application
 Support.
+
+## After-the-fact analysis (`diting analyze`)
+
+Run `diting analyze <log.jsonl>` against a `--log`-produced
+JSONL to get a rule-based report — heuristics that name what
+went wrong (`Frequent inter-AP roams`, `Real packet loss
+observed`, `Repeated disassociations`, etc.) plus a connection
+timeline and an actionable TODO list per insight.
+
+Point it at multiple files (shell glob) with an optional
+`--since DURATION` filter to surface patterns single-session
+reports can't:
+
+```bash
+diting analyze 'diting-*.jsonl' --since 30d
+```
+
+…produces (on top of the per-session block):
+
+- **Scope header** — file count, observed span, active filter
+- **Events by hour-of-day** — 24-row ASCII bar chart
+- **Day × hour heatmap** — 7×24 density grid using
+  `▁▂▃▄▅▆▇█` so weekend mornings and weekday lunch hours pop
+  out visually
+- **Top networks** — events per associated BSSID, ranked
+- **Daily trend** — per-day total + 7-day rolling average
+- **Top contributors** — three sub-rankings: BSSIDs by
+  roam + RF-stir count; BLE identifiers by `seen` count
+  (catches privacy-rotating devices); LAN hosts by
+  DHCP-rotation count
+
+`--since` accepts `30d` / `7d` / `24h` / `90m` / `60s`.
+Single-file no-`--since` invocations keep the original
+per-session layout verbatim — the cross-session blocks only
+render when the user is genuinely doing a multi-session view.
+
+### Pass the data to ChatGPT or Claude for richer interpretation
+
+```bash
+diting analyze 'diting-*.jsonl' --since 30d --for-llm
+```
+
+Writes a paste-ready bundle to `./diting-llm-<timestamp>/`:
+
+- `report.md` — Markdown rendition of the same analysis the
+  terminal produces, with tables for ranked data, fenced
+  code blocks for the ASCII charts, and a glossary section
+  defining diting-specific terms so the LLM doesn't have
+  to guess.
+- `prompt.txt` — a paste-ready analyst prompt that asks the
+  LLM to identify the top patterns the data supports, name
+  likely root causes + supporting evidence, suggest follow-up
+  investigations, and label any inferences as "hypothesis"
+  rather than "fact".
+
+The CLI then prints a four-step paste workflow (open
+chat.openai.com / claude.ai → drag-drop the `.md` → paste
+the prompt → submit). No API key, no telemetry, no upload —
+diting writes the files locally and the user controls who
+sees them.
+
+Add `--anonymize` when pasting into a public LLM:
+
+```bash
+diting analyze 'diting-*.jsonl' --since 30d --for-llm --anonymize
+```
+
+SSIDs / BSSIDs / RFC1918 IPs / hostnames / BLE identifiers /
+LAN MACs get replaced with stable handles (`SSID_1`, `AP_1`,
+`IP_1`, `HOST_1`, `BLE_1`, `MAC_1`). Public IPs (`8.8.8.8`,
+`1.1.1.1`) and vendor names (`Apple, Inc.`, `Cisco Systems`)
+pass through unchanged. The handle↔original mapping prints
+to terminal stdout only — never into the bundle — so you can
+decode the LLM's references later without leaking the mapping
+into the chat.
 
 ## Switching language
 
