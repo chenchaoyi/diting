@@ -10,6 +10,9 @@
 
 ## [Unreleased]
 
+### 变更
+- **BLE 匿名广播 presence gate，默认 5 s。** `BLEPoller` 不再在匿名广播（只有 vendor + RSSI，没有 `name`）首次出现时就发 `BLEDeviceSeenEvent`。identifier 进入 PENDING 状态，必须被持续观察至少 `presence_gate_s` 秒才会 graduate 到 PRESENT、发 `seen`。如果 identifier 在 gate 成熟之前就被 TTL 清掉了，**什么事件都不发** —— 既无 `seen` 也无 `left`，干掉密集 RF 环境里那种 `seen_for=0s` 单包 ghost 闪现。带 `name` 的广播（`Magic Keyboard`、`Z-GM0YXG5J`、`ccy iPhone 15 Pro Max`）和已连接外设（`_connected` 快照）不走 gate —— 第一次观察就发 `seen`，只对匿名广播加门。新增 CLI flag `--ble-presence-gate DURATION`（`5s` / `30s` / `2m`，或 `0` 关闭）和 `DITING_BLE_PRESENCE_GATE` 环境变量；CLI 优先于 env，默认 5 s。`0` 恢复 A1 「记一切」语义，给想抓住每一个瞬态广播的用户（安全研究、AirTag 寻找、短广播调试）用。
+
 ### 修复
 - **事件面板英文写「joined」、但事件其实是 `*_seen`。** EN UI 把 `ble_device_seen` / `bonjour_service_seen` / `lan_host_seen` 渲染成 `[BLE] device joined:` / `[BJ] service joined:` / `[LAN] host joined:`，但 ZH 一直是 `设备出现 / 服务出现 / 主机出现`，JSONL `type` 字段一直是 `*_seen`。"joined" 还会让人误以为「配对 / 关联」—— 实际事件触发的是首次被动观察到，包括路过的陌生人手机。把三个 EN i18n key 改为 `device seen: ` / `service seen: ` / `host seen: `；ZH 不变。
 - **事件过滤页脚仍写 `1/2/3/4/0`，A1 早就加了 `5/6/7`。** EventsScreen 过滤循环自 A1 起已经是八桶（`ble` / `bonjour` / `lan` 绑定到 `5` / `6` / `7`），按键也接好了，但事件弹窗页脚 + 帮助弹窗里的「Events modal (m)」段落（EN + ZH 共四处）还在只列旧的五个键。统一改为 `1/2/3/4/5/6/7/0`，让新加的过滤桶在 TUI 里就能被发现。

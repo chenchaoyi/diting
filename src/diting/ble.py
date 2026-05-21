@@ -1301,6 +1301,17 @@ class BLEPoller:
         # within "feels live". 1 s caused neighbouring rows to swap
         # on every render even when nothing real had changed.
         snapshot_interval_s: float = 2.0,
+        # Anonymous-advert presence gate. An identifier whose first
+        # observation has no helper-given `name` must be observed
+        # for at least this many seconds (i.e. graduate from PENDING
+        # to PRESENT) before BLEDeviceSeenEvent fires. 5 s default
+        # kills single-packet ghost flicker (the dominant source of
+        # `seen_for=0s` events in dense RF) while keeping legitimate
+        # walk-bys (5-30 s typical) and static nearby devices.
+        # Named adverts and connected peripherals bypass the gate
+        # — they're already high-confidence. 0 disables the gate
+        # entirely, restoring the original record-everything contract.
+        presence_gate_s: float = 5.0,
         vendors: dict[int, str] | None = None,
         ouis: dict[str, str] | None = None,
         member_uuids: dict[str, str] | None = None,
@@ -1309,6 +1320,7 @@ class BLEPoller:
         self._helper_path = helper_path
         self._ttl_s = ttl_s
         self._snapshot_interval_s = snapshot_interval_s
+        self._presence_gate_s = presence_gate_s
         self._vendors = vendors if vendors is not None else load_vendors()
         # OUI lookup is only consulted for connected peripherals (which
         # arrive without manufacturer_data). Lazy-load on first use; the
@@ -1336,6 +1348,15 @@ class BLEPoller:
         # so a peripheral that connects then disappears doesn't
         # double-emit.
         self._seen_identifiers: set[str] = set()
+        # Identifiers in PENDING — observed at least once, but their
+        # first observation was anonymous (no helper-given `name`)
+        # so they're holding for the presence-gate window before
+        # graduating to PRESENT. Maps identifier → wall-clock time of
+        # the first observation. Entries are removed on graduation
+        # (moved to `_seen_identifiers`) OR on silent eviction
+        # (identifier disappears from `_devices` before the gate
+        # matures — no events emitted, identifier returns to INIT).
+        self._pending_seen: dict[str, datetime] = {}
         # Identifiers we've already emitted a `left` event for this
         # session. Used to gate `BLEDeviceLeftEvent` so an identifier
         # that flaps in and out of `_devices` (edge-of-range device
@@ -1484,24 +1505,61 @@ class BLEPoller:
 
         Side effects: appends transition events to
         `_pending_transitions`, expires stale entries from
-        `_devices` (via `expire_devices`), and updates
-        `_seen_identifiers` with first-time observations.
+        `_devices` (via `expire_devices`), updates `_seen_identifiers`
+        with graduated observations, and threads new anonymous
+        identifiers through `_pending_seen` until the presence-gate
+        elapses (or until they vanish, in which case they're dropped
+        silently — no seen, no left).
+
+        Identifiers already in `_seen_identifiers` or
+        `_departed_identifiers` are not re-evaluated.
         """
-        # Newcomers BEFORE expire so an advert that arrived just
-        # before this tick AND aged out in the same tick still fires
-        # its seen event. (User chose "record everything" — no debounce.)
+        # Advertising-path graduation. Walk BEFORE the expire pass so
+        # an identifier that graduates on this tick can still fire its
+        # left event if TTL evicts it in the same tick (sub-snapshot
+        # race; preserves the seen-then-left ordering invariant).
         for ident in list(self._devices.keys()):
-            if ident not in self._seen_identifiers:
-                dev = self._devices[ident]
-                self._pending_transitions.append(BLEDeviceSeenEvent(
-                    timestamp=now,
-                    identifier=ident,
-                    name=dev.name,
-                    vendor=dev.vendor,
-                    rssi_dbm=dev.rssi_dbm,
-                    service_categories=_ble_service_categories(dev),
-                ))
-                self._seen_identifiers.add(ident)
+            if ident in self._seen_identifiers:
+                continue
+            if ident in self._departed_identifiers:
+                continue
+            dev = self._devices[ident]
+            # Bypass conditions: named device, OR gate disabled.
+            # Named adverts are almost always real devices with
+            # stable identity (Magic Keyboard, Z-GM0YXG5J, etc.) —
+            # waiting on them would make the events log lag the BLE
+            # list. Anonymous adverts (vendor + RSSI only) are the
+            # noise source we're gating.
+            bypass = dev.name is not None or self._presence_gate_s <= 0
+            first_seen_at = self._pending_seen.get(ident)
+            if first_seen_at is None:
+                # First observation. Remember the wall-clock so a
+                # later tick can graduate this identifier.
+                first_seen_at = now
+                if not bypass:
+                    self._pending_seen[ident] = first_seen_at
+            graduates = bypass or (
+                (now - first_seen_at).total_seconds() >= self._presence_gate_s
+            )
+            if not graduates:
+                continue
+            # Emit seen with the device's own first_seen timestamp,
+            # NOT the graduation wall-clock — the JSONL log should
+            # answer "when did the device appear", not "when did the
+            # poller become confident".
+            ts = dev.first_seen or first_seen_at
+            self._pending_transitions.append(BLEDeviceSeenEvent(
+                timestamp=ts,
+                identifier=ident,
+                name=dev.name,
+                vendor=dev.vendor,
+                rssi_dbm=dev.rssi_dbm,
+                service_categories=_ble_service_categories(dev),
+            ))
+            self._seen_identifiers.add(ident)
+            self._pending_seen.pop(ident, None)
+        # Connected peripherals always bypass the gate — they're
+        # bonded by definition.
         for ident in list(self._connected.keys()):
             if ident not in self._seen_identifiers:
                 dev = self._connected[ident]
@@ -1514,13 +1572,28 @@ class BLEPoller:
                     service_categories=_ble_service_categories(dev),
                 ))
                 self._seen_identifiers.add(ident)
-        # Expire TTL'd advertising entries. Emit left for each.
+        # Expire TTL'd advertising entries. Emit left ONLY for
+        # identifiers that previously graduated to PRESENT — a
+        # PENDING identifier that never made it past the gate
+        # leaves silently (no seen, no left).
         before = self._devices
         self._devices = expire_devices(
             self._devices, now=now, ttl_s=self._ttl_s,
         )
+        # Drop PENDING entries whose underlying _devices entry has
+        # gone away before the gate matured. Silent — no seen event
+        # ever fired for these, so no left event either. Done after
+        # expire so newly-aged-out entries are caught.
+        for ident in list(self._pending_seen):
+            if ident not in self._devices:
+                self._pending_seen.pop(ident)
         for ident, dev in before.items():
             if ident in self._devices:
+                continue
+            if ident not in self._seen_identifiers:
+                # Never graduated to PRESENT (still in PENDING or
+                # silently dropped). No paired seen exists, so no
+                # left either.
                 continue
             if ident in self._departed_identifiers:
                 continue

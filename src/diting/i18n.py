@@ -508,6 +508,13 @@ _ZH: dict[str, str] = {
     "              Same schema as `diting monitor`; append-mode + line-\n"
     "              flushed so already-emitted events survive Ctrl+C / kill /\n"
     "              traceback. Env: DITING_LOG=PATH (or =auto for default).\n"
+    "  --ble-presence-gate D\n"
+    "              anonymous BLE adverts must be observed for at least D\n"
+    "              (e.g. 5s, 30s, 2m) before they emit transition events.\n"
+    "              Suppresses single-packet ghost flicker in dense RF\n"
+    "              environments. Default 5s; 0 restores record-everything.\n"
+    "              Named devices + connected peripherals bypass the gate.\n"
+    "              Env: DITING_BLE_PRESENCE_GATE=D.\n"
     "  --version   print the running version and exit\n"
     "  -h, --help  show this message\n":
         "用法：diting [--lang en|zh] [--log [PATH]] [子命令]\n"
@@ -529,6 +536,12 @@ _ZH: dict[str, str] = {
         "              schema 与 `diting monitor` 一致，append 模式 + 行\n"
         "              刷新，已写入的事件 Ctrl+C / kill / traceback 后都\n"
         "              留在文件里。环境变量：DITING_LOG=PATH 或 =auto。\n"
+        "  --ble-presence-gate D\n"
+        "              匿名 BLE 广播必须被持续观察到至少 D（例如 5s / 30s\n"
+        "              / 2m）才会发出现 / 消失事件。压制密集 RF 环境里的\n"
+        "              单包 ghost 闪现。默认 5s；填 0 恢复「记一切」语义。\n"
+        "              带 name 的设备和已连接外设不走 gate，第一次就发\n"
+        "              出现事件。环境变量：DITING_BLE_PRESENCE_GATE=D。\n"
         "  --version   打印当前版本号后退出\n"
         "  -h, --help  显示本说明\n",
     "diting: unknown subcommand {cmd!r}":

@@ -1604,3 +1604,160 @@ def test_poller_connected_peripheral_does_not_re_emit_seen():
     seen_second = [t for t in second if isinstance(t, BLEDeviceSeenEvent)]
     assert len(seen_first) == 1
     assert seen_second == []
+
+
+# ------------------------------------------------------------------
+# Presence gate: anonymous adverts hold in PENDING until they've
+# been observed for `presence_gate_s` seconds. Named devices and
+# connected peripherals bypass the gate.
+# ------------------------------------------------------------------
+
+
+def test_poller_anonymous_advert_below_gate_emits_no_seen_no_left():
+    """An anonymous identifier that ages out before the gate
+    elapses leaves NO transition events behind. Models the
+    single-packet ghost flicker that motivated the gate."""
+    from datetime import timedelta
+    from diting.events import BLEDeviceLeftEvent, BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake", ttl_s=3.0, presence_gate_s=5.0)
+    t0 = datetime(2026, 5, 21, 12, 0, 0, tzinfo=timezone.utc)
+    # Anonymous: name=None
+    poller._devices["MAC_A"] = _build_ble_device(
+        "MAC_A", name=None, first_seen=t0, last_seen=t0,
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=1))
+    out_1 = poller.drain_transitions()
+    assert [t for t in out_1 if isinstance(t, BLEDeviceSeenEvent)] == []
+    # `MAC_A` is in PENDING.
+    assert "MAC_A" in poller._pending_seen
+
+    # Advance past TTL (3s) but before gate (5s). Device is evicted.
+    poller._detect_transitions(t0 + timedelta(seconds=4))
+    out_2 = poller.drain_transitions()
+    assert [t for t in out_2 if isinstance(t, BLEDeviceSeenEvent)] == []
+    assert [t for t in out_2 if isinstance(t, BLEDeviceLeftEvent)] == []
+    # PENDING cleared, no graduation.
+    assert "MAC_A" not in poller._pending_seen
+    assert "MAC_A" not in poller._seen_identifiers
+
+
+def test_poller_anonymous_advert_graduates_after_gate_elapses():
+    """An anonymous identifier kept alive past the gate threshold
+    fires seen with the device's first_seen timestamp, then on TTL
+    eviction fires left with the full seen_for duration."""
+    from datetime import timedelta
+    from diting.events import BLEDeviceLeftEvent, BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0, presence_gate_s=5.0)
+    t0 = datetime(2026, 5, 21, 12, 0, 0, tzinfo=timezone.utc)
+    poller._devices["MAC_A"] = _build_ble_device(
+        "MAC_A", name=None, first_seen=t0, last_seen=t0,
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=1))
+    poller.drain_transitions()  # discard
+    # Refresh last_seen, simulating subsequent adverts arriving.
+    poller._devices["MAC_A"] = _build_ble_device(
+        "MAC_A", name=None,
+        first_seen=t0, last_seen=t0 + timedelta(seconds=5),
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=6))
+    out = poller.drain_transitions()
+    seens = [t for t in out if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seens) == 1
+    # Timestamp matches the device's original first_seen, NOT the
+    # wall-clock at graduation.
+    assert seens[0].timestamp == t0
+
+    # Now age out and assert left fires (gate-graduated → present →
+    # eligible for left).
+    poller._detect_transitions(t0 + timedelta(seconds=60))
+    out2 = poller.drain_transitions()
+    lefts = [t for t in out2 if isinstance(t, BLEDeviceLeftEvent)]
+    assert len(lefts) == 1
+    assert lefts[0].seen_for_seconds == 5.0
+
+
+def test_poller_named_first_advert_bypasses_gate():
+    """A first advert that carries a `name` fires seen on the
+    same tick, regardless of presence_gate_s. The events log
+    must not lag the BLE list for paired peripherals."""
+    from diting.events import BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0, presence_gate_s=60.0)
+    t0 = datetime(2026, 5, 21, 12, 0, 0, tzinfo=timezone.utc)
+    poller._devices["MAC_A"] = _build_ble_device(
+        "MAC_A", name="Magic Keyboard", first_seen=t0,
+    )
+    poller._detect_transitions(t0)
+    out = poller.drain_transitions()
+    seens = [t for t in out if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seens) == 1
+    # Did NOT pass through PENDING.
+    assert "MAC_A" not in poller._pending_seen
+
+
+def test_poller_connected_peripheral_bypasses_gate():
+    """A connected peripheral (entry in `_connected`) fires seen
+    on the same tick regardless of gate setting. Bonded
+    peripherals are by-definition high-confidence."""
+    from diting.events import BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0, presence_gate_s=60.0)
+    poller._connected["UUID_1"] = _build_ble_device(
+        "UUID_1", name="AirPods", vendor="Apple, Inc.",
+    )
+    now = datetime(2026, 5, 21, 12, 0, 0, tzinfo=timezone.utc)
+    poller._detect_transitions(now)
+    out = poller.drain_transitions()
+    seens = [t for t in out if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seens) == 1
+    assert "UUID_1" not in poller._pending_seen
+
+
+def test_poller_presence_gate_zero_restores_no_debounce():
+    """`presence_gate_s = 0` returns to the A1 contract: every
+    first observation (even anonymous) fires seen immediately,
+    with no PENDING state."""
+    from diting.events import BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0, presence_gate_s=0.0)
+    t0 = datetime(2026, 5, 21, 12, 0, 0, tzinfo=timezone.utc)
+    poller._devices["MAC_A"] = _build_ble_device(
+        "MAC_A", name=None, first_seen=t0,
+    )
+    poller._detect_transitions(t0)
+    out = poller.drain_transitions()
+    seens = [t for t in out if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seens) == 1
+    assert "MAC_A" not in poller._pending_seen
+
+
+def test_poller_pending_identifier_graduates_when_name_appears_in_later_advert():
+    """If an identifier's first advert is anonymous but a later
+    advert (e.g. a scan-response) carries a name before the gate
+    elapses, the identifier graduates immediately. `_build_device`
+    already carries the name forward via `prior`."""
+    from datetime import timedelta
+    from diting.events import BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0, presence_gate_s=10.0)
+    t0 = datetime(2026, 5, 21, 12, 0, 0, tzinfo=timezone.utc)
+    poller._devices["MAC_A"] = _build_ble_device(
+        "MAC_A", name=None, first_seen=t0, last_seen=t0,
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=1))
+    assert "MAC_A" in poller._pending_seen
+    # Later advert carries the name.
+    poller._devices["MAC_A"] = _build_ble_device(
+        "MAC_A", name="Magic Keyboard",
+        first_seen=t0, last_seen=t0 + timedelta(seconds=3),
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=4))
+    out = poller.drain_transitions()
+    seens = [t for t in out if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seens) == 1
+    assert seens[0].name == "Magic Keyboard"
+    # Out of PENDING, into PRESENT.
+    assert "MAC_A" not in poller._pending_seen
+    assert "MAC_A" in poller._seen_identifiers

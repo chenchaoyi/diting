@@ -714,6 +714,13 @@ def _usage() -> str:
         "              Same schema as `diting monitor`; append-mode + line-\n"
         "              flushed so already-emitted events survive Ctrl+C / kill /\n"
         "              traceback. Env: DITING_LOG=PATH (or =auto for default).\n"
+        "  --ble-presence-gate D\n"
+        "              anonymous BLE adverts must be observed for at least D\n"
+        "              (e.g. 5s, 30s, 2m) before they emit transition events.\n"
+        "              Suppresses single-packet ghost flicker in dense RF\n"
+        "              environments. Default 5s; 0 restores record-everything.\n"
+        "              Named devices + connected peripherals bypass the gate.\n"
+        "              Env: DITING_BLE_PRESENCE_GATE=D.\n"
         "  --version   print the running version and exit\n"
         "  -h, --help  show this message\n"
     )
@@ -838,6 +845,81 @@ def _resolve_log_path(cli_value: str | object | None) -> str | None:
     return env
 
 
+def _extract_ble_presence_gate_arg(argv: list[str]) -> float | None:
+    """Pop ``--ble-presence-gate <duration>`` from ``argv`` in place.
+
+    Returns seconds (float), or ``None`` if the flag is absent (caller
+    then falls back to ``DITING_BLE_PRESENCE_GATE`` env var, then to
+    the BLEPoller default of 5.0 s).
+
+    Accepts both ``--ble-presence-gate 5s`` and
+    ``--ble-presence-gate=5s`` forms. Duration syntax is the same
+    ``<int><unit>`` shape ``diting analyze --since`` accepts (``5s``,
+    ``30s``, ``2m``, ``1h``); ``0`` (no unit) is also accepted as a
+    shortcut for ``0s`` since "disable the gate" is a common ask.
+
+    Invalid input triggers SystemExit so the caller does not have to
+    repeat the validation.
+    """
+    from . import analyze
+    raw: str | None = None
+    for i, arg in enumerate(argv):
+        if arg == "--ble-presence-gate":
+            if i + 1 >= len(argv):
+                print(t(
+                    "--ble-presence-gate requires a duration "
+                    "(e.g. --ble-presence-gate 5s)",
+                ), file=sys.stderr)
+                sys.exit(2)
+            raw = argv[i + 1]
+            del argv[i:i + 2]
+            break
+        if arg.startswith("--ble-presence-gate="):
+            raw = arg.split("=", 1)[1]
+            del argv[i]
+            break
+    if raw is None:
+        return None
+    if raw == "0":
+        return 0.0
+    try:
+        return analyze.parse_since(raw).total_seconds()
+    except ValueError as exc:
+        print(t(
+            "--ble-presence-gate: invalid duration {raw!r}: {exc}",
+            raw=raw, exc=str(exc),
+        ), file=sys.stderr)
+        sys.exit(2)
+
+
+def _resolve_ble_presence_gate(cli_value: float | None) -> float:
+    """Pick the active presence-gate seconds:
+    CLI value > DITING_BLE_PRESENCE_GATE env var > 5.0 default.
+
+    A blank env var is treated as absent so a parent shell can leave
+    the default in place with ``DITING_BLE_PRESENCE_GATE= diting``.
+    """
+    if cli_value is not None:
+        return cli_value
+    from . import analyze
+    env = (os.environ.get("DITING_BLE_PRESENCE_GATE") or "").strip()
+    if not env:
+        return 5.0
+    if env == "0":
+        return 0.0
+    try:
+        return analyze.parse_since(env).total_seconds()
+    except ValueError:
+        # Env var with bad shape: warn once on stderr, fall back to
+        # default rather than refusing to launch.
+        print(t(
+            "warning: DITING_BLE_PRESENCE_GATE={env!r} is not a "
+            "valid duration; using 5s default",
+            env=env,
+        ), file=sys.stderr)
+        return 5.0
+
+
 def _extract_notify_arg(argv: list[str]) -> bool:
     """Pop ``--notify`` from ``argv`` in place; return True if present.
 
@@ -856,7 +938,10 @@ def _extract_notify_arg(argv: list[str]) -> bool:
 
 
 def _run_tui(
-    *, log_path: str | None = None, notify: bool = False,
+    *,
+    log_path: str | None = None,
+    notify: bool = False,
+    ble_presence_gate_s: float = 5.0,
 ) -> None:
     # Imported lazily so `diting once` and `diting watch` do not
     # pull in textual / rich on every invocation.
@@ -882,6 +967,7 @@ def _run_tui(
         backend, inv,
         scan_interval=_scan_interval(),
         ble_helper_path=ble_binary,
+        ble_presence_gate_s=ble_presence_gate_s,
         event_log_path=log_path,
         notify=notify,
     ).run()
@@ -1118,8 +1204,15 @@ def main() -> None:
     # to parse.
     has_subcommand = any(a in _KNOWN_SUBCOMMANDS for a in args)
     tui_notify = _extract_notify_arg(args) if not has_subcommand else False
+    ble_gate_cli = (
+        _extract_ble_presence_gate_arg(args) if not has_subcommand else None
+    )
     if not args:
-        _run_tui(log_path=log_path, notify=tui_notify)
+        _run_tui(
+            log_path=log_path,
+            notify=tui_notify,
+            ble_presence_gate_s=_resolve_ble_presence_gate(ble_gate_cli),
+        )
         return
     cmd = args[0]
     if cmd == "once":

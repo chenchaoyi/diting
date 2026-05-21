@@ -101,7 +101,12 @@ BSSID. Same path as menu-off-then-on, in one keystroke.
 - **Find Bluetooth things around you.** What IoT is in this room?
   Where's that AirTag? The BLE list resolves vendor + protocol on
   every advertising device; the detail modal's RSSI sparkline lets
-  you walk a target down by signal strength.
+  you walk a target down by signal strength. Anonymous adverts
+  (vendor + RSSI only, no name) are gated by a 5-second presence
+  window before they fire a `seen` event, which kills single-packet
+  ghost flicker in dense RF environments while preserving real
+  walk-bys; tune with `--ble-presence-gate DURATION` (`0` to
+  capture every ephemeral advert).
 - **See who's on your Wi-Fi.** The fourth panel (cycle to it via
   `n`) lists every host on your local subnet — IP, MAC, vendor,
   hostname, Bonjour name. ARP cache + ICMP sweep; no router
