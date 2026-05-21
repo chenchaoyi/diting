@@ -1534,6 +1534,56 @@ def test_poller_emits_left_event_on_ttl_eviction():
     assert left[0].seen_for_seconds == 5.0
 
 
+def test_poller_does_not_re_emit_left_after_identifier_returns_and_evicts_again():
+    """Once an identifier emits its `left`, subsequent flap cycles
+    in the same session are silent. Models the edge-of-range case
+    observed in a 5.6 h capture where one identifier produced
+    229 left events from a single seen — TTL evicted, an advert
+    re-populated `_devices`, TTL evicted again, repeat. The fix
+    gates left-emission on a per-identifier "departed" set so the
+    second eviction (and every subsequent one) produces nothing.
+    """
+    from datetime import timedelta
+    from diting.events import BLEDeviceLeftEvent, BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0)
+    t0 = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+
+    # Tick 1: device arrives → emits seen.
+    poller._devices["MAC_A"] = _build_ble_device(
+        "MAC_A", first_seen=t0, last_seen=t0,
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=1))
+    out_1 = poller.drain_transitions()
+    assert any(isinstance(t, BLEDeviceSeenEvent) for t in out_1)
+
+    # Tick 2: TTL evicts → emits left.
+    poller._detect_transitions(t0 + timedelta(seconds=40))
+    out_2 = poller.drain_transitions()
+    left_2 = [t for t in out_2 if isinstance(t, BLEDeviceLeftEvent)]
+    assert len(left_2) == 1
+
+    # Tick 3: a fresh advert from the same identifier re-populates
+    # `_devices`. This is what the helper does when CoreBluetooth
+    # rediscovers the same peripheral after a brief radio gap.
+    poller._devices["MAC_A"] = _build_ble_device(
+        "MAC_A",
+        first_seen=t0 + timedelta(seconds=60),
+        last_seen=t0 + timedelta(seconds=60),
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=61))
+    out_3 = poller.drain_transitions()
+    # No fresh seen: identifier is in `_seen_identifiers`.
+    assert [t for t in out_3 if isinstance(t, BLEDeviceSeenEvent)] == []
+
+    # Tick 4: TTL evicts the re-introduced entry. Pre-fix this
+    # emitted ANOTHER left. Post-fix: silent.
+    poller._detect_transitions(t0 + timedelta(seconds=100))
+    out_4 = poller.drain_transitions()
+    assert [t for t in out_4 if isinstance(t, BLEDeviceLeftEvent)] == []
+    assert [t for t in out_4 if isinstance(t, BLEDeviceSeenEvent)] == []
+
+
 def test_poller_connected_peripheral_does_not_re_emit_seen():
     """A connected peripheral fires its seen event once and stays
     in `_connected` across subsequent ticks."""

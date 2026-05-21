@@ -149,7 +149,7 @@
 | Categories 诊断行排除协议工具类 GATT 服务 | `test_ble.py::test_service_category_category_only_excludes_protocol_services` |
 | Vendors 诊断行标注 RPA 轮换折叠数 | `test_tui_helpers.py::test_ble_vendors_line_annotates_folded_rotation_count`、`::test_ble_vendors_line_skips_annotation_when_nothing_folded` |
 | BLE 行 Name 列在 helper 没给名字时依次回落到 `type` / `device_class`，最后才显示 `(未知)`；Services 列只保留 service-category（不再重复展示 `type` / `device_class`） | `test_tui_helpers.py::test_ble_row_line_name_uses_helper_name_when_present`、`::test_ble_row_line_name_falls_back_to_type`、`::test_ble_row_line_name_falls_back_to_device_class`、`::test_ble_row_line_name_unknown_when_no_signal`、`::test_ble_label_summary_services_only` |
-| `BLEPoller` 首次看到 identifier 时发 `BLEDeviceSeenEvent`；TTL 失效时发 `BLEDeviceLeftEvent`；不防抖、后续观察不再 re-emit | `test_ble.py::test_poller_emits_seen_event_on_first_observation`、`::test_poller_does_not_re_emit_seen_for_known_identifier`、`::test_poller_emits_left_event_on_ttl_eviction`、`::test_poller_connected_peripheral_does_not_re_emit_seen` |
+| `BLEPoller` 首次看到 identifier 时发 `BLEDeviceSeenEvent`；TTL 失效时发 `BLEDeviceLeftEvent`；不防抖、后续观察不再 re-emit；identifier 在发完 left 之后再次 flap 进 `_devices` 又被 TTL 清掉，本会话内不再发任何事件 | `test_ble.py::test_poller_emits_seen_event_on_first_observation`、`::test_poller_does_not_re_emit_seen_for_known_identifier`、`::test_poller_emits_left_event_on_ttl_eviction`、`::test_poller_connected_peripheral_does_not_re_emit_seen`、`::test_poller_does_not_re_emit_left_after_identifier_returns_and_evicts_again` |
 
 ### `cli`
 
