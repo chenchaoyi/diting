@@ -54,5 +54,5 @@
 
 ## 8. Merge + archive
 
-- [ ] PR open, reviewed, merged
-- [ ] `/opsx:archive add-ble-presence-gate`
+- [x] PR open, reviewed, merged (#111)
+- [x] `/opsx:archive add-ble-presence-gate`
