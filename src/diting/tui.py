@@ -5668,6 +5668,7 @@ class DitingApp(App):
         *,
         scan_interval: float = 7.0,
         ble_helper_path: str | None = None,
+        ble_presence_gate_s: float = 5.0,
         enable_latency: bool = True,
         enable_environment: bool = True,
         calibration_path: str | None = None,
@@ -5739,6 +5740,7 @@ class DitingApp(App):
             helper_path = getattr(backend, "_helper_path", None) or ""
         self._ble_poller: BLEPoller | None = None
         self._ble_helper_path = helper_path
+        self._ble_presence_gate_s = ble_presence_gate_s
         # Latest BLE snapshot — kept fresh in the background regardless
         # of which view is active so toggling is instant. Two parallel
         # buffers: advertising (RSSI-sorted, post-merge) and connected
@@ -5863,7 +5865,10 @@ class DitingApp(App):
             )
         self.run_worker(self._consume_events(), exclusive=True, name="poller")
         if self._ble_helper_path:
-            self._ble_poller = BLEPoller(self._ble_helper_path)
+            self._ble_poller = BLEPoller(
+                self._ble_helper_path,
+                presence_gate_s=self._ble_presence_gate_s,
+            )
             self.run_worker(
                 self._consume_ble_events(), exclusive=False, name="ble-poller",
             )
