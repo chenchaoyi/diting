@@ -10,6 +10,9 @@
 
 ## [Unreleased]
 
+### 修复
+- **BLE `ble_device_left` 重复发送的 bug。** 范围边缘的设备如果广播被 macOS 蓝牙栈短暂卡掉一次，会触发 TTL 失效；紧接着下一条广播又把 `_devices` 填回去、再失效、再发 `BLEDeviceLeftEvent`，循环不止。真实 5.6 小时抓取里有一个 identifier 从单个 seen 派生了 **229** 个 left 事件，整个会话产出 67,548 个 BLE 事件 / 13 MB JSONL。`BLEPoller._detect_transitions` 现在用会话级 `_departed_identifiers` 集合给 left-emission 加门：一个 seen 最多对应一个 left，发完之后该 identifier 本会话内静音。该抓取的 JSONL 体积下降约 63%。
+
 ## [1.4.0] — 2026-05-21
 
 Minor release。长时间线分析这条线整体落地：JSONL 日志里事件

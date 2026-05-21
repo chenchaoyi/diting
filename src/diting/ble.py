@@ -1336,6 +1336,15 @@ class BLEPoller:
         # so a peripheral that connects then disappears doesn't
         # double-emit.
         self._seen_identifiers: set[str] = set()
+        # Identifiers we've already emitted a `left` event for this
+        # session. Used to gate `BLEDeviceLeftEvent` so an identifier
+        # that flaps in and out of `_devices` (edge-of-range device
+        # whose adverts the macOS stack briefly stops delivering)
+        # emits at most one left per session, not one per TTL cycle.
+        # Re-appearance after departure does NOT fire a fresh seen
+        # either — `_seen_identifiers` still gates that. An
+        # identifier is terminal-departed for the rest of the session.
+        self._departed_identifiers: set[str] = set()
         # Transition events (BLEDeviceSeenEvent / BLEDeviceLeftEvent)
         # accumulated during a tick. Consumers call `drain_transitions()`
         # after receiving each `BLEScanUpdate` to pull them — keeps
@@ -1513,6 +1522,8 @@ class BLEPoller:
         for ident, dev in before.items():
             if ident in self._devices:
                 continue
+            if ident in self._departed_identifiers:
+                continue
             self._pending_transitions.append(BLEDeviceLeftEvent(
                 timestamp=now,
                 identifier=ident,
@@ -1526,6 +1537,7 @@ class BLEPoller:
                     else 0.0
                 ),
             ))
+            self._departed_identifiers.add(ident)
 
     async def _snapshot_loop(self) -> None:
         # Always emit at least one snapshot promptly so consumers see

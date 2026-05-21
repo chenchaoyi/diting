@@ -11,6 +11,9 @@ behaviours between releases.
 
 ## [Unreleased]
 
+### Fixed
+- **BLE `ble_device_left` re-emission bug.** A device at the edge of range whose adverts the macOS Bluetooth stack briefly stopped delivering would TTL-evict, re-populate `_devices` from the next advert, evict again, and re-emit `BLEDeviceLeftEvent` on every cycle. One identifier in a real 5.6 h capture produced 229 left events from a single seen — 67,548 BLE events / 13 MB JSONL for the session. `BLEPoller._detect_transitions` now gates left-emission on a per-session `_departed_identifiers` set: at most one left per seen, identifier silent for the rest of the session after departure. JSONL size for the captured session drops ~63%.
+
 ## [1.4.0] — 2026-05-21
 
 Minor release. The long-timeline-analysis arc: the JSONL log
