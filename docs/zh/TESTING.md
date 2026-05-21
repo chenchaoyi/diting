@@ -77,6 +77,13 @@
 | `aggregate_daily_trend` — 每日总数 + 7 天滚动均值；按事件家族出 sparkline | `test_analyze.py::test_aggregate_daily_trend_yields_per_day_counts`、`::test_aggregate_daily_trend_includes_rolling_avg`、`::test_render_daily_trend_emits_one_sparkline_per_family` |
 | `aggregate_top_contributors` — 三套子排行（BSSID / BLE / LAN）按各自信号计数 | `test_analyze.py::test_top_contributors_ranks_bssids_by_roam_plus_stir`、`::test_top_contributors_ranks_ble_identifiers_by_seen_count`、`::test_top_contributors_ranks_lan_hosts_by_dhcp_rotation_count` |
 | 跨会话块「只追加」— 单文件无 `--since` 时旧布局原样保留 | `test_analyze.py::test_single_file_no_since_preserves_existing_layout`、`::test_multi_file_or_since_appends_cross_session_blocks` |
+| `--for-llm [outdir]` 写 `report.md` + `prompt.txt` 包；默认 outdir 是 `./diting-llm-<timestamp>/` | `test_analyze.py::test_for_llm_writes_report_markdown`、`::test_for_llm_writes_prompt_txt`、`test_cli.py::test_analyze_for_llm_flag_threads_through` |
+| 报告 Markdown 含 Glossary；ASCII 图在 ` ```text ` 围栏块里；排行数据为 Markdown 表 | `test_analyze.py::test_render_markdown_includes_glossary`、`::test_render_markdown_wraps_ascii_in_fenced_blocks`、`::test_render_markdown_renders_per_network_as_table` |
+| Prompt 模板含 role + 任务 + 输出格式 + 「不要超出数据推断」护栏 + 匿名感知条款 | `test_analyze.py::test_build_llm_prompt_includes_all_five_sections`、`::test_build_llm_prompt_substitutes_span_and_files` |
+| `--anonymize` 用首见顺序的稳定句柄替换 SSID / BSSID / RFC1918 IP / 主机名 / BLE 标识 / MAC | `test_analyze.py::test_anonymizer_assigns_stable_handles`、`::test_anonymizer_same_value_returns_same_handle`、`::test_for_llm_with_anonymize_replaces_identifiers` |
+| 公网 IP（8.8.8.8、1.1.1.1）原样保留；厂商 + 类别名不变 | `test_analyze.py::test_anonymizer_preserves_public_ip_addresses`、`::test_anonymizer_passes_through_vendor_names` |
+| 匿名映射只打到终端 stdout；report.md 里是占位说明，不含映射 | `test_analyze.py::test_render_markdown_anonymization_section_is_placeholder`、`test_cli.py::test_analyze_anonymize_prints_mapping_to_stdout` |
+| 终端引导文案含 4 步粘贴流程；未开 `--anonymize` 时多一行提示 | `test_cli.py::test_analyze_for_llm_prints_four_step_guidance`、`::test_analyze_for_llm_nudges_anonymize_when_off` |
 
 ### `anomaly-watchdog`
 

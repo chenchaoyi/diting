@@ -543,6 +543,9 @@ def _run_analyze(args: list[str]) -> None:
 
     paths: list[Path] = []
     since: timedelta | None = None
+    for_llm: bool = False
+    for_llm_outdir: Path | None = None
+    anonymize: bool = False
     i = 0
     while i < len(args):
         a = args[i]
@@ -572,6 +575,25 @@ def _run_analyze(args: list[str]) -> None:
                     exc=str(exc),
                 ), file=sys.stderr)
                 sys.exit(2)
+            i += 1
+            continue
+        if a == "--for-llm":
+            for_llm = True
+            # Optional next arg is the outdir path. If the next arg
+            # starts with '-' (another flag) treat it as missing.
+            if i + 1 < len(args) and not args[i + 1].startswith("-"):
+                for_llm_outdir = Path(args[i + 1]).expanduser()
+                i += 2
+            else:
+                i += 1
+            continue
+        if a.startswith("--for-llm="):
+            for_llm = True
+            for_llm_outdir = Path(a.split("=", 1)[1]).expanduser()
+            i += 1
+            continue
+        if a == "--anonymize":
+            anonymize = True
             i += 1
             continue
         paths.append(Path(a).expanduser())
@@ -612,6 +634,57 @@ def _run_analyze(args: list[str]) -> None:
         source_paths=[str(p) for p in paths],
         since=since,
     )
+
+    if for_llm:
+        # Build the bundle: report.md + prompt.txt under outdir.
+        if for_llm_outdir is None:
+            ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+            for_llm_outdir = Path(f"diting-llm-{ts}")
+        for_llm_outdir.mkdir(parents=True, exist_ok=True)
+        anonymizer = analyze.Anonymizer() if anonymize else None
+        md = analyze.render_markdown(report, anonymizer=anonymizer)
+        prompt = analyze.build_llm_prompt(report)
+        report_path = for_llm_outdir / "report.md"
+        prompt_path = for_llm_outdir / "prompt.txt"
+        report_path.write_text(md)
+        prompt_path.write_text(prompt)
+        report_size_kb = report_path.stat().st_size / 1024.0
+        prompt_size_kb = prompt_path.stat().st_size / 1024.0
+        print(t(
+            "✓ wrote {path}  ({kb:.1f} KB{suffix})",
+            path=str(report_path),
+            kb=report_size_kb,
+            suffix=", anonymized" if anonymize else "",
+        ))
+        print(t(
+            "✓ wrote {path}  ({kb:.1f} KB)",
+            path=str(prompt_path),
+            kb=prompt_size_kb,
+        ))
+        print()
+        print(t("to analyze with an LLM:"))
+        print(t("  1. open https://claude.ai or chat.openai.com"))
+        print(t("  2. drag-drop the report.md file into the chat"))
+        print(t("  3. paste the contents of prompt.txt"))
+        print(t("  4. submit"))
+        if anonymizer is not None:
+            mapping = anonymizer.mapping()
+            if mapping:
+                print()
+                print(t(
+                    "anonymization mapping "
+                    "(keep this private — do NOT paste):",
+                ))
+                for handle, original in mapping:
+                    print(f"  {handle} ↔ {original}")
+        else:
+            print()
+            print(t(
+                "(if you're pasting into a public LLM and want to "
+                "scrub identifiers, re-run with --anonymize)",
+            ))
+        return
+
     print(analyze.render(report), end="")
 
 

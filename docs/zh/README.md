@@ -96,6 +96,21 @@ Apple 的面板不会告诉你你连在哪台 AP；谛听会，而且按 `c` 一
 - **抓异常信号。** 延迟尖峰、丢包风暴、说不清原因的 RF 波动 ——
   谛听会告诉你什么时候变了什么。长时间会话以 `--log` JSONL 留底，
   事后用 `diting analyze` 复盘。
+- **看跨周的会话模式。** 把 `diting analyze` 指向多个 JSONL 文件
+  （shell 通配符）+ 可选的 `--since 7d` 时间窗口，单会话报告看不
+  出的模式就浮出来：按小时分布的柱状图、星期×小时密度热力图、
+  按事件量排序的网络榜、带 7 天滚动均值的每日趋势、以及「最大
+  贡献者」榜单 —— 哪些 BSSID / BLE 设备 / LAN 主机在窗口内
+  造成了最多的状态切换。JSONL 日志本身现在也记录 BLE / Bonjour /
+  LAN 的「出现 / 消失 / DHCP 换 IP」事件，所以这些聚合覆盖完整
+  事件词汇。
+- **把数据丢给 ChatGPT / Claude 做更深的解读。**
+  `diting analyze --for-llm` 写出一份 Markdown 报告 + 一段可粘
+  贴的「分析师」提示词；把 .md 拖进 chat.openai.com 或 claude.ai，
+  粘贴提示词，让 LLM 反过来给你做模式聚类、假设排序、后续调查
+  建议。加 `--anonymize` 在粘到公网 LLM 前把 SSID / BSSID /
+  RFC1918 IP / 主机名 / BLE 标识 / LAN MAC 全部替换为稳定句柄。
+  句柄↔原值的对应表只打到你的终端 —— 不会写进 bundle。
 - **（未来）室内人员感知。** 长期目标，需要外置硬件配合。详见
   [路线图](#路线图)。
 
@@ -155,6 +170,69 @@ uv run diting
 `uv run diting` 与 curl 装的 `diting` 可以同机共存——开发者路径继续从
 仓库内的 helper 取数据，安装好的 binary 走自己的 Application Support
 副本。
+
+## 事后分析（`diting analyze`）
+
+把 `diting analyze <log.jsonl>` 指向 `--log` 产出的 JSONL，会
+得到一份基于规则的报告 —— 命中各种启发式（`频繁的跨 AP 漫游`、
+`观察到真正的丢包`、`反复断开重连` 等等）+ 连接时间线 +
+按 insight 给出可落地的 TODO。
+
+指向多个文件（shell 通配符）+ 可选 `--since DURATION` 过滤
+窗口，就能看到单会话报告看不出的模式：
+
+```bash
+diting analyze 'diting-*.jsonl' --since 30d
+```
+
+…在每个会话块之后会追加：
+
+- **Scope 头行** —— 文件数、观察跨度、当前过滤窗口
+- **按小时分布** —— 24 行 ASCII 柱状图
+- **星期 × 小时热力图** —— 7×24 密度网格，用
+  `▁▂▃▄▅▆▇█` 编码密度；周末早上、工作日午餐时间会一眼跳
+  出来
+- **网络榜** —— 按关联 BSSID 分组的事件量排名
+- **每日趋势** —— 每天总数 + 7 天滚动均值
+- **最大贡献者** —— 三个子排行：BSSID 按 roam + RF-stir
+  次数；BLE 标识按 `seen` 次数（抓隐私 MAC 轮换的设备）；
+  LAN 主机按 DHCP 轮换次数
+
+`--since` 接受 `30d` / `7d` / `24h` / `90m` / `60s`。单文件
+无 `--since` 的调用保持原有逐会话布局不变 —— 跨会话块仅在
+用户确实在做多会话视图时才追加。
+
+### 把数据交给 ChatGPT / Claude 做更深解读
+
+```bash
+diting analyze 'diting-*.jsonl' --since 30d --for-llm
+```
+
+写一份可粘贴包到 `./diting-llm-<时间戳>/`：
+
+- `report.md` —— Markdown 版本的同一份分析，排行数据用表格，
+  ASCII 图用围栏代码块，附带 Glossary 段定义 diting 自己的
+  术语（`rf_stir` 之类），LLM 不用猜上下文。
+- `prompt.txt` —— 可粘贴的「分析师」提示词，要求 LLM 识别
+  数据支持的主要模式、给出最可能的根因 + 证据、建议后续调
+  查方向，并把任何超出数据范围的推断标为 "hypothesis"。
+
+CLI 接着会打印四步粘贴流程（打开 chat.openai.com / claude.ai
+→ 拖入 `.md` → 粘 prompt → 提交）。没有 API key、没有遥测、
+没有上传 —— diting 把文件写在本地，谁能看由你决定。
+
+要粘进公网 LLM 时加 `--anonymize`：
+
+```bash
+diting analyze 'diting-*.jsonl' --since 30d --for-llm --anonymize
+```
+
+SSID / BSSID / RFC1918 IP / 主机名 / BLE 标识 / LAN MAC 全部
+被替换为稳定句柄（`SSID_1`、`AP_1`、`IP_1`、`HOST_1`、`BLE_1`、
+`MAC_1`）。公网 IP（`8.8.8.8`、`1.1.1.1`）和厂商名（`Apple,
+Inc.`、`Cisco Systems`）原样保留。句柄↔原值的对应表只打到
+终端 stdout —— 永远不写进 bundle —— 所以你事后能解码 LLM
+的引用，又不会把映射泄露到聊天里。
 
 ## 切换语言
 
