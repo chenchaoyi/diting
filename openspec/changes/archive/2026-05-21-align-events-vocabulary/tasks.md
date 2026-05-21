@@ -35,10 +35,10 @@
 
 ## 5. CHANGELOG
 
-- [ ] `CHANGELOG.md` — `## [Unreleased]` → `### Fixed`
-- [ ] `docs/zh/CHANGELOG.md` — mirror EN entry
+- [x] `CHANGELOG.md` — `## [Unreleased]` → `### Fixed`
+- [x] `docs/zh/CHANGELOG.md` — mirror EN entry
 
 ## 6. Merge + archive
 
-- [ ] PR open, reviewed, merged
-- [ ] `/opsx:archive align-events-vocabulary`
+- [x] PR open, reviewed, merged (#109)
+- [x] `/opsx:archive align-events-vocabulary`
