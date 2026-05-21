@@ -77,6 +77,15 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Loss-pct rendering auto-detects 0..1 fractions vs 0..100 percent | `test_analyze.py::test_loss_burst_present_warns_real_loss` (covers the scaled-loss path) |
 | Duration formatting honesty (`30s`, never `1 min`) | `test_tui_helpers.py::test_format_duration_short_buckets`, `::test_format_duration_short_negative_clamps_to_zero` |
 | TODO section gates on whether any insight fires | `test_analyze.py::test_render_handles_zero_events`, `::test_empty_log_warns` |
+| Multi-file glob input — multiple JSONL paths merge into one event stream sorted by timestamp | `test_analyze.py::test_glob_expansion_via_multiple_paths_aggregates_into_single_report`, `test_cli.py::test_analyze_multi_path_args_thread_through` |
+| `--since DURATION` flag parses `<int><unit>` forms and filters events to the last DURATION | `test_analyze.py::test_since_filter_parses_30d_24h_15m_etc`, `::test_since_filter_rejects_invalid_format`, `test_cli.py::test_analyze_since_flag_threads_through` |
+| `Scope` header line surfaces file count + observed span + active `--since` | `test_analyze.py::test_scope_header_renders_single_file_no_since`, `::test_scope_header_renders_multi_file_with_since` |
+| `aggregate_hour_of_day` — 24 buckets per-event-type Counter | `test_analyze.py::test_aggregate_hour_of_day_buckets_events_into_24_slots`, `::test_aggregate_hour_of_day_carries_type_breakdown` |
+| `aggregate_day_of_week_x_hour` — 7×24 integer grid; renderer uses `▁▂▃▄▅▆▇█` density | `test_analyze.py::test_aggregate_day_of_week_x_hour_returns_7x24_grid`, `::test_render_day_x_hour_heatmap_normalises_to_block_chars` |
+| `aggregate_per_network` — events grouped by associated BSSID via connection_update walk; orphan events bucketed under `(unknown network)` | `test_analyze.py::test_aggregate_per_network_groups_by_associated_bssid`, `::test_aggregate_per_network_attributes_orphan_events_to_unknown` |
+| `aggregate_daily_trend` — per-day total + 7-day rolling avg; one sparkline per event-family | `test_analyze.py::test_aggregate_daily_trend_yields_per_day_counts`, `::test_aggregate_daily_trend_includes_rolling_avg`, `::test_render_daily_trend_emits_one_sparkline_per_family` |
+| `aggregate_top_contributors` — three sub-rankings (BSSID/BLE/LAN) by signal-specific count | `test_analyze.py::test_top_contributors_ranks_bssids_by_roam_plus_stir`, `::test_top_contributors_ranks_ble_identifiers_by_seen_count`, `::test_top_contributors_ranks_lan_hosts_by_dhcp_rotation_count` |
+| Cross-session blocks append-only — single-file no-since input keeps the legacy layout | `test_analyze.py::test_single_file_no_since_preserves_existing_layout`, `::test_multi_file_or_since_appends_cross_session_blocks` |
 
 ### `anomaly-watchdog`
 

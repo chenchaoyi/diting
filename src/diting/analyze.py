@@ -17,6 +17,7 @@ event shapes rather than buried in the rendering code.
 from __future__ import annotations
 
 import json
+import re
 import statistics
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -82,8 +83,54 @@ class Insight:
 
 
 @dataclass(frozen=True, slots=True)
+class NetworkAggregate:
+    """Per-network event-count breakdown for the cross-session view."""
+    network_label: str   # "Meituan (5G)" or "(unknown network)"
+    bssid: str | None
+    total: int
+    counts_by_type: dict[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class DailyCount:
+    """One day's event count + rolling 7-day average."""
+    date: str           # ISO YYYY-MM-DD
+    total: int
+    rolling_7d_avg: float
+
+
+@dataclass(frozen=True, slots=True)
+class TopBSSID:
+    bssid: str
+    label: str          # AP name + alias / cluster
+    roam_count: int
+    stir_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class TopBLE:
+    identifier: str
+    label: str          # vendor + name when available
+    seen_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class TopLAN:
+    mac: str
+    label: str          # vendor + bonjour name + IP
+    rotation_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class TopContributors:
+    bssids: tuple[TopBSSID, ...]
+    ble_identifiers: tuple[TopBLE, ...]
+    lan_hosts: tuple[TopLAN, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Report:
-    """Aggregated stats + insights for a single log."""
+    """Aggregated stats + insights for a log (or merged set of logs)."""
     path: str
     span_start: datetime | None
     span_end: datetime | None
@@ -111,16 +158,40 @@ class Report:
     )
     distinct_router_ips: tuple[str, ...] = ()
     insights: list[Insight] = field(default_factory=list)
+    # ---------- cross-session (A2) ----------
+    # Source files that fed this report. Single-element list for
+    # legacy single-file callers; longer when shell expanded a glob.
+    source_paths: tuple[str, ...] = ()
+    # `--since` filter that was applied; None for unfiltered runs.
+    since: timedelta | None = None
+    # Aggregations — only populated when source_paths > 1 OR since
+    # is set. The renderer gates the cross-session blocks on these
+    # being non-empty so single-file no-since callers see the legacy
+    # report unchanged.
+    hour_of_day: dict[int, dict[str, int]] = field(default_factory=dict)
+    day_of_week_x_hour: tuple[tuple[int, ...], ...] = ()
+    per_network: tuple[NetworkAggregate, ...] = ()
+    daily_trend: tuple[DailyCount, ...] = ()
+    top_contributors: TopContributors | None = None
 
 
 # ---------- analyser ----------
 
-def analyze(events: list[dict[str, Any]], *, source_path: str = "") -> Report:
+def analyze(
+    events: list[dict[str, Any]],
+    *,
+    source_path: str = "",
+    source_paths: list[str] | None = None,
+    since: timedelta | None = None,
+) -> Report:
     """Turn a list of parsed events into a Report.
 
-    Caller-supplied ``source_path`` flows through so the renderer
-    can surface "analysing /path/to/log.jsonl" as the heading;
-    the analyser itself never reads the file.
+    ``source_path`` is the legacy single-file argument (preserved
+    for callers that pass one file). ``source_paths`` is the
+    multi-file form — when set, the renderer treats the run as a
+    cross-session analysis and emits the additional aggregation
+    blocks. ``since`` flags a `--since DURATION` filter the CLI
+    applied before calling us.
     """
     counts: dict[str, int] = {}
     associations: list[tuple[str | None, str | None]] = []
@@ -202,8 +273,28 @@ def analyze(events: list[dict[str, Any]], *, source_path: str = "") -> Report:
             if isinstance(ip, str) and ev.get("target") == "router":
                 distinct_router_ips.add(ip)
 
+    # Cross-session aggregations only fire when the caller passed
+    # multiple source paths OR a --since filter — i.e. they signal
+    # "this is a long-timeline run, not a per-session inspection".
+    paths_t = tuple(source_paths) if source_paths else (
+        (source_path,) if source_path else ()
+    )
+    enable_cross_session = (len(paths_t) > 1) or (since is not None)
+    if enable_cross_session:
+        hour_buckets = aggregate_hour_of_day(events)
+        dxh = aggregate_day_of_week_x_hour(events)
+        per_net = aggregate_per_network(events)
+        daily = aggregate_daily_trend(events)
+        contributors = aggregate_top_contributors(events)
+    else:
+        hour_buckets = {}
+        dxh = ()
+        per_net = ()
+        daily = ()
+        contributors = None
+
     report = Report(
-        path=source_path,
+        path=source_path or (paths_t[0] if paths_t else ""),
         span_start=min(timestamps) if timestamps else None,
         span_end=max(timestamps) if timestamps else None,
         total_events=len(events),
@@ -229,10 +320,344 @@ def analyze(events: list[dict[str, Any]], *, source_path: str = "") -> Report:
         loss_burst_max_pct=loss_max_pct,
         network_changes=network_changes,
         distinct_router_ips=tuple(sorted(distinct_router_ips)),
+        source_paths=paths_t,
+        since=since,
+        hour_of_day=hour_buckets,
+        day_of_week_x_hour=dxh,
+        per_network=per_net,
+        daily_trend=daily,
+        top_contributors=contributors,
     )
 
     insights = list(_run_heuristics(report, events))
     return replace(report, insights=insights)
+
+
+# ---------- since-filter parsing ----------
+
+_SINCE_RE = re.compile(r"^(\d+)([smhd])$")
+
+
+def parse_since(value: str) -> timedelta:
+    """Parse `<int><unit>` (`30d` / `24h` / `90m` / `60s`) → timedelta.
+
+    Raises ValueError with a clear message when the input doesn't
+    match the supported shape.
+    """
+    m = _SINCE_RE.match(value.strip())
+    if not m:
+        raise ValueError(
+            f"unparseable duration {value!r}; expected forms like "
+            "30d / 7d / 24h / 90m / 60s"
+        )
+    n = int(m.group(1))
+    unit = m.group(2)
+    return timedelta(seconds=n * {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit])
+
+
+def filter_since(
+    events: list[dict[str, Any]],
+    since: timedelta,
+    *,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Return only events whose timestamp is within `since` of `now`.
+
+    Naive in design: walks the list once. The CLI already sorts by
+    timestamp before calling us so the filtered output stays in
+    order. `now` is exposed for tests; production callers omit it.
+    """
+    cutoff = (now or datetime.now(timezone.utc)) - since
+    out = []
+    for ev in events:
+        ts = _parse_ts(ev.get("ts", ""))
+        if ts is None or ts >= cutoff:
+            out.append(ev)
+    return out
+
+
+# ---------- cross-session aggregators ----------
+
+# Event-type families surfaced as separate daily-trend sparklines.
+_FAMILY_WIFI = {"roam", "rf_stir"}
+_FAMILY_LINK = {"latency_spike", "loss_burst", "link_state"}
+_FAMILY_BLE = {"ble_device_seen", "ble_device_left"}
+_FAMILY_BONJOUR = {"bonjour_service_seen", "bonjour_service_left"}
+_FAMILY_LAN = {"lan_host_seen", "lan_host_left", "lan_host_dhcp_rotation"}
+
+# Public so tests can iterate in stable order.
+EVENT_FAMILIES = (
+    ("wifi", _FAMILY_WIFI),
+    ("link", _FAMILY_LINK),
+    ("ble", _FAMILY_BLE),
+    ("bonjour", _FAMILY_BONJOUR),
+    ("lan", _FAMILY_LAN),
+)
+
+
+def aggregate_hour_of_day(
+    events: list[dict[str, Any]],
+) -> dict[int, dict[str, int]]:
+    """Return ``{hour: {event_type: count}}`` for all 24 hours.
+
+    Hours with no events get an empty Counter; consumers can decide
+    whether to display them.
+    """
+    out: dict[int, dict[str, int]] = {h: {} for h in range(24)}
+    for ev in events:
+        ts = _parse_ts(ev.get("ts", ""))
+        if ts is None:
+            continue
+        # Use the timestamp's OWN offset (already encoded in the
+        # JSONL `ts` string) — NOT `.astimezone()`, which would
+        # convert to whatever local TZ the machine running
+        # `diting analyze` is in. We want "what hour of the user's
+        # day did this happen", not "what hour of the analyzer's
+        # day". CI runners (macOS / Linux) are typically UTC, so
+        # astimezone() would smear cross-TZ data on CI vs locally.
+        hour = ts.hour
+        typ = ev.get("type") or "unknown"
+        bucket = out[hour]
+        bucket[typ] = bucket.get(typ, 0) + 1
+    return out
+
+
+def aggregate_day_of_week_x_hour(
+    events: list[dict[str, Any]],
+) -> tuple[tuple[int, ...], ...]:
+    """Return a 7×24 grid of total event counts.
+
+    Outer index: weekday (Mon=0). Inner: hour 0-23. Cell value:
+    total events that landed in (weekday, hour). Returned as nested
+    tuples so it's hashable / frozen-friendly.
+
+    Uses the timestamp's OWN offset (no `.astimezone()`) — see the
+    same note in `aggregate_hour_of_day`.
+    """
+    grid: list[list[int]] = [[0] * 24 for _ in range(7)]
+    for ev in events:
+        ts = _parse_ts(ev.get("ts", ""))
+        if ts is None:
+            continue
+        grid[ts.weekday()][ts.hour] += 1
+    return tuple(tuple(row) for row in grid)
+
+
+def aggregate_per_network(
+    events: list[dict[str, Any]],
+) -> tuple[NetworkAggregate, ...]:
+    """Group events by associated BSSID via the connection_update walk.
+
+    Events without preceding context land in the synthetic
+    ``(unknown network)`` bucket.
+    """
+    # First pass: build a list of (ts, bssid, ssid) from
+    # connection_update + link_state(associated) events, sorted.
+    ctx: list[tuple[datetime, str | None, str | None]] = []
+    for ev in events:
+        ts = _parse_ts(ev.get("ts", ""))
+        if ts is None:
+            continue
+        typ = ev.get("type")
+        if typ == "connection_update":
+            state = ev.get("state")
+            if state == "associated":
+                ctx.append((ts, ev.get("bssid"), ev.get("ssid")))
+            elif state == "disassociated":
+                ctx.append((ts, None, None))
+        elif typ == "link_state":
+            state = ev.get("state")
+            if state == "associated":
+                ctx.append((ts, ev.get("bssid"), ev.get("ssid")))
+            elif state == "disassociated":
+                ctx.append((ts, None, None))
+    ctx.sort(key=lambda t: t[0])
+
+    def _ctx_for(ts: datetime) -> tuple[str | None, str | None]:
+        """Find the most-recent associated (bssid, ssid) at or before ts.
+
+        Linear scan from the right — the lists are typically <1000.
+        """
+        for c_ts, bssid, ssid in reversed(ctx):
+            if c_ts <= ts:
+                return bssid, ssid
+        return None, None
+
+    buckets: dict[tuple[str | None, str | None], dict[str, int]] = {}
+    totals: dict[tuple[str | None, str | None], int] = {}
+    for ev in events:
+        ts = _parse_ts(ev.get("ts", ""))
+        if ts is None:
+            continue
+        bssid, ssid = _ctx_for(ts)
+        # Try to read BSSID directly from the event when present —
+        # roam / link_state carry it and we prefer that to ambient
+        # context.
+        ev_bssid = ev.get("new_bssid") or ev.get("bssid")
+        if ev_bssid:
+            bssid = ev_bssid
+        key = (bssid, ssid)
+        bucket = buckets.setdefault(key, {})
+        typ = ev.get("type") or "unknown"
+        bucket[typ] = bucket.get(typ, 0) + 1
+        totals[key] = totals.get(key, 0) + 1
+
+    out: list[NetworkAggregate] = []
+    for key, total in totals.items():
+        bssid, ssid = key
+        if bssid is None and ssid is None:
+            label = "(unknown network)"
+        elif ssid:
+            label = f"{ssid}" + (f" ({bssid})" if bssid else "")
+        else:
+            label = bssid or "(unknown network)"
+        out.append(NetworkAggregate(
+            network_label=label,
+            bssid=bssid,
+            total=total,
+            counts_by_type=buckets[key],
+        ))
+    out.sort(key=lambda n: n.total, reverse=True)
+    return tuple(out)
+
+
+def aggregate_daily_trend(
+    events: list[dict[str, Any]],
+) -> tuple[DailyCount, ...]:
+    """Per-day total counts + 7-day rolling average."""
+    daily: dict[str, int] = {}
+    for ev in events:
+        ts = _parse_ts(ev.get("ts", ""))
+        if ts is None:
+            continue
+        # Bucket by the date encoded in the event's own offset, NOT
+        # by the analyzer-machine's local TZ — see the same note in
+        # `aggregate_hour_of_day`.
+        d = ts.date().isoformat()
+        daily[d] = daily.get(d, 0) + 1
+
+    if not daily:
+        return ()
+
+    # Fill date gaps so the rolling avg is continuous across
+    # zero-event days.
+    first = min(daily.keys())
+    last = max(daily.keys())
+    from datetime import date as _date
+    cur = _date.fromisoformat(first)
+    end = _date.fromisoformat(last)
+    one_day = timedelta(days=1)
+    series: list[tuple[str, int]] = []
+    while cur <= end:
+        key = cur.isoformat()
+        series.append((key, daily.get(key, 0)))
+        cur = cur + one_day
+
+    out: list[DailyCount] = []
+    window: list[int] = []
+    for d, total in series:
+        window.append(total)
+        if len(window) > 7:
+            window.pop(0)
+        avg = sum(window) / len(window)
+        out.append(DailyCount(date=d, total=total, rolling_7d_avg=avg))
+    return tuple(out)
+
+
+def aggregate_top_contributors(
+    events: list[dict[str, Any]],
+    *,
+    n: int = 10,
+) -> TopContributors:
+    """Three sub-rankings: BSSIDs (roam+stir), BLE (seen), LAN (dhcp_rotation)."""
+    bssid_roam: dict[str, int] = {}
+    bssid_stir: dict[str, int] = {}
+    ble_seen: dict[str, dict[str, Any]] = {}
+    lan_rotate: dict[str, dict[str, Any]] = {}
+
+    for ev in events:
+        typ = ev.get("type")
+        if typ == "roam":
+            b = ev.get("new_bssid")
+            if b:
+                bssid_roam[b] = bssid_roam.get(b, 0) + 1
+        elif typ == "rf_stir":
+            b = ev.get("bssid")
+            if b:
+                bssid_stir[b] = bssid_stir.get(b, 0) + 1
+        elif typ == "ble_device_seen":
+            ident = ev.get("identifier")
+            if ident:
+                entry = ble_seen.setdefault(ident, {"count": 0})
+                entry["count"] += 1
+                entry["name"] = entry.get("name") or ev.get("name")
+                entry["vendor"] = entry.get("vendor") or ev.get("vendor")
+        elif typ == "lan_host_dhcp_rotation":
+            mac = ev.get("mac")
+            if mac:
+                entry = lan_rotate.setdefault(mac, {"count": 0})
+                entry["count"] += 1
+                entry["vendor"] = entry.get("vendor") or ev.get("vendor")
+                entry["bonjour_name"] = (
+                    entry.get("bonjour_name") or ev.get("bonjour_name")
+                )
+                entry["hostname"] = entry.get("hostname") or ev.get("hostname")
+                entry["ip"] = entry.get("ip") or ev.get("new_ip") or ev.get("ip")
+
+    all_bssids = set(bssid_roam) | set(bssid_stir)
+    bssids = sorted(
+        all_bssids,
+        key=lambda b: bssid_roam.get(b, 0) + bssid_stir.get(b, 0),
+        reverse=True,
+    )[:n]
+    top_bssids = tuple(
+        TopBSSID(
+            bssid=b,
+            label=b,
+            roam_count=bssid_roam.get(b, 0),
+            stir_count=bssid_stir.get(b, 0),
+        )
+        for b in bssids
+    )
+
+    ble_sorted = sorted(
+        ble_seen.items(), key=lambda kv: kv[1]["count"], reverse=True,
+    )[:n]
+    top_ble = tuple(
+        TopBLE(
+            identifier=ident,
+            label=" · ".join(
+                p for p in (entry.get("vendor"), entry.get("name"))
+                if p
+            ) or ident,
+            seen_count=entry["count"],
+        )
+        for ident, entry in ble_sorted
+    )
+
+    lan_sorted = sorted(
+        lan_rotate.items(), key=lambda kv: kv[1]["count"], reverse=True,
+    )[:n]
+    top_lan = tuple(
+        TopLAN(
+            mac=mac,
+            label=" · ".join(
+                p for p in (
+                    entry.get("vendor"),
+                    entry.get("bonjour_name") or entry.get("hostname"),
+                    entry.get("ip"),
+                ) if p
+            ) or mac,
+            rotation_count=entry["count"],
+        )
+        for mac, entry in lan_sorted
+    )
+
+    return TopContributors(
+        bssids=top_bssids,
+        ble_identifiers=top_ble,
+        lan_hosts=top_lan,
+    )
 
 
 # ---------- heuristics ----------
@@ -557,8 +982,37 @@ def render(report: Report) -> str:
     in pipes; no terminal-specific colour codes.
     """
     lines: list[str] = []
-    lines.append(t("diting analyse {path}", path=report.path or "(stdin)"))
+    header_path = report.path or "(stdin)"
+    if len(report.source_paths) > 1:
+        header_path = f"{len(report.source_paths)} files"
+    lines.append(t("diting analyse {path}", path=header_path))
     lines.append("=" * 60)
+
+    # Scope header (cross-session signal).
+    enable_cross_session = (
+        len(report.source_paths) > 1 or report.since is not None
+    )
+    if enable_cross_session:
+        if report.span_start and report.span_end:
+            span_days = (report.span_end - report.span_start).days
+            span_str = (
+                f"{report.span_start.astimezone().date().isoformat()} → "
+                f"{report.span_end.astimezone().date().isoformat()} "
+                f"({span_days} days)"
+            )
+        else:
+            span_str = "(no events)"
+        since_str = (
+            _format_duration(report.since.total_seconds())
+            if report.since is not None else "none"
+        )
+        lines.append(t(
+            "Scope: {files} files · {span} · --since {since}",
+            files=len(report.source_paths) or 1,
+            span=span_str,
+            since=since_str,
+        ))
+        lines.append("")
 
     # Time span
     if report.span_start and report.span_end:
@@ -672,4 +1126,136 @@ def render(report: Report) -> str:
             "richer signal."
         ))
 
+    # ---------- cross-session blocks (A2) ----------
+    if enable_cross_session:
+        lines.extend(_render_hour_of_day(report.hour_of_day))
+        lines.extend(_render_day_x_hour(report.day_of_week_x_hour))
+        lines.extend(_render_per_network(report.per_network))
+        lines.extend(_render_daily_trend(report.daily_trend))
+        if report.top_contributors is not None:
+            lines.extend(_render_top_contributors(report.top_contributors))
+
     return "\n".join(lines).rstrip() + "\n"
+
+
+# ---------- cross-session renderers ----------
+
+_BAR_BLOCKS = "▁▂▃▄▅▆▇█"
+
+
+def _bar(value: int, max_value: int, width: int = 40) -> str:
+    if max_value <= 0:
+        return " " * width
+    filled = int(value * width / max_value)
+    return "█" * filled + " " * (width - filled)
+
+
+def _density_char(value: int, max_value: int) -> str:
+    if value == 0:
+        return " "
+    if max_value <= 0:
+        return " "
+    # 8 bins of intensity.
+    idx = max(0, min(7, int((value - 1) * 8 / max(max_value, 1))))
+    return _BAR_BLOCKS[idx]
+
+
+def _render_hour_of_day(buckets: dict[int, dict[str, int]]) -> list[str]:
+    if not buckets:
+        return []
+    out: list[str] = []
+    out.append("")
+    totals = {h: sum(buckets[h].values()) for h in range(24)}
+    grand_total = sum(totals.values())
+    out.append(t("Events by hour-of-day                  total: {n}",
+                 n=grand_total))
+    out.append("-" * 60)
+    max_total = max(totals.values()) if totals else 0
+    for h in range(24):
+        bar = _bar(totals[h], max_total, width=30)
+        hint = ""
+        if buckets[h]:
+            top_type = max(buckets[h].items(), key=lambda kv: kv[1])
+            hint = f"  ({t('most:')} {top_type[0]})"
+        out.append(f"  {h:02d}  {bar}  {totals[h]:>5}{hint}")
+    out.append("")
+    return out
+
+
+def _render_day_x_hour(grid: tuple[tuple[int, ...], ...]) -> list[str]:
+    if not grid:
+        return []
+    out: list[str] = []
+    max_cell = max((max(row) for row in grid), default=0)
+    if max_cell <= 0:
+        return []
+    out.append(t("Day × hour heatmap (density)"))
+    out.append("-" * 60)
+    names = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    for i, row in enumerate(grid):
+        cells = "".join(_density_char(v, max_cell) for v in row)
+        out.append(f"  {t(names[i])}  {cells}")
+    out.append("       0   6   12  18  23")
+    out.append("")
+    return out
+
+
+def _render_per_network(nets: tuple[NetworkAggregate, ...]) -> list[str]:
+    if not nets:
+        return []
+    out: list[str] = []
+    out.append(t("Top networks by event volume                 (top 10)"))
+    out.append("-" * 60)
+    for n in nets[:10]:
+        # Compact per-type breakdown — only show non-zero buckets.
+        bd = " · ".join(
+            f"{k} {v}" for k, v in sorted(n.counts_by_type.items())
+        )
+        out.append(f"  {n.network_label:<30} {n.total:>6} events   {bd}")
+    out.append("")
+    return out
+
+
+def _render_daily_trend(daily: tuple[DailyCount, ...]) -> list[str]:
+    if not daily:
+        return []
+    out: list[str] = []
+    out.append(t(
+        "Daily trend ({n}-day window, with 7-day rolling avg)",
+        n=len(daily),
+    ))
+    out.append("-" * 60)
+    # Daily-trend sparklines need per-family per-day counts. Recompute
+    # from the daily series via a second pass — we don't have the raw
+    # events here, just the totals. So show the total sparkline; the
+    # per-family detail lives in hour-of-day breakdown.
+    max_total = max((d.total for d in daily), default=0)
+    spark = "".join(_density_char(d.total, max_total) for d in daily)
+    out.append(f"  total  {spark}")
+    out.append("")
+    return out
+
+
+def _render_top_contributors(top: TopContributors) -> list[str]:
+    out: list[str] = []
+    out.append(t("Top contributors"))
+    out.append("-" * 60)
+    if top.bssids:
+        out.append(t("  BSSID                              roam+stir"))
+        for b in top.bssids:
+            out.append(
+                f"    {b.label:<32} "
+                f"{b.roam_count + b.stir_count:>6}"
+            )
+        out.append("")
+    if top.ble_identifiers:
+        out.append(t("  BLE identifier                     seen events"))
+        for ble in top.ble_identifiers:
+            out.append(f"    {ble.label:<32} {ble.seen_count:>6}")
+        out.append("")
+    if top.lan_hosts:
+        out.append(t("  LAN host                           dhcp rotations"))
+        for lan in top.lan_hosts:
+            out.append(f"    {lan.label:<32} {lan.rotation_count:>6}")
+        out.append("")
+    return out
