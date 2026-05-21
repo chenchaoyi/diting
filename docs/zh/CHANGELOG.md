@@ -10,6 +10,65 @@
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-05-21
+
+Minor release。长时间线分析这条线整体落地：JSONL 日志里事件
+词汇更丰富，`diting analyze` 一次能读多份日志、把跨周的模式
+端出来，新增 `--for-llm` 包导出可粘贴到 ChatGPT / Claude 的
+报告 + 提示词。没有 API key、没有遥测、没有额外依赖 —— diting
+仍然是离线优先。
+
+### 新增
+- **JSONL 日志新增 7 种事件类型。** `BLEPoller`、`BonjourPoller`、
+  `LANInventoryPoller` 现在在原有 snapshot 流之外也吐出转移
+  事件：`ble_device_seen` / `ble_device_left`，
+  `bonjour_service_seen` / `bonjour_service_left`，
+  `lan_host_seen` / `lan_host_left` /
+  `lan_host_dhcp_rotation`。**不防抖**——每个 identifier 第一
+  次出现都会发 `seen` 事件，包括拥挤环境里转瞬即逝的 random
+  MAC。EventsScreen 过滤循环从 5 → 8 桶（新增 `ble` / `bonjour`
+  / `lan`），EventsPanel 用 `[BLE]` / `[BJ]` / `[LAN]` 前缀
+  渲染新事件。
+- **`diting analyze` 接受多个 JSONL 路径**（shell 通配符）。
+  可选 `--since DURATION` 过滤窗口（`30d` / `7d` / `24h` /
+  `90m` / `60s`）把合并后的事件流过滤到最近 DURATION。
+  单文件无 `--since` 的调用保持原有逐会话布局不变 —— 跨会话块
+  仅在用户确实做多会话视图时才追加。
+- **五个跨会话聚合**追加在逐会话报告之后：按小时分布（24 行
+  ASCII 柱状图）、星期×小时密度热力图（Unicode 方块
+  `▁▂▃▄▅▆▇█`）、按关联 BSSID 分组的网络榜（孤立事件归入
+  `(unknown network)`）、每日趋势（每天总数 + 7 天滚动均值）、
+  最大贡献者三排行（BSSID 按 roam + RF-stir、BLE 标识按
+  `seen` 次数、LAN 主机按 DHCP 轮换次数）。
+- **`diting analyze --for-llm [outdir]`** —— 输出可粘贴包
+  （`report.md` + `prompt.txt`）给 ChatGPT / Claude。报告用
+  Markdown 表展示排行数据、用围栏块封 ASCII 图、固定附带
+  `## Glossary` 段定义 diting 自己的术语（`stir`、`co_located`
+  等等），LLM 不用猜上下文。提示词是 5 段分析师模板，要 LLM
+  识别模式、给出根因 + 证据、建议后续调查、用置信标签标推断、
+  并要求不要超出数据推断。CLI 紧接着打印 4 步粘贴流程。
+- **`--anonymize`** —— 配套开关（默认关闭），把 SSID / BSSID /
+  RFC1918 IP / 主机名 / BLE 标识 / LAN MAC 替换为稳定句柄
+  （`SSID_1` / `AP_1` / `IP_1` / `HOST_1` / `BLE_1` / `MAC_1`）。
+  公网 IP（`8.8.8.8`、`1.1.1.1`）与厂商名（`Apple, Inc.`、
+  `Cisco Systems`）原样保留。句柄↔原值的对应表**只打到终端**
+  ——绝不写进 bundle ——用户事后能在本地解码 LLM 的引用，
+  又不会把映射泄露进公网聊天。
+
+### 变更
+- **EventRing + JSONL writer 现在承载 12 种事件类型**（从 5
+  扩到 12）。analyzer 对未知 `type` 已经是宽容跳过的，所以
+  新格式日志被旧 analyzer 读时优雅降级。
+- **`diting analyze` 命令行签名** —— `paths` 改为 `nargs="+"`；
+  `--since DURATION` / `--for-llm [outdir]` / `--anonymize`
+  是新的可选 flag。
+
+### 修复
+- **时区分桶 bug**，在 A2 PR 的 CI 里发现并在合并前修掉 ——
+  跨会话聚合器按时间戳自身偏移（JSONL `ts` 字符串编码的那一份）
+  分桶，不再按 analyzer 机器的本地 TZ。CI runner 是 UTC；用
+  `.astimezone()` 把 `+08:00` 时间戳在 CI 上偏移了 -8 小时。
+
 ## [1.3.0] — 2026-05-19
 
 Minor release。来自一台 Meituan 公司网真实环境审计的两个反馈
