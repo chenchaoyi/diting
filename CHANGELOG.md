@@ -11,6 +11,84 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-05-21
+
+Minor release. The long-timeline-analysis arc: the JSONL log
+captures a much richer event vocabulary, `diting analyze` reads
+many logs at once and surfaces patterns across weeks, and a new
+`--for-llm` bundle exports a paste-ready report + prompt for
+ChatGPT / Claude when a user wants richer interpretation than
+the local heuristics produce. No API keys, no telemetry, no
+extra dependency — diting stays offline-first.
+
+### Added
+- **Seven new event types in the JSONL log.** `BLEPoller`,
+  `BonjourPoller`, and `LANInventoryPoller` now emit transition
+  events alongside their existing snapshot streams:
+  `ble_device_seen` / `ble_device_left`,
+  `bonjour_service_seen` / `bonjour_service_left`,
+  `lan_host_seen` / `lan_host_left` /
+  `lan_host_dhcp_rotation`. No debounce — every first observation
+  of an identifier fires its `seen` event, including short-lived
+  ghost MACs in dense environments. EventsScreen filter cycle
+  extends from 5 → 8 buckets (`ble` / `bonjour` / `lan`) and
+  EventsPanel renders the new types with `[BLE]` / `[BJ]` /
+  `[LAN]` prefix tags.
+- **`diting analyze` accepts multiple JSONL paths via shell
+  glob.** Optional `--since DURATION` flag (`30d` / `7d` /
+  `24h` / `90m` / `60s`) filters the merged event stream to
+  the last DURATION before "now". Single-file no-`--since`
+  invocations keep the existing per-session layout verbatim —
+  the new cross-session blocks only render when the user is
+  doing a multi-session view.
+- **Five cross-session aggregations** rendered below the
+  per-session report when the input is multi-session:
+  hour-of-day distribution (24-row ASCII bars), day-of-week × hour
+  heatmap (Unicode block density `▁▂▃▄▅▆▇█`), per-network
+  ranking (groups events by associated BSSID via
+  `connection_update` walk; orphan events land in
+  `(unknown network)`), daily trend (per-day total + 7-day
+  rolling average), and top contributors (BSSIDs by
+  roam + RF-stir, BLE identifiers by `seen` count, LAN hosts
+  by DHCP rotations).
+- **`diting analyze --for-llm [outdir]`** — writes a paste-ready
+  bundle (`report.md` + `prompt.txt`) for ChatGPT / Claude. The
+  report uses Markdown tables for ranked data, fenced text
+  blocks for ASCII charts, and always-present `## Glossary`
+  section so the LLM doesn't have to guess diting-specific
+  terms (`stir`, `co_located`, the 7 new event types). The
+  prompt is a 5-section analyst template asking the LLM to
+  identify patterns, name root causes + evidence, suggest
+  follow-up investigations, tag inferences with confidence, and
+  not speculate beyond the data. CLI prints a 4-step paste
+  workflow to stdout.
+- **`--anonymize`** (companion flag, default OFF) — replaces
+  SSIDs / BSSIDs / RFC1918 IPs / hostnames / BLE identifiers /
+  LAN MACs with stable first-seen handles (`SSID_1`, `AP_1`,
+  `IP_1`, `HOST_1`, `BLE_1`, `MAC_1`). Public IPs (`8.8.8.8`,
+  `1.1.1.1`) and vendor names (`Apple, Inc.`, `Cisco Systems`)
+  pass through unchanged. The handle ↔ original mapping prints
+  to TERMINAL ONLY — never into the bundle — so users can decode
+  the LLM's references locally without leaking the mapping into
+  a public chat.
+
+### Changed
+- **Twelve event types** share the EventRing + JSONL writer (was
+  five). The analyzer treats unknown event types as benign
+  passthrough already, so reading a new-format log with an old
+  build degrades gracefully.
+- **`diting analyze` argparse signature** — `paths` is now
+  `nargs="+"`; `--since DURATION` and `--for-llm [outdir]` /
+  `--anonymize` are new optional flags.
+
+### Fixed
+- **TZ-bucketing bug** caught on CI before A2 shipped — cross-
+  session aggregators bucket by the timestamp's own offset
+  (encoded in the JSONL `ts` string), not by the analyzer
+  machine's local TZ. CI runners are UTC; using `.astimezone()`
+  was shifting `+08:00` timestamps by -8 hours on CI vs the
+  user's local machine.
+
 ## [1.3.0] — 2026-05-19
 
 Minor release. Two real-environment audit findings on a Meituan
