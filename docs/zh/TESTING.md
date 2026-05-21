@@ -68,6 +68,15 @@
 | 丢包率自动识别 0..1 分数 vs 0..100 百分比 | `test_analyze.py::test_loss_burst_present_warns_real_loss`（覆盖 scaled-loss 路径） |
 | 时长格式诚实（`30s`，永远不写 `1 min`） | `test_tui_helpers.py::test_format_duration_short_buckets`、`::test_format_duration_short_negative_clamps_to_zero` |
 | 有 insight 时才出 TODO 段 | `test_analyze.py::test_render_handles_zero_events`、`::test_empty_log_warns` |
+| 多文件 glob 输入 — 多个 JSONL 合并为单个按时间戳排序的事件流 | `test_analyze.py::test_glob_expansion_via_multiple_paths_aggregates_into_single_report`、`test_cli.py::test_analyze_multi_path_args_thread_through` |
+| `--since DURATION` 解析 `<int><unit>` 形式并过滤最近 DURATION 内的事件 | `test_analyze.py::test_since_filter_parses_30d_24h_15m_etc`、`::test_since_filter_rejects_invalid_format`、`test_cli.py::test_analyze_since_flag_threads_through` |
+| `Scope` 头行：文件数 + 观察跨度 + 当前 `--since` | `test_analyze.py::test_scope_header_renders_single_file_no_since`、`::test_scope_header_renders_multi_file_with_since` |
+| `aggregate_hour_of_day` — 24 桶 + 每桶事件类型 Counter | `test_analyze.py::test_aggregate_hour_of_day_buckets_events_into_24_slots`、`::test_aggregate_hour_of_day_carries_type_breakdown` |
+| `aggregate_day_of_week_x_hour` — 7×24 整数网格；渲染用 `▁▂▃▄▅▆▇█` 密度块 | `test_analyze.py::test_aggregate_day_of_week_x_hour_returns_7x24_grid`、`::test_render_day_x_hour_heatmap_normalises_to_block_chars` |
+| `aggregate_per_network` — 通过 connection_update 历史走查归到关联 BSSID；找不到归 `(unknown network)` | `test_analyze.py::test_aggregate_per_network_groups_by_associated_bssid`、`::test_aggregate_per_network_attributes_orphan_events_to_unknown` |
+| `aggregate_daily_trend` — 每日总数 + 7 天滚动均值；按事件家族出 sparkline | `test_analyze.py::test_aggregate_daily_trend_yields_per_day_counts`、`::test_aggregate_daily_trend_includes_rolling_avg`、`::test_render_daily_trend_emits_one_sparkline_per_family` |
+| `aggregate_top_contributors` — 三套子排行（BSSID / BLE / LAN）按各自信号计数 | `test_analyze.py::test_top_contributors_ranks_bssids_by_roam_plus_stir`、`::test_top_contributors_ranks_ble_identifiers_by_seen_count`、`::test_top_contributors_ranks_lan_hosts_by_dhcp_rotation_count` |
+| 跨会话块「只追加」— 单文件无 `--since` 时旧布局原样保留 | `test_analyze.py::test_single_file_no_since_preserves_existing_layout`、`::test_multi_file_or_since_appends_cross_session_blocks` |
 
 ### `anomaly-watchdog`
 

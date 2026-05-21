@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import i18n
@@ -527,18 +527,57 @@ async def _run_calibrate(args: list[str]) -> None:
 # ---------- analyze (rule-based JSONL log reader) ----------
 
 def _run_analyze(args: list[str]) -> None:
-    """Read a JSONL log and print rule-based insights.
+    """Read JSONL log(s) and print rule-based insights.
 
-    With no arg, picks the newest ``diting-*.jsonl`` in the
-    current directory — convenient for "I just ran diting here,
-    tell me what happened" without having to remember the
-    timestamped filename. Explicit path always wins.
+    Accepts one or more paths (shell globs expand before this
+    function sees them). With no path arg, picks the newest
+    ``diting-*.jsonl`` in the current directory — convenient for
+    "I just ran diting here, tell me what happened" without having
+    to remember the timestamped filename.
+
+    Optional `--since DURATION` (e.g. `--since 7d` / `--since 24h` /
+    `--since 90m`) filters the merged event stream to events whose
+    timestamp falls within the last DURATION before "now".
     """
     from . import analyze
 
-    if args:
-        path = Path(args[0]).expanduser()
-    else:
+    paths: list[Path] = []
+    since: timedelta | None = None
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--since":
+            if i + 1 >= len(args):
+                print(t(
+                    "diting analyze: --since requires a duration "
+                    "argument (e.g. --since 7d)",
+                ), file=sys.stderr)
+                sys.exit(2)
+            try:
+                since = analyze.parse_since(args[i + 1])
+            except ValueError as exc:
+                print(t(
+                    "diting analyze: invalid --since value: {exc}",
+                    exc=str(exc),
+                ), file=sys.stderr)
+                sys.exit(2)
+            i += 2
+            continue
+        if a.startswith("--since="):
+            try:
+                since = analyze.parse_since(a.split("=", 1)[1])
+            except ValueError as exc:
+                print(t(
+                    "diting analyze: invalid --since value: {exc}",
+                    exc=str(exc),
+                ), file=sys.stderr)
+                sys.exit(2)
+            i += 1
+            continue
+        paths.append(Path(a).expanduser())
+        i += 1
+
+    if not paths:
         candidates = sorted(
             Path(".").glob("diting-*.jsonl"),
             key=lambda p: p.stat().st_mtime if p.exists() else 0,
@@ -551,15 +590,28 @@ def _run_analyze(args: list[str]) -> None:
                 "Pass a path: diting analyze ~/wifi-20260507.jsonl",
             ), file=sys.stderr)
             sys.exit(2)
-        path = candidates[0]
+        paths = [candidates[0]]
 
-    if not path.is_file():
-        print(t("diting analyze: file not found: {path}",
-                path=str(path)), file=sys.stderr)
+    missing = [p for p in paths if not p.is_file()]
+    if missing:
+        for p in missing:
+            print(t("diting analyze: file not found: {path}",
+                    path=str(p)), file=sys.stderr)
         sys.exit(2)
 
-    events = analyze.parse_jsonl(path)
-    report = analyze.analyze(events, source_path=str(path))
+    all_events: list[dict] = []
+    for p in paths:
+        all_events.extend(analyze.parse_jsonl(p))
+    all_events.sort(key=lambda e: e.get("ts", ""))
+
+    if since is not None:
+        all_events = analyze.filter_since(all_events, since)
+
+    report = analyze.analyze(
+        all_events,
+        source_paths=[str(p) for p in paths],
+        since=since,
+    )
     print(analyze.render(report), end="")
 
 
