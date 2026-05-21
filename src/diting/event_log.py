@@ -38,6 +38,13 @@ from datetime import datetime, timezone
 from typing import IO, Any
 
 from .events import (
+    BLEDeviceLeftEvent,
+    BLEDeviceSeenEvent,
+    BonjourServiceLeftEvent,
+    BonjourServiceSeenEvent,
+    LANHostDHCPRotationEvent,
+    LANHostLeftEvent,
+    LANHostSeenEvent,
     LatencySpikeEvent,
     LinkStateEvent,
     LossBurstEvent,
@@ -360,6 +367,146 @@ class EventLogger:
             payload["previous_bssid"] = event.previous_bssid.lower()
         if event.new_bssid is not None:
             payload["new_bssid"] = event.new_bssid.lower()
+        self._write(payload)
+
+    # ---------- BLE / Bonjour / LAN transition events ----------
+    #
+    # All seven follow the same shape as the existing emit methods:
+    # locale-stable English `type` value, snake_case keys, None
+    # fields omitted, tuple fields emit as JSON arrays even when
+    # empty. The no-op (sink=None) logger silently swallows all
+    # seven, matching the existing methods' contract.
+
+    def emit_ble_device_seen(self, event: BLEDeviceSeenEvent) -> None:
+        if self._sink is None:
+            return
+        payload: dict[str, Any] = {
+            "ts": _iso(event.timestamp),
+            "type": "ble_device_seen",
+            "identifier": event.identifier,
+            "service_categories": list(event.service_categories),
+        }
+        if event.name is not None:
+            payload["name"] = event.name
+        if event.vendor is not None:
+            payload["vendor"] = event.vendor
+        if event.rssi_dbm is not None:
+            payload["rssi_dbm"] = event.rssi_dbm
+        self._write(payload)
+
+    def emit_ble_device_left(self, event: BLEDeviceLeftEvent) -> None:
+        if self._sink is None:
+            return
+        payload: dict[str, Any] = {
+            "ts": _iso(event.timestamp),
+            "type": "ble_device_left",
+            "identifier": event.identifier,
+            "service_categories": list(event.service_categories),
+            "seen_for_seconds": round(event.seen_for_seconds, 1),
+        }
+        if event.name is not None:
+            payload["name"] = event.name
+        if event.vendor is not None:
+            payload["vendor"] = event.vendor
+        if event.last_rssi_dbm is not None:
+            payload["last_rssi_dbm"] = event.last_rssi_dbm
+        self._write(payload)
+
+    def emit_bonjour_service_seen(self, event: BonjourServiceSeenEvent) -> None:
+        if self._sink is None:
+            return
+        payload: dict[str, Any] = {
+            "ts": _iso(event.timestamp),
+            "type": "bonjour_service_seen",
+            "service_type": event.service_type,
+            "name": event.name,
+            "addresses": list(event.addresses),
+        }
+        if event.host is not None:
+            payload["host"] = event.host
+        if event.category is not None:
+            payload["category"] = event.category
+        if event.vendor is not None:
+            payload["vendor"] = event.vendor
+        self._write(payload)
+
+    def emit_bonjour_service_left(self, event: BonjourServiceLeftEvent) -> None:
+        if self._sink is None:
+            return
+        payload: dict[str, Any] = {
+            "ts": _iso(event.timestamp),
+            "type": "bonjour_service_left",
+            "service_type": event.service_type,
+            "name": event.name,
+            "seen_for_seconds": round(event.seen_for_seconds, 1),
+        }
+        if event.host is not None:
+            payload["host"] = event.host
+        if event.category is not None:
+            payload["category"] = event.category
+        if event.vendor is not None:
+            payload["vendor"] = event.vendor
+        self._write(payload)
+
+    def emit_lan_host_seen(self, event: LANHostSeenEvent) -> None:
+        if self._sink is None:
+            return
+        payload: dict[str, Any] = {
+            "ts": _iso(event.timestamp),
+            "type": "lan_host_seen",
+            "mac": event.mac.lower(),
+            "ip": event.ip,
+            "is_randomised_mac": event.is_randomised_mac,
+        }
+        if event.vendor is not None:
+            payload["vendor"] = event.vendor
+        if event.hostname is not None:
+            payload["hostname"] = event.hostname
+        if event.bonjour_name is not None:
+            payload["bonjour_name"] = event.bonjour_name
+        self._write(payload)
+
+    def emit_lan_host_left(self, event: LANHostLeftEvent) -> None:
+        if self._sink is None:
+            return
+        payload: dict[str, Any] = {
+            "ts": _iso(event.timestamp),
+            "type": "lan_host_left",
+            "mac": event.mac.lower(),
+            "ip": event.ip,
+            "is_randomised_mac": event.is_randomised_mac,
+            "seen_for_seconds": round(event.seen_for_seconds, 1),
+        }
+        if event.vendor is not None:
+            payload["vendor"] = event.vendor
+        if event.hostname is not None:
+            payload["hostname"] = event.hostname
+        if event.bonjour_name is not None:
+            payload["bonjour_name"] = event.bonjour_name
+        if event.last_reachable_ago_seconds is not None:
+            payload["last_reachable_ago_seconds"] = round(
+                event.last_reachable_ago_seconds, 1,
+            )
+        self._write(payload)
+
+    def emit_lan_host_dhcp_rotation(
+        self, event: LANHostDHCPRotationEvent,
+    ) -> None:
+        if self._sink is None:
+            return
+        payload: dict[str, Any] = {
+            "ts": _iso(event.timestamp),
+            "type": "lan_host_dhcp_rotation",
+            "mac": event.mac.lower(),
+            "previous_ip": event.previous_ip,
+            "new_ip": event.new_ip,
+        }
+        if event.vendor is not None:
+            payload["vendor"] = event.vendor
+        if event.hostname is not None:
+            payload["hostname"] = event.hostname
+        if event.bonjour_name is not None:
+            payload["bonjour_name"] = event.bonjour_name
         self._write(payload)
 
     # ---------- lifecycle ----------

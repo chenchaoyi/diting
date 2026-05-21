@@ -34,7 +34,14 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
+from typing import Any
+
 from .ble import load_ouis, lookup_oui_vendor
+from .events import (
+    LANHostDHCPRotationEvent,
+    LANHostLeftEvent,
+    LANHostSeenEvent,
+)
 from .mdns import BonjourPoller
 from .models import Connection
 
@@ -86,6 +93,11 @@ _WIDE_CAP_PREFIX = 22
 _PING_CONCURRENCY = 30
 _PING_TIMEOUT_MS = 200
 _REVERSE_DNS_TIMEOUT_S = 0.5
+# Window after which a host that's no longer in the ARP cache AND
+# whose `last_reachable_at` is older than this is considered
+# departed. Generates a `LANHostLeftEvent`; the entry is then
+# removed from `_state` so a re-appearance fires a fresh seen.
+_HOST_LEFT_TIMEOUT_S = 300.0
 
 _ARP_LINE_RE = re.compile(
     r"\(([\d.]+)\)\s+at\s+([0-9a-f:]+)\s+on\s+(\w+)",
@@ -381,8 +393,20 @@ class LANInventoryPoller:
         self._stopped = False
         self._state: dict[str, LANHost] = {}
         self._queue: asyncio.Queue[LANInventoryUpdate] = asyncio.Queue()
+        # Transition events (LANHostSeenEvent / LANHostLeftEvent /
+        # LANHostDHCPRotationEvent) accumulated during each sweep.
+        # Drained via ``drain_transitions()`` so `events()` stays
+        # mono-typed (snapshots only) and existing tests keep working.
+        self._pending_transitions: list[Any] = []
         self._sweep_wakeup: asyncio.Event | None = None
         self._ouis: dict[str, str] | None = None
+
+    def drain_transitions(self) -> list[Any]:
+        """Pop transition events accumulated during recent sweep
+        ticks. Consumer calls this after each `LANInventoryUpdate`."""
+        out = self._pending_transitions
+        self._pending_transitions = []
+        return out
 
     async def events(self) -> AsyncIterator[LANInventoryUpdate]:
         loop = asyncio.get_running_loop()
@@ -576,8 +600,16 @@ class LANInventoryPoller:
                 last_reachable_at=self_reach,
             )
 
+        # Track MACs we observed this tick so we can detect departures
+        # after the loop. Self injection above also goes into this set
+        # so we don't accidentally emit a "left" event for ourselves.
+        observed_macs: set[str] = set()
+        if iface_mac_lc:
+            observed_macs.add(iface_mac_lc)
+
         for ip, mac, _iface in triples:
             mac_lc = mac.lower()
+            observed_macs.add(mac_lc)
             existing = self._state.get(mac_lc)
             randomised = _is_randomised_mac(mac_lc)
             vendor = (
@@ -588,6 +620,8 @@ class LANInventoryPoller:
             bonjour_host, bonjour_cats = bonjour_index.get(ip, (None, ()))
             hostname = rdns_results.get(ip, existing.hostname if existing else None)
             last_rtt_ms, last_reachable_at = _rtt_for(existing, ip)
+            is_gateway_now = (router_ip is not None and ip == router_ip)
+            is_self_now = (mac_lc == iface_mac_lc)
             host_entry = LANHost(
                 mac=mac_lc,
                 ip=ip,
@@ -597,8 +631,8 @@ class LANInventoryPoller:
                 bonjour_services=bonjour_cats,
                 first_seen=existing.first_seen if existing else now,
                 last_seen=now,
-                is_gateway=(router_ip is not None and ip == router_ip),
-                is_self=(mac_lc == iface_mac_lc),
+                is_gateway=is_gateway_now,
+                is_self=is_self_now,
                 is_randomised_mac=randomised,
                 last_rtt_ms=last_rtt_ms,
                 last_reachable_at=last_reachable_at,
@@ -620,7 +654,64 @@ class LANInventoryPoller:
                         ),
                     )
                 continue
+            # Transition-event emission. Self / gateway are excluded
+            # from `seen` events per the spec (they would otherwise fire
+            # on every diting launch and pollute downstream analysis).
+            if existing is None and not is_self_now and not is_gateway_now:
+                self._pending_transitions.append(LANHostSeenEvent(
+                    timestamp=now,
+                    mac=mac_lc,
+                    ip=ip,
+                    vendor=vendor,
+                    hostname=hostname,
+                    bonjour_name=bonjour_host,
+                    is_randomised_mac=randomised,
+                ))
+            elif existing is not None and existing.ip != ip:
+                # DHCP rotation: same MAC, new IP. Event fires BEFORE
+                # the state entry's `ip` field gets the new value.
+                self._pending_transitions.append(LANHostDHCPRotationEvent(
+                    timestamp=now,
+                    mac=mac_lc,
+                    previous_ip=existing.ip,
+                    new_ip=ip,
+                    vendor=vendor,
+                    hostname=hostname,
+                    bonjour_name=bonjour_host,
+                ))
             self._state[mac_lc] = host_entry
+
+        # Sweep over `_state` for hosts that have gone silent past
+        # `_HOST_LEFT_TIMEOUT_S` AND are absent from the latest ARP
+        # triples. Emit a single `LANHostLeftEvent` per departure and
+        # drop the entry so a re-appearance fires a fresh seen.
+        # Self + gateway are skipped — they're always observed.
+        for mac_lc, dev in list(self._state.items()):
+            if mac_lc in observed_macs:
+                continue
+            if dev.is_self:
+                continue
+            # Use last_reachable_at when known; fall back to last_seen
+            # so a never-reached host can still depart cleanly.
+            age_anchor = dev.last_reachable_at or dev.last_seen
+            age_s = (now - age_anchor).total_seconds()
+            if age_s < _HOST_LEFT_TIMEOUT_S:
+                continue
+            self._pending_transitions.append(LANHostLeftEvent(
+                timestamp=now,
+                mac=mac_lc,
+                ip=dev.ip,
+                vendor=dev.vendor,
+                hostname=dev.hostname,
+                bonjour_name=dev.bonjour_name,
+                is_randomised_mac=dev.is_randomised_mac,
+                seen_for_seconds=(dev.last_seen - dev.first_seen).total_seconds(),
+                last_reachable_ago_seconds=(
+                    (now - dev.last_reachable_at).total_seconds()
+                    if dev.last_reachable_at else None
+                ),
+            ))
+            self._state.pop(mac_lc, None)
 
 
 def _sort_key(h: LANHost) -> tuple[int, int, tuple[int, ...]]:

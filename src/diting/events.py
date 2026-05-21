@@ -1,20 +1,27 @@
 """Unified event ring buffer + JSONL serialisation.
 
-Five event types share one schema and one in-memory ring (last 100):
+Twelve event types share one schema and one in-memory ring (last 100):
 
-    rf_stir       — RSSI variance crossed threshold
-    latency_spike — rtt > 200 ms AND > 5× median
-    loss_burst    — 3 of last 5 ping samples lost
-    roam          — BSSID change
-    link_state    — associated / disassociated
+    rf_stir              — RSSI variance crossed threshold
+    latency_spike        — rtt > 200 ms AND > 5× median
+    loss_burst           — 3 of last 5 ping samples lost
+    roam                 — BSSID change
+    link_state           — associated / disassociated
+    ble_device_seen      — BLE device first observed
+    ble_device_left      — BLE device aged out of TTL
+    bonjour_service_seen — Bonjour service first announced
+    bonjour_service_left — Bonjour service removed / TTL evicted
+    lan_host_seen        — non-self / non-gateway MAC entered ARP cache
+    lan_host_left        — host gone silent past _HOST_LEFT_TIMEOUT_S
+    lan_host_dhcp_rotation — known MAC observed at a new IP
 
 Layer 1 (Events panel) and Layer 2 (modal EventsScreen) read from
 the same in-memory ring buffer; Layer 3 (``diting monitor``)
 streams JSON Lines to stdout / file.
 
-The contract — five-event vocabulary, ring-buffer semantics, JSONL
-key stability, NetworkChangeEvent-as-control-plane — is pinned in
-``openspec/specs/events/spec.md``.
+The contract — twelve-event vocabulary, ring-buffer semantics,
+JSONL key stability, NetworkChangeEvent-as-control-plane — is
+pinned in ``openspec/specs/events/spec.md``.
 """
 
 from __future__ import annotations
@@ -78,6 +85,93 @@ class NetworkChangeEvent:
     new_bssid: str | None = None
 
 
+# ---------- BLE / Bonjour / LAN transition events ----------
+#
+# Seven new event types covering subsystem state transitions. Each
+# follows the same `@dataclass(frozen=True, slots=True)` shape as
+# the original five and rides the same EventRing + JSONL writer.
+# Emission contracts live in the BLE / Bonjour / LAN poller specs;
+# the schema lives here.
+
+@dataclass(frozen=True, slots=True)
+class BLEDeviceSeenEvent:
+    timestamp: datetime
+    identifier: str        # rotation-folded stable id
+    name: str | None
+    vendor: str | None
+    rssi_dbm: int | None
+    service_categories: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BLEDeviceLeftEvent:
+    timestamp: datetime
+    identifier: str
+    name: str | None
+    vendor: str | None
+    last_rssi_dbm: int | None
+    service_categories: tuple[str, ...]
+    seen_for_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class BonjourServiceSeenEvent:
+    timestamp: datetime
+    service_type: str
+    name: str
+    host: str | None
+    category: str | None
+    vendor: str | None
+    addresses: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BonjourServiceLeftEvent:
+    timestamp: datetime
+    service_type: str
+    name: str
+    host: str | None
+    category: str | None
+    vendor: str | None
+    seen_for_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class LANHostSeenEvent:
+    timestamp: datetime
+    mac: str
+    ip: str
+    vendor: str | None
+    hostname: str | None
+    bonjour_name: str | None
+    is_randomised_mac: bool
+
+
+@dataclass(frozen=True, slots=True)
+class LANHostLeftEvent:
+    timestamp: datetime
+    mac: str
+    ip: str
+    vendor: str | None
+    hostname: str | None
+    bonjour_name: str | None
+    is_randomised_mac: bool
+    seen_for_seconds: float
+    # None when the host never responded to ICMP this session.
+    last_reachable_ago_seconds: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class LANHostDHCPRotationEvent:
+    timestamp: datetime
+    mac: str
+    previous_ip: str
+    new_ip: str
+    vendor: str | None
+    hostname: str | None
+    bonjour_name: str | None
+
+
 # Union of every event the ring buffer accepts. ``RoamEvent`` is
 # imported from poller so we don't redefine it.
 Event = (
@@ -87,6 +181,13 @@ Event = (
     | LinkStateEvent
     | NetworkChangeEvent
     | RoamEvent
+    | BLEDeviceSeenEvent
+    | BLEDeviceLeftEvent
+    | BonjourServiceSeenEvent
+    | BonjourServiceLeftEvent
+    | LANHostSeenEvent
+    | LANHostLeftEvent
+    | LANHostDHCPRotationEvent
 )
 
 
@@ -183,7 +284,104 @@ def _event_to_dict(event: Event) -> dict[str, Any]:
             "new_bssid": event.new_bssid,
             "kind": kind,
         }
+    # ---------- new transition events ----------
+    #
+    # None fields are omitted via `_drop_none`; tuple fields go
+    # through unchanged so callers see [] for empty (informative —
+    # "no services" is distinct from "field absent").
+    if isinstance(event, BLEDeviceSeenEvent):
+        return _drop_none({
+            "ts": ts,
+            "type": "ble_device_seen",
+            "identifier": event.identifier,
+            "name": event.name,
+            "vendor": event.vendor,
+            "rssi_dbm": event.rssi_dbm,
+            "service_categories": list(event.service_categories),
+        })
+    if isinstance(event, BLEDeviceLeftEvent):
+        return _drop_none({
+            "ts": ts,
+            "type": "ble_device_left",
+            "identifier": event.identifier,
+            "name": event.name,
+            "vendor": event.vendor,
+            "last_rssi_dbm": event.last_rssi_dbm,
+            "service_categories": list(event.service_categories),
+            "seen_for_seconds": round(event.seen_for_seconds, 1),
+        })
+    if isinstance(event, BonjourServiceSeenEvent):
+        return _drop_none({
+            "ts": ts,
+            "type": "bonjour_service_seen",
+            "service_type": event.service_type,
+            "name": event.name,
+            "host": event.host,
+            "category": event.category,
+            "vendor": event.vendor,
+            "addresses": list(event.addresses),
+        })
+    if isinstance(event, BonjourServiceLeftEvent):
+        return _drop_none({
+            "ts": ts,
+            "type": "bonjour_service_left",
+            "service_type": event.service_type,
+            "name": event.name,
+            "host": event.host,
+            "category": event.category,
+            "vendor": event.vendor,
+            "seen_for_seconds": round(event.seen_for_seconds, 1),
+        })
+    if isinstance(event, LANHostSeenEvent):
+        return _drop_none({
+            "ts": ts,
+            "type": "lan_host_seen",
+            "mac": event.mac,
+            "ip": event.ip,
+            "vendor": event.vendor,
+            "hostname": event.hostname,
+            "bonjour_name": event.bonjour_name,
+            "is_randomised_mac": event.is_randomised_mac,
+        })
+    if isinstance(event, LANHostLeftEvent):
+        payload = {
+            "ts": ts,
+            "type": "lan_host_left",
+            "mac": event.mac,
+            "ip": event.ip,
+            "vendor": event.vendor,
+            "hostname": event.hostname,
+            "bonjour_name": event.bonjour_name,
+            "is_randomised_mac": event.is_randomised_mac,
+            "seen_for_seconds": round(event.seen_for_seconds, 1),
+        }
+        if event.last_reachable_ago_seconds is not None:
+            payload["last_reachable_ago_seconds"] = round(
+                event.last_reachable_ago_seconds, 1,
+            )
+        return _drop_none(payload)
+    if isinstance(event, LANHostDHCPRotationEvent):
+        return _drop_none({
+            "ts": ts,
+            "type": "lan_host_dhcp_rotation",
+            "mac": event.mac,
+            "previous_ip": event.previous_ip,
+            "new_ip": event.new_ip,
+            "vendor": event.vendor,
+            "hostname": event.hostname,
+            "bonjour_name": event.bonjour_name,
+        })
     raise TypeError(f"unsupported event type: {type(event).__name__}")
+
+
+def _drop_none(d: dict[str, Any]) -> dict[str, Any]:
+    """Strip keys whose value is None.
+
+    Tuple-typed empty values pass through as `[]` (informative —
+    "no services" is distinct from "field absent"). Bools (e.g.
+    `is_randomised_mac=False`) survive unchanged.
+    """
+    return {k: v for k, v in d.items() if v is not None}
 
 
 def _to_utc_iso(ts: datetime) -> str:
