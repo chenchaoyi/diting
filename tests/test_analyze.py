@@ -15,8 +15,11 @@ from diting.analyze import (
     Insight,
     Report,
     analyze,
+    build_llm_prompt,
     parse_jsonl,
     render,
+    render_markdown,
+    scene_summary,
 )
 
 
@@ -763,3 +766,146 @@ def test_build_llm_prompt_substitutes_span_and_files():
     assert "2026-05-20" in prompt
     assert "2026-05-21" in prompt
     assert "2 session" in prompt
+
+
+# ------------------------------------------------------------------
+# session_meta consumption + scene context
+# ------------------------------------------------------------------
+
+def _ev_sm(scene: str, source: str = "cli", ts_iso: str = "2026-05-22T13:00:00+08:00") -> dict:
+    """Build a session_meta event dict the way the JSONL reader sees one."""
+    return {
+        "type": "session_meta",
+        "ts": ts_iso,
+        "scene": scene,
+        "scene_source": source,
+        "diting_version": "1.6.0",
+        "ssid": "TestNet",
+        "gateway_ip": "192.168.1.1",
+        "hostname": "test-host",
+    }
+
+
+def test_analyze_collects_scene_from_session_meta():
+    """A JSONL containing a session_meta line populates Report.scenes
+    and Report.scene_sources."""
+    events = [
+        _ev_sm("office", "cli"),
+        _ev_b(20),
+    ]
+    report = analyze(events)
+    assert report.scenes == ("office",)
+    assert report.scene_sources == {"office": "cli"}
+
+
+def test_analyze_multi_scene_mix_recorded_in_order_seen():
+    """Three session_meta lines (one per file in a glob) populate
+    Report.scenes with all three names; scene_summary then folds
+    them into a count-descending string."""
+    events = [
+        _ev_sm("home", "default"),
+        _ev_sm("home", "default"),
+        _ev_sm("office", "cli"),
+    ]
+    report = analyze(events)
+    assert sorted(report.scenes) == ["home", "home", "office"]
+    summary = scene_summary(report)
+    assert "2 × home" in summary
+    assert "1 × office" in summary
+
+
+def test_analyze_missing_session_meta_leaves_scenes_empty():
+    """Pre-scene-aware JSONL has no session_meta line. Report.scenes
+    is an empty tuple; scene_summary surfaces the gap explicitly."""
+    events = [_ev_b(20)]
+    report = analyze(events)
+    assert report.scenes == ()
+    assert "unknown" in scene_summary(report)
+    assert "pre-scene" in scene_summary(report)
+
+
+def test_scene_summary_single_scene_names_source():
+    """`home (cli)` style — gives the LLM context about whether the
+    scene was the user's deliberate choice or a default fallback."""
+    events = [_ev_sm("home", "env")]
+    report = analyze(events)
+    assert scene_summary(report) == "home (env)"
+
+
+def test_scene_summary_source_promotion_uses_strongest():
+    """If the same scene appears with multiple sources across the
+    input, the most-specific source wins (cli > env > default)."""
+    events = [
+        _ev_sm("office", "default"),
+        _ev_sm("office", "cli"),
+        _ev_sm("office", "env"),
+    ]
+    report = analyze(events)
+    # cli is the strongest of the three sources observed.
+    assert "(cli)" in scene_summary(report)
+
+
+def test_render_markdown_includes_scene_line():
+    """The Markdown report header surfaces the scene immediately
+    after the title."""
+    events = [_ev_sm("office", "cli"), _ev_b(20)]
+    report = analyze(events)
+    md = render_markdown(report)
+    assert "**Scene:** office (cli)" in md
+
+
+def test_render_markdown_pre_scene_aware_shows_unknown():
+    events = [_ev_b(20)]
+    report = analyze(events)
+    md = render_markdown(report)
+    assert "**Scene:** unknown" in md
+    assert "pre-scene-aware capture" in md
+
+
+def test_build_llm_prompt_starts_with_scene_context():
+    """`[Scene context]` is the first paragraph the LLM sees — the
+    role / tasks / output-format sections come after."""
+    events = [_ev_sm("office", "cli"), _ev_b(20)]
+    report = analyze(events)
+    prompt = build_llm_prompt(report)
+    assert prompt.startswith("[Scene context]")
+    assert "office" in prompt.split("\n\n", 1)[0]
+    assert "departures from this baseline" in prompt
+
+
+def test_build_llm_prompt_includes_observed_counts_when_available():
+    """The scene-context paragraph backfills with concrete numbers
+    so the LLM can calibrate (e.g. `observed BSSID count 1`)."""
+    events = [
+        _ev_sm("office", "cli"),
+        {"type": "roam", "ts": "2026-05-22T13:00:00+08:00",
+         "from_bssid": "aa:bb:cc:11:22:33",
+         "to_bssid": "aa:bb:cc:11:22:44",
+         "bssid": "aa:bb:cc:11:22:44",
+         "ssid": "X", "kind": "inter_ap"},
+    ]
+    report = analyze(events)
+    prompt = build_llm_prompt(report)
+    assert "BSSID count" in prompt
+
+
+def test_build_llm_prompt_multi_scene_acknowledges_mix():
+    events = [
+        _ev_sm("home", "default"),
+        _ev_sm("office", "cli"),
+        _ev_b(20),
+    ]
+    report = analyze(events)
+    prompt = build_llm_prompt(report)
+    # Multi-scene prompt explicitly tells the LLM to compare across.
+    assert "multiple scenes" in prompt
+    assert "Compare across" in prompt
+
+
+def test_build_llm_prompt_pre_scene_aware_falls_back_to_general_priors():
+    events = [_ev_b(20)]
+    report = analyze(events)
+    prompt = build_llm_prompt(report)
+    assert prompt.startswith("[Scene context]")
+    assert "pre-scene-aware capture" in prompt
+    assert "general priors" in prompt

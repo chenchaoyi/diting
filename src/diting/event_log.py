@@ -32,9 +32,11 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import socket
 import sys
 import weakref
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import IO, Any
 
 from .events import (
@@ -111,6 +113,10 @@ class EventLogger:
         # to-BSSID changes go through emit_roam instead.
         self._last_assoc_bssid: str | None | object = _UNSET
         self._io_failed: bool = False
+        # Session-meta is written exactly once, on first call. The
+        # idempotency flag lets callers ask for it unconditionally
+        # without double-writing if the codepath fires twice.
+        self._session_meta_written: bool = False
 
     # ---------- factories ----------
 
@@ -153,6 +159,56 @@ class EventLogger:
         return cls(None, owns_sink=False)
 
     # ---------- public emit surface ----------
+
+    def emit_session_meta(
+        self,
+        *,
+        scene: str,
+        scene_source: str,
+        ssid: str | None = None,
+        gateway_ip: str | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        """Write the JSONL session header. Idempotent — only the
+        first call per logger emits.
+
+        Called by the CLI immediately after constructing the logger,
+        before any other ``emit_*``. Downstream tools (the analyzer,
+        the ``--for-llm`` bundle, third-party ``jq`` consumers) read
+        this line to know what kind of environment the data came
+        from. Per-event lines don't carry the scene, only this
+        header does — keeps JSONL size honest at scale.
+
+        Fields included are those listed in
+        ``openspec/specs/event-log/spec.md``. PII surface kept
+        intentionally narrow: hostname is in (anonymizable downstream);
+        BSSID is NOT (could doxx physical location).
+        """
+        if self._sink is None:
+            return
+        if self._session_meta_written:
+            return
+        if now is None:
+            now = datetime.now()
+        try:
+            version = _pkg_version("diting")
+        except PackageNotFoundError:
+            # Editable install in a worktree where the dist-info
+            # hasn't been laid down (rare; CI / source checkouts).
+            # Surface as "unknown" rather than crash session header.
+            version = "unknown"
+        payload: dict[str, Any] = {
+            "ts": _iso(now),
+            "type": "session_meta",
+            "scene": scene,
+            "scene_source": scene_source,
+            "diting_version": version,
+            "ssid": ssid,
+            "gateway_ip": gateway_ip,
+            "hostname": socket.gethostname(),
+        }
+        self._write(payload)
+        self._session_meta_written = True
 
     def emit_connection_update(
         self,

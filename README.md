@@ -137,6 +137,36 @@ BSSID. Same path as menu-off-then-on, in one keystroke.
 - **(Future) Room-presence sensing.** Long-term, hardware-assisted
   flagship. See [Roadmap](#roadmap).
 
+## Scenes (`--scene SCENE`)
+
+diting carries a notion of *where the user is right now*. Four
+scenes ship today, each tuned for one class of environment:
+
+| Scene | When to use | What it changes |
+|---|---|---|
+| `home` (default) | apartment / own Wi-Fi, ≤ ~15 BLE devices, single AP | BLE presence gate **5 s** — kills 0 s ghost flicker but keeps brief contacts |
+| `office` | corp floor, enterprise Wi-Fi, dense BLE + many BSSIDs | BLE presence gate **15 s** — absorbs the Continuity RPA churn baseline |
+| `public` | cafe / train / plane / public Wi-Fi | BLE presence gate **30 s** — almost everything is passers-by |
+| `audit` | actively investigating (security research, debug, forensics) | BLE presence gate **0 s** — record every advert |
+
+Set via CLI flag or env var, same precedence pattern as `--lang`:
+
+```
+diting --scene office             # this session
+DITING_SCENE=office diting        # persistent (e.g. shell rc)
+```
+
+The active scene is tagged into the JSONL session header
+(`session_meta`) so `diting analyze` can group cross-session
+aggregations by scene, and the `--for-llm` bundle injects the
+scene's baseline expectation into the prompt template — the LLM
+reads office-mode noise as "expected baseline" rather than
+"anomalous", and home-mode novelty as "interesting" rather than
+"signal in the bin".
+
+`--ble-presence-gate D` continues to override the scene's gate
+when you want fine control for one session.
+
 ## The name
 
 **diting (谛听)** is a mythical beast in Chinese Buddhist lore —

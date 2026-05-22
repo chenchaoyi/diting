@@ -253,13 +253,19 @@ def _render(event: Event, state: dict, inv: NetworkInventory) -> str | None:
 
 # ---------- monitor (headless JSONL) ----------
 
-async def _run_monitor(args: list[str]) -> None:
+async def _run_monitor(
+    args: list[str], *, scene_source: str = "default",
+) -> None:
     """Long-running headless event stream.
 
     Spawns WiFiPoller + LatencyPoller + EnvironmentMonitor and emits
     one JSONL document per event to stdout (or ``--out path.jsonl``
     when set), with ``--notify`` raising a macOS Notification Centre
     alert for high-confidence events.
+
+    ``scene_source`` is threaded from ``main()`` (where ``--scene`` /
+    ``DITING_SCENE`` were resolved) so the session_meta line written
+    here can record HOW the scene was picked.
     """
     out_path = _arg_value(args, "--out")
     notify = "--notify" in args
@@ -275,6 +281,15 @@ async def _run_monitor(args: list[str]) -> None:
     logger = (
         EventLogger.to_path(out_path) if out_path
         else EventLogger.to_stdout()
+    )
+    # Session header — must be the first line emitted, byte-identical
+    # to the TUI's --log path so downstream readers don't branch on
+    # source. Scene was resolved by main() before dispatching; we
+    # only thread the source through here.
+    from . import scene as _scene_mod
+    logger.emit_session_meta(
+        scene=_scene_mod.get_scene(),
+        scene_source=scene_source,
     )
 
     poller = WiFiPoller(backend)
@@ -720,13 +735,17 @@ def _usage() -> str:
         "                          (env: DITING_LOG=PATH or =auto)\n"
         "  --notify                raise OS banners on anomaly events while\n"
         "                          TUI runs (also accepted by `monitor`)\n"
-        "  --ble-presence-gate D   anonymous BLE adverts must be observed for\n"
-        "                          at least D (e.g. 5s, 30s, 2m) before they\n"
-        "                          emit transition events; suppresses single-\n"
-        "                          packet ghost flicker in dense RF. Default\n"
-        "                          5s; 0 restores record-everything. Named\n"
-        "                          devices + connected peripherals bypass.\n"
-        "                          (env: DITING_BLE_PRESENCE_GATE)\n"
+        "  --scene SCENE           home / office / public / audit (default home)\n"
+        "                          sets sensitivity defaults for the environment;\n"
+        "                          tags JSONL session_meta + LLM bundle context\n"
+        "                          (env: DITING_SCENE)\n"
+        "  --ble-presence-gate D   override the scene's BLE presence gate.\n"
+        "                          Anonymous BLE adverts must be observed for at\n"
+        "                          least D (e.g. 5s, 30s, 2m) before emitting\n"
+        "                          events; 0 disables the gate. Wins over scene\n"
+        "                          default (home=5s / office=15s / public=30s /\n"
+        "                          audit=0s). Named + connected peripherals\n"
+        "                          bypass. (env: DITING_BLE_PRESENCE_GATE)\n"
         "  --version, -V           print the running version and exit\n"
         "  -h, --help              show this message\n"
     )
@@ -898,32 +917,83 @@ def _extract_ble_presence_gate_arg(argv: list[str]) -> float | None:
         sys.exit(2)
 
 
-def _resolve_ble_presence_gate(cli_value: float | None) -> float:
+def _extract_scene_arg(argv: list[str]) -> str | None:
+    """Pop ``--scene SCENE`` from ``argv`` in place.
+
+    Returns the value, or ``None`` if the flag is absent (caller then
+    falls back to ``DITING_SCENE`` env var, then to ``home`` default
+    via :func:`diting.scene.resolve_scene`).
+
+    Supports both ``--scene office`` and ``--scene=office`` forms.
+    Invalid values trigger SystemExit so the caller does not have to
+    repeat the validation.
+    """
+    from . import scene as _scene_mod
+    raw: str | None = None
+    for i, arg in enumerate(argv):
+        if arg == "--scene":
+            if i + 1 >= len(argv):
+                print(t(
+                    "--scene requires a value ({names})",
+                    names=" / ".join(_scene_mod.valid_scenes()),
+                ), file=sys.stderr)
+                sys.exit(2)
+            raw = argv[i + 1]
+            del argv[i:i + 2]
+            break
+        if arg.startswith("--scene="):
+            raw = arg.split("=", 1)[1]
+            del argv[i]
+            break
+    if raw is None:
+        return None
+    if raw not in _scene_mod.valid_scenes():
+        print(t(
+            "unsupported scene: {raw!r}; must be one of {names}",
+            raw=raw, names=" / ".join(_scene_mod.valid_scenes()),
+        ), file=sys.stderr)
+        sys.exit(2)
+    return raw
+
+
+def _resolve_ble_presence_gate(
+    cli_value: float | None,
+    scene_default: float = 5.0,
+) -> float:
     """Pick the active presence-gate seconds:
-    CLI value > DITING_BLE_PRESENCE_GATE env var > 5.0 default.
+    CLI value > DITING_BLE_PRESENCE_GATE env var > scene_default.
+
+    ``scene_default`` is the value from
+    ``scene_defaults(active_scene)["ble_presence_gate_s"]`` — the CLI
+    layer resolves the scene first and passes that value in. With
+    the four canonical scenes that resolves to home=5.0, office=15.0,
+    public=30.0, audit=0.0; an explicit ``--ble-presence-gate D``
+    overrides whichever scene is active. The scene name itself is
+    independent — used by session_meta and the LLM prompt — even
+    when the gate value comes from a flag override.
 
     A blank env var is treated as absent so a parent shell can leave
-    the default in place with ``DITING_BLE_PRESENCE_GATE= diting``.
+    the scene default in place with ``DITING_BLE_PRESENCE_GATE= diting``.
     """
     if cli_value is not None:
         return cli_value
     from . import analyze
     env = (os.environ.get("DITING_BLE_PRESENCE_GATE") or "").strip()
     if not env:
-        return 5.0
+        return scene_default
     if env == "0":
         return 0.0
     try:
         return analyze.parse_since(env).total_seconds()
     except ValueError:
         # Env var with bad shape: warn once on stderr, fall back to
-        # default rather than refusing to launch.
+        # scene default rather than refusing to launch.
         print(t(
             "warning: DITING_BLE_PRESENCE_GATE={env!r} is not a "
-            "valid duration; using 5s default",
-            env=env,
+            "valid duration; using scene default {default}s",
+            env=env, default=scene_default,
         ), file=sys.stderr)
-        return 5.0
+        return scene_default
 
 
 def _extract_notify_arg(argv: list[str]) -> bool:
@@ -948,6 +1018,8 @@ def _run_tui(
     log_path: str | None = None,
     notify: bool = False,
     ble_presence_gate_s: float = 5.0,
+    scene: str = "home",
+    scene_source: str = "default",
 ) -> None:
     # Imported lazily so `diting once` and `diting watch` do not
     # pull in textual / rich on every invocation.
@@ -974,6 +1046,8 @@ def _run_tui(
         scan_interval=_scan_interval(),
         ble_helper_path=ble_binary,
         ble_presence_gate_s=ble_presence_gate_s,
+        scene=scene,
+        scene_source=scene_source,
         event_log_path=log_path,
         notify=notify,
     ).run()
@@ -1213,11 +1287,27 @@ def main() -> None:
     ble_gate_cli = (
         _extract_ble_presence_gate_arg(args) if not has_subcommand else None
     )
+    # --scene is global — applies to the default TUI subcommand AND
+    # to `monitor` (which writes session_meta to stdout / --out). We
+    # extract it unconditionally so it gets stripped from args before
+    # subcommand parsers see it, and so the resolved scene is set in
+    # the scene module before any poller / logger touches it.
+    scene_cli = _extract_scene_arg(args)
+    from . import scene as _scene_mod
+    scene_name, scene_source = _scene_mod.resolve_scene(scene_cli)
+    _scene_mod.set_scene(scene_name)
+    scene_gate_default = _scene_mod.scene_defaults(scene_name).get(
+        "ble_presence_gate_s", 5.0,
+    )
     if not args:
         _run_tui(
             log_path=log_path,
             notify=tui_notify,
-            ble_presence_gate_s=_resolve_ble_presence_gate(ble_gate_cli),
+            ble_presence_gate_s=_resolve_ble_presence_gate(
+                ble_gate_cli, scene_default=scene_gate_default,
+            ),
+            scene=scene_name,
+            scene_source=scene_source,
         )
         return
     cmd = args[0]
@@ -1232,7 +1322,7 @@ def main() -> None:
         return
     if cmd == "monitor":
         try:
-            asyncio.run(_run_monitor(args[1:]))
+            asyncio.run(_run_monitor(args[1:], scene_source=scene_source))
         except KeyboardInterrupt:
             pass
         return

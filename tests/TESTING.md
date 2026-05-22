@@ -93,6 +93,8 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Public IPs (8.8.8.8, 1.1.1.1) pass through unchanged; vendor + category names preserved | `test_analyze.py::test_anonymizer_preserves_public_ip_addresses`, `::test_anonymizer_passes_through_vendor_names` |
 | Anonymization mapping printed to terminal stdout only; report.md contains placeholder section, NOT the mapping | `test_analyze.py::test_render_markdown_anonymization_section_is_placeholder`, `test_cli.py::test_analyze_anonymize_prints_mapping_to_stdout` |
 | Terminal guidance copy includes 4-step paste workflow + `--anonymize` nudge when flag off | `test_cli.py::test_analyze_for_llm_prints_four_step_guidance`, `::test_analyze_for_llm_nudges_anonymize_when_off` |
+| `session_meta` consumption: scene + scene_source surfaced in Markdown header; multi-session mix aggregated; missing session_meta degrades to `unknown`; source promotion uses cli > env > default | `test_analyze.py::test_analyze_collects_scene_from_session_meta`, `::test_analyze_multi_scene_mix_recorded_in_order_seen`, `::test_analyze_missing_session_meta_leaves_scenes_empty`, `::test_scene_summary_single_scene_names_source`, `::test_scene_summary_source_promotion_uses_strongest`, `::test_render_markdown_includes_scene_line`, `::test_render_markdown_pre_scene_aware_shows_unknown` |
+| `--for-llm` injects `[Scene context]` paragraph as first prompt section; backfills observed BSSID + BLE counts; multi-scene bundles instruct LLM to compare across; pre-scene-aware logs fall back to general priors | `test_analyze.py::test_build_llm_prompt_starts_with_scene_context`, `::test_build_llm_prompt_includes_observed_counts_when_available`, `::test_build_llm_prompt_multi_scene_acknowledges_mix`, `::test_build_llm_prompt_pre_scene_aware_falls_back_to_general_priors` |
 
 ### `anomaly-watchdog`
 
@@ -187,10 +189,19 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Wording: correlation, not presence | (review-enforced — no string in `i18n.py` asserts "person" / "motion" / "presence") |
 | `RFStirEvent` carries the current `Connection.ssid` on emit | `test_environment.py::test_rf_stir_event_carries_ssid_from_current_connection` |
 
+### `scenes`
+
+| Requirement | Test |
+|---|---|
+| Four canonical scene names (`home` / `office` / `public` / `audit`); `home` is the default; CLI > env > default precedence; blank env falls to default; invalid env warns + defaults; invalid CLI raises | `test_scene.py::test_valid_scenes_returns_exactly_four_canonical_names`, `::test_default_scene_is_home`, `::test_resolve_cli_wins_over_env`, `::test_resolve_env_fills_in_when_no_cli`, `::test_resolve_blank_env_falls_to_default`, `::test_resolve_invalid_env_warns_and_defaults`, `::test_resolve_invalid_cli_raises_value_error`, `::test_set_scene_invalid_raises`, `::test_set_scene_get_scene_roundtrip` |
+| `scene_defaults(scene)` returns stable per-scene knob map; `home=5s`, `office=15s`, `public=30s`, `audit=0s` presence gates; every scene carries a non-empty `llm_prior` string; callers can `.get()` defensively for future knobs | `test_scene.py::test_scene_defaults_home_presence_gate_is_5s`, `::test_scene_defaults_office_presence_gate_is_15s`, `::test_scene_defaults_public_presence_gate_is_30s`, `::test_scene_defaults_audit_presence_gate_is_zero`, `::test_scene_defaults_includes_llm_prior_for_every_scene`, `::test_scene_defaults_unknown_scene_raises`, `::test_callers_can_read_knobs_defensively` |
+| `--scene SCENE` CLI flag + `DITING_SCENE` env var threaded; `--ble-presence-gate D` wins over scene default; env wins over scene default; blank/invalid env falls to scene default | `test_cli.py::test_extract_scene_arg_parses_value`, `::test_extract_scene_arg_parses_equals_form`, `::test_extract_scene_arg_absent_returns_none`, `::test_extract_scene_arg_invalid_value_exits`, `::test_extract_scene_arg_missing_value_exits`, `::test_resolve_ble_presence_gate_uses_scene_default_when_no_cli_no_env`, `::test_resolve_ble_presence_gate_cli_overrides_scene_default`, `::test_resolve_ble_presence_gate_env_wins_over_scene_default`, `::test_resolve_ble_presence_gate_blank_env_falls_to_scene_default`, `::test_resolve_ble_presence_gate_invalid_env_falls_to_scene_default` |
+
 ### `event-log`
 
 | Requirement | Test |
 |---|---|
+| `session_meta` line is first; carries scene + scene_source + diting_version + ssid + gateway_ip + hostname; emit is idempotent; disabled logger is no-op; null SSID / gateway are written through | `test_event_log.py::test_session_meta_writes_header_with_all_fields`, `::test_session_meta_is_first_when_emitted_first`, `::test_session_meta_is_idempotent`, `::test_session_meta_disabled_logger_is_no_op`, `::test_session_meta_accepts_null_ssid_and_gateway` |
 | `--log` and `diting monitor` produce byte-identical streams | `test_event_log.py::test_to_path_writes_appendable_jsonl`, `::test_unicode_user_strings_survive_readable` (single shared writer class) |
 | Writer flushes after every event | `test_event_log.py::test_line_buffered_writes_are_visible_before_close` |
 | atexit hook closes writer cleanly | (gap — no direct test; behaviour validated by `test_line_buffered_writes_are_visible_before_close`) |

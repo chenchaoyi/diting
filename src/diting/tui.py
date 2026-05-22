@@ -5669,6 +5669,8 @@ class DitingApp(App):
         scan_interval: float = 7.0,
         ble_helper_path: str | None = None,
         ble_presence_gate_s: float = 5.0,
+        scene: str = "home",
+        scene_source: str = "default",
         enable_latency: bool = True,
         enable_environment: bool = True,
         calibration_path: str | None = None,
@@ -5696,6 +5698,15 @@ class DitingApp(App):
         self._event_logger = (
             EventLogger.to_path(event_log_path) if event_log_path
             else EventLogger.disabled()
+        )
+        # Session header — written immediately so any subsequent
+        # emit_* (which may fire before the first ConnectionUpdate
+        # gives us SSID / gateway) lands AFTER the session_meta
+        # line. SSID / gateway are filled in here if known at this
+        # point, else null; downstream consumers expect the field
+        # to exist either way. No-op on the disabled logger.
+        self._event_logger.emit_session_meta(
+            scene=scene, scene_source=scene_source,
         )
         self._event_log_path = event_log_path
         # Per-(event_type, target) last-emit monotonic timestamp,
@@ -5741,6 +5752,11 @@ class DitingApp(App):
         self._ble_poller: BLEPoller | None = None
         self._ble_helper_path = helper_path
         self._ble_presence_gate_s = ble_presence_gate_s
+        # Active scene + how it was resolved (cli / env / default).
+        # Threaded into the title-bar chip and into the JSONL session
+        # header. Fixed at startup; never mutates during a session.
+        self._scene = scene
+        self._scene_source = scene_source
         # Latest BLE snapshot — kept fresh in the background regardless
         # of which view is active so toggling is instant. Two parallel
         # buffers: advertising (RSSI-sorted, post-merge) and connected
@@ -7293,6 +7309,14 @@ class DitingApp(App):
             sweep_s = int(getattr(self._lan_inventory_poller, "_sweep_interval_s", 0))
             if sweep_s:
                 bits.append(t("sweep {n}s", n=sweep_s))
+        # Scene chip — the localised name of the active scene
+        # (`home` / `office` / `public` / `audit` in EN; `家` /
+        # `公司` / `公共` / `排查` in ZH). Brackets are part of the
+        # format and not locale-dependent. Scene is fixed at startup
+        # so this never changes mid-session, but it must re-render
+        # with the subtitle to stay visible after a refresh.
+        scene_name = getattr(self, "_scene", "home")
+        bits.append(t("[{scene}]", scene=t(scene_name)))
         if self._paused:
             bits.append(t("PAUSED"))
         return " · ".join(bits)

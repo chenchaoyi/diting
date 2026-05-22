@@ -589,3 +589,96 @@ def test_naive_datetime_treated_as_local_not_utc(tmp_path):
     # Both must carry an explicit offset — never naive.
     assert ts0.utcoffset() is not None
     assert ts1.utcoffset() is not None
+
+
+# ------------------------------------------------------------------
+# session_meta — the JSONL session header
+# ------------------------------------------------------------------
+
+def test_session_meta_writes_header_with_all_fields(tmp_path):
+    """emit_session_meta produces a single JSONL line carrying every
+    field documented in the event-log spec."""
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_session_meta(
+        scene="office", scene_source="cli",
+        ssid="Meituan", gateway_ip="11.10.128.1",
+    )
+    logger.close()
+    rows = _read_jsonl(path)
+    assert len(rows) == 1
+    meta = rows[0]
+    assert meta["type"] == "session_meta"
+    assert meta["scene"] == "office"
+    assert meta["scene_source"] == "cli"
+    assert meta["ssid"] == "Meituan"
+    assert meta["gateway_ip"] == "11.10.128.1"
+    # diting_version must be present and look like a version string.
+    assert "diting_version" in meta
+    assert isinstance(meta["diting_version"], str)
+    # hostname comes from socket.gethostname() — just assert it's
+    # populated and a string; we don't assert specific values
+    # because tests run on heterogeneous machines.
+    assert isinstance(meta["hostname"], str)
+    assert len(meta["hostname"]) > 0
+    # Timestamp must be ISO-8601 with explicit offset, matching the
+    # rest of the JSONL stream.
+    from datetime import datetime as _dt
+    ts = _dt.fromisoformat(meta["ts"])
+    assert ts.utcoffset() is not None
+
+
+def test_session_meta_is_first_when_emitted_first(tmp_path):
+    """The CLI calls emit_session_meta immediately after constructing
+    the logger; subsequent event emits land below it. Order matters
+    because downstream tools read line 1 expecting the session
+    header."""
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_session_meta(scene="home", scene_source="default")
+    logger.emit_latency_spike(LatencySpikeEvent(
+        timestamp=datetime(2026, 5, 22, 12, 0, 0, tzinfo=timezone.utc),
+        target="router", target_ip="192.168.1.1",
+        rtt_ms=300.0, loss_pct=0.0,
+    ))
+    logger.close()
+    rows = _read_jsonl(path)
+    assert rows[0]["type"] == "session_meta"
+    assert rows[1]["type"] == "latency_spike"
+
+
+def test_session_meta_is_idempotent(tmp_path):
+    """A second emit_session_meta call on the same logger is a no-op.
+    Lets caller paths invoke it unconditionally without risking
+    duplicate headers in the JSONL."""
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_session_meta(scene="home", scene_source="default")
+    logger.emit_session_meta(scene="office", scene_source="cli")
+    logger.close()
+    rows = _read_jsonl(path)
+    assert len(rows) == 1
+    # The first call wins — the second is silently dropped.
+    assert rows[0]["scene"] == "home"
+
+
+def test_session_meta_disabled_logger_is_no_op():
+    """The TUI uses .disabled() when --log is off; emit_session_meta
+    must be safe to call unconditionally."""
+    logger = EventLogger.disabled()
+    # Must not raise.
+    logger.emit_session_meta(scene="home", scene_source="default")
+
+
+def test_session_meta_accepts_null_ssid_and_gateway(tmp_path):
+    """If diting launches before the first Wi-Fi connection lands,
+    SSID and gateway are not yet known. They MUST be writable as
+    null without skipping the field — downstream consumers want to
+    distinguish 'not known' from 'not measured'."""
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_session_meta(scene="home", scene_source="default")
+    logger.close()
+    rows = _read_jsonl(path)
+    assert rows[0]["ssid"] is None
+    assert rows[0]["gateway_ip"] is None

@@ -11,6 +11,12 @@ behaviours between releases.
 
 ## [Unreleased]
 
+### Added
+- **Scene awareness — `--scene SCENE` flag + `DITING_SCENE` env var.** Four named environments (`home` / `office` / `public` / `audit`) each carry default knobs and a plain-language baseline expectation. Selected via CLI flag (highest priority), env var, or the default `home`. Drives the BLE presence-gate default per scene (`home=5s`, `office=15s`, `public=30s`, `audit=0s`); `--ble-presence-gate D` continues to override. Active scene renders as a chip in the TUI title bar (`scan 7s · [home]` / `扫描间隔 7s · [家]`). Spec lives in the new `scenes` capability.
+- **JSONL `session_meta` event.** Every diting session now writes a `session_meta` line as the FIRST line of its JSONL log (both `--log` and `diting monitor`). Carries `scene`, `scene_source` (cli / env / default), `diting_version`, `ssid`, `gateway_ip`, `hostname`. Per-event lines unchanged — the session context lives ONLY in the header. PII surface kept narrow: hostname is in (anonymizable downstream), BSSID is NOT.
+- **`diting analyze` reads `session_meta`.** Report header surfaces the active scene (e.g. `Scene: office (cli)`); multi-session globs summarise the scene mix (`Scenes: 2 × home, 1 × office`). Pre-scene-aware logs render `Scene: unknown (pre-scene-aware capture)` and continue.
+- **`diting analyze --for-llm` injects scene context.** The generated `prompt.txt` opens with a `[Scene context]` paragraph telling the LLM what baseline to expect for the captured environment ("office mode — dense enterprise baseline churn expected — look for departures from this baseline, not the baseline itself"). Backfills observed BSSID + BLE-identifier counts from the data when present. Multi-scene bundles get a different paragraph instructing the LLM to compare across scenes.
+
 ## [1.5.0] — 2026-05-22
 
 Minor release. BLE event-stream quality pass driven by the
