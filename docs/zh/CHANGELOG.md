@@ -10,6 +10,22 @@
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-05-22
+
+Minor release。**场景感知** —— diting 现在明确知道「你身处什么
+环境」。四个命名场景（`home` / `office` / `public` / `audit`）
+各有 BLE presence-gate 默认值和基线预期；`--for-llm` 分析包会
+把这份预期作为先验注入 LLM prompt。场景按 5 层优先级解析：
+`--scene` flag → `DITING_SCENE` env → `scenes.yaml` 网络粘贴
+→ 启发式自动判别（WPA-Enterprise / 密集 BSSID 面）→ `home`
+默认。每个 JSONL 会话开头都会写一行 `session_meta` 标明场景
++ 怎么定的，让 analyzer 按场景做跨会话聚合，LLM bundle 也能
+在 prompt 模板前面塞上「office 长什么样」的基线先验。
+
+如果做审计 / 排查需要，`--scene audit`（或
+`--ble-presence-gate 0`）直接关掉门控，恢复 v1.4.0 「记一切」
+契约。
+
 ### 新增
 - **场景自动识别 + `scenes.yaml` 按网络持久化。** 不传 `--scene`、也不设 `DITING_SCENE` 时，diting 启动时会自己看当前 Wi-Fi 连接选场景：企业认证（WPA2 / WPA3 Enterprise）→ `office`；CoreWLAN 缓存里 ≥ 30 BSSID → `office`；其他 → `home`。一行 stderr banner 说明结果（`auto-detected scene: office (WPA2 Enterprise auth)`），`DITING_SCENE_QUIET=1` 可静音。常去的网络可以拷 `scenes.example.yaml` 成 `scenes.yaml`（与 `aps.yaml` 同模式，可选、在 cwd、git-ignored），按 SSID → 场景固定（或 `gateway_mac` → 场景，给 SSID 撞名场景如 `eduroam`）；yaml 命中优先于启发式，banner 变成 `pinned scene: office (matched "Meituan" in scenes.yaml)`。JSONL `scene_source` 字段从 `{cli, env, default}` 扩到 `{cli, env, yaml, auto, default}`，让 analyzer 和 LLM bundle 区分「用户明确指定」与「diting 自己猜的」。解析顺序：CLI flag > env var > scenes.yaml > 启发式 > `home` 默认。`public` 保持手动（无主动探测时区分不开公共 Wi-Fi 和邻居开放 AP）。
 - **场景感知 —— `--scene SCENE` flag + `DITING_SCENE` 环境变量。** 四个命名环境（`home` / `office` / `public` / `audit`），每个带一套默认旋钮和一句白话的基线预期。CLI flag（最高优先级）/ env var / 默认 `home` 三层解析。决定 BLE presence gate 的每场景默认值（`home=5s`、`office=15s`、`public=30s`、`audit=0s`）；`--ble-presence-gate D` 仍然能单点覆盖。激活的场景在 TUI 标题栏里显示成 chip（`扫描间隔 7s · [家]` / `scan 7s · [home]`）。Spec 单独成一个 `scenes` capability。

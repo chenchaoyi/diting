@@ -11,6 +11,26 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-05-22
+
+Minor release. **Scene awareness** — diting now carries an explicit
+notion of *where the user is right now*. Four named scenes
+(`home` / `office` / `public` / `audit`) each set their own BLE
+presence-gate default and carry a baseline-expectation prior that
+the `--for-llm` analysis bundle hands to the LLM as load-bearing
+context. Scene resolves from a 5-tier precedence: `--scene` CLI
+flag → `DITING_SCENE` env var → `scenes.yaml` per-network pinning
+→ auto-detect heuristic (WPA-Enterprise / dense BSSID surface) →
+`home` default. Every JSONL session now opens with a `session_meta`
+line tagging the scene + how it was resolved, so the analyzer
+can group cross-session aggregations by scene and the LLM bundle
+prepends a "here's what 'office' looks like as a baseline" prior
+to the prompt template.
+
+For the audit / debug use case, `--scene audit` (or
+`--ble-presence-gate 0`) disables the gate entirely and restores
+the v1.4.0 "record everything" contract.
+
 ### Added
 - **Scene auto-detect + `scenes.yaml` per-network persistence.** When neither `--scene` nor `DITING_SCENE` is set, diting now picks the scene itself at startup by inspecting the active Wi-Fi connection: enterprise auth (WPA2 / WPA3 Enterprise) → `office`; ≥ 30 visible BSSIDs in the CoreWLAN scan cache → `office`; otherwise `home`. A one-line stderr banner explains the choice (`auto-detected scene: office (WPA2 Enterprise auth)`); suppress with `DITING_SCENE_QUIET=1`. For networks you visit regularly, `scenes.yaml` (mirror of `aps.yaml` — optional, in cwd, git-ignored) pins SSID → scene (or `gateway_mac` → scene for SSID-collision cases like `eduroam`); yaml hit wins over auto-detect, banner becomes `pinned scene: office (matched "Meituan" in scenes.yaml)`. `scene_source` JSONL field extends from `{cli, env, default}` to `{cli, env, yaml, auto, default}` so the analyzer and LLM bundle can distinguish explicit user choice from automated guess. Resolution precedence: CLI flag > env var > scenes.yaml > heuristic > `home` default. `public` stays opt-in (captive-portal detection without active probing is unreliable).
 - **Scene awareness — `--scene SCENE` flag + `DITING_SCENE` env var.** Four named environments (`home` / `office` / `public` / `audit`) each carry default knobs and a plain-language baseline expectation. Selected via CLI flag (highest priority), env var, or the default `home`. Drives the BLE presence-gate default per scene (`home=5s`, `office=15s`, `public=30s`, `audit=0s`); `--ble-presence-gate D` continues to override. Active scene renders as a chip in the TUI title bar (`scan 7s · [home]` / `扫描间隔 7s · [家]`). Spec lives in the new `scenes` capability.
