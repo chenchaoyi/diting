@@ -139,7 +139,7 @@ The `session_meta` event SHALL include these fields:
 | `type` | string, fixed `"session_meta"` | constant |
 | `ts` | ISO-8601 local TZ, same format as other events | `datetime.now(LOCAL_TZ)` at writer open |
 | `scene` | string, one of `home` / `office` / `public` / `audit` | `get_scene()` |
-| `scene_source` | string, one of `cli` / `env` / `default` | resolution layer in `cli.py` |
+| `scene_source` | string, one of `cli` / `env` / `yaml` / `auto` / `default` | resolution layer in `cli.py` |
 | `diting_version` | string | `importlib.metadata.version("diting")` |
 | `ssid` | string or null | latest connection's SSID at open time; null if not yet connected |
 | `gateway_ip` | string or null | latest connection's gateway IP; null if not yet known |
@@ -162,3 +162,19 @@ When `diting monitor` is invoked (stdout mode), the same `session_meta` line SHA
 #### Scenario: session_meta when SSID is unknown at start
 - **WHEN** diting launches without a current Wi-Fi connection
 - **THEN** the session_meta line still emits with `"ssid": null` and `"gateway_ip": null`; subsequent per-event lines may carry the SSID once it's known
+
+The `scene_source` field's expanded value set lets analyzers distinguish:
+
+- `cli` — user explicitly passed `--scene SCENE`.
+- `env` — `DITING_SCENE` env var.
+- `yaml` — `scenes.yaml` matched the current network.
+- `auto` — heuristic classified from active connection signals.
+- `default` — nothing decided; fell to `home`.
+
+#### Scenario: yaml-resolved scene records source `yaml`
+- **WHEN** `scenes.yaml` matches the current SSID, diting launches the TUI with `--log /tmp/x.jsonl`
+- **THEN** the first line of `/tmp/x.jsonl` has `"scene_source": "yaml"`
+
+#### Scenario: auto-detected scene records source `auto`
+- **WHEN** the user has no `--scene` / no env var / no yaml match, and the active connection is WPA2 Enterprise
+- **THEN** the session_meta line has `"scene": "office"` and `"scene_source": "auto"`
