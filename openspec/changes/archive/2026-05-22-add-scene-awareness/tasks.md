@@ -69,5 +69,5 @@
 
 ## 10. Merge + archive
 
-- [ ] PR open, reviewed, merged
-- [ ] `/opsx:archive add-scene-awareness`
+- [x] PR open, reviewed, merged (#114)
+- [x] `/opsx:archive add-scene-awareness`

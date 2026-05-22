@@ -159,7 +159,9 @@ The exclusion is implemented via the `category_only=True` flag on `service_categ
 - **Bypass path** — the identifier's first observation carries a non-null `name` OR the identifier comes from the `_connected` snapshot. Graduates to PRESENT on the same tick, `BLEDeviceSeenEvent` fires with the original `first_seen` timestamp.
 - **Gated path** — the identifier's first observation is anonymous (no helper-given `name`, only `vendor` + RSSI). The identifier enters PENDING with a stored `first_seen` timestamp. On each subsequent tick, the poller checks whether `(now - first_seen) >= presence_gate_s`. When that elapses AND the identifier is still in `_devices`, the identifier graduates to PRESENT and `BLEDeviceSeenEvent` fires with `timestamp = first_seen` (NOT the wall-clock graduation time).
 
-`presence_gate_s` is configurable via `BLEPoller(presence_gate_s=...)` and defaults to **5.0** seconds. A value of `0.0` restores the pre-gate "every first-seen identifier fires seen on its first observation" behaviour, including for anonymous adverts; in that case PENDING is bypassed entirely.
+`presence_gate_s` is configurable via `BLEPoller(presence_gate_s=...)`. The default `presence_gate_s` for any given session SHALL be sourced from the active scene: `scene_defaults(get_scene())["ble_presence_gate_s"]`. With the four canonical scenes that resolves to `home=5.0`, `office=15.0`, `public=30.0`, `audit=0.0`. The `home` value (5.0) matches the pre-scene v1.5.0 default — upgrading users who do not pass `--scene` see no behaviour change.
+
+`--ble-presence-gate D` on the CLI SHALL override the scene-derived default — the explicit flag is narrower-scoped and always wins. A value of `0.0` (whether from `--scene audit` or from `--ble-presence-gate 0`) restores the pre-gate "every first-seen identifier fires seen on its first observation" behaviour, including for anonymous adverts; in that case PENDING is bypassed entirely.
 
 `BLEPoller` SHALL emit `BLEDeviceLeftEvent` when a PRESENT device's `last_seen` falls more than the existing TTL behind the latest snapshot AND the device is then removed from state.
 
@@ -186,6 +188,14 @@ The `BLEPoller.events()` async iterator's union return type SHALL include `BLEDe
 #### Scenario: `presence_gate_s = 0` restores no-debounce
 - **WHEN** `BLEPoller(presence_gate_s=0.0)` is constructed AND an anonymous advertisement populates `_devices[ident]` for the first time
 - **THEN** `BLEDeviceSeenEvent` is yielded on the same tick, with no PENDING state entered
+
+#### Scenario: Scene `office` sources a 15 s gate
+- **WHEN** `diting --scene office` is launched with no explicit `--ble-presence-gate`
+- **THEN** `BLEPoller.presence_gate_s == 15.0` for the session
+
+#### Scenario: `--ble-presence-gate` overrides scene
+- **WHEN** `diting --scene office --ble-presence-gate 5s` is launched
+- **THEN** `BLEPoller.presence_gate_s == 5.0` for the session; the scene name remains `office` for session_meta / LLM context
 
 #### Scenario: TTL eviction fires left
 - **WHEN** a tracked device's `last_seen` exceeds the BLE TTL relative to the latest snapshot's `now` AND the identifier had previously graduated to PRESENT
