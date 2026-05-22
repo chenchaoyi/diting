@@ -35,7 +35,16 @@ _DEFAULT = HOME
 # Source-of-resolution constants — what told us which scene to use.
 SOURCE_CLI = "cli"
 SOURCE_ENV = "env"
+SOURCE_YAML = "yaml"      # scenes.yaml matched the current network
+SOURCE_AUTO = "auto"      # heuristic classified from active connection signals
 SOURCE_DEFAULT = "default"
+
+# Heuristic threshold — BSSID count above this classifies as office.
+# Empirically: corp floors easily see 60+ on 5 GHz alone; typical
+# apartments see 10-20 from neighbouring residences. 30 is the
+# crossover. Tuning is a future concern; today it's a constant so the
+# behaviour is reproducible.
+_OFFICE_BSSID_THRESHOLD = 30
 
 _scene: str = _DEFAULT
 
@@ -181,3 +190,36 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         ),
     },
 }
+
+
+def classify_environment(
+    security: str | None,
+    visible_bssid_count: int,
+    ssid: str | None = None,
+) -> tuple[str, str]:
+    """Heuristic scene classifier — no side effects, pure function.
+
+    Returns ``(scene, reason)``. The reason is a short human-readable
+    string the CLI banner surfaces so the user can see why diting
+    picked the scene it did.
+
+    Rules in priority order (first match wins):
+
+    1. ``security`` contains "Enterprise" (case-insensitive — matches
+       WPA2 Enterprise / WPA3 Enterprise / WPA-Enterprise) → ``office``.
+       Enterprise auth is the strongest single signal that the user is
+       on a corp / institutional network.
+    2. ``visible_bssid_count >= 30`` → ``office``. Catches dense urban
+       offices, malls, conference centres without enterprise auth.
+    3. otherwise → ``home``. The conservative fallback.
+
+    Note: ``public`` is intentionally NOT auto-classified. Open WiFi
+    exists in homes (neighbour's), offices (guest network), and public
+    spaces; without active probing diting cannot distinguish them.
+    Public scene stays opt-in via ``--scene public``.
+    """
+    if security and "enterprise" in security.lower():
+        return OFFICE, f"{security} auth"
+    if visible_bssid_count >= _OFFICE_BSSID_THRESHOLD:
+        return OFFICE, f"{visible_bssid_count} BSSIDs visible"
+    return HOME, "no enterprise auth, sparse BSSID surface"

@@ -133,3 +133,94 @@ def test_callers_can_read_knobs_defensively() -> None:
     assert scene.scene_defaults("home").get(
         "future_knob", "fallback"
     ) == "fallback"
+
+
+# ------------------------------------------------------------------
+# classify_environment — heuristic
+# ------------------------------------------------------------------
+
+
+def test_classify_wpa2_enterprise_returns_office() -> None:
+    scene_, reason = scene.classify_environment(
+        "WPA2 Enterprise", 5, "Meituan",
+    )
+    assert scene_ == "office"
+    assert "WPA2 Enterprise" in reason
+
+
+def test_classify_wpa3_enterprise_returns_office() -> None:
+    """WPA3 Enterprise is increasingly common on corp networks; the
+    'Enterprise' substring match catches both WPA2 and WPA3 variants."""
+    scene_, reason = scene.classify_environment(
+        "WPA3 Enterprise", 12, "Corp",
+    )
+    assert scene_ == "office"
+
+
+def test_classify_case_insensitive_enterprise_match() -> None:
+    """Some helper outputs report the security mode as `wpa-enterprise`
+    or `802.1X Enterprise`. The substring match is case-insensitive
+    so any of these resolves correctly."""
+    for sec in ("wpa-enterprise", "WPA2-ENTERPRISE", "802.1X Enterprise"):
+        scene_, _ = scene.classify_environment(sec, 5, "X")
+        assert scene_ == "office", f"{sec!r} should classify as office"
+
+
+def test_classify_dense_personal_network_is_office() -> None:
+    """A personal-auth network with 47 visible BSSIDs is most likely
+    a dense urban office complex / mall / conference centre — the
+    BSSID count is the secondary signal that catches these."""
+    scene_, reason = scene.classify_environment(
+        "WPA2 Personal", 47, "BigComplex",
+    )
+    assert scene_ == "office"
+    assert "47" in reason
+
+
+def test_classify_sparse_personal_network_is_home() -> None:
+    scene_, reason = scene.classify_environment(
+        "WPA2 Personal", 8, "HomeNet",
+    )
+    assert scene_ == "home"
+
+
+def test_classify_open_network_does_not_classify_as_public() -> None:
+    """Public auto-detection is intentionally out of scope. An open
+    WiFi could be your neighbour's, a guest network at work, or a
+    cafe — without active probing diting can't tell. Falls back to
+    home unless the BSSID count tips it to office."""
+    scene_, _ = scene.classify_environment("None", 12, "CoffeeBar-WiFi")
+    assert scene_ == "home"
+
+
+def test_classify_null_security_falls_to_home() -> None:
+    """Helpers / TCC states can leave the security field None. The
+    classifier handles that gracefully without crashing."""
+    scene_, _ = scene.classify_environment(None, 0, None)
+    assert scene_ == "home"
+
+
+def test_classify_threshold_exactly_30_is_office() -> None:
+    """Boundary: visible_bssid_count == 30 falls in 'office' (the
+    threshold is `>= 30`)."""
+    scene_, _ = scene.classify_environment("WPA2 Personal", 30, "X")
+    assert scene_ == "office"
+
+
+def test_classify_threshold_below_30_is_home() -> None:
+    """Boundary: visible_bssid_count == 29 stays in 'home'."""
+    scene_, _ = scene.classify_environment("WPA2 Personal", 29, "X")
+    assert scene_ == "home"
+
+
+def test_classify_reason_is_human_readable() -> None:
+    """The reason string surfaces in the startup banner; should be
+    short and explanatory, not a stack trace."""
+    for sec, count in (
+        ("WPA2 Enterprise", 5),
+        ("WPA2 Personal", 50),
+        ("WPA2 Personal", 5),
+    ):
+        _, reason = scene.classify_environment(sec, count, "X")
+        assert len(reason) > 5
+        assert "\n" not in reason

@@ -149,7 +149,49 @@ scenes ship today, each tuned for one class of environment:
 | `public` | cafe / train / plane / public Wi-Fi | BLE presence gate **30 s** — almost everything is passers-by |
 | `audit` | actively investigating (security research, debug, forensics) | BLE presence gate **0 s** — record every advert |
 
-Set via CLI flag or env var, same precedence pattern as `--lang`:
+### Auto-detect (default)
+
+When you don't pass `--scene` and don't set `DITING_SCENE`, diting picks the scene itself by inspecting the active Wi-Fi connection at startup. The rules are simple, deterministic, and run on local state only — no probes, no phone-home:
+
+1. **Enterprise auth** (WPA2 Enterprise / WPA3 Enterprise / 802.1X) → `office`
+2. **≥ 30 visible BSSIDs** in the most recent CoreWLAN scan → `office`
+3. **otherwise** → `home`
+
+`public` stays opt-in (captive-portal detection without active probing is unreliable). When the auto-detect runs, diting prints a one-line banner to stderr explaining what it picked and why:
+
+```
+$ diting
+auto-detected scene: office (WPA2 Enterprise auth)
+```
+
+Suppress the banner with `DITING_SCENE_QUIET=1`.
+
+### Pin per-network in `scenes.yaml`
+
+For networks you visit regularly, copy `scenes.example.yaml` to `scenes.yaml` (git-ignored) and map SSID → scene:
+
+```yaml
+networks:
+  - ssid: HomeNet
+    scene: home
+  - ssid: Meituan
+    scene: office
+  # Use gateway_mac when SSID is reused across networks (eduroam):
+  - gateway_mac: 14:51:7e:71:5a:1a
+    scene: office
+```
+
+A yaml hit wins over the auto-detect. The banner becomes:
+
+```
+pinned scene: office (matched "Meituan" in scenes.yaml)
+```
+
+Override the file location with `DITING_SCENES_FILE=/path/to/scenes.yaml`.
+
+### Explicit override
+
+CLI flag and env var still take precedence over scenes.yaml and the heuristic:
 
 ```
 diting --scene office             # this session

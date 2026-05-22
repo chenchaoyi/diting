@@ -917,6 +917,119 @@ def _extract_ble_presence_gate_arg(argv: list[str]) -> float | None:
         sys.exit(2)
 
 
+def _gateway_mac_for_router_ip(router_ip: str | None) -> str | None:
+    """Look up the gateway MAC by reading ``arp -an``. Used at scene
+    resolution time to match a ``scenes.yaml`` `gateway_mac` entry.
+
+    Best-effort: returns None if the ARP cache doesn't know the
+    gateway (which is normal right after boot, before any traffic
+    flows). The caller falls back to SSID-only matching.
+    """
+    if not router_ip:
+        return None
+    try:
+        from .lan import _read_arp_cache
+        for ip, mac, _iface in _read_arp_cache():
+            if ip == router_ip:
+                return mac
+    except Exception:
+        # ARP subprocess may fail (no permissions / no /usr/sbin/arp).
+        # Scene resolution must not crash startup over this.
+        return None
+    return None
+
+
+def _resolve_scene_at_startup(
+    cli_value: str | None,
+) -> tuple[str, str, str | None]:
+    """Run the full 5-tier scene resolution at process startup.
+
+    Returns ``(scene_name, scene_source, banner_text_or_none)``.
+    Banner text is non-None only when scene was resolved by yaml or
+    auto — explicit user choices (cli / env) are silent.
+
+    Tiers, highest-priority first:
+
+    1. CLI `--scene` flag.
+    2. `DITING_SCENE` env var.
+    3. `scenes.yaml` SSID / gateway_mac match.
+    4. Auto-detect heuristic on the current connection.
+    5. Default `home`.
+
+    Steps 3-4 require a synchronous ``MacOSWiFiBackend.get_connection()``
+    call. If no Wi-Fi is associated, both tiers are skipped and
+    resolution falls straight to step 5.
+    """
+    from . import scene as _scene_mod
+    # Step 1+2+5 — pure-function pass through scene.resolve_scene.
+    scene_name, source = _scene_mod.resolve_scene(cli_value)
+    if source != _scene_mod.SOURCE_DEFAULT:
+        # cli or env decided; skip yaml + heuristic.
+        return scene_name, source, None
+
+    # Step 3+4: sync read of current Wi-Fi connection.
+    try:
+        from .macos_backend import MacOSWiFiBackend
+        backend = MacOSWiFiBackend()
+        connection = backend.get_connection()
+    except Exception:
+        # CoreWLAN unavailable (rare on a Mac) — fall to default.
+        return scene_name, source, None
+    if connection is None or not connection.ssid:
+        # Step 5: no connection → home (default), no banner.
+        return scene_name, source, None
+
+    # Step 3: scenes.yaml lookup.
+    from . import scenes_config
+    registry = scenes_config.load_scenes_registry()
+    gateway_mac = _gateway_mac_for_router_ip(
+        getattr(connection, "router_ip", None),
+    )
+    hit = registry.lookup(ssid=connection.ssid, gateway_mac=gateway_mac)
+    if hit is not None:
+        match_key = (
+            f"gateway MAC {hit.gateway_mac}" if hit.gateway_mac
+            else f"\"{hit.ssid}\""
+        )
+        banner = t(
+            "pinned scene: {scene} (matched {key} in scenes.yaml)",
+            scene=t(hit.scene), key=match_key,
+        )
+        return hit.scene, _scene_mod.SOURCE_YAML, banner
+
+    # Step 4: heuristic.
+    bssid_count = 0
+    try:
+        # get_scan_results returns the most recent scan from the
+        # CoreWLAN cache without forcing a fresh probe (it's the
+        # synchronous read of `wifi.cachedScanResults()` in macOS).
+        bssid_count = len(backend.get_scan_results() or [])
+    except Exception:
+        bssid_count = 0
+    inferred, reason = _scene_mod.classify_environment(
+        connection.security, bssid_count, connection.ssid,
+    )
+    banner = t(
+        "auto-detected scene: {scene} ({reason})",
+        scene=t(inferred), reason=reason,
+    )
+    return inferred, _scene_mod.SOURCE_AUTO, banner
+
+
+def _emit_scene_banner(banner_text: str | None) -> None:
+    """Print the resolution banner to stderr — unless suppressed.
+
+    `DITING_SCENE_QUIET=1` silences the banner (for users / scripts
+    that want clean startup). Source `cli` / `env` never produce a
+    banner; this function is a no-op when `banner_text` is None.
+    """
+    if not banner_text:
+        return
+    if os.environ.get("DITING_SCENE_QUIET", "").strip():
+        return
+    print(banner_text, file=sys.stderr)
+
+
 def _extract_scene_arg(argv: list[str]) -> str | None:
     """Pop ``--scene SCENE`` from ``argv`` in place.
 
@@ -1294,8 +1407,11 @@ def main() -> None:
     # the scene module before any poller / logger touches it.
     scene_cli = _extract_scene_arg(args)
     from . import scene as _scene_mod
-    scene_name, scene_source = _scene_mod.resolve_scene(scene_cli)
+    scene_name, scene_source, scene_banner = _resolve_scene_at_startup(
+        scene_cli,
+    )
     _scene_mod.set_scene(scene_name)
+    _emit_scene_banner(scene_banner)
     scene_gate_default = _scene_mod.scene_defaults(scene_name).get(
         "ble_presence_gate_s", 5.0,
     )
