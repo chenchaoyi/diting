@@ -10,6 +10,18 @@
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-05-22
+
+Minor release。BLE 事件流的一次质量整顿，起因是 2026-05-21
+EN ↔ ZH TUI audit 和一次 5.6 小时真实环境抓取。三件主要事：
+默认开启可配置的 presence gate，把单包 ghost 闪现压掉，但
+「记一切」契约仍以 opt-in 方式保留；state-machine 修复，止
+住了一个 BLE identifier 从单个 `seen` 派生 229 个 `left` 的
+病；以及一次措辞清理 —— EN UI / ZH UI / JSONL `type` 字段
+对「`*_seen` 是什么意思」终于一致了。顺便把 `diting --help`
+重新排版了一下 —— 子命令和全局选项分成两段，不再是一个扁
+平列表。
+
 ### 变更
 - **`diting --help` 重新排版。** 子命令和全局选项分到两个独立段落（之前是混在一起的扁平列表）。`--notify` 提升为顶层条目，不再只在「(无参数)」那段被一笔带过。`analyze` 子命令的 flag（`--since` / `--for-llm` / `--anonymize`）现在在顶层 help 里列出来 —— 之前必须读 README 才能发现。每条说明压缩到 2 行（之前最长 5 行），长篇文档留在 README。EN 与 ZH 两份目录同步更新。
 - **BLE 匿名广播 presence gate，默认 5 s。** `BLEPoller` 不再在匿名广播（只有 vendor + RSSI，没有 `name`）首次出现时就发 `BLEDeviceSeenEvent`。identifier 进入 PENDING 状态，必须被持续观察至少 `presence_gate_s` 秒才会 graduate 到 PRESENT、发 `seen`。如果 identifier 在 gate 成熟之前就被 TTL 清掉了，**什么事件都不发** —— 既无 `seen` 也无 `left`，干掉密集 RF 环境里那种 `seen_for=0s` 单包 ghost 闪现。带 `name` 的广播（`Magic Keyboard`、`Z-GM0YXG5J`、`ccy iPhone 15 Pro Max`）和已连接外设（`_connected` 快照）不走 gate —— 第一次观察就发 `seen`，只对匿名广播加门。新增 CLI flag `--ble-presence-gate DURATION`（`5s` / `30s` / `2m`，或 `0` 关闭）和 `DITING_BLE_PRESENCE_GATE` 环境变量；CLI 优先于 env，默认 5 s。`0` 恢复 A1 「记一切」语义，给想抓住每一个瞬态广播的用户（安全研究、AirTag 寻找、短广播调试）用。
