@@ -47,6 +47,11 @@ helper/wifiscope-helper.app/
 # business in version control and would expose private deployment info.
 aps.yaml
 
+# User's own scene assignments — created by copying scenes.example.yaml.
+# Contains SSIDs / gateway MACs of networks the user regularly visits;
+# same "private deployment info" reasoning as aps.yaml above.
+scenes.yaml
+
 # Event log files produced by `diting --log` and `diting monitor`.
 # Contain MAC addresses / SSIDs / timestamps from the user's network and
 # have no place in source control. The default-named pattern catches

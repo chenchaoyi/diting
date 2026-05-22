@@ -225,3 +225,146 @@ def test_resolve_ble_presence_gate_invalid_env_falls_to_scene_default(
     assert "DITING_BLE_PRESENCE_GATE" in err
     # Warning message names the scene default it fell back to.
     assert "30" in err
+
+
+# ------------------------------------------------------------------
+# Startup scene resolution: CLI > env > yaml > heuristic > default
+# ------------------------------------------------------------------
+
+
+def test_resolve_scene_at_startup_cli_short_circuits_yaml_and_heuristic(
+    monkeypatch, tmp_path,
+) -> None:
+    """When the user passes --scene, the yaml lookup + heuristic do
+    NOT run. We assert this by pointing DITING_SCENES_FILE at a yaml
+    that would match (and would otherwise win) and confirming CLI
+    still wins."""
+    yaml_path = tmp_path / "scenes.yaml"
+    yaml_path.write_text("networks:\n  - ssid: X\n    scene: office\n")
+    monkeypatch.setenv("DITING_SCENES_FILE", str(yaml_path))
+    monkeypatch.delenv("DITING_SCENE", raising=False)
+    scene_, source, banner = cli._resolve_scene_at_startup("audit")
+    assert scene_ == "audit"
+    assert source == "cli"
+    assert banner is None  # explicit user choice → no banner
+
+
+def test_resolve_scene_at_startup_env_short_circuits_yaml_and_heuristic(
+    monkeypatch, tmp_path,
+) -> None:
+    yaml_path = tmp_path / "scenes.yaml"
+    yaml_path.write_text("networks:\n  - ssid: X\n    scene: office\n")
+    monkeypatch.setenv("DITING_SCENES_FILE", str(yaml_path))
+    monkeypatch.setenv("DITING_SCENE", "public")
+    scene_, source, banner = cli._resolve_scene_at_startup(None)
+    assert scene_ == "public"
+    assert source == "env"
+    assert banner is None
+
+
+def test_resolve_scene_at_startup_yaml_hit(monkeypatch, tmp_path) -> None:
+    """No CLI, no env. scenes.yaml matches the current SSID. The
+    yaml tier should resolve; banner names the matched key."""
+    yaml_path = tmp_path / "scenes.yaml"
+    yaml_path.write_text("networks:\n  - ssid: TestNet\n    scene: office\n")
+    monkeypatch.setenv("DITING_SCENES_FILE", str(yaml_path))
+    monkeypatch.delenv("DITING_SCENE", raising=False)
+    # Patch the WiFi backend so we don't try to hit real CoreWLAN.
+    class _FakeConn:
+        ssid = "TestNet"
+        security = "WPA2 Personal"
+        router_ip = None
+    class _FakeBackend:
+        def get_connection(self):
+            return _FakeConn()
+        def get_scan_results(self):
+            return []
+    monkeypatch.setattr(
+        "diting.macos_backend.MacOSWiFiBackend",
+        lambda *a, **kw: _FakeBackend(),
+    )
+    scene_, source, banner = cli._resolve_scene_at_startup(None)
+    assert scene_ == "office"
+    assert source == "yaml"
+    assert banner is not None
+    assert "TestNet" in banner or "scenes.yaml" in banner
+
+
+def test_resolve_scene_at_startup_heuristic_when_no_yaml(
+    monkeypatch, tmp_path,
+) -> None:
+    """No yaml hit, but the connection is WPA2 Enterprise — the
+    heuristic should fire and return office."""
+    yaml_path = tmp_path / "empty.yaml"
+    yaml_path.write_text("")
+    monkeypatch.setenv("DITING_SCENES_FILE", str(yaml_path))
+    monkeypatch.delenv("DITING_SCENE", raising=False)
+    class _FakeConn:
+        ssid = "MysteryNet"
+        security = "WPA2 Enterprise"
+        router_ip = None
+    class _FakeBackend:
+        def get_connection(self):
+            return _FakeConn()
+        def get_scan_results(self):
+            return []
+    monkeypatch.setattr(
+        "diting.macos_backend.MacOSWiFiBackend",
+        lambda *a, **kw: _FakeBackend(),
+    )
+    scene_, source, banner = cli._resolve_scene_at_startup(None)
+    assert scene_ == "office"
+    assert source == "auto"
+    assert "WPA2 Enterprise" in banner
+
+
+def test_resolve_scene_at_startup_no_connection_falls_to_default(
+    monkeypatch,
+) -> None:
+    """No active Wi-Fi — heuristic and yaml are both skipped, falls
+    to home / default with no banner."""
+    monkeypatch.delenv("DITING_SCENE", raising=False)
+    monkeypatch.delenv("DITING_SCENES_FILE", raising=False)
+    class _FakeBackend:
+        def get_connection(self):
+            return None
+    monkeypatch.setattr(
+        "diting.macos_backend.MacOSWiFiBackend",
+        lambda *a, **kw: _FakeBackend(),
+    )
+    scene_, source, banner = cli._resolve_scene_at_startup(None)
+    assert scene_ == "home"
+    assert source == "default"
+    assert banner is None
+
+
+def test_emit_scene_banner_respects_quiet_env(monkeypatch, capsys) -> None:
+    """DITING_SCENE_QUIET=1 silences the banner for scripts that want
+    clean startup output."""
+    monkeypatch.setenv("DITING_SCENE_QUIET", "1")
+    cli._emit_scene_banner("auto-detected scene: office (test)")
+    err = capsys.readouterr().err
+    assert err == ""
+
+
+def test_emit_scene_banner_writes_to_stderr_not_stdout(
+    monkeypatch, capsys,
+) -> None:
+    """Banner MUST go to stderr — `diting monitor > log.jsonl` shells
+    must not see banner text interleaved with JSONL."""
+    monkeypatch.delenv("DITING_SCENE_QUIET", raising=False)
+    cli._emit_scene_banner("pinned scene: office (matched X in scenes.yaml)")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "pinned scene" in captured.err
+
+
+def test_emit_scene_banner_none_input_is_no_op(monkeypatch, capsys) -> None:
+    """When source is cli / env / default, _resolve_scene_at_startup
+    returns None for banner_text. The emitter must accept None silently
+    so callers can pass it unconditionally."""
+    monkeypatch.delenv("DITING_SCENE_QUIET", raising=False)
+    cli._emit_scene_banner(None)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""

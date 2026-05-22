@@ -1272,6 +1272,10 @@ _ZH: dict[str, str] = {
         "--scene 需要一个值（{names}）",
     "unsupported scene: {raw!r}; must be one of {names}":
         "不支持的场景：{raw!r}；可选项：{names}",
+    "auto-detected scene: {scene} ({reason})":
+        "自动识别场景：{scene}（{reason}）",
+    "pinned scene: {scene} (matched {key} in scenes.yaml)":
+        "锁定场景：{scene}（scenes.yaml 命中 {key}）",
     "Per-AP σ baseline": "各 AP 环境稳定度",
     "σ = RSSI stddev; current σ > baseline ×{ratio} (≥{floor} dB) fires [STIR]":
         "σ 是 RSSI 标准差；当前 σ 超过基线 ×{ratio}（且 ≥{floor} dB）时报告 [扰动]",

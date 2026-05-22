@@ -1,0 +1,37 @@
+# diting per-network scene assignment — sample config
+#
+# Resolution semantics are pinned in
+# openspec/specs/scenes/spec.md. The short version: scenes.yaml is
+# tier 3 in scene resolution, between `DITING_SCENE` env var and the
+# auto-detect heuristic.
+#
+# This file is OPTIONAL. Without it, diting auto-detects from the
+# active Wi-Fi connection's security mode + visible BSSID density.
+# The auto-detect runs every launch though, and prints a one-line
+# banner — pinning here makes diting silent for known networks.
+#
+# To get scoped scene assignment:
+#   1. cp scenes.example.yaml scenes.yaml          (next to this file)
+#   2. fill in entries below from networks you regularly use
+#   3. diting picks it up automatically; no restart needed
+#
+# Override the location with DITING_SCENES_FILE=/full/path/scenes.yaml.
+#
+# The four canonical scenes (also documented in --help):
+#   home   — sparse RF, your own Wi-Fi, ≤ ~15 BLE devices
+#   office — dense enterprise environment, baseline churn expected
+#   public — cafe / train / plane / public Wi-Fi, hostile shared
+#   audit  — actively investigating, record everything
+
+networks:
+  # Match by SSID (most common). First match wins.
+  - ssid: HomeNet
+    scene: home
+  - ssid: Meituan
+    scene: office
+
+  # Match by gateway MAC when SSID is reused across networks
+  # (e.g. eduroam everywhere, or several homes with the same name).
+  # Gateway MAC wins over SSID when both match — it's more specific.
+  - gateway_mac: 14:51:7e:71:5a:1a
+    scene: office
