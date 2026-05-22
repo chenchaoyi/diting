@@ -514,13 +514,17 @@ _ZH: dict[str, str] = {
     "                          (env: DITING_LOG=PATH or =auto)\n"
     "  --notify                raise OS banners on anomaly events while\n"
     "                          TUI runs (also accepted by `monitor`)\n"
-    "  --ble-presence-gate D   anonymous BLE adverts must be observed for\n"
-    "                          at least D (e.g. 5s, 30s, 2m) before they\n"
-    "                          emit transition events; suppresses single-\n"
-    "                          packet ghost flicker in dense RF. Default\n"
-    "                          5s; 0 restores record-everything. Named\n"
-    "                          devices + connected peripherals bypass.\n"
-    "                          (env: DITING_BLE_PRESENCE_GATE)\n"
+    "  --scene SCENE           home / office / public / audit (default home)\n"
+    "                          sets sensitivity defaults for the environment;\n"
+    "                          tags JSONL session_meta + LLM bundle context\n"
+    "                          (env: DITING_SCENE)\n"
+    "  --ble-presence-gate D   override the scene's BLE presence gate.\n"
+    "                          Anonymous BLE adverts must be observed for at\n"
+    "                          least D (e.g. 5s, 30s, 2m) before emitting\n"
+    "                          events; 0 disables the gate. Wins over scene\n"
+    "                          default (home=5s / office=15s / public=30s /\n"
+    "                          audit=0s). Named + connected peripherals\n"
+    "                          bypass. (env: DITING_BLE_PRESENCE_GATE)\n"
     "  --version, -V           print the running version and exit\n"
     "  -h, --help              show this message\n":
         "用法：diting [全局选项] [子命令 [子命令选项]]\n"
@@ -549,11 +553,16 @@ _ZH: dict[str, str] = {
         "                          （环境变量：DITING_LOG=PATH 或 =auto）\n"
         "  --notify                TUI 运行时在异常事件触发处弹出 macOS\n"
         "                          通知中心横幅（`monitor` 子命令也接受）\n"
-        "  --ble-presence-gate D   匿名 BLE 广播必须被持续观察至少 D\n"
-        "                          （例如 5s / 30s / 2m）才会发出现 / 消失\n"
-        "                          事件；压掉密集 RF 环境里的单包 ghost\n"
-        "                          闪现。默认 5s；填 0 恢复「记一切」语义。\n"
-        "                          带 name 的设备和已连接外设直通门控。\n"
+        "  --scene SCENE           home / office / public / audit（默认 home）\n"
+        "                          按环境给灵敏度设默认值；写入 JSONL\n"
+        "                          session_meta + LLM bundle 上下文\n"
+        "                          （环境变量：DITING_SCENE）\n"
+        "  --ble-presence-gate D   覆盖场景默认的 BLE presence gate。匿名\n"
+        "                          BLE 广播必须被持续观察至少 D（例如 5s /\n"
+        "                          30s / 2m）才会发事件；填 0 关闭门控。\n"
+        "                          优先级高于场景默认（home=5s / office=15s\n"
+        "                          / public=30s / audit=0s）。带 name 的\n"
+        "                          设备和已连接外设直通。\n"
         "                          （环境变量：DITING_BLE_PRESENCE_GATE）\n"
         "  --version, -V           打印当前版本号后退出\n"
         "  -h, --help              显示本说明\n",
@@ -1253,6 +1262,16 @@ _ZH: dict[str, str] = {
     "stir": "扰动",
     "latency": "延迟",
     "loss": "丢包",
+    # ---- Scenes (title-bar chip + report headers) ----
+    "home": "家",
+    "office": "公司",
+    "public": "公共",
+    "audit": "排查",
+    "[{scene}]": "[{scene}]",
+    "--scene requires a value ({names})":
+        "--scene 需要一个值（{names}）",
+    "unsupported scene: {raw!r}; must be one of {names}":
+        "不支持的场景：{raw!r}；可选项：{names}",
     "Per-AP σ baseline": "各 AP 环境稳定度",
     "σ = RSSI stddev; current σ > baseline ×{ratio} (≥{floor} dB) fires [STIR]":
         "σ 是 RSSI 标准差；当前 σ 超过基线 ×{ratio}（且 ≥{floor} dB）时报告 [扰动]",

@@ -124,3 +124,104 @@ def test_resolve_ble_presence_gate_invalid_env_warns_and_defaults(
     assert cli._resolve_ble_presence_gate(None) == 5.0
     err = capsys.readouterr().err
     assert "DITING_BLE_PRESENCE_GATE" in err
+
+
+# ------------------------------------------------------------------
+# --scene flag + scene-aware _resolve_ble_presence_gate
+# ------------------------------------------------------------------
+
+
+def test_extract_scene_arg_parses_value() -> None:
+    args = ["--scene", "office"]
+    assert cli._extract_scene_arg(args) == "office"
+    assert args == []
+
+
+def test_extract_scene_arg_parses_equals_form() -> None:
+    args = ["--scene=audit"]
+    assert cli._extract_scene_arg(args) == "audit"
+    assert args == []
+
+
+def test_extract_scene_arg_absent_returns_none() -> None:
+    args = ["--lang", "en"]
+    assert cli._extract_scene_arg(args) is None
+    assert args == ["--lang", "en"]
+
+
+def test_extract_scene_arg_invalid_value_exits(capsys) -> None:
+    """Bad CLI input is a clear error, not a fallback. The user
+    typed something wrong; tell them, exit non-zero."""
+    with pytest.raises(SystemExit):
+        cli._extract_scene_arg(["--scene", "shop"])
+    err = capsys.readouterr().err
+    assert "shop" in err
+    # The error must list the valid scene names so the user can fix it.
+    for name in ("home", "office", "public", "audit"):
+        assert name in err
+
+
+def test_extract_scene_arg_missing_value_exits() -> None:
+    with pytest.raises(SystemExit):
+        cli._extract_scene_arg(["--scene"])
+
+
+def test_resolve_ble_presence_gate_uses_scene_default_when_no_cli_no_env(
+    monkeypatch,
+) -> None:
+    """When neither CLI flag nor env var is set, the scene-derived
+    default wins. This is what `diting --scene office` triggers:
+    no `--ble-presence-gate`, no env var, gate becomes 15.0."""
+    monkeypatch.delenv("DITING_BLE_PRESENCE_GATE", raising=False)
+    assert cli._resolve_ble_presence_gate(
+        None, scene_default=15.0,
+    ) == 15.0
+
+
+def test_resolve_ble_presence_gate_cli_overrides_scene_default(
+    monkeypatch,
+) -> None:
+    """`--scene office --ble-presence-gate 5s` → gate is 5s, NOT
+    the office-scene default 15s. Explicit flag is narrower-scoped
+    and always wins."""
+    monkeypatch.delenv("DITING_BLE_PRESENCE_GATE", raising=False)
+    assert cli._resolve_ble_presence_gate(
+        5.0, scene_default=15.0,
+    ) == 5.0
+
+
+def test_resolve_ble_presence_gate_env_wins_over_scene_default(
+    monkeypatch,
+) -> None:
+    """Env var sits between CLI flag and scene default in precedence.
+    `DITING_BLE_PRESENCE_GATE=60s --scene office` → gate is 60s."""
+    monkeypatch.setenv("DITING_BLE_PRESENCE_GATE", "60s")
+    assert cli._resolve_ble_presence_gate(
+        None, scene_default=15.0,
+    ) == 60.0
+
+
+def test_resolve_ble_presence_gate_blank_env_falls_to_scene_default(
+    monkeypatch,
+) -> None:
+    """`DITING_BLE_PRESENCE_GATE= --scene public` → gate is 30s
+    (the public scene default), not the hard 5s fallback."""
+    monkeypatch.setenv("DITING_BLE_PRESENCE_GATE", "")
+    assert cli._resolve_ble_presence_gate(
+        None, scene_default=30.0,
+    ) == 30.0
+
+
+def test_resolve_ble_presence_gate_invalid_env_falls_to_scene_default(
+    monkeypatch, capsys,
+) -> None:
+    """Invalid env var still falls to scene default (not the hard
+    5s baseline). Warn on stderr but don't crash startup."""
+    monkeypatch.setenv("DITING_BLE_PRESENCE_GATE", "garbage")
+    assert cli._resolve_ble_presence_gate(
+        None, scene_default=30.0,
+    ) == 30.0
+    err = capsys.readouterr().err
+    assert "DITING_BLE_PRESENCE_GATE" in err
+    # Warning message names the scene default it fell back to.
+    assert "30" in err

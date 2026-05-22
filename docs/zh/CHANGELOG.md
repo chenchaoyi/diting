@@ -10,6 +10,12 @@
 
 ## [Unreleased]
 
+### 新增
+- **场景感知 —— `--scene SCENE` flag + `DITING_SCENE` 环境变量。** 四个命名环境（`home` / `office` / `public` / `audit`），每个带一套默认旋钮和一句白话的基线预期。CLI flag（最高优先级）/ env var / 默认 `home` 三层解析。决定 BLE presence gate 的每场景默认值（`home=5s`、`office=15s`、`public=30s`、`audit=0s`）；`--ble-presence-gate D` 仍然能单点覆盖。激活的场景在 TUI 标题栏里显示成 chip（`扫描间隔 7s · [家]` / `scan 7s · [home]`）。Spec 单独成一个 `scenes` capability。
+- **JSONL `session_meta` 事件。** 每个 diting 会话现在会把一行 `session_meta` 写成 JSONL 日志的第一行（`--log` 和 `diting monitor` 都会）。携带 `scene`、`scene_source`（cli / env / default）、`diting_version`、`ssid`、`gateway_ip`、`hostname`。逐事件行不变 —— 会话级 context 只放在 header 里。PII 面控制：hostname 在内（下游可匿名化），BSSID 不在。
+- **`diting analyze` 消费 `session_meta`。** 报告头会显示激活的场景（如 `Scene: office (cli)`）；多会话 glob 汇总场景分布（`Scenes: 2 × home, 1 × office`）。不带 session_meta 的老日志降级显示 `Scene: unknown (pre-scene-aware capture)` 后继续。
+- **`diting analyze --for-llm` 注入场景上下文。** 生成的 `prompt.txt` 开头加了一段 `[Scene context]`，告诉 LLM 抓取环境的基线预期（"office mode —— 企业网密集环境基线噪声本来就大 —— 你该找的是偏离基线的部分，而不是基线本身"）。带数据时还会把观察到的 BSSID + BLE identifier 数量回填进去。多场景 bundle 会换成另一段，要求 LLM 在场景之间做对比。
+
 ## [1.5.0] — 2026-05-22
 
 Minor release。BLE 事件流的一次质量整顿，起因是 2026-05-21

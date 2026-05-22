@@ -174,6 +174,23 @@ class Report:
     per_network: tuple[NetworkAggregate, ...] = ()
     daily_trend: tuple[DailyCount, ...] = ()
     top_contributors: TopContributors | None = None
+    # ---------- session_meta (scene awareness) ----------
+    # Scenes observed across the input session(s). Empty tuple when no
+    # session_meta line was found (pre-scene-aware capture). Single-
+    # element tuple for one consistent scene; multi-element when a
+    # glob spans different scenes (`Scenes: 3 × home, 1 × office`).
+    scenes: tuple[str, ...] = ()
+    # Map of scene → source ("cli" / "env" / "default") observed in
+    # input session_meta. When the same scene was set multiple times
+    # via different sources across input files, the most specific
+    # source wins (cli > env > default).
+    scene_sources: dict[str, str] = field(default_factory=dict)
+    # Observed env counters from session_meta lines, used to enrich
+    # the LLM scene-context paragraph with concrete numbers
+    # ("observed BSSID count ~80"). Populated from per-event data,
+    # not from session_meta itself.
+    observed_bssid_count: int = 0
+    observed_ble_identifier_count: int = 0
 
 
 # ---------- analyser ----------
@@ -215,6 +232,17 @@ def analyze(
     distinct_router_ips: set[str] = set()
 
     timestamps: list[datetime] = []
+
+    # session_meta accumulation. Across a multi-file glob each input
+    # contributes one session_meta line; we track the scenes observed
+    # and the most-specific source per scene (cli > env > default).
+    scenes_observed: list[str] = []
+    scene_sources_map: dict[str, str] = {}
+    _SOURCE_RANK = {"cli": 2, "env": 1, "default": 0}
+    # Distinct counts from per-event BLE / WiFi observations — fed
+    # into the LLM scene-context paragraph.
+    distinct_bssids: set[str] = set()
+    distinct_ble_identifiers: set[str] = set()
 
     for ev in events:
         kind = ev.get("type")
@@ -269,10 +297,30 @@ def analyze(
                 ev.get("previous_router_ip"),
                 ev.get("new_router_ip"),
             ))
+        elif kind == "session_meta":
+            scene = ev.get("scene")
+            if isinstance(scene, str) and scene:
+                scenes_observed.append(scene)
+                src = ev.get("scene_source") or "default"
+                if scene not in scene_sources_map or (
+                    _SOURCE_RANK.get(src, 0)
+                    > _SOURCE_RANK.get(scene_sources_map[scene], 0)
+                ):
+                    scene_sources_map[scene] = src
         if kind == "latency_spike":
             ip = ev.get("target_ip")
             if isinstance(ip, str) and ev.get("target") == "router":
                 distinct_router_ips.add(ip)
+        # Track distinct identifiers across all event types so the
+        # LLM scene-context paragraph can quote concrete numbers.
+        bssid = ev.get("bssid")
+        if isinstance(bssid, str) and bssid:
+            distinct_bssids.add(bssid.lower())
+        ble_id = ev.get("identifier")
+        if isinstance(ble_id, str) and ble_id and kind in (
+            "ble_device_seen", "ble_device_left",
+        ):
+            distinct_ble_identifiers.add(ble_id)
 
     # Cross-session aggregations only fire when the caller passed
     # multiple source paths OR a --since filter — i.e. they signal
@@ -328,6 +376,10 @@ def analyze(
         per_network=per_net,
         daily_trend=daily,
         top_contributors=contributors,
+        scenes=tuple(scenes_observed),
+        scene_sources=scene_sources_map,
+        observed_bssid_count=len(distinct_bssids),
+        observed_ble_identifier_count=len(distinct_ble_identifiers),
     )
 
     insights = list(_run_heuristics(report, events))
@@ -1092,6 +1144,11 @@ def render_markdown(
     lines: list[str] = []
     lines.append("# diting analysis report")
     lines.append("")
+    # Scene line surfaces the environment the JSONL was captured in.
+    # Always rendered (single or multi-session). Pre-scene-aware
+    # captures show `unknown (pre-scene-aware capture)`.
+    lines.append(f"**Scene:** {scene_summary(report)}")
+    lines.append("")
     enable_cross = (
         len(report.source_paths) > 1 or report.since is not None
     )
@@ -1343,6 +1400,96 @@ def render_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
+def scene_summary(report: Report) -> str:
+    """Short one-line summary of the scene(s) in this report.
+
+    Returns strings like:
+    - `home (cli)` — single scene, source named in parens
+    - `office (env)` — single scene from env var
+    - `2 × home, 1 × office` — multi-scene mix
+    - `unknown (pre-scene-aware capture)` — no session_meta found
+
+    Used in the Markdown report header.
+    """
+    if not report.scenes:
+        return "unknown (pre-scene-aware capture)"
+    counts: dict[str, int] = {}
+    for s in report.scenes:
+        counts[s] = counts.get(s, 0) + 1
+    if len(counts) == 1:
+        scene = next(iter(counts))
+        source = report.scene_sources.get(scene, "default")
+        return f"{scene} ({source})"
+    # Multi-scene: render in count-descending order, ties by name.
+    parts = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ", ".join(f"{n} × {name}" for name, n in parts)
+
+
+def scene_llm_context_paragraph(report: Report) -> str:
+    """Build the `[Scene context]` paragraph injected at the top of
+    the LLM prompt.
+
+    For single-scene captures the paragraph names the scene + cites
+    the `llm_prior` from `scene_defaults`, backfilled with observed
+    counters (BSSID / BLE identifiers) when available.
+
+    For multi-scene mixes the paragraph names the mix and tells the
+    LLM to compare across rather than apply one prior.
+
+    For pre-scene-aware captures (no session_meta) the paragraph
+    notes the gap and falls back to a generic prior.
+    """
+    from . import scene as _scene_mod
+    if not report.scenes:
+        return (
+            "[Scene context]\n"
+            "Scene unknown (pre-scene-aware capture — JSONL has no "
+            "session_meta line). Apply general priors only. The "
+            "data may span any of: home (sparse, novelty matters), "
+            "office (dense enterprise baseline churn), public "
+            "(hostile shared Wi-Fi), or audit (raw capture, no "
+            "filtering)."
+        )
+    counts: dict[str, int] = {}
+    for s in report.scenes:
+        counts[s] = counts.get(s, 0) + 1
+    if len(counts) == 1:
+        scene = next(iter(counts))
+        try:
+            prior = _scene_mod.scene_defaults(scene).get("llm_prior", "")
+        except ValueError:
+            prior = ""
+        env_facts: list[str] = []
+        if report.observed_bssid_count:
+            env_facts.append(
+                f"observed BSSID count {report.observed_bssid_count}"
+            )
+        if report.observed_ble_identifier_count:
+            env_facts.append(
+                f"observed BLE identifier count "
+                f"{report.observed_ble_identifier_count}"
+            )
+        facts = (
+            f" ({'; '.join(env_facts)})" if env_facts else ""
+        )
+        return (
+            f"[Scene context]\n"
+            f"These sessions were captured in `{scene}` mode{facts}. "
+            f"{prior} Look for departures from this baseline, not "
+            f"the baseline itself."
+        )
+    # Multi-scene
+    parts = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    mix = ", ".join(f"{n} × `{name}`" for name, n in parts)
+    return (
+        f"[Scene context]\n"
+        f"Input spans multiple scenes: {mix}. Apply each scene's "
+        f"prior to its own subset rather than averaging. Compare "
+        f"across scenes where the same metric tells different "
+        f"stories under different baselines."
+    )
+
+
 def build_llm_prompt(report: Report) -> str:
     """Compose the analyst prompt for `prompt.txt`.
 
@@ -1358,6 +1505,7 @@ def build_llm_prompt(report: Report) -> str:
         span_str = "an unknown span"
     files = len(report.source_paths) or 1
     return (
+        f"{scene_llm_context_paragraph(report)}\n\n"
         f"You are a wireless / network analyst reviewing a "
         f"`diting` report (macOS terminal Wi-Fi / BLE / LAN "
         f"monitor). The report covers {span_str} across {files} "

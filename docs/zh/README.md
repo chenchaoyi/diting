@@ -118,6 +118,34 @@ Apple 的面板不会告诉你你连在哪台 AP；谛听会，而且按 `c` 一
 - **（未来）室内人员感知。** 长期目标，需要外置硬件配合。详见
   [路线图](#路线图)。
 
+## 场景（`--scene SCENE`）
+
+diting 内置「你现在身处什么环境」的概念。当前支持四种场景，
+每种针对一类环境调过：
+
+| Scene | 适用场合 | 改了什么 |
+|---|---|---|
+| `home`（默认） | 公寓 / 自有 Wi-Fi、≤ 15 BLE、单 AP | BLE presence gate **5 s** —— 杀掉 0 s ghost 闪现，保留短时接触 |
+| `office` | 公司楼层、企业 Wi-Fi、密集 BLE + 多 AP | BLE presence gate **15 s** —— 吸收掉 Continuity RPA 轮换基线 |
+| `public` | 咖啡馆 / 高铁 / 飞机 / 公共 Wi-Fi | BLE presence gate **30 s** —— 几乎都是路人 |
+| `audit` | 主动排查（安全研究、设备调试、取证） | BLE presence gate **0 s** —— 每个广播都记 |
+
+CLI flag 或环境变量配置，优先级跟 `--lang` 一致：
+
+```
+diting --scene office             # 本次会话
+DITING_SCENE=office diting        # 长期偏好（写进 shell rc）
+```
+
+激活的场景会被打进 JSONL 会话头（`session_meta`），让 `diting
+analyze` 按场景分组做跨会话聚合；`--for-llm` bundle 会把场景的
+基线预期注入到 prompt template —— LLM 把 office 环境的噪声读
+作「正常基线」而不是「异常」，把 home 环境的小波动读作「值得
+注意」而不是「噪声」。
+
+`--ble-presence-gate D` 仍然可以覆盖场景默认的门控，给你单次
+会话的精细控制空间。
+
 ## 名字由来
 
 **谛听** 是中国佛教传说中的一头神兽 —— 地藏王菩萨的坐骑。
