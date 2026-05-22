@@ -60,5 +60,5 @@
 
 ## 10. Merge + archive
 
-- [ ] PR open, reviewed, merged
-- [ ] `/opsx:archive add-scene-autodetect-and-persistence`
+- [x] PR open, reviewed, merged (#116)
+- [x] `/opsx:archive add-scene-autodetect-and-persistence`
