@@ -278,6 +278,70 @@ def test_apple_model_iphone_signals_phone():
     assert classify(h) == "phone"
 
 
+def test_apple_model_ipad_signals_tablet_not_phone():
+    """iPads are tablets, not phones. The `iPad*` model-code prefix
+    routes to the new `tablet` class — regression for the
+    2026-05-23 PM user-flagged case where a `Situs-iPad-Pro-M4`
+    rendered as 手机 (phone) in the LAN modal."""
+    h = _host(
+        vendor_raw="Apple, Inc.",
+        bonjour_services=("Apple Companion",),
+        bonjour_model="iPad14,3",
+    )
+    assert classify(h) == "tablet"
+
+
+# ---------- Bonjour-name is NOT a classifier signal (security) ----------
+
+
+def test_bonjour_name_ipad_pattern_does_NOT_signal_tablet():
+    """Device names (bonjour_name, hostname) are user-controllable
+    and must NOT drive classification. A device renamed to include
+    "iPad" by anyone with access would otherwise spoof the
+    classifier. The audit tool's authoritative signals are vendor
+    OUI, scene-gated active probes, and Bonjour TXT-record model
+    codes the device's mDNS daemon writes (NOT the renameable
+    display name).
+
+    Random-MAC iPad with only Apple Companion published, no model
+    code in TXT, falls through to the phone rule (current
+    behavior — accurate-to-evidence, not name-based guess)."""
+    h = _host(
+        is_randomised_mac=True,
+        bonjour_name="Situs-iPad-Pro-M4",     # name says iPad
+        bonjour_services=("Apple Companion",),
+    )
+    # We classify by evidence, not by name. Apple Companion alone
+    # → phone (the documented rule). User can still see the name
+    # `Situs-iPad-Pro-M4` in the LAN modal's Name row — they
+    # decide what to make of it.
+    assert classify(h) == "phone"
+
+
+def test_renamed_homepod_to_macbook_still_classifies_correctly():
+    """A HomePod renamed to "MacBook" by a malicious / mistaken
+    user MUST still classify by its authoritative signals (model
+    code, HomeKit category), not by the name."""
+    h = _host(
+        vendor_raw="Apple, Inc.",
+        bonjour_name="MacBook Pro Trustworthy",   # spoofing attempt
+        bonjour_services=("AirPlay", "AirPlay audio", "HomeKit"),
+    )
+    assert classify(h) == "speaker"
+
+
+def test_apple_model_code_still_wins_over_misleading_name():
+    """Belt-and-braces: model code is authoritative; a misleading
+    name is ignored."""
+    h = _host(
+        vendor_raw="Apple, Inc.",
+        bonjour_name="iPad-mascot",
+        bonjour_services=("Apple Companion",),
+        bonjour_model="MacBookPro18,1",
+    )
+    assert classify(h) == "laptop"
+
+
 def test_apple_model_appletv_signals_tv():
     """`AppleTV14,1` (Apple TV 4K 3rd gen) → tv via model code,
     not the AirPlay-as-tv fallback. Apple TVs also publish
@@ -397,7 +461,7 @@ def test_classifier_with_predicate_raising_skips_and_continues(monkeypatch):
 
 
 _VALID_CLASSES = {
-    "phone", "laptop", "desktop", "tv", "camera", "smart-home",
+    "phone", "tablet", "laptop", "desktop", "tv", "camera", "smart-home",
     "printer", "nas", "gaming", "speaker", "router",
 }
 

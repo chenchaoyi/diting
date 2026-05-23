@@ -84,7 +84,7 @@ devices stand out.
   `TTL 64 (unix)`. Zero additional traffic.
 - **Device-class classifier** (new module
   `src/diting/lan_classify.py`). Pure function over the augmented
-  LANHost returns one of 11 classes: `phone | laptop | desktop |
+  LANHost returns one of 12 classes: `phone | tablet | laptop | desktop |
   tv | camera | smart-home | printer | nas | gaming | speaker |
   router`, or None. Total function — never raises on any field
   combination.

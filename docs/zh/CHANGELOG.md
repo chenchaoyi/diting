@@ -70,7 +70,7 @@ LAN 行的列布局参考 Fing Desktop 重新组织：class 列移到最左侧
   详情模态的 Network 段显示 `TTL 64 (unix)`。零额外流量。
 - **设备分类器**（新模块 `src/diting/lan_classify.py`）。
   一张规则表消费 vendor / Bonjour 类目 / NBNS / UPnP 字段 / TTL，
-  输出 11 类之一：`phone | laptop | desktop | tv | camera |
+  输出 12 类之一：`phone | tablet | laptop | desktop | tv | camera |
   smart-home | printer | nas | gaming | speaker | router` 或
   None。纯函数 —— 对任何字段组合都不抛。
 - **LAN 行布局：class 列 + `[new]` chip。** 按 Fing UX 实证，

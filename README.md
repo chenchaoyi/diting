@@ -240,7 +240,7 @@ identification stack:
   `TTL 64 (unix)`.
 - **Device class** — a rules-table classifier consumes vendor,
   Bonjour categories, NBNS / UPnP fields, and TTL to assign one
-  of: `phone | laptop | desktop | tv | camera | smart-home |
+  of: `phone | tablet | laptop | desktop | tv | camera | smart-home |
   printer | nas | gaming | speaker | router`. Rendered as the
   leftmost data column on each row.
 

@@ -223,6 +223,7 @@ _ZH: dict[str, str] = {
     # event log carries the EN tokens.
     "Class": "分类",
     "phone": "手机",
+    "tablet": "平板",
     "laptop": "笔记本",
     "desktop": "台式机",
     "tv": "电视",

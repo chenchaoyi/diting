@@ -93,7 +93,7 @@ class LANHost:
     ttl: int | None = None
     ttl_class: str | None = None
     # Output of the device-class inference rules in
-    # `src/diting/lan_classify.py`. One of `phone | laptop |
+    # `src/diting/lan_classify.py`. One of `phone | tablet | laptop |
     # desktop | tv | camera | smart-home | printer | nas | gaming
     # | speaker | router`, or None when no rule fires. Presentational
     # only.
@@ -608,6 +608,37 @@ def _strip_local_suffix(host: str | None) -> str | None:
     return h or None
 
 
+# TXT-record keys that carry Apple's hardware model identifier
+# (`Mac14,2` / `iPad14,3` / `AudioAccessory6,1` / `iPhone16,1` /
+# `AppleTV14,1`). Different Apple Continuity protocols use
+# different key names for the same kind of value:
+#
+#   `_airplay._tcp.local.`        → `model=…`
+#   `_companion-link._tcp.local.` → `rpMd=…`  (rendezvous-protocol Model)
+#   `_raop._tcp.local.`           → `am=…`    (Apple Model)
+#
+# A random-MAC iPad that only publishes `_companion-link` is
+# identifiable as a tablet purely via `rpMd=iPad14,3` in that
+# service's TXT — without falling back to the user-controllable
+# Bonjour name.
+_APPLE_MODEL_TXT_KEYS: tuple[str, ...] = ("model", "rpMd", "am")
+
+
+def _bonjour_extract_apple_model(txt: dict[str, str] | None) -> str | None:
+    """Pull Apple's hardware-model identifier out of a Bonjour TXT
+    record. Tries the documented Continuity-protocol keys in turn;
+    first non-empty hit wins. Returns None when no key carries a
+    model code.
+    """
+    if not txt:
+        return None
+    for key in _APPLE_MODEL_TXT_KEYS:
+        value = txt.get(key)
+        if value:
+            return value
+    return None
+
+
 def _build_bonjour_index(
     bonjour_poller: BonjourPoller | None,
 ) -> dict[str, tuple[str | None, tuple[str, ...], str | None]]:
@@ -618,10 +649,11 @@ def _build_bonjour_index(
     Bonjour entry whose ``addresses`` contains the IP.
 
     ``apple_model`` is Apple's hardware identifier (``Mac14,2``,
-    ``AudioAccessory6,1``, ``iPhone16,1``, ``AppleTV14,1``, etc.)
-    extracted from any TXT record's ``model`` key on this host.
-    First non-empty value wins. None when no Bonjour entry for the
-    IP carried a ``model=`` field.
+    ``iPad14,3``, ``AudioAccessory6,1``, ``iPhone16,1``,
+    ``AppleTV14,1``, etc.) extracted from any TXT record's
+    ``model`` / ``rpMd`` / ``am`` key on this host. First non-empty
+    value wins. None when no Bonjour entry for the IP carried a
+    model-code field.
 
     The LAN poller does NOT mutate Bonjour state.
     """
@@ -631,7 +663,7 @@ def _build_bonjour_index(
     by_ip: dict[str, tuple[str | None, list[str], str | None]] = {}
     for dev in bonjour_poller._state.values():
         host = _strip_local_suffix(dev.host)
-        txt_model = (dev.txt.get("model") if dev.txt else None) or None
+        txt_model = _bonjour_extract_apple_model(dev.txt)
         for ip in dev.addresses:
             entry = by_ip.setdefault(ip, (host, [], None))
             cur_host, cats, cur_model = entry
@@ -640,8 +672,9 @@ def _build_bonjour_index(
                 cur_host = host
             if dev.category and dev.category not in cats:
                 cats.append(dev.category)
-            # First-wins for the model code — `_companion-link` and
-            # AirPlay TXT records can disagree; first stable hit is
+            # First-wins for the model code — different Apple
+            # services (AirPlay model, _companion-link rpMd, _raop am)
+            # can disagree on capitalisation; first stable hit is
             # enough for classification.
             if cur_model is None and txt_model:
                 cur_model = txt_model

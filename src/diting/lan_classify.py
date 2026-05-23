@@ -2,7 +2,7 @@
 
 Pure read-side classifier — consumes the vendor / probe / TTL
 fields already populated on a `LANHost` and returns one of the
-documented class strings (``phone | laptop | desktop | tv | camera
+documented class strings (``phone | tablet | laptop | desktop | tv | camera
 | smart-home | printer | nas | gaming | speaker | router``) or
 ``None`` when no rule fires.
 
@@ -212,11 +212,28 @@ _APPLE_MODEL_PREFIXES: tuple[tuple[str, str], ...] = (
     # desktop in display.
     ("Mac", "laptop"),
     ("AudioAccessory", "speaker"),  # HomePod / HomePod mini
-    ("iPad", "phone"),
+    # iPads get their own class — they're a distinct form factor
+    # from iPhones (handheld + computer hybrid) and the user
+    # explicitly flagged that classifying them as `phone` is wrong.
+    ("iPad", "tablet"),
     ("iPhone", "phone"),
     ("Watch", "phone"),             # Apple Watch — closest single class
     ("AppleTV", "tv"),
 )
+
+# Deliberate non-rule: device name (Bonjour name / reverse-DNS
+# hostname) is NOT used for classification. Both fields are
+# user-controllable — a user (or anyone with access to the device)
+# can rename a HomePod to "MacBook" or an iPhone to "Server-NAS",
+# and an audit tool that derives class from those names is one
+# step away from being a spoofing target. The model-code path
+# above gives us authoritative Apple-side identity from a TXT
+# record the device's mDNS daemon writes, not the user-facing
+# name. When the model code is unavailable (random-MAC iPad that
+# only publishes Apple Companion without a `model=` / `rpMd` /
+# `am` TXT key), the host falls through to the rules table below
+# and the audit transparently shows what we know vs don't know
+# rather than guessing from a renameable string.
 
 
 def _apple_model_class(host: "LANHost") -> str | None:
@@ -429,6 +446,11 @@ def classify(host: "LANHost") -> str | None:
        Bonjour-category heuristics can't.
     3. Documented rules table (printers, cameras, NAS, speakers,
        TVs, phones, gaming, routers, smart-home, TTL fallback).
+
+    User-controllable strings (``bonjour_name``, reverse-DNS
+    ``hostname``) are deliberately NOT used — a device can be
+    renamed by anyone with access, and a name-based classifier
+    is a spoofing surface in an audit tool.
     """
     try:
         if host.is_gateway:

@@ -245,7 +245,7 @@ RULES = [
 First match wins. Return None when no rule fires (row shows blank
 class).
 
-Classes: `phone | laptop | desktop | tv | camera | smart-home | printer | nas | gaming | speaker | router`.
+Classes: `phone | tablet | laptop | desktop | tv | camera | smart-home | printer | nas | gaming | speaker | router`.
 
 **Class vocabulary rationale (from Fing UX reference, see D14):** the
 `iot` class from the original draft was too coarse — Fing's data

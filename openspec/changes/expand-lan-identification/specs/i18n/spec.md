@@ -18,6 +18,7 @@ For every new English string introduced by the `expand-lan-identification` chang
 | `Vendor (IEEE)` (modal continuation label) | `厂商（IEEE 注册名）` |
 | `(not probed)` (modal placeholder) | `（未主动探测）` |
 | `phone` (class value) | `手机` |
+| `tablet` (class value) | `平板` |
 | `laptop` (class value) | `笔记本` |
 | `desktop` (class value) | `台式机` |
 | `tv` (class value) | `电视` |

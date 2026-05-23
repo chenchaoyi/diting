@@ -840,8 +840,9 @@ def test_bonjour_cross_ref_aggregates_categories():
 
 
 def test_bonjour_cross_ref_pulls_apple_model_code_from_txt():
-    """When any BonjourDevice for an IP carries `model=` in its TXT
-    records, the index surfaces it on the IP entry. First-wins."""
+    """When any BonjourDevice for an IP carries `model=` (AirPlay
+    TXT key) in its TXT records, the index surfaces it on the IP
+    entry. First-wins."""
     from dataclasses import replace as _replace
     poller = BonjourPoller()
     # First device — no model in TXT.
@@ -856,13 +857,46 @@ def test_bonjour_cross_ref_pulls_apple_model_code_from_txt():
     assert model == "Mac14,2"
 
 
-def test_bonjour_cross_ref_apple_model_none_when_no_txt_model():
-    """No `model=` TXT key on any device → model field is None."""
+def test_bonjour_cross_ref_pulls_apple_model_code_from_rpmd_txt():
+    """A `_companion-link._tcp` TXT uses the `rpMd` key (rendezvous-
+    protocol Model). Diagnostic for random-MAC iPads that only
+    publish Apple Companion — without this extraction we'd have
+    no authoritative class signal for them."""
+    from dataclasses import replace as _replace
+    poller = BonjourPoller()
+    dev = _bonjour_device(
+        ("192.168.1.42",), category="Apple Companion", name="y",
+    )
+    dev = _replace(dev, txt={"rpMd": "iPad14,3"})
+    poller._state[("a", "y")] = dev
+    idx = _build_bonjour_index(poller)
+    _, _, model = idx["192.168.1.42"]
+    assert model == "iPad14,3"
+
+
+def test_bonjour_cross_ref_pulls_apple_model_code_from_am_txt():
+    """A `_raop._tcp` TXT uses the `am` key for the Apple model
+    identifier. AirPlay receivers (HomePods, AirPlay 2 speakers)
+    publish here."""
+    from dataclasses import replace as _replace
+    poller = BonjourPoller()
+    dev = _bonjour_device(
+        ("192.168.1.42",), category="AirPlay audio", name="z",
+    )
+    dev = _replace(dev, txt={"am": "AudioAccessory6,1"})
+    poller._state[("a", "z")] = dev
+    idx = _build_bonjour_index(poller)
+    _, _, model = idx["192.168.1.42"]
+    assert model == "AudioAccessory6,1"
+
+
+def test_bonjour_cross_ref_apple_model_none_when_no_txt_key_present():
+    """No `model` / `rpMd` / `am` TXT key on any device → model
+    field is None. Other TXT keys are irrelevant for classification."""
     from dataclasses import replace as _replace
     poller = BonjourPoller()
     dev = _bonjour_device(("192.168.1.42",), category="AirPlay")
-    # TXT is non-empty but doesn't include "model"
-    dev = _replace(dev, txt={"rpFl": "0x123"})
+    dev = _replace(dev, txt={"rpFl": "0x123", "deviceid": "abc"})
     poller._state[(dev.service_type, dev.name)] = dev
     idx = _build_bonjour_index(poller)
     _, _, model = idx["192.168.1.42"]
