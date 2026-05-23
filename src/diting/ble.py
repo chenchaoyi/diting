@@ -283,6 +283,12 @@ def lookup_vendor(company_id: int | None, vendors: dict[int, str]) -> str | None
 # Bluetooth vendors; anything else stays unknown.
 
 _OUIS_PATH = Path(__file__).resolve().parent / "data" / "bluetooth_ouis.json"
+_OUIS_MA_M_PATH = (
+    Path(__file__).resolve().parent / "data" / "bluetooth_ouis_ma_m.json"
+)
+_OUIS_MA_S_PATH = (
+    Path(__file__).resolve().parent / "data" / "bluetooth_ouis_ma_s.json"
+)
 
 
 def load_ouis(path: Path | None = None) -> dict[str, str]:
@@ -307,20 +313,87 @@ def load_ouis(path: Path | None = None) -> dict[str, str]:
     }
 
 
+def load_ouis_layered(
+    *,
+    ma_l_path: Path | None = None,
+    ma_m_path: Path | None = None,
+    ma_s_path: Path | None = None,
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """Load all three IEEE OUI tiers as ``(ma_l, ma_m, ma_s)`` dicts.
+
+    Each tier is loaded independently via ``load_ouis()``; missing
+    or unreadable files yield empty dicts for that tier so the
+    downstream lookup degrades gracefully through the remaining
+    tiers.
+
+    Key shapes:
+
+    - MA-L: ``aa:bb:cc`` (24-bit, 3 colon-separated bytes)
+    - MA-M: ``aa:bb:cc:d`` (28-bit, 3 bytes + 1 nibble)
+    - MA-S: ``aa:bb:cc:dd:e`` (36-bit, 4 bytes + 1 nibble)
+    """
+    return (
+        load_ouis(ma_l_path or _OUIS_PATH),
+        load_ouis(ma_m_path or _OUIS_MA_M_PATH),
+        load_ouis(ma_s_path or _OUIS_MA_S_PATH),
+    )
+
+
 def lookup_oui_vendor(
-    identifier: str | None, ouis: dict[str, str]
+    identifier: str | None,
+    ouis: dict[str, str] | None = None,
+    *,
+    ma_l: dict[str, str] | None = None,
+    ma_m: dict[str, str] | None = None,
+    ma_s: dict[str, str] | None = None,
 ) -> str | None:
-    """Resolve a BT MAC (any common separator: ``:``, ``-``, none) to
-    a vendor name via its first 3 octets, or None when unknown.
-    Tolerant of the ``38-09-fb-0b-be-60`` form the helper emits.
+    """Resolve a BT / LAN MAC to a vendor name via the IEEE registry.
+
+    Two calling conventions are supported:
+
+    - **Legacy single-tier**: ``lookup_oui_vendor(mac, ouis)`` — treats
+      ``ouis`` as the MA-L (24-bit) map. Preserved so existing call
+      sites and tests keep working.
+    - **Layered**: ``lookup_oui_vendor(mac, ma_l=…, ma_m=…, ma_s=…)``
+      tries the longest prefix first (36 → 28 → 24 bits). First
+      match wins. Missing / empty dicts are skipped silently.
+
+    The function is tolerant of all common MAC separators: ``:``,
+    ``-``, or none. Lower-case input is recommended.
     """
     if not identifier:
         return None
     cleaned = identifier.replace("-", "").replace(":", "").lower()
     if len(cleaned) < 6 or any(c not in "0123456789abcdef" for c in cleaned):
         return None
-    prefix = f"{cleaned[0:2]}:{cleaned[2:4]}:{cleaned[4:6]}"
-    return ouis.get(prefix)
+
+    # Legacy single-tier call: positional ``ouis`` was supplied AND
+    # the layered kwargs were NOT used. Behave exactly as before.
+    if ouis is not None and ma_l is None and ma_m is None and ma_s is None:
+        prefix = f"{cleaned[0:2]}:{cleaned[2:4]}:{cleaned[4:6]}"
+        return ouis.get(prefix)
+
+    # Layered lookup. Resolve ma_l from `ouis` if the caller passed
+    # ouis positionally alongside layered kwargs (uncommon but legal).
+    resolved_ma_l = ma_l if ma_l is not None else (ouis if ouis is not None else {})
+    resolved_ma_m = ma_m if ma_m is not None else {}
+    resolved_ma_s = ma_s if ma_s is not None else {}
+
+    if len(cleaned) >= 9 and resolved_ma_s:
+        key_36 = (
+            f"{cleaned[0:2]}:{cleaned[2:4]}:{cleaned[4:6]}:"
+            f"{cleaned[6:8]}:{cleaned[8]}"
+        )
+        hit = resolved_ma_s.get(key_36)
+        if hit:
+            return hit
+    if len(cleaned) >= 7 and resolved_ma_m:
+        key_28 = f"{cleaned[0:2]}:{cleaned[2:4]}:{cleaned[4:6]}:{cleaned[6]}"
+        hit = resolved_ma_m.get(key_28)
+        if hit:
+            return hit
+    key_24 = f"{cleaned[0:2]}:{cleaned[2:4]}:{cleaned[4:6]}"
+    return resolved_ma_l.get(key_24)
 
 
 # ---------- service category inference ----------

@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 
 from typing import Any
 
-from .ble import load_ouis, lookup_oui_vendor
+from .ble import load_ouis_layered, lookup_oui_vendor
 from .events import (
     LANHostDHCPRotationEvent,
     LANHostLeftEvent,
@@ -73,6 +73,10 @@ class LANHost:
     is_randomised_mac: bool
     last_rtt_ms: float | None = None
     last_reachable_at: datetime | None = None
+    # Raw IEEE registry string before _normalize_vendor() ran. Kept so
+    # the detail modal can surface both forms — the row gets the short
+    # normalized name, the modal lets the user reconcile odd cases.
+    vendor_raw: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +141,151 @@ def _is_randomised_mac(mac: str) -> bool:
     except (ValueError, IndexError):
         return False
     return bool(first_octet & 0x02)
+
+
+# Tokens stripped from the trailing end of an IEEE registry string.
+# Order matters: longer multi-word tokens go first so they match
+# before their substrings.
+_TRAILING_NOISE_TOKENS: tuple[str, ...] = (
+    "CO., LTD.",
+    "CO.,LTD.",
+    "CO., LTD",
+    "CO.,LTD",
+    "CO. LTD",
+    "CO LTD",
+    "CO.,",
+    "CO.",
+    "CO",
+    "CORPORATION",
+    "CORP.",
+    "CORP",
+    "LIMITED",
+    "LTD.",
+    "LTD",
+    "INC.",
+    "INC",
+    "GMBH",
+    "LLC",
+    "B.V.",
+    "BV",
+    "S.A.",
+    "SA",
+    "COMPANY",
+    "TECHNOLOGIES",
+    "TECHNOLOGY",
+    "ELECTRONICS",
+    "ELECTRONIC",
+)
+
+# Geographic prefixes stripped from the leading end. Chinese city
+# names bloat the column without identifying the company; the actual
+# brand follows.
+_LEADING_NOISE_TOKENS: tuple[str, ...] = (
+    "SHENZHEN",
+    "HANGZHOU",
+    "BEIJING",
+    "SHANGHAI",
+    "GUANGZHOU",
+    "DONGGUAN",
+    "CHENGDU",
+    "NANJING",
+    "SUZHOU",
+    "TIANJIN",
+)
+
+# Acronyms / brand names that must NOT be titlecased. Keyed by the
+# titlecased form Python would produce so the lookup is cheap.
+_ACRONYM_OVERRIDES: dict[str, str] = {
+    "Hp": "HP",
+    "Ibm": "IBM",
+    "Asus": "ASUS",
+    "Asrock": "ASRock",
+    "Lg": "LG",
+    "H3C": "H3C",
+    "Tp-Link": "TP-Link",
+    "D-Link": "D-Link",
+    "Zte": "ZTE",
+    "Tcl": "TCL",
+    "Lge": "LGE",
+    "Mtk": "MTK",
+    "Hkc": "HKC",
+    "Vmware": "VMware",
+    "Ipad": "iPad",
+    "Iphone": "iPhone",
+    "Imac": "iMac",
+    "Iot": "IoT",
+}
+
+_VENDOR_DISPLAY_WIDTH = 16
+
+
+def _normalize_vendor(name: str | None) -> str | None:
+    """Return a short, readable display form of an IEEE vendor string.
+
+    Drops trailing corporate-form noise (``CO., LTD``, ``CORPORATION``,
+    ``LTD``, ``INC``, ``TECHNOLOGIES`` …), drops leading Chinese-city
+    prefixes (``SHENZHEN``, ``HANGZHOU`` …), titlecases the remainder
+    while preserving registered acronyms via ``_ACRONYM_OVERRIDES``,
+    and truncates to ``_VENDOR_DISPLAY_WIDTH`` characters with an
+    ellipsis when the result is still too long.
+
+    Returns ``None`` when input is ``None`` or empty. Idempotent: a
+    name that already passed through normalization is unchanged.
+    """
+    if not name:
+        return None
+
+    s = name.strip()
+    if not s:
+        return None
+
+    # Strip leading geographic prefixes, repeating in case the
+    # registry packs more than one (rare but defensive).
+    changed = True
+    while changed:
+        changed = False
+        upper = s.upper()
+        for prefix in _LEADING_NOISE_TOKENS:
+            if upper.startswith(prefix + " "):
+                s = s[len(prefix) + 1 :].lstrip()
+                changed = True
+                break
+
+    # Strip trailing corporate-form noise, repeating so e.g.
+    # "FOO TECHNOLOGIES CO., LTD" peels both tokens.
+    changed = True
+    while changed:
+        changed = False
+        # Strip trailing comma / whitespace so token comparison lands
+        # cleanly.
+        s = s.rstrip(" ,.;")
+        upper = s.upper()
+        for tok in _TRAILING_NOISE_TOKENS:
+            if upper.endswith(" " + tok) or upper == tok:
+                s = s[: len(s) - len(tok)].rstrip(" ,.;")
+                changed = True
+                break
+
+    s = s.strip(" ,.;")
+    if not s:
+        return None
+
+    # Titlecase while preserving acronyms. Python's str.title() is
+    # naive — "H3C" becomes "H3C" (digits split the word so the C
+    # stays upper) but other registered tokens like "ASUS" become
+    # "Asus" so we map them back.
+    out_tokens: list[str] = []
+    for raw in s.split():
+        tc = raw.title()
+        out_tokens.append(_ACRONYM_OVERRIDES.get(tc, tc))
+    out = " ".join(out_tokens)
+
+    # Truncate to display width with an ellipsis. ``str`` len here is
+    # fine — the OUI registry is ASCII; CJK glyphs are translated by
+    # i18n.t() at the render site, not at the OUI layer.
+    if len(out) > _VENDOR_DISPLAY_WIDTH:
+        out = out[: _VENDOR_DISPLAY_WIDTH - 1].rstrip() + "…"
+    return out
 
 
 def _effective_cap_prefix() -> int:
@@ -399,7 +548,12 @@ class LANInventoryPoller:
         # mono-typed (snapshots only) and existing tests keep working.
         self._pending_transitions: list[Any] = []
         self._sweep_wakeup: asyncio.Event | None = None
-        self._ouis: dict[str, str] | None = None
+        # Three-tier OUI registry. None until the first sweep loads it;
+        # subsequent sweeps reuse the same dicts. The tuple shape is
+        # (ma_l, ma_m, ma_s) per `load_ouis_layered`'s contract.
+        self._oui_layers: tuple[
+            dict[str, str], dict[str, str], dict[str, str]
+        ] | None = None
 
     def drain_transitions(self) -> list[Any]:
         """Pop transition events accumulated during recent sweep
@@ -515,8 +669,25 @@ class LANInventoryPoller:
         now: datetime,
         sweep_results: dict[str, tuple[bool, float | None]] | None = None,
     ) -> None:
-        if self._ouis is None:
-            self._ouis = load_ouis()
+        if self._oui_layers is None:
+            self._oui_layers = load_ouis_layered()
+        ma_l, ma_m, ma_s = self._oui_layers
+
+        def _resolve_vendor(mac_lc: str, randomised: bool) -> tuple[
+            str | None, str | None,
+        ]:
+            """Return (normalized display vendor, raw IEEE vendor).
+
+            Randomised MACs are not in the registry by construction;
+            short-circuit both forms to None so the caller still records
+            `is_randomised_mac` truthfully without paying the lookup.
+            """
+            if randomised:
+                return None, None
+            raw = lookup_oui_vendor(
+                mac_lc, ma_l=ma_l, ma_m=ma_m, ma_s=ma_s,
+            )
+            return _normalize_vendor(raw), raw
 
         bonjour_index = _build_bonjour_index(self._bonjour_poller)
 
@@ -580,14 +751,14 @@ class LANInventoryPoller:
                 self_reach = (
                     now if self_entry is None else self_entry.last_reachable_at
                 )
+            self_randomised = _is_randomised_mac(iface_mac_lc)
+            self_vendor, self_vendor_raw = _resolve_vendor(
+                iface_mac_lc, self_randomised,
+            )
             self._state[iface_mac_lc] = LANHost(
                 mac=iface_mac_lc,
                 ip=conn.ip_address,
-                vendor=(
-                    lookup_oui_vendor(iface_mac_lc, self._ouis)
-                    if not _is_randomised_mac(iface_mac_lc)
-                    else None
-                ),
+                vendor=self_vendor,
                 hostname=(self_entry.hostname if self_entry else None),
                 bonjour_name=None,
                 bonjour_services=(),
@@ -595,9 +766,10 @@ class LANInventoryPoller:
                 last_seen=now,
                 is_gateway=False,
                 is_self=True,
-                is_randomised_mac=_is_randomised_mac(iface_mac_lc),
+                is_randomised_mac=self_randomised,
                 last_rtt_ms=self_rtt,
                 last_reachable_at=self_reach,
+                vendor_raw=self_vendor_raw,
             )
 
         # Track MACs we observed this tick so we can detect departures
@@ -612,11 +784,7 @@ class LANInventoryPoller:
             observed_macs.add(mac_lc)
             existing = self._state.get(mac_lc)
             randomised = _is_randomised_mac(mac_lc)
-            vendor = (
-                lookup_oui_vendor(mac_lc, self._ouis)
-                if not randomised
-                else None
-            )
+            vendor, vendor_raw = _resolve_vendor(mac_lc, randomised)
             bonjour_host, bonjour_cats = bonjour_index.get(ip, (None, ()))
             hostname = rdns_results.get(ip, existing.hostname if existing else None)
             last_rtt_ms, last_reachable_at = _rtt_for(existing, ip)
@@ -636,6 +804,7 @@ class LANInventoryPoller:
                 is_randomised_mac=randomised,
                 last_rtt_ms=last_rtt_ms,
                 last_reachable_at=last_reachable_at,
+                vendor_raw=vendor_raw,
             )
             # Special-case: self may also appear in ARP (rare; mostly
             # not, since we ARP others). If it does, merge — keep

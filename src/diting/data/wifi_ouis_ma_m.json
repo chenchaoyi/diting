@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "source": "IEEE Registration Authority — MA-M (28-bit) OUI registry",
+    "source_url": "https://standards-oui.ieee.org/oui28/mam.csv",
+    "fetched_at": "unpopulated",
+    "license": "Attribution-only convention; see IEEE Registration Authority terms at https://standards.ieee.org/products-programs/regauth/",
+    "note": "Wi-Fi-side twin of bluetooth_ouis_ma_m.json. Both files hold the same MA-M payload (IEEE 28-bit sub-allocations) — twin paths exist for back-compat with the existing BLE / Wi-Fi consumers. Populate via `uv run python scripts/refresh_ouis.py`."
+  }
+}

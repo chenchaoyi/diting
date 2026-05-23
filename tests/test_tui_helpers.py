@@ -2333,6 +2333,7 @@ def _lan_host(
     mac="aa:bb:cc:11:22:33",
     ip="192.168.1.10",
     vendor="Apple, Inc.",
+    vendor_raw=None,
     bonjour_name=None,
     bonjour_services=(),
     hostname=None,
@@ -2355,6 +2356,7 @@ def _lan_host(
         is_gateway=is_gateway,
         is_self=is_self,
         is_randomised_mac=is_randomised_mac,
+        vendor_raw=vendor_raw,
     )
 
 
@@ -2507,6 +2509,60 @@ def test_lan_detail_modal_renders_bonjour_services_when_present():
     assert "AirPlay" in rendered
     assert "AirPlay audio" in rendered
     assert "(no Bonjour services)" not in rendered
+
+
+def test_lan_detail_shows_raw_ieee_continuation_when_normalized():
+    """When `vendor_raw != vendor` (normalization shortened the IEEE
+    name), the modal renders the raw form on a dim continuation line
+    so the user can reconcile odd normalisations."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(
+        vendor="New H3C",
+        vendor_raw="NEW H3C TECHNOLOGIES CO., LTD",
+        bonjour_services=(),
+    )
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "New H3C" in rendered
+    assert "NEW H3C TECHNOLOGIES CO., LTD" in rendered
+
+
+def test_lan_detail_omits_raw_continuation_when_unchanged():
+    """When normalization didn't change the name, the modal does NOT
+    add a second continuation line — that would be noise."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(
+        vendor="Apple, Inc.",
+        vendor_raw="Apple, Inc.",
+        bonjour_services=(),
+    )
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    # Vendor row appears exactly once.
+    assert rendered.count("Apple, Inc.") == 1
+
+
+def test_lan_detail_omits_raw_continuation_when_raw_none():
+    """`vendor_raw=None` (older snapshot path, or random MAC) must
+    not add a continuation line either."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(
+        vendor="Apple, Inc.",
+        vendor_raw=None,
+        bonjour_services=(),
+    )
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert rendered.count("Apple, Inc.") == 1
 
 
 def test_lan_detail_modal_renders_latency_row_when_rtt_known():

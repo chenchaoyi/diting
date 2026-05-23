@@ -5427,6 +5427,16 @@ class LANDetailScreen(ModalScreen):
             h.bonjour_name or h.hostname or t("—")))
         if h.vendor:
             rows.append(_kv_line(t("Vendor"), h.vendor))
+            # When normalization changed the IEEE registry name (most
+            # rows do), surface the raw form on a dim continuation
+            # line so the user can reconcile odd normalisations.
+            vendor_raw = getattr(h, "vendor_raw", None)
+            if vendor_raw and vendor_raw != h.vendor:
+                cont = Text()
+                cont.append(pad_cells("", 14), style="bold dim")
+                cont.append("  ")
+                cont.append(vendor_raw, style="dim")
+                rows.append(cont)
         elif h.is_randomised_mac:
             rows.append(_kv_line(t("Vendor"), t("(random MAC)")))
         else:

@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "source": "IEEE Registration Authority — MA-M (28-bit) OUI registry",
+    "source_url": "https://standards-oui.ieee.org/oui28/mam.csv",
+    "fetched_at": "unpopulated",
+    "license": "Attribution-only convention; see IEEE Registration Authority terms at https://standards.ieee.org/products-programs/regauth/",
+    "note": "MA-M (28-bit) sub-allocation registry. Populate by running `uv run python scripts/refresh_ouis.py` from the repo root — that script fetches all three tiers (MA-L, MA-M, MA-S) and writes them together. This stub is committed so the lookup-degrades-gracefully scenario in the spec is reachable in CI even when IEEE is unreachable. Lookup is keyed as `aa:bb:cc:d` where the 7th nibble is the sub-allocation."
+  }
+}

@@ -602,62 +602,62 @@ def test_lan_host_last_reachable_at_preserved_when_silent(monkeypatch):
     assert host.last_seen > t1  # advanced
 
 
-def test_oui_refresh_script_parses_csv_to_aabbcc_keys():
-    """`parse_csv` normalises 24-bit OUIs to the canonical lowercase
-    colon-separated form the existing JSON file uses."""
+def _refresh_ouis_module():
+    """Return the `scripts/refresh_ouis.py` module, importing once."""
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-    from refresh_ouis import parse_csv  # type: ignore
+    import refresh_ouis  # type: ignore
+    return refresh_ouis
 
+
+def test_oui_refresh_script_parses_csv_to_aabbcc_keys():
+    """`parse_csv` normalises 24-bit MA-L OUIs to the canonical
+    lowercase colon-separated form the existing JSON file uses."""
+    mod = _refresh_ouis_module()
+    ma_l = next(r for r in mod._REGISTRIES if r.name == "MA-L")
     csv_text = (
         "Registry,Assignment,Organization Name,Organization Address\n"
         'MA-L,001D0F,"TP-LINK TECHNOLOGIES CO.,LTD.","example address"\n'
         'MA-L,00038F,"Wave Wireless Networking","123 Example St"\n'
     )
-    out = parse_csv(csv_text)
+    out = mod.parse_csv(csv_text, ma_l)
     assert out["00:1d:0f"] == "TP-LINK TECHNOLOGIES CO.,LTD."
     assert out["00:03:8f"] == "Wave Wireless Networking"
 
 
-def test_oui_refresh_script_skips_non_ma_l_rows():
-    """MA-M (28-bit) and MA-S (36-bit) sub-allocations are not used
-    by our lookup function today — they would have keys longer than
-    6 hex characters and would never match `lookup_oui_vendor`.
-    `parse_csv` must filter them out so the resulting JSON stays
-    consistent with the lookup contract."""
-    import sys
-    from pathlib import Path
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-    from refresh_ouis import parse_csv  # type: ignore
-
+def test_oui_refresh_script_parses_each_tier_separately():
+    """parse_csv filters to the registry passed in; the three tiers
+    do not bleed into each other."""
+    mod = _refresh_ouis_module()
+    ma_l = next(r for r in mod._REGISTRIES if r.name == "MA-L")
+    ma_m = next(r for r in mod._REGISTRIES if r.name == "MA-M")
+    ma_s = next(r for r in mod._REGISTRIES if r.name == "MA-S")
     csv_text = (
         "Registry,Assignment,Organization Name,Organization Address\n"
         'MA-L,AABBCC,"Vendor A","addr"\n'
         'MA-M,DDEEFF0,"Vendor B (MA-M)","addr"\n'
-        'MA-S,11223345678,"Vendor C (MA-S)","addr"\n'
+        'MA-S,112233455,"Vendor C (MA-S)","addr"\n'
     )
-    out = parse_csv(csv_text)
-    assert out == {"aa:bb:cc": "Vendor A"}
+    assert mod.parse_csv(csv_text, ma_l) == {"aa:bb:cc": "Vendor A"}
+    assert mod.parse_csv(csv_text, ma_m) == {"dd:ee:ff:0": "Vendor B (MA-M)"}
+    assert mod.parse_csv(csv_text, ma_s) == {
+        "11:22:33:45:5": "Vendor C (MA-S)",
+    }
 
 
 def test_oui_refresh_script_dedupes_repeated_assignments():
     """IEEE occasionally lists the same OUI twice under slight
     naming variations. First wins; second is dropped."""
-    import sys
-    from pathlib import Path
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-    from refresh_ouis import parse_csv  # type: ignore
-
+    mod = _refresh_ouis_module()
+    ma_l = next(r for r in mod._REGISTRIES if r.name == "MA-L")
     csv_text = (
         "Registry,Assignment,Organization Name,Organization Address\n"
         'MA-L,AABBCC,"First Variant Inc","addr1"\n'
         'MA-L,AABBCC,"Second Variant LLC","addr2"\n'
     )
-    out = parse_csv(csv_text)
+    out = mod.parse_csv(csv_text, ma_l)
     assert out == {"aa:bb:cc": "First Variant Inc"}
 
 
@@ -792,6 +792,86 @@ def test_vendor_lookup_for_random_mac_returns_none():
     ouis = load_ouis()
     # 0x02 first octet → locally administered.
     assert lookup_oui_vendor("02:11:22:33:44:55", ouis) is None
+
+
+# ---------- LANHost.vendor + vendor_raw round-trip ----------
+
+
+def _build_state_with_vendor(monkeypatch, mac: str, raw_vendor: str | None):
+    """Drive _merge_arp_into_state once with synthetic OUI tables so we
+    can assert what `vendor` and `vendor_raw` land as on the LANHost."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    # Pre-seed the layered cache so the merge step doesn't try to
+    # touch the bundled JSON.
+    oui_24 = mac[:8].lower()
+    ma_l = {oui_24: raw_vendor} if raw_vendor is not None else {}
+    poller._oui_layers = (ma_l, {}, {})
+    conn = _make_conn()
+
+    async def _go():
+        now = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", mac, "en0")],
+            conn=conn,
+            now=now,
+            sweep_results={"192.168.1.42": (True, 2.4)},
+        )
+        return poller._state[mac.lower()]
+
+    return asyncio.run(_go())
+
+
+def test_vendor_normalized_on_host_when_lookup_hits(monkeypatch):
+    """Raw IEEE string `"NEW H3C TECHNOLOGIES CO., LTD"` lands on
+    `vendor_raw`; `vendor` is the normalized short form `"New H3C"`."""
+    host = _build_state_with_vendor(
+        monkeypatch, "00:03:93:11:22:33", "NEW H3C TECHNOLOGIES CO., LTD",
+    )
+    assert host.vendor_raw == "NEW H3C TECHNOLOGIES CO., LTD"
+    assert host.vendor == "New H3C"
+
+
+def test_vendor_raw_preserved_when_normalization_changes_name(monkeypatch):
+    host = _build_state_with_vendor(
+        monkeypatch, "00:03:93:11:22:33", "SHENZHEN BILIAN ELECTRONIC CO.,LTD",
+    )
+    assert host.vendor_raw == "SHENZHEN BILIAN ELECTRONIC CO.,LTD"
+    assert host.vendor == "Bilian"
+
+
+def test_vendor_raw_equals_vendor_when_already_clean(monkeypatch):
+    host = _build_state_with_vendor(
+        monkeypatch, "00:03:93:11:22:33", "Apple",
+    )
+    assert host.vendor_raw == "Apple"
+    assert host.vendor == "Apple"
+
+
+def test_vendor_raw_none_for_random_mac(monkeypatch):
+    # Locally-administered MAC short-circuits the lookup entirely.
+    host = _build_state_with_vendor(
+        monkeypatch, "02:11:22:33:44:55", "Should Not Be Used",
+    )
+    assert host.vendor is None
+    assert host.vendor_raw is None
+    assert host.is_randomised_mac is True
+
+
+def test_vendor_raw_none_when_oui_misses(monkeypatch):
+    # 0x08 first octet — universal (bit 0x02 clear) but unknown to
+    # the synthetic OUI table.
+    host = _build_state_with_vendor(
+        monkeypatch, "08:11:22:33:44:55", None,
+    )
+    assert host.vendor is None
+    assert host.vendor_raw is None
+    assert host.is_randomised_mac is False
 
 
 # ---------- LANInventoryPoller — state merge / first_seen preservation ----------
