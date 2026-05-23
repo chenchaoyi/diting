@@ -77,6 +77,14 @@ class LANHost:
     # the detail modal can surface both forms — the row gets the short
     # normalized name, the modal lets the user reconcile odd cases.
     vendor_raw: str | None = None
+    # Active-discovery enrichments. All None when the active-probe
+    # phase did not run for this host (scene-gated, or the host
+    # didn't reply). The fields default to None so existing test
+    # fixtures + JSONL consumers stay valid.
+    nbns_name: str | None = None
+    upnp_server: str | None = None
+    upnp_friendly_name: str | None = None
+    upnp_model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -529,6 +537,8 @@ class LANInventoryPoller:
         bonjour_poller: BonjourPoller | None = None,
         sweep_interval_s: float = 60.0,
         ping_timeout_ms: int = _PING_TIMEOUT_MS,
+        active_probe_enabled: bool = False,
+        upnp_fetch_enabled: bool = True,
     ) -> None:
         # ``connection_provider`` is a no-arg callable returning a
         # ``Connection`` (or None) — usually ``backend.get_connection``.
@@ -538,6 +548,16 @@ class LANInventoryPoller:
         self._bonjour_poller = bonjour_poller
         self._sweep_interval_s = sweep_interval_s
         self._ping_timeout_ms = ping_timeout_ms
+        # Active-discovery layer gating. Scene + env resolved at app
+        # startup; the poller sees the final boolean. False keeps the
+        # passive-only behaviour from previous versions.
+        self._active_probe_enabled = active_probe_enabled
+        self._upnp_fetch_enabled = upnp_fetch_enabled
+        # Public-scene one-shot consent override: when True, the
+        # next sweep runs the active-discovery phase once and clears
+        # the flag. Set from the LANProbeConsentScreen modal in
+        # tui.py; this poller never sets it itself.
+        self._one_shot_probe_armed: bool = False
 
         self._stopped = False
         self._state: dict[str, LANHost] = {}
@@ -647,6 +667,21 @@ class LANInventoryPoller:
         await self._merge_arp_into_state(
             triples, conn=conn, now=now, sweep_results=sweep_results,
         )
+
+        # Active-discovery phase. Runs when the scene/env has the
+        # capability enabled OR when the public-scene one-shot
+        # override has armed the next sweep. Probe enrichments are
+        # merged into the per-host state via _apply_probe_results.
+        probe_armed = (
+            self._active_probe_enabled or self._one_shot_probe_armed
+        )
+        if probe_armed:
+            await self._run_active_probes(conn=conn)
+            # One-shot consumes itself — subsequent sweeps revert to
+            # scene/env default. Cleared whether or not any host
+            # actually responded; the user already paid the consent
+            # cost for this single tick.
+            self._one_shot_probe_armed = False
 
         update = LANInventoryUpdate(
             hosts=tuple(sorted(self._state.values(), key=_sort_key)),
@@ -881,6 +916,128 @@ class LANInventoryPoller:
                 ),
             ))
             self._state.pop(mac_lc, None)
+
+    async def _run_active_probes(self, *, conn: Connection) -> None:
+        """Three-phase active discovery, gated upstream by scene/env.
+
+        Phase A — NBNS Status Query (unicast UDP 137) to every silent
+        host (no Bonjour name, no reverse-DNS hostname).
+        Phase B — SSDP M-SEARCH multicast (UDP 1900) once; replies
+        merged into per-host upnp_* fields.
+        Phase C — active mDNS browse-query via the BonjourPoller (the
+        passive listener already captures responses).
+
+        Phases A + B + C run concurrently via ``asyncio.gather``;
+        the SSDP listen window (~3 s) is the wall-clock floor. Any
+        single phase failure is swallowed — enrichments are best-
+        effort.
+        """
+        from . import lan_probes as _lp  # local to keep top-level deps thin
+
+        # Candidate hosts for NBNS: those with no friendly name yet.
+        # Self / gateway are NOT excluded — Windows-flavoured gateways
+        # (some H3C / TP-Link / Mikrotik) do reply to NBNS.
+        nbns_targets: list[str] = []
+        for mac_lc, h in self._state.items():
+            if h.is_self:
+                continue
+            if h.bonjour_name or h.hostname:
+                continue
+            nbns_targets.append(h.ip)
+
+        async def _nbns_phase() -> dict[str, str | None]:
+            try:
+                return await _lp.probe_nbns(nbns_targets)
+            except Exception:
+                return {ip: None for ip in nbns_targets}
+
+        async def _ssdp_phase() -> dict[str, _lp.SSDPResponse]:
+            try:
+                results = await _lp.probe_ssdp()
+            except Exception:
+                return {}
+            if not self._upnp_fetch_enabled:
+                return results
+            # Enrich each response with friendlyName + modelName
+            # via the LOCATION fetch. Concurrent, fail-soft.
+            async def _enrich(ip: str, r: _lp.SSDPResponse) -> tuple[
+                str, _lp.SSDPResponse,
+            ]:
+                friendly, model = await _lp.fetch_upnp_location(r.location)
+                from dataclasses import replace as _replace
+                return ip, _replace(r, friendly_name=friendly, model_name=model)
+            try:
+                enriched = await asyncio.gather(
+                    *[_enrich(ip, r) for ip, r in results.items()],
+                    return_exceptions=True,
+                )
+            except Exception:
+                return results
+            out: dict[str, _lp.SSDPResponse] = dict(results)
+            for entry in enriched:
+                if isinstance(entry, tuple) and len(entry) == 2:
+                    ip, r = entry
+                    out[ip] = r
+            return out
+
+        async def _mdns_phase() -> None:
+            if self._bonjour_poller is None:
+                return
+            try:
+                self._bonjour_poller.send_meta_query()
+            except Exception:
+                pass
+
+        nbns_results, ssdp_results, _ = await asyncio.gather(
+            _nbns_phase(), _ssdp_phase(), _mdns_phase(),
+            return_exceptions=False,
+        )
+
+        # Merge enrichments into the existing state entries. Look up
+        # by IP since that's what the probes give us back.
+        if nbns_results or ssdp_results:
+            self._apply_probe_results(nbns_results, ssdp_results)
+
+    def _apply_probe_results(
+        self,
+        nbns_results: dict[str, str | None],
+        ssdp_results: dict[str, "_lp.SSDPResponse | None"],  # type: ignore[name-defined]
+    ) -> None:
+        """Merge probe enrichments into ``self._state``.
+
+        Keyed by IP. Hosts that don't appear in either probe map are
+        left untouched. Replaces the LANHost entry with an updated
+        copy via ``dataclasses.replace`` to preserve immutability.
+        """
+        from dataclasses import replace
+        # Build an IP → mac_lc lookup once.
+        by_ip: dict[str, str] = {h.ip: mac_lc for mac_lc, h in self._state.items()}
+        ips_touched: set[str] = set(nbns_results.keys()) | set(ssdp_results.keys())
+        for ip in ips_touched:
+            mac_lc = by_ip.get(ip)
+            if mac_lc is None:
+                continue
+            host = self._state[mac_lc]
+            nbns_name = nbns_results.get(ip)
+            ssdp = ssdp_results.get(ip)
+            new = replace(
+                host,
+                nbns_name=nbns_name if nbns_name else host.nbns_name,
+                upnp_server=(
+                    ssdp.server if ssdp and ssdp.server else host.upnp_server
+                ),
+                upnp_friendly_name=(
+                    ssdp.friendly_name
+                    if ssdp and ssdp.friendly_name
+                    else host.upnp_friendly_name
+                ),
+                upnp_model=(
+                    ssdp.model_name
+                    if ssdp and ssdp.model_name
+                    else host.upnp_model
+                ),
+            )
+            self._state[mac_lc] = new
 
 
 def _sort_key(h: LANHost) -> tuple[int, int, tuple[int, ...]]:

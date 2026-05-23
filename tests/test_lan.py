@@ -907,6 +907,255 @@ def test_vendor_raw_none_when_oui_misses(monkeypatch):
     assert host.is_randomised_mac is False
 
 
+# ---------- active-discovery integration (Phase 2) ----------
+
+
+def _poller_with_one_host(monkeypatch):
+    """Build a LANInventoryPoller pre-populated with one synthetic
+    host so the probe-merge logic can be exercised without standing
+    up a real sweep."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+    poller = LANInventoryPoller(
+        connection_provider=lambda: None,
+        active_probe_enabled=True,
+    )
+    poller._oui_layers = ({}, {}, {})
+    conn = _make_conn()
+
+    async def _seed():
+        now = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "08:11:22:33:44:55", "en0")],
+            conn=conn,
+            now=now,
+            sweep_results={"192.168.1.42": (True, 2.4)},
+        )
+
+    asyncio.run(_seed())
+    return poller
+
+
+def test_apply_probe_results_merges_nbns_into_state(monkeypatch):
+    poller = _poller_with_one_host(monkeypatch)
+    poller._apply_probe_results(
+        {"192.168.1.42": "LAB-PRINTER-01"}, {},
+    )
+    host = poller._state["08:11:22:33:44:55"]
+    assert host.nbns_name == "LAB-PRINTER-01"
+    assert host.upnp_server is None
+
+
+def test_apply_probe_results_merges_upnp_into_state(monkeypatch):
+    from diting.lan_probes import SSDPResponse
+    poller = _poller_with_one_host(monkeypatch)
+    poller._apply_probe_results(
+        {},
+        {
+            "192.168.1.42": SSDPResponse(
+                ip="192.168.1.42",
+                server="Linux/3.10 UPnP/1.0 HiSenseTV/2024.01",
+                location="http://192.168.1.42:1900/desc.xml",
+                usn=None,
+                st="upnp:rootdevice",
+                friendly_name="Living Room TV",
+                model_name="HiSense 75U7K",
+            )
+        },
+    )
+    host = poller._state["08:11:22:33:44:55"]
+    assert host.upnp_server == "Linux/3.10 UPnP/1.0 HiSenseTV/2024.01"
+    assert host.upnp_friendly_name == "Living Room TV"
+    assert host.upnp_model == "HiSense 75U7K"
+
+
+def test_apply_probe_results_leaves_untouched_hosts_alone(monkeypatch):
+    poller = _poller_with_one_host(monkeypatch)
+    # No probe data for this host's IP.
+    poller._apply_probe_results({"10.0.0.99": "ghost"}, {})
+    host = poller._state["08:11:22:33:44:55"]
+    assert host.nbns_name is None
+    assert host.upnp_server is None
+
+
+def test_apply_probe_results_preserves_prior_enrichment_when_new_value_none(
+    monkeypatch,
+):
+    """A subsequent sweep where the host briefly didn't answer NBNS
+    must NOT clobber a name we previously captured."""
+    poller = _poller_with_one_host(monkeypatch)
+    poller._apply_probe_results({"192.168.1.42": "LAB-PRINTER-01"}, {})
+    assert poller._state["08:11:22:33:44:55"].nbns_name == "LAB-PRINTER-01"
+    # Second probe — same IP, None result (silent this tick).
+    poller._apply_probe_results({"192.168.1.42": None}, {})
+    assert poller._state["08:11:22:33:44:55"].nbns_name == "LAB-PRINTER-01"
+
+
+def test_run_active_probes_swallows_nbns_exception(monkeypatch):
+    """NBNS phase raising must not propagate from _run_active_probes —
+    the next phase still runs and the sweep cycle proceeds."""
+    poller = _poller_with_one_host(monkeypatch)
+    conn = _make_conn()
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("nbns kaboom")
+
+    async def _empty_ssdp(*args, **kwargs):
+        return {}
+
+    monkeypatch.setattr("diting.lan_probes.probe_nbns", _boom)
+    monkeypatch.setattr("diting.lan_probes.probe_ssdp", _empty_ssdp)
+
+    async def _go():
+        await poller._run_active_probes(conn=conn)
+
+    # Must not raise.
+    asyncio.run(_go())
+
+
+def test_run_active_probes_swallows_ssdp_exception(monkeypatch):
+    poller = _poller_with_one_host(monkeypatch)
+    conn = _make_conn()
+
+    async def _empty_nbns(*args, **kwargs):
+        return {}
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("ssdp kaboom")
+
+    monkeypatch.setattr("diting.lan_probes.probe_nbns", _empty_nbns)
+    monkeypatch.setattr("diting.lan_probes.probe_ssdp", _boom)
+
+    async def _go():
+        await poller._run_active_probes(conn=conn)
+
+    asyncio.run(_go())
+
+
+def test_run_active_probes_returns_normally_on_total_phase_failure(monkeypatch):
+    """All three probe phases failing must NOT raise. The sweep just
+    yields no enrichments and the existing host state is preserved."""
+    poller = _poller_with_one_host(monkeypatch)
+    conn = _make_conn()
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr("diting.lan_probes.probe_nbns", _boom)
+    monkeypatch.setattr("diting.lan_probes.probe_ssdp", _boom)
+
+    async def _go():
+        await poller._run_active_probes(conn=conn)
+
+    asyncio.run(_go())
+    # Host state untouched.
+    assert poller._state["08:11:22:33:44:55"].nbns_name is None
+
+
+def test_one_shot_probe_armed_runs_probes_once_then_clears(monkeypatch):
+    """Setting _one_shot_probe_armed=True drives one probe sweep
+    even when active_probe_enabled is False; the flag clears
+    afterwards so subsequent sweeps revert to passive."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+
+    calls = {"nbns": 0, "ssdp": 0}
+
+    async def _fake_nbns(ips, **kwargs):
+        calls["nbns"] += 1
+        return {ip: None for ip in ips}
+
+    async def _fake_ssdp(**kwargs):
+        calls["ssdp"] += 1
+        return {}
+
+    monkeypatch.setattr("diting.lan_probes.probe_nbns", _fake_nbns)
+    monkeypatch.setattr("diting.lan_probes.probe_ssdp", _fake_ssdp)
+    # Subnet detection runs ifconfig; mock to deterministic value.
+    monkeypatch.setattr(
+        "diting.lan._detect_subnet",
+        lambda _ip: (["192.168.1.42"], "192.168.1.0/24", 24, False),
+    )
+    # ARP cache: one host.
+    monkeypatch.setattr(
+        "diting.lan._read_arp_cache",
+        lambda: [("192.168.1.42", "08:11:22:33:44:55", "en0")],
+    )
+
+    # Force the ping sweep to succeed without subprocess.
+    async def _fake_sweep(hosts, **kwargs):
+        return {ip: (True, 2.4) for ip in hosts}
+
+    monkeypatch.setattr("diting.lan._sweep", _fake_sweep)
+
+    conn = _make_conn()
+    poller = LANInventoryPoller(
+        connection_provider=lambda: conn,
+        active_probe_enabled=False,  # scene-default off
+    )
+
+    async def _go():
+        # Arm and drive one sweep — probes should fire.
+        poller._one_shot_probe_armed = True
+        await poller._do_sweep_and_emit()
+        # The flag clears after the sweep.
+        assert poller._one_shot_probe_armed is False
+        # Run another sweep with no arming — probes should NOT fire
+        # again (call counts stay at 1).
+        await poller._do_sweep_and_emit()
+
+    asyncio.run(_go())
+    assert calls["nbns"] == 1
+    assert calls["ssdp"] == 1
+
+
+def test_one_shot_probe_armed_clears_even_when_no_host_replied(monkeypatch):
+    """Consent has already been paid for the arming press — clear
+    the flag whether or not any host answered."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+    monkeypatch.setattr(
+        "diting.lan._detect_subnet",
+        lambda _ip: ([], "192.168.1.0/24", 24, False),
+    )
+    monkeypatch.setattr("diting.lan._read_arp_cache", lambda: [])
+
+    async def _fake_sweep(hosts, **kwargs):
+        return {ip: (False, None) for ip in hosts}
+
+    async def _fake_nbns(ips, **kwargs):
+        return {ip: None for ip in ips}
+
+    async def _fake_ssdp(**kwargs):
+        return {}
+
+    monkeypatch.setattr("diting.lan._sweep", _fake_sweep)
+    monkeypatch.setattr("diting.lan_probes.probe_nbns", _fake_nbns)
+    monkeypatch.setattr("diting.lan_probes.probe_ssdp", _fake_ssdp)
+
+    conn = _make_conn()
+    poller = LANInventoryPoller(
+        connection_provider=lambda: conn,
+        active_probe_enabled=False,
+    )
+
+    async def _go():
+        poller._one_shot_probe_armed = True
+        await poller._do_sweep_and_emit()
+        assert poller._one_shot_probe_armed is False
+
+    asyncio.run(_go())
+
+
 # ---------- LANInventoryPoller — state merge / first_seen preservation ----------
 
 def _make_conn(

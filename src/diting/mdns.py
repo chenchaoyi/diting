@@ -29,12 +29,15 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Mapping
 
 from zeroconf import (
+    DNSOutgoing,
+    DNSQuestion,
     InterfaceChoice,
     ServiceBrowser,
     ServiceListener,
     Zeroconf,
 )
 from zeroconf.asyncio import AsyncServiceInfo
+from zeroconf.const import _CLASS_IN, _FLAGS_QR_QUERY, _TYPE_PTR
 
 from .ble import _NAME_PATTERN_VENDORS, load_ouis, lookup_oui_vendor
 from .events import BonjourServiceLeftEvent, BonjourServiceSeenEvent
@@ -408,6 +411,39 @@ class BonjourPoller:
             except Exception:
                 pass
             self._zc = None
+
+    def send_meta_query(self) -> bool:
+        """Send one mDNS PTR query for the meta-service record.
+
+        RFC 6763 §9 — querying ``_services._dns-sd._meta._tcp.local``
+        with type PTR asks every device on the link to enumerate its
+        registered service types. Many Apple-ecosystem devices reply
+        even when they're not currently in a registered browse set,
+        which is what we want for the LAN-inventory active-probe pass.
+
+        Returns True when the query was emitted, False when the
+        zeroconf socket is not yet up (called before ``events()``
+        started iterating) or when the underlying send raised.
+        Fails soft — this is an enrichment path, never load-bearing.
+        """
+        if self._zc is None:
+            return False
+        try:
+            out = DNSOutgoing(_FLAGS_QR_QUERY)
+            out.add_question(
+                DNSQuestion(
+                    "_services._dns-sd._meta._tcp.local.",
+                    _TYPE_PTR,
+                    _CLASS_IN,
+                )
+            )
+            self._zc.send(out)
+            return True
+        except Exception:
+            # zeroconf internals can raise on closed loops / weird
+            # interface states; the meta-query is best-effort, never
+            # propagate.
+            return False
 
     def _start_browser(self) -> None:
         self._zc = Zeroconf(interfaces=InterfaceChoice.Default)

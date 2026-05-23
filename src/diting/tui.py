@@ -5686,6 +5686,8 @@ class DitingApp(App):
         calibration_path: str | None = None,
         event_log_path: str | None = None,
         notify: bool = False,
+        lan_active_probe: bool = True,
+        lan_upnp_fetch: bool = True,
     ) -> None:
         super().__init__()
         self._backend = backend
@@ -5767,6 +5769,11 @@ class DitingApp(App):
         # header. Fixed at startup; never mutates during a session.
         self._scene = scene
         self._scene_source = scene_source
+        # LAN active-probe resolution (scene default + env var).
+        # Threaded into the LANInventoryPoller when lazily constructed.
+        # Fixed at startup; never mutates during a session.
+        self._lan_active_probe = lan_active_probe
+        self._lan_upnp_fetch = lan_upnp_fetch
         # Latest BLE snapshot — kept fresh in the background regardless
         # of which view is active so toggling is instant. Two parallel
         # buffers: advertising (RSSI-sorted, post-merge) and connected
@@ -6484,6 +6491,8 @@ class DitingApp(App):
             poller = LANInventoryPoller(
                 connection_provider=lambda: self._latest_connection,
                 bonjour_poller=self._mdns_poller,
+                active_probe_enabled=self._lan_active_probe,
+                upnp_fetch_enabled=self._lan_upnp_fetch,
             )
             self._lan_inventory_poller = poller
         finally:
