@@ -10,6 +10,13 @@
 
 ## [Unreleased]
 
+## [1.7.1] — 2026-05-23
+
+Patch release。**`session_meta` JSONL 头部现在带启动时的 SSID + 网关 IP** —— v1.7.1 之前，emit_session_meta 在第一次 WiFi 轮询完成前调用，每个 session log 的首行都把 `ssid` / `gateway_ip` 写成 `null`，哪怕主机一直是连着 Wi-Fi 的。下游消费者（analyzer、`--for-llm` 提示包、第三方 `jq` 脚本）会把会话误读为"启动时未关联 Wi-Fi"。
+
+### 修复
+- **`emit_session_meta` 在写头部前同步取一次 `get_connection()`，把 SSID + 网关填进去。** `_run_monitor`（cli.py）和 `DitingApp.__init__`（tui.py）两个调用点都改了。`get_connection()` 抛错时（helper 未就绪 / 没 Wi-Fi）吞掉异常，回退为 `None`，所以未关联场景的冷启动路径继续可用。这个时序 race 自 v1.6.0 起就有，由 v1.7.0 发版后的 release-binary 烟雾审计发现。
+
 ## [1.7.0] — 2026-05-23
 
 Minor release。**LAN 识别能力扩展** —— LAN 视图现在能识别国内

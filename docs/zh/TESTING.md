@@ -196,6 +196,7 @@
 | Requirement | 测试 |
 |---|---|
 | `session_meta` 在第一行；带 scene + scene_source + diting_version + ssid + gateway_ip + hostname；emit 幂等；disabled logger 是 no-op；SSID / gateway 允许 null 写入 | `test_event_log.py::test_session_meta_writes_header_with_all_fields`、`::test_session_meta_is_first_when_emitted_first`、`::test_session_meta_is_idempotent`、`::test_session_meta_disabled_logger_is_no_op`、`::test_session_meta_accepts_null_ssid_and_gateway` |
+| **v1.7.1** —— `DitingApp.__init__` 和 `_run_monitor` 都在 emit `session_meta` 之前同步 `backend.get_connection()`，让 JSONL 头部带启动时的 SSID + 网关 IP，而不是 null。Backend 抛错（helper 未就绪、还没 Wi-Fi）时回退为 None | `test_tui_smoke.py::test_app_session_meta_carries_startup_ssid_and_gateway`、`::test_app_session_meta_absorbs_get_connection_failure` |
 | `--log` 与 `diting monitor` 输出字节相等 | `test_event_log.py::test_to_path_writes_appendable_jsonl`、`::test_unicode_user_strings_survive_readable`（共享 writer 类） |
 | 每个事件后强制 flush | `test_event_log.py::test_line_buffered_writes_are_visible_before_close` |
 | atexit 钩子优雅关闭 writer | (gap — 没有专门的测试；行为在 `test_line_buffered_writes_are_visible_before_close` 里间接覆盖) |
