@@ -53,7 +53,9 @@ def test_gateway_wins_router_regardless_of_vendor():
 
 
 def test_airprint_bonjour_signals_printer():
-    h = _host(bonjour_services=("AirPrint", "IPP"))
+    # Network printers publish `_ipp._tcp.local.`, which the mdns
+    # module records as the category "Printer".
+    h = _host(bonjour_services=("Printer",))
     assert classify(h) == "printer"
 
 
@@ -129,17 +131,28 @@ def test_aqara_vendor_signals_smart_home():
 
 
 def test_sonos_bonjour_signals_speaker():
-    h = _host(bonjour_services=("_spotify-connect",))
+    h = _host(bonjour_services=("Sonos",))
     assert classify(h) == "speaker"
 
 
-def test_homepod_airplay_plus_raop_signals_speaker_not_tv():
-    """HomePods publish AirPlay alongside `_raop._tcp` (the AirPlay
-    receiver protocol used by audio-output devices). The speaker
-    rule must win over the AirPlay-as-tv rule — regression for the
-    2026-05-23 tui-audit where a 'Blue-Pod' HomePod was being
-    classified as `tv`."""
-    h = _host(bonjour_services=("AirPlay", "_raop"))
+def test_homepod_airplay_audio_signals_speaker_not_tv():
+    """HomePods publish AirPlay (video) alongside `_raop._tcp`,
+    which the mdns module records as the category `"AirPlay audio"`.
+    The speaker rule must win over the AirPlay-as-tv rule — first
+    regression from the 2026-05-23 tui-audit ('Blue-Pod' as tv)."""
+    h = _host(bonjour_services=("AirPlay", "AirPlay audio"))
+    assert classify(h) == "speaker"
+
+
+def test_homepod_full_apple_signature_signals_speaker_not_phone():
+    """Real-data HomePod signature observed on the user's home
+    network: AirPlay + AirPlay audio + Apple Companion + HomeKit.
+    Speaker MUST win over phone — second regression from the
+    2026-05-23 follow-up audit where my first fix used `_raop`
+    as the needle and never matched the actual category string."""
+    h = _host(bonjour_services=(
+        "AirPlay", "AirPlay audio", "Apple Companion", "HomeKit",
+    ))
     assert classify(h) == "speaker"
 
 
@@ -162,7 +175,8 @@ def test_qnap_vendor_signals_nas():
 
 
 def test_smb_bonjour_signals_nas():
-    h = _host(bonjour_services=("smb", "_adisk"))
+    # `_smb._tcp.local.` → "File share" category.
+    h = _host(bonjour_services=("File share",))
     assert classify(h) == "nas"
 
 
@@ -170,22 +184,22 @@ def test_smb_bonjour_signals_nas():
 
 
 def test_apple_companion_signals_phone():
-    h = _host(bonjour_services=("_companion-link",))
+    h = _host(bonjour_services=("Apple Companion",))
     assert classify(h) == "phone"
 
 
-def test_ipad_airplay_plus_companion_link_signals_phone_not_tv():
+def test_ipad_airplay_plus_companion_signals_phone_not_tv():
     """iPads / iPhones with screen-mirroring active publish BOTH
-    `AirPlay` AND `_companion-link`. The phone class must win —
+    AirPlay AND Apple Companion. The phone rule must win —
     regression for the 2026-05-23 tui-audit where an iPad serial
     `L19L6JC6Q2` was classified as `tv`."""
-    h = _host(bonjour_services=("AirPlay", "_companion-link"))
+    h = _host(bonjour_services=("AirPlay", "Apple Companion"))
     assert classify(h) == "phone"
 
 
 def test_apple_tv_airplay_alone_still_signals_tv():
-    """Apple TV publishes AirPlay without `_raop` or
-    `_companion-link` in its non-paired state. The AirPlay-only
+    """Apple TV publishes AirPlay without `AirPlay audio` or
+    `Apple Companion` in its non-paired state. The AirPlay-only
     branch should still route to `tv`."""
     h = _host(bonjour_services=("AirPlay",))
     assert classify(h) == "tv"

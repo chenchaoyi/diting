@@ -146,16 +146,66 @@ _SPEAKER_VENDOR_NEEDLES: tuple[str, ...] = (
 Rule = tuple[Callable[["LANHost"], bool], str]
 
 
+# Bonjour needles match the human-readable *category* strings the
+# mdns module stores on each LANHost — NOT the raw service-type
+# names like `_raop._tcp.local.`. The mapping lives in
+# `src/diting/data/bonjour_services.json`; key category strings
+# we use here:
+#
+#   `_airplay._tcp.local.`         → "AirPlay"          (TVs + HomePods + iPads)
+#   `_raop._tcp.local.`            → "AirPlay audio"    (HomePods + AirPlay speakers — speaker signal)
+#   `_companion-link._tcp.local.`  → "Apple Companion"  (iPhones + iPads + Macs + HomePods)
+#   `_homekit._tcp.local.`         → "HomeKit"          (HomeKit accessories incl. HomePod)
+#   `_googlecast._tcp.local.`      → "Chromecast"       (Cast-capable TVs)
+#   `_smb._tcp.local.`             → "File share"       (NAS / Samba)
+#   `_ipp._tcp.local.`             → "Printer"          (network printers)
+#   `_sonos._tcp.local.`           → "Sonos"            (Sonos speakers)
+#
+# Caller does `" ".join(bonjour_services).lower()` and checks
+# substring membership, so the needle text must appear in the
+# joined lowercase category strings.
+
+
+_BONJOUR_SPEAKER_NEEDLES: tuple[str, ...] = (
+    # HomePods + third-party AirPlay 2 speakers publish `_raop` →
+    # "AirPlay audio". This category is the strongest speaker
+    # signal in the Apple ecosystem and is absent from TVs / iPads.
+    "airplay audio",
+    "sonos",
+)
+
+_BONJOUR_PHONE_NEEDLES: tuple[str, ...] = (
+    # `_companion-link` → "Apple Companion" — published by iPhone /
+    # iPad / Mac AND HomePod. HomePod is caught by the speaker
+    # rule before this rule runs.
+    "apple companion",
+)
+
+_BONJOUR_PRINTER_NEEDLES: tuple[str, ...] = (
+    "printer",
+)
+
+_BONJOUR_NAS_NEEDLES: tuple[str, ...] = (
+    # `_smb` → "File share"; `_afpovertcp` → not in our bundled
+    # categories so we match the common SMB category instead.
+    "file share",
+)
+
+_BONJOUR_TV_NEEDLES: tuple[str, ...] = (
+    # Cast / Chromecast is TV-specific (phones can cast TO Cast,
+    # not advertise it).
+    "chromecast",
+)
+
+
 _RULES: tuple[Rule, ...] = (
     # Gateway is always router, regardless of vendor.
     (lambda h: h.is_gateway, "router"),
 
-    # Printers via Bonjour AirPrint / IPP / LPD — strongest signal,
+    # Printers via Bonjour Printer category — strongest signal,
     # works even when vendor is unknown.
     (
-        lambda h: _bonjour_has(
-            h, ("airprint", "ipp", "ipps", "lpd", "pdl-datastream"),
-        ),
+        lambda h: _bonjour_has(h, _BONJOUR_PRINTER_NEEDLES),
         "printer",
     ),
     (
@@ -177,11 +227,9 @@ _RULES: tuple[Rule, ...] = (
         "camera",
     ),
 
-    # NAS — Bonjour shares (SMB / AFP) or vendor.
+    # NAS — Bonjour shares or vendor.
     (
-        lambda h: _bonjour_has(
-            h, ("smb", "afpovertcp", "nfs", "_adisk", "time machine"),
-        ),
+        lambda h: _bonjour_has(h, _BONJOUR_NAS_NEEDLES),
         "nas",
     ),
     (
@@ -189,14 +237,16 @@ _RULES: tuple[Rule, ...] = (
         "nas",
     ),
 
-    # Speakers (HomePod / Sonos) — `_raop` is the AirPlay receiver
-    # service published by audio-only Apple devices; HomePods AND
-    # iPads / iPhones can publish AirPlay, but only audio-output
-    # devices publish `_raop._tcp`. Order matters: this rule MUST
-    # come before the AirPlay-as-tv rule so HomePods don't get
-    # mis-classified.
+    # Speakers (HomePod / Sonos / AirPlay-2 speakers) — `_raop` is
+    # the AirPlay-audio receiver service published by audio-only
+    # Apple-ecosystem devices and AirPlay-capable speakers; the
+    # category is "AirPlay audio". HomePods AND iPads publish
+    # "AirPlay" (video), but only audio-output devices publish
+    # "AirPlay audio". Order matters: this rule MUST come before
+    # the phone rule (HomePods also publish Apple Companion) and
+    # before the AirPlay-as-tv rule.
     (
-        lambda h: _bonjour_has(h, ("_raop", "_spotify-connect", "sonos")),
+        lambda h: _bonjour_has(h, _BONJOUR_SPEAKER_NEEDLES),
         "speaker",
     ),
     (
@@ -215,23 +265,21 @@ _RULES: tuple[Rule, ...] = (
         ),
         "tv",
     ),
-    # Cast / Android-TV protocols are TV-specific (no phone / speaker
+    # Chromecast / Cast protocols are TV-specific (no phone / speaker
     # publishes them).
     (
-        lambda h: _bonjour_has(h, ("googlecast", "_androidtvremote2")),
+        lambda h: _bonjour_has(h, _BONJOUR_TV_NEEDLES),
         "tv",
     ),
-    # AirPlay alone is ambiguous — iPad, iPhone, HomePod, AND Apple TV
-    # all publish it. Treat as tv ONLY when no phone / speaker
-    # companion signal is present (the speaker rule above already
-    # claimed `_raop`-bearing hosts; this leaves Apple TV — which
-    # publishes AirPlay without `_raop` — and third-party AirPlay-
-    # capable TVs).
+    # AirPlay alone is ambiguous — iPad, iPhone, HomePod, AND Apple
+    # TV all publish it. Treat as tv ONLY when no phone / speaker
+    # companion signal is present. The speaker rule above already
+    # claimed "AirPlay audio"-bearing hosts (HomePods); this leaves
+    # Apple TV (which publishes "AirPlay" without "AirPlay audio")
+    # and third-party AirPlay-capable TVs.
     (
         lambda h: _bonjour_has(h, ("airplay",))
-        and not _bonjour_has(
-            h, ("_companion-link", "apple companion", "_apple-mobdev2"),
-        ),
+        and not _bonjour_has(h, _BONJOUR_PHONE_NEEDLES),
         "tv",
     ),
     (
@@ -241,11 +289,10 @@ _RULES: tuple[Rule, ...] = (
 
     # Phones — Apple Continuity / Companion Bonjour. Falls through
     # the TV rules above only when AirPlay is paired with
-    # `_companion-link`, i.e. an iPad / iPhone / Mac.
+    # "Apple Companion" but NOT "AirPlay audio" — i.e. an iPad /
+    # iPhone / Mac, not a HomePod.
     (
-        lambda h: _bonjour_has(
-            h, ("_companion-link", "apple companion", "_apple-mobdev2"),
-        ),
+        lambda h: _bonjour_has(h, _BONJOUR_PHONE_NEEDLES),
         "phone",
     ),
 
