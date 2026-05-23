@@ -823,9 +823,10 @@ def test_bonjour_cross_ref_pulls_name_from_state():
     dev = _bonjour_device(("192.168.1.42",), category="AirPlay")
     poller._state[(dev.service_type, dev.name)] = dev
     idx = _build_bonjour_index(poller)
-    host, cats = idx["192.168.1.42"]
+    host, cats, model = idx["192.168.1.42"]
     assert host == "ccy-MBP24-M4-Office"
     assert cats == ("AirPlay",)
+    assert model is None  # no `model=` TXT in this fixture
 
 
 def test_bonjour_cross_ref_aggregates_categories():
@@ -834,8 +835,38 @@ def test_bonjour_cross_ref_aggregates_categories():
     poller._state[("b", "y")] = _bonjour_device(("192.168.1.42",), category="AirPlay audio", name="y")
     poller._state[("c", "z")] = _bonjour_device(("192.168.1.42",), category="Apple Companion", name="z")
     idx = _build_bonjour_index(poller)
-    _, cats = idx["192.168.1.42"]
+    _, cats, _ = idx["192.168.1.42"]
     assert set(cats) == {"AirPlay", "AirPlay audio", "Apple Companion"}
+
+
+def test_bonjour_cross_ref_pulls_apple_model_code_from_txt():
+    """When any BonjourDevice for an IP carries `model=` in its TXT
+    records, the index surfaces it on the IP entry. First-wins."""
+    from dataclasses import replace as _replace
+    poller = BonjourPoller()
+    # First device — no model in TXT.
+    dev1 = _bonjour_device(("192.168.1.42",), category="AirPlay", name="x")
+    # Second device on the same IP — has model code.
+    dev2 = _bonjour_device(("192.168.1.42",), category="Apple Companion", name="y")
+    dev2 = _replace(dev2, txt={"model": "Mac14,2"})
+    poller._state[("a", "x")] = dev1
+    poller._state[("b", "y")] = dev2
+    idx = _build_bonjour_index(poller)
+    _, _, model = idx["192.168.1.42"]
+    assert model == "Mac14,2"
+
+
+def test_bonjour_cross_ref_apple_model_none_when_no_txt_model():
+    """No `model=` TXT key on any device → model field is None."""
+    from dataclasses import replace as _replace
+    poller = BonjourPoller()
+    dev = _bonjour_device(("192.168.1.42",), category="AirPlay")
+    # TXT is non-empty but doesn't include "model"
+    dev = _replace(dev, txt={"rpFl": "0x123"})
+    poller._state[(dev.service_type, dev.name)] = dev
+    idx = _build_bonjour_index(poller)
+    _, _, model = idx["192.168.1.42"]
+    assert model is None
 
 
 def test_bonjour_cross_ref_leaves_name_none_when_no_match():

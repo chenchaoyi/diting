@@ -98,6 +98,14 @@ class LANHost:
     # | speaker | router`, or None when no rule fires. Presentational
     # only.
     device_class: str | None = None
+    # Apple hardware model identifier (e.g. ``Mac14,2``,
+    # ``AudioAccessory6,1``, ``iPhone16,1``) extracted from Bonjour
+    # TXT records published by the host's AirPlay / Apple-Companion /
+    # mobdev services. The high-confidence classifier signal —
+    # Apple's own product code maps unambiguously to laptop /
+    # speaker / phone / tv. None when no Bonjour-side TXT record
+    # carried a `model=` entry.
+    bonjour_model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -602,30 +610,47 @@ def _strip_local_suffix(host: str | None) -> str | None:
 
 def _build_bonjour_index(
     bonjour_poller: BonjourPoller | None,
-) -> dict[str, tuple[str | None, tuple[str, ...]]]:
-    """Walk ``BonjourPoller._state`` once, return ``{ip: (host, services)}``.
+) -> dict[str, tuple[str | None, tuple[str, ...], str | None]]:
+    """Walk ``BonjourPoller._state`` once, return
+    ``{ip: (host, services, apple_model)}``.
 
     ``services`` is a tuple of unique ``category`` strings across every
-    Bonjour entry whose ``addresses`` contains the IP. The LAN poller
-    does NOT mutate Bonjour state.
+    Bonjour entry whose ``addresses`` contains the IP.
+
+    ``apple_model`` is Apple's hardware identifier (``Mac14,2``,
+    ``AudioAccessory6,1``, ``iPhone16,1``, ``AppleTV14,1``, etc.)
+    extracted from any TXT record's ``model`` key on this host.
+    First non-empty value wins. None when no Bonjour entry for the
+    IP carried a ``model=`` field.
+
+    The LAN poller does NOT mutate Bonjour state.
     """
     if bonjour_poller is None:
         return {}
 
-    by_ip: dict[str, tuple[str | None, list[str]]] = {}
+    by_ip: dict[str, tuple[str | None, list[str], str | None]] = {}
     for dev in bonjour_poller._state.values():
         host = _strip_local_suffix(dev.host)
+        txt_model = (dev.txt.get("model") if dev.txt else None) or None
         for ip in dev.addresses:
-            entry = by_ip.setdefault(ip, (host, []))
-            cur_host, cats = entry
+            entry = by_ip.setdefault(ip, (host, [], None))
+            cur_host, cats, cur_model = entry
             # First match wins for host name (rare virtual-host case).
             if cur_host is None and host is not None:
                 cur_host = host
             if dev.category and dev.category not in cats:
                 cats.append(dev.category)
-            by_ip[ip] = (cur_host, cats)
+            # First-wins for the model code — `_companion-link` and
+            # AirPlay TXT records can disagree; first stable hit is
+            # enough for classification.
+            if cur_model is None and txt_model:
+                cur_model = txt_model
+            by_ip[ip] = (cur_host, cats, cur_model)
 
-    return {ip: (host, tuple(cats)) for ip, (host, cats) in by_ip.items()}
+    return {
+        ip: (host, tuple(cats), model)
+        for ip, (host, cats, model) in by_ip.items()
+    }
 
 
 class LANInventoryPoller:
@@ -960,7 +985,9 @@ class LANInventoryPoller:
             existing = self._state.get(mac_lc)
             randomised = _is_randomised_mac(mac_lc)
             vendor, vendor_raw = _resolve_vendor(mac_lc, randomised)
-            bonjour_host, bonjour_cats = bonjour_index.get(ip, (None, ()))
+            bonjour_host, bonjour_cats, bonjour_model = bonjour_index.get(
+                ip, (None, (), None),
+            )
             hostname = rdns_results.get(ip, existing.hostname if existing else None)
             last_rtt_ms, last_reachable_at, ttl = _rtt_for(existing, ip)
             is_gateway_now = (router_ip is not None and ip == router_ip)
@@ -982,6 +1009,7 @@ class LANInventoryPoller:
                 vendor_raw=vendor_raw,
                 ttl=ttl,
                 ttl_class=ttl_class_for(ttl),
+                bonjour_model=bonjour_model,
             )
             host_entry = replace(
                 host_entry, device_class=_classify_device(host_entry),

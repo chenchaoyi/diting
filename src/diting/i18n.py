@@ -249,6 +249,9 @@ _ZH: dict[str, str] = {
     "UPnP server": "UPnP 标识",
     "Friendly name": "友好名称",
     "(not probed)": "（未主动探测）",
+    # Bonjour detail modal — LAN cross-reference section (Tier B).
+    # "LAN host" + "class" already catalogued above (LAN detail modal).
+    "vendor (OUI)": "厂商 (OUI)",
     # Public-scene one-shot consent modal. Each string here gets a
     # ZH translation so DITING_LANG=zh users see the same flow in
     # their language.

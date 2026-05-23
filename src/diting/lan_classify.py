@@ -171,12 +171,66 @@ Rule = tuple[Callable[["LANHost"], bool], str]
 
 
 _BONJOUR_SPEAKER_NEEDLES: tuple[str, ...] = (
-    # HomePods + third-party AirPlay 2 speakers publish `_raop` →
-    # "AirPlay audio". This category is the strongest speaker
-    # signal in the Apple ecosystem and is absent from TVs / iPads.
-    "airplay audio",
+    # "Sonos" (`_sonos._tcp`) and `_raop._tcp` → "AirPlay audio"
+    # are the candidate speaker signals. Sonos is unambiguous;
+    # "AirPlay audio" is published by BOTH HomePods AND any Mac
+    # running with AirPlay receiver enabled, so the speaker rule
+    # below additionally requires HomeKit on the same host before
+    # treating "AirPlay audio" as a HomePod signal. Sonos rule has
+    # no such requirement.
     "sonos",
 )
+
+# Bonjour categories produced by macOS-specific services that are
+# almost never seen on HomePods / iPads / iPhones — used to route
+# AirPlay-audio-publishing Macs to laptop instead of speaker.
+_BONJOUR_MAC_NEEDLES: tuple[str, ...] = (
+    "mac",              # _workstation._tcp → "Mac"
+    "screen sharing",   # _rfb._tcp
+)
+
+# Apple model-code prefix → device class. Maps the `model=` TXT
+# record value (e.g. `Mac14,2`, `AudioAccessory6,1`) to the
+# corresponding class. First prefix match wins. This is the
+# highest-confidence Apple-side signal — Apple's own product code,
+# unambiguous, encoded directly in the device's mDNS announcement.
+_APPLE_MODEL_PREFIXES: tuple[tuple[str, str], ...] = (
+    # Order: most-specific prefix first so e.g. "MacBookPro" and
+    # "MacBookAir" win before the generic "Mac" prefix.
+    ("MacBookPro", "laptop"),
+    ("MacBookAir", "laptop"),
+    ("MacBook", "laptop"),
+    ("Macmini", "desktop"),
+    ("MacPro", "desktop"),
+    ("iMac", "desktop"),
+    # `Mac14,2` / `Mac15,3` / `Mac16,5` are M-series Macs (mix of
+    # MacBook Air / Pro / mini / Studio depending on the variant).
+    # `_APPLE_MODELS` in mdns_txt_decoders.py knows which is which;
+    # for the classifier, every `Mac<N>,<m>` is a Mac of some kind
+    # → laptop is the most common variant and the safe default.
+    # The friendly-name lookup in the modal corrects laptop /
+    # desktop in display.
+    ("Mac", "laptop"),
+    ("AudioAccessory", "speaker"),  # HomePod / HomePod mini
+    ("iPad", "phone"),
+    ("iPhone", "phone"),
+    ("Watch", "phone"),             # Apple Watch — closest single class
+    ("AppleTV", "tv"),
+)
+
+
+def _apple_model_class(host: "LANHost") -> str | None:
+    """Map ``host.bonjour_model`` to a device class via Apple's
+    product-code prefix. Returns None when the host has no model
+    code or no prefix matches.
+    """
+    code = getattr(host, "bonjour_model", None)
+    if not code:
+        return None
+    for prefix, klass in _APPLE_MODEL_PREFIXES:
+        if code.startswith(prefix):
+            return klass
+    return None
 
 _BONJOUR_PHONE_NEEDLES: tuple[str, ...] = (
     # `_companion-link` → "Apple Companion" — published by iPhone /
@@ -241,21 +295,46 @@ _RULES: tuple[Rule, ...] = (
         "nas",
     ),
 
-    # Speakers (HomePod / Sonos / AirPlay-2 speakers) — `_raop` is
-    # the AirPlay-audio receiver service published by audio-only
-    # Apple-ecosystem devices and AirPlay-capable speakers; the
-    # category is "AirPlay audio". HomePods AND iPads publish
-    # "AirPlay" (video), but only audio-output devices publish
-    # "AirPlay audio". Order matters: this rule MUST come before
-    # the phone rule (HomePods also publish Apple Companion) and
-    # before the AirPlay-as-tv rule.
+    # Macs running with AirPlay-receiver enabled publish "AirPlay
+    # audio" (the `_raop._tcp` service) — same category HomePods
+    # publish. Diagnose Macs first via the "Mac" / "Screen sharing"
+    # categories (workstation / RFB services), and the Apple
+    # model-code path above already catches Macs whose mDNS TXT
+    # includes a `model=Mac…` field. This rule is the fallback
+    # when neither signal is available.
     (
-        lambda h: _bonjour_has(h, _BONJOUR_SPEAKER_NEEDLES),
+        lambda h: _bonjour_has(h, _BONJOUR_MAC_NEEDLES),
+        "laptop",
+    ),
+
+    # Sonos is unambiguous (Sonos category from `_sonos._tcp`).
+    (
+        lambda h: _bonjour_has(h, ("sonos",)),
         "speaker",
     ),
+    # HomePod (and most third-party AirPlay 2 speakers) publish
+    # BOTH "AirPlay audio" AND HomeKit. Macs publish "AirPlay
+    # audio" without HomeKit, so the AND constraint excludes them.
+    (
+        lambda h: _bonjour_has(h, ("airplay audio",))
+        and _bonjour_has(h, ("homekit",)),
+        "speaker",
+    ),
+    # Vendor-based speaker rule for non-Apple speakers (Bose, JBL,
+    # Harman, Anker, Marshall, Denon, etc.) that publish AirPlay
+    # audio without HomeKit.
     (
         lambda h: _has_any(_lower(h.vendor_raw), _SPEAKER_VENDOR_NEEDLES),
         "speaker",
+    ),
+    # Apple vendor + "AirPlay audio" without HomeKit is a Mac
+    # (HomePod hit the rule above). Routes the AirPlay-receiver
+    # Mac case to laptop. Comes BEFORE the phone rule since both
+    # Macs and iPads publish Apple Companion.
+    (
+        lambda h: _bonjour_has(h, ("airplay audio",))
+        and "apple" in _lower(h.vendor_raw),
+        "laptop",
     ),
 
     # TVs — UPnP server header is the most reliable signal because
@@ -341,8 +420,27 @@ def classify(host: "LANHost") -> str | None:
     fields. Caller-side rule (the merge step in ``lan.py``) decides
     what to do with a None result; the row's class column simply
     renders empty when class is None.
+
+    Precedence:
+
+    1. ``is_gateway`` → router (preempts every other signal).
+    2. Apple model code from Bonjour TXT — highest confidence
+       Apple-side signal; resolves Mac-vs-HomePod ambiguity that
+       Bonjour-category heuristics can't.
+    3. Documented rules table (printers, cameras, NAS, speakers,
+       TVs, phones, gaming, routers, smart-home, TTL fallback).
     """
     try:
+        if host.is_gateway:
+            return "router"
+        # Apple model code: precedes the rules table because the
+        # category-overlap between Macs (AirPlay + AirPlay audio +
+        # Apple Companion) and HomePods (same set + HomeKit) is
+        # the exact failure mode the model-code resolves
+        # unambiguously.
+        apple_klass = _apple_model_class(host)
+        if apple_klass is not None:
+            return apple_klass
         for predicate, klass in _RULES:
             try:
                 if predicate(host):

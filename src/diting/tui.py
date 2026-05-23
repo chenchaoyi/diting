@@ -1679,7 +1679,15 @@ class BonjourPanel(VerticalScroll):
         self, devices: list, *,
         selected_key: str | None = None,
         sort_mode: str = "service",
+        lan_lookup=None,
     ) -> None:
+        """Refresh the Bonjour panel.
+
+        ``lan_lookup`` is forwarded to the row renderers so they can
+        cross-reference the LAN side's OUI vendor by IPv4 address —
+        Bonjour-derived vendor is often None for non-Apple gear, and
+        the LAN side already knows the IEEE-registered brand.
+        """
         body = self.query_one("#mdns-body", Static)
         base_title = t("Nearby Bonjour devices")
         self.border_title = _view_tabs_border_title("mdns")
@@ -1693,10 +1701,10 @@ class BonjourPanel(VerticalScroll):
             return
         now = datetime.now(timezone.utc)
         if sort_mode == "by-host":
-            row_specs = _bonjour_by_host_rows(devices, now)
+            row_specs = _bonjour_by_host_rows(devices, now, lan_lookup=lan_lookup)
         else:
             row_specs = [
-                (_bonjour_row_line(d, now), _bonjour_row_key(d))
+                (_bonjour_row_line(d, now, lan_lookup=lan_lookup), _bonjour_row_key(d))
                 for d in devices
             ]
         self.border_subtitle = (
@@ -3674,14 +3682,50 @@ def _strip_service_suffix(name: str, service_type: str) -> str:
     return name
 
 
-def _bonjour_row_line(d, now: datetime) -> Text:
-    # Vendor cell.
+def _bonjour_borrow_vendor(d, lan_lookup) -> str | None:
+    """Look up the LAN-side OUI vendor for a Bonjour device's IP.
+
+    Used by the Bonjour row + the Bonjour detail modal's
+    `LAN cross-reference` section. Returns the LAN host's vendor
+    string (already normalized for display) or None when no LAN
+    record matches the device's first IPv4 address.
+
+    IPv4-only: Bonjour devices on a LAN typically have an IPv4
+    address even when they also publish IPv6. The LAN inventory
+    is keyed by IPv4 (the ARP cache is v4 only).
+    """
+    if lan_lookup is None:
+        return None
+    addresses = getattr(d, "addresses", None) or ()
+    for addr in addresses:
+        if ":" in addr:
+            continue  # skip IPv6
+        host = lan_lookup(addr)
+        if host is not None:
+            return host.vendor
+    return None
+
+
+def _bonjour_row_line(
+    d, now: datetime, *, lan_lookup=None,
+) -> Text:
+    # Vendor cell. Bonjour-derived vendor (name-pattern + service
+    # hints in `mdns.resolve_vendor`) is often None for non-Apple
+    # gear because mDNS doesn't carry an IEEE OUI. When `lan_lookup`
+    # is supplied, fall back to the LAN side's OUI-resolved vendor
+    # for the same IP — turns most `(unknown)` rows into real brand
+    # names. Styled dim-cyan to mark "borrowed from LAN".
     if d.vendor:
         vendor_cell = fit_cells(d.vendor, _COL_MDNS_VENDOR)
         vendor_style = "cyan"
     else:
-        vendor_cell = pad_cells(t("(unknown)"), _COL_MDNS_VENDOR)
-        vendor_style = "dim"
+        lan_vendor = _bonjour_borrow_vendor(d, lan_lookup)
+        if lan_vendor:
+            vendor_cell = fit_cells(lan_vendor, _COL_MDNS_VENDOR)
+            vendor_style = "dim cyan"
+        else:
+            vendor_cell = pad_cells(t("(unknown)"), _COL_MDNS_VENDOR)
+            vendor_style = "dim"
     # Strip the redundant ``._airplay._tcp.local.`` suffix from the
     # service-instance name — the service type is already shown in
     # the Services column one cell to the right.
@@ -3718,7 +3762,7 @@ def _bonjour_age_text(d, now: datetime) -> str:
 
 
 def _bonjour_by_host_rows(
-    devices: list, now: datetime,
+    devices: list, now: datetime, *, lan_lookup=None,
 ) -> list[tuple[Text, str]]:
     """Render the Bonjour panel grouped by host.
 
@@ -3764,13 +3808,26 @@ def _bonjour_by_host_rows(
     for host in host_order:
         members = groups[host]
         freshest = max(members, key=lambda d: d.last_seen)
-        # Vendor / name / age come from the freshest member.
+        # Vendor / name / age come from the freshest member. When
+        # Bonjour-derived vendor is None, fall back to the LAN side's
+        # OUI-resolved vendor (matched by IPv4 address). Try each
+        # member of the group so a host that publishes some services
+        # with addresses and others without still wins the lookup.
         if freshest.vendor:
             vendor_cell = fit_cells(freshest.vendor, _COL_MDNS_VENDOR)
             vendor_style = "cyan"
         else:
-            vendor_cell = pad_cells(t("(unknown)"), _COL_MDNS_VENDOR)
-            vendor_style = "dim"
+            lan_vendor = None
+            for member in members:
+                lan_vendor = _bonjour_borrow_vendor(member, lan_lookup)
+                if lan_vendor:
+                    break
+            if lan_vendor:
+                vendor_cell = fit_cells(lan_vendor, _COL_MDNS_VENDOR)
+                vendor_style = "dim cyan"
+            else:
+                vendor_cell = pad_cells(t("(unknown)"), _COL_MDNS_VENDOR)
+                vendor_style = "dim"
         raw_name = _strip_service_suffix(
             freshest.name or "", freshest.service_type,
         )
@@ -5037,11 +5094,12 @@ class BonjourDetailScreen(ModalScreen):
         latest_mdns: "list | None" = None,
         latest_ble: "list | None" = None,
         latest_connection: "Connection | None" = None,
+        lan_host=None,
     ) -> None:
         super().__init__()
         self._device = device
-        # New context refs — supplied by the App so the modal can
-        # render "Other services on this host" (latest_mdns) and the
+        # Context refs — supplied by the App so the modal can render
+        # "Other services on this host" (latest_mdns) and the
         # cross-surface correlation rules (latest_ble + connection).
         # All default to None so existing fixtures + tests that
         # construct the modal directly without these refs still work;
@@ -5050,6 +5108,13 @@ class BonjourDetailScreen(ModalScreen):
         self._latest_mdns = latest_mdns or []
         self._latest_ble = latest_ble or []
         self._latest_connection = latest_connection
+        # LAN cross-reference — the LANHost serving the device's
+        # first IPv4 address, when one is on the LAN inventory side.
+        # Drives the new `LAN host` section that surfaces MAC / OUI
+        # vendor / device class / TTL / NBNS / UPnP enrichments the
+        # Bonjour announcement doesn't carry. None when the App
+        # didn't supply it (test fixtures) or no LAN row matches.
+        self._lan_host = lan_host
 
     def compose(self) -> ComposeResult:
         body = Static(self._render_body(), id="bonjour-detail-content")
@@ -5085,6 +5150,15 @@ class BonjourDetailScreen(ModalScreen):
         if new_device is None:
             return
         self._device = new_device
+        # Refresh the LAN cross-reference too — arrow-key navigation
+        # walks the user to a different host's services, and the
+        # `LAN host` section needs to follow.
+        lookup = getattr(self.app, "_bonjour_lan_host_for", None)
+        if callable(lookup):
+            try:
+                self._lan_host = lookup(new_device)
+            except Exception:
+                pass
         try:
             body = self.query_one("#bonjour-detail-content", Static)
         except Exception:
@@ -5104,10 +5178,18 @@ class BonjourDetailScreen(ModalScreen):
             self._section_other_services(out)
         out.append("\n")
         self._section_network(out)
-        # Cross-surface section sits between Network and TXT — by the
-        # time the user has scanned the host's addresses they are
-        # primed to read "yep, that's the local Mac" / "also a BLE
-        # peer at -53 dBm" without yet wading into TXT records.
+        # LAN cross-reference sits between Network and Cross-surface
+        # — the LAN side knows MAC + OUI vendor + device class for
+        # this same IP, and Bonjour announcements never carry those.
+        # Rendered only when the App supplied a LANHost match.
+        if self._lan_host is not None:
+            out.append("\n")
+            self._section_lan_cross_ref(out)
+        # Cross-surface section sits between LAN and TXT — by the
+        # time the user has scanned the host's addresses + LAN
+        # cross-ref they are primed to read "yep, that's the local
+        # Mac" / "also a BLE peer at -53 dBm" without yet wading
+        # into TXT records.
         if self._cross_surface_has_data():
             out.append("\n")
             self._section_cross_surface(out)
@@ -5320,6 +5402,49 @@ class BonjourDetailScreen(ModalScreen):
         # Single-line section per match; no field-label-style row.
         for line in lines:
             out.append("  " + line + "\n", style="white")
+
+    def _section_lan_cross_ref(self, out: Text) -> None:
+        """Surface MAC / OUI vendor / device class / TTL / NBNS / UPnP
+        for the LAN host whose IPv4 matches this Bonjour device.
+
+        Pulls every field the LAN side has but Bonjour announcements
+        don't carry. Symmetric to the Bonjour-into-LAN enrichment
+        already done by `lan.py:_build_bonjour_index`.
+        """
+        h = self._lan_host
+        if h is None:
+            return
+        self._heading(out, t("LAN host"))
+        self._label(out, t("MAC"), h.mac)
+        # Render the OUI-resolved vendor in the modal's full form.
+        # Bonjour's own vendor field (from `mdns.resolve_vendor`) may
+        # already display in the Identity section above with a
+        # name-pattern guess; this row carries the IEEE-registered
+        # name from the OUI lookup.
+        vendor_display = h.vendor or t("(unknown)")
+        self._label(out, t("vendor (OUI)"), vendor_display)
+        if h.device_class:
+            self._label(out, t("class"), t(h.device_class))
+        if h.ttl is not None:
+            ttl_klass = h.ttl_class
+            # Suppress class label for gateways (matches the LAN
+            # detail modal's convention; CN routers' TTL=128 reading
+            # as "windows" is misleading).
+            show_klass = ttl_klass and not h.is_gateway
+            ttl_text = (
+                f"{h.ttl} ({t(ttl_klass)})" if show_klass else str(h.ttl)
+            )
+            self._label(out, t("TTL"), ttl_text)
+        # Active-discovery fields the LAN side captured via NBNS /
+        # SSDP / UPnP. Rendered only when populated.
+        if h.nbns_name:
+            self._label(out, t("NBNS"), h.nbns_name)
+        if h.upnp_server:
+            self._label(out, t("UPnP server"), h.upnp_server)
+        if h.upnp_model:
+            self._label(out, t("Model"), h.upnp_model)
+        elif h.upnp_friendly_name:
+            self._label(out, t("Model"), h.upnp_friendly_name)
 
     def _section_network(self, out: Text) -> None:
         d = self._device
@@ -5577,14 +5702,33 @@ class LANDetailScreen(ModalScreen):
             rows.append(_kv_line(t("Vendor"), t("(random MAC)")))
         else:
             rows.append(_kv_line(t("Vendor"), t("(unknown)")))
-        # Model row in the Identity section — prefer UPnP `<modelName>`
-        # (cleanest manufacturer string), fall back to `<friendlyName>`
-        # which usually carries the brand + product, e.g.
-        # `Living Room TV (Hisense 75U7K)` or `Apple HomePod`. Row is
-        # omitted when neither source has a value.
+        # Model row in the Identity section. Source priority:
+        # 1. Apple `bonjour_model` (e.g. `Mac14,2`) — Apple's own
+        #    product code from mDNS TXT records, the highest-fidelity
+        #    signal. We resolve via `mdns_txt_decoders._APPLE_MODELS`
+        #    to a friendly name like `MacBook Air 13-inch (M2, 2022)`
+        #    and parenthesise the raw code so the user can match
+        #    Apple's published identifier tables externally.
+        # 2. UPnP `<modelName>` (cleanest non-Apple manufacturer
+        #    string).
+        # 3. UPnP `<friendlyName>` (usually brand + product, e.g.
+        #    `Living Room TV (Hisense 75U7K)`).
+        # Row is omitted when no source has a value.
+        bonjour_model_code = getattr(h, "bonjour_model", None)
         upnp_model = getattr(h, "upnp_model", None)
         upnp_friendly = getattr(h, "upnp_friendly_name", None)
-        model_text = upnp_model or upnp_friendly
+        model_text: str | None = None
+        if bonjour_model_code:
+            from .mdns_txt_decoders import _APPLE_MODELS
+            friendly = _APPLE_MODELS.get(bonjour_model_code)
+            if friendly:
+                model_text = f"{friendly} ({bonjour_model_code})"
+            else:
+                model_text = bonjour_model_code
+        elif upnp_model:
+            model_text = upnp_model
+        elif upnp_friendly:
+            model_text = upnp_friendly
         if model_text:
             rows.append(_kv_line(t("Model"), model_text))
         if h.is_self:
@@ -6807,10 +6951,15 @@ class DitingApp(App):
             keys = {_bonjour_row_key(d) for d in self._latest_mdns}
             if self._bonjour_selected_key not in keys:
                 self._bonjour_selected_key = None
+        # Build the LAN-by-IP index once per render and hand it as a
+        # closure to the panel — turns "(unknown)" Bonjour rows into
+        # OUI-resolved vendors when the LAN side has the same IP.
+        lan_idx = self._lan_index_by_ip()
         panel.update_devices(
             self._latest_mdns,
             selected_key=self._bonjour_selected_key,
             sort_mode=self._bonjour_sort_mode,
+            lan_lookup=(lan_idx.get if lan_idx else None),
         )
         if self._view_mode == "mdns":
             self._refresh_environment_panel()
@@ -7370,6 +7519,7 @@ class DitingApp(App):
                     latest_mdns=list(self._latest_mdns),
                     latest_ble=list(self._latest_ble),
                     latest_connection=self._latest_connection,
+                    lan_host=self._bonjour_lan_host_for(device),
                 ))
 
     def action_bonjour_select_prev(self) -> None:
@@ -7425,6 +7575,7 @@ class DitingApp(App):
             latest_mdns=list(self._latest_mdns),
             latest_ble=list(self._latest_ble),
             latest_connection=self._latest_connection,
+            lan_host=self._bonjour_lan_host_for(device),
         ))
 
     # ------------------------------------------------------------------
@@ -7479,6 +7630,53 @@ class DitingApp(App):
             if h.mac == mac:
                 return h
         return None
+
+    def _lan_host_at_ip(self, ip: str | None):
+        """Return the LANHost serving ``ip``, or None when no match.
+
+        Used by the Bonjour panel + Bonjour detail modal to
+        cross-reference into the LAN side: pulls MAC / OUI vendor /
+        device class / TTL / NBNS / UPnP fields that the LAN poller
+        knows but mDNS doesn't carry. The symmetric direction (LAN
+        side pulling Bonjour service categories) is already in
+        ``_build_bonjour_index`` in ``lan.py``.
+
+        O(N) over the latest LAN snapshot. Callers that hit this
+        per-row should cache via ``_lan_index_by_ip()`` instead so
+        a large LAN doesn't quadratic-scan the Bonjour panel.
+        """
+        if not ip or self._latest_lan is None:
+            return None
+        for h in self._latest_lan.hosts:
+            if h.ip == ip:
+                return h
+        return None
+
+    def _bonjour_lan_host_for(self, device):
+        """Return the LANHost matching this Bonjour device's first
+        IPv4 address, or None when no LAN row corresponds.
+
+        Used by ``BonjourDetailScreen`` to render the new
+        `LAN host` cross-reference section. Caller-side helper so
+        the modal stays unaware of the App's state layout.
+        """
+        addresses = getattr(device, "addresses", None) or ()
+        for addr in addresses:
+            if ":" in addr:
+                continue  # IPv4 only; the LAN inventory is v4-keyed
+            host = self._lan_host_at_ip(addr)
+            if host is not None:
+                return host
+        return None
+
+    def _lan_index_by_ip(self):
+        """Build a single ``{ip: LANHost}`` snapshot for one render
+        pass. Far cheaper than calling ``_lan_host_at_ip`` once per
+        Bonjour row on busy networks (40+ rows × 50+ LAN hosts =
+        2000 inner-loop iterations; the dict cuts it to N+M)."""
+        if self._latest_lan is None:
+            return {}
+        return {h.ip: h for h in self._latest_lan.hosts}
 
     def _lan_set_selected(self, mac: str, *, inspect: bool = False) -> None:
         if mac not in self._lan_ordered_macs():

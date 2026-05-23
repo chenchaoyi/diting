@@ -34,6 +34,7 @@ def _host(**overrides) -> LANHost:
         ttl=None,
         ttl_class=None,
         device_class=None,
+        bonjour_model=None,
     )
     defaults.update(overrides)
     return LANHost(**defaults)
@@ -135,13 +136,29 @@ def test_sonos_bonjour_signals_speaker():
     assert classify(h) == "speaker"
 
 
-def test_homepod_airplay_audio_signals_speaker_not_tv():
-    """HomePods publish AirPlay (video) alongside `_raop._tcp`,
-    which the mdns module records as the category `"AirPlay audio"`.
-    The speaker rule must win over the AirPlay-as-tv rule — first
-    regression from the 2026-05-23 tui-audit ('Blue-Pod' as tv)."""
-    h = _host(bonjour_services=("AirPlay", "AirPlay audio"))
+def test_homepod_airplay_audio_plus_homekit_signals_speaker_not_tv():
+    """HomePods publish AirPlay + AirPlay audio + HomeKit. The
+    HomeKit category is the discriminator vs Macs with AirPlay
+    receiver enabled (which publish AirPlay audio but no HomeKit).
+    Original regression from the 2026-05-23 tui-audit
+    ('Blue-Pod' as tv); HomeKit requirement added 2026-05-23 PM
+    after Macs were mis-routed to speaker."""
+    h = _host(bonjour_services=("AirPlay", "AirPlay audio", "HomeKit"))
     assert classify(h) == "speaker"
+
+
+def test_mac_with_airplay_receiver_enabled_signals_laptop_not_speaker():
+    """A Mac with AirPlay receiver enabled publishes AirPlay +
+    AirPlay audio + Apple Companion — the exact category set that
+    iPad / iPhone publish PLUS the audio-receiver service. No
+    HomeKit. Vendor=Apple. Must NOT classify as speaker —
+    regression for the 2026-05-23 PM user-flagged case where an
+    M2 MacBook Air rendered as `音箱` after the previous fix."""
+    h = _host(
+        vendor_raw="Apple, Inc.",
+        bonjour_services=("AirPlay", "AirPlay audio", "Apple Companion"),
+    )
+    assert classify(h) == "laptop"
 
 
 def test_homepod_full_apple_signature_signals_speaker_not_phone():
@@ -223,6 +240,80 @@ def test_sony_interactive_entertainment_signals_gaming_not_tv():
     the gaming rule."""
     h = _host(vendor_raw="Sony Interactive Entertainment Inc.")
     assert classify(h) == "gaming"
+
+
+# ---------- Apple model-code (Bonjour TXT) ----------
+
+
+def test_apple_model_mac_signals_laptop():
+    """`Mac14,2` (MacBook Air M2 13" 2022) → laptop via the Apple
+    model-code rule, regardless of Bonjour categories."""
+    h = _host(
+        vendor_raw="Apple, Inc.",
+        bonjour_services=("AirPlay", "AirPlay audio", "Apple Companion"),
+        bonjour_model="Mac14,2",
+    )
+    assert classify(h) == "laptop"
+
+
+def test_apple_model_audioaccessory_signals_speaker():
+    """`AudioAccessory6,1` (HomePod 2nd gen) → speaker even when
+    HomeKit isn't visible yet in the bonjour_services snapshot
+    (the HomePodSensor publishes HomeKit as a separate service-
+    instance; cross-reference may race)."""
+    h = _host(
+        vendor_raw="Apple, Inc.",
+        bonjour_services=("AirPlay", "AirPlay audio", "Apple Companion"),
+        bonjour_model="AudioAccessory6,1",
+    )
+    assert classify(h) == "speaker"
+
+
+def test_apple_model_iphone_signals_phone():
+    h = _host(
+        vendor_raw="Apple, Inc.",
+        bonjour_services=("Apple Companion",),
+        bonjour_model="iPhone16,1",
+    )
+    assert classify(h) == "phone"
+
+
+def test_apple_model_appletv_signals_tv():
+    """`AppleTV14,1` (Apple TV 4K 3rd gen) → tv via model code,
+    not the AirPlay-as-tv fallback. Apple TVs also publish
+    Apple Companion for pairing; the model code lifts them above
+    the phone rule."""
+    h = _host(
+        vendor_raw="Apple, Inc.",
+        bonjour_services=("AirPlay", "Apple Companion"),
+        bonjour_model="AppleTV14,1",
+    )
+    assert classify(h) == "tv"
+
+
+def test_apple_model_unknown_prefix_falls_through():
+    """A model code with a prefix we don't recognise (future Apple
+    SKU, or a typo) shouldn't short-circuit — the rules table still
+    gets to fire."""
+    h = _host(
+        vendor_raw="Apple, Inc.",
+        bonjour_services=("AirPlay", "Apple Companion"),
+        bonjour_model="XyzNewThing1,1",
+    )
+    # Falls through Apple-model → tv-category (AirPlay no companion-speaker)
+    # → phone (Apple Companion). The exact class doesn't matter for this
+    # test — only that the function returns SOMETHING and doesn't crash.
+    cls = classify(h)
+    assert cls in {None, "tv", "phone"}
+
+
+def test_apple_model_macbookpro_explicit_prefix_wins():
+    """The MacBookPro prefix MUST match before the generic `Mac`
+    prefix, otherwise `MacBookPro18,1` would resolve to laptop
+    purely on the `Mac` prefix anyway (same class) — but the
+    ordering matters for desktop variants like `Macmini`."""
+    h = _host(bonjour_model="Macmini9,1")
+    assert classify(h) == "desktop"
 
 
 def test_sony_corporation_still_signals_tv():

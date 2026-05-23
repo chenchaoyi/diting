@@ -421,3 +421,25 @@ the extra dicts.
   display until probe results return, or fire-and-forget and let the
   panel update normally? Lean toward fire-and-forget — keeping the
   modal open while a 5 s probe window runs feels heavy.
+
+## Deferred — shared host registry (revisit post-v1.7.0)
+
+This change keeps the LAN ↔ Bonjour enrichment **pairwise**: each
+side maintains its own `_state` map and the other side walks
+through to enrich at render / sweep time. That shipped as v1.7.0:
+
+- `lan.py:_build_bonjour_index` pulls Bonjour name / services /
+  `model=` TXT into `LANHost`.
+- `tui.py:_bonjour_borrow_vendor` + `BonjourDetailScreen._section_lan_cross_ref`
+  pull LAN-side MAC / OUI vendor / class / TTL / NBNS / UPnP into
+  the Bonjour render path.
+
+This is fine for two sources but won't scale once a third lands
+(BLE-via-RPA correlation, the deferred `lan.yaml` manual naming
+layer, the edge-hardware sidecar from `project-edge-hardware-future`).
+
+The architectural move — promote `{ip, mac} → HostRecord` into a
+shared `host_registry` that both pollers update and both panels
+read — is recorded in the `project-shared-host-registry` memory
+note. Pick up when a third source needs to join, or when the
+`lan.yaml` manual-naming feature ships.

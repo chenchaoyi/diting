@@ -2347,6 +2347,7 @@ def _lan_host(
     upnp_server=None,
     upnp_friendly_name=None,
     upnp_model=None,
+    bonjour_model=None,
 ):
     from datetime import datetime, timezone
     from diting.lan import LANHost
@@ -2371,6 +2372,7 @@ def _lan_host(
         upnp_server=upnp_server,
         upnp_friendly_name=upnp_friendly_name,
         upnp_model=upnp_model,
+        bonjour_model=bonjour_model,
     )
 
 
@@ -2694,6 +2696,38 @@ def test_lan_detail_identity_shows_model_when_upnp_model_set():
     )
     assert "Model" in rendered
     assert "HiSense 75U7K" in rendered
+
+
+def test_lan_detail_identity_prefers_bonjour_model_with_friendly_name():
+    """When `bonjour_model` is set (e.g. `Mac14,2` from Bonjour TXT),
+    Identity Model row renders `<friendly-name> (<raw-code>)` via the
+    `_APPLE_MODELS` lookup table — preferred over the UPnP source."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(
+        bonjour_services=(),
+        bonjour_model="Mac14,2",
+    )
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "MacBook Air 13-inch (M2, 2022)" in rendered
+    assert "Mac14,2" in rendered
+
+
+def test_lan_detail_identity_uses_raw_code_when_apple_model_unknown():
+    """Unknown / future Apple model codes still render as the raw
+    string — the user can match against Apple's external tables."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(bonjour_services=(), bonjour_model="Mac99,99")
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    # Raw code shown bare (no parenthesised friendly name).
+    assert "Mac99,99" in rendered
 
 
 def test_lan_detail_identity_falls_back_to_friendly_name_when_no_model():
