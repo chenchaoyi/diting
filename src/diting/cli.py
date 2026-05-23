@@ -286,10 +286,24 @@ async def _run_monitor(
     # to the TUI's --log path so downstream readers don't branch on
     # source. Scene was resolved by main() before dispatching; we
     # only thread the source through here.
+    #
+    # Synchronously fetch the connection ONCE before emitting so
+    # session_meta carries the at-launch SSID + gateway_ip rather
+    # than null. Pre-v1.7.1 this call ran before any poll
+    # completed and every session_meta line reported `ssid: null`
+    # even when the host was associated. Failure (no Wi-Fi yet,
+    # helper not ready) is absorbed as None so the disassociated-
+    # at-launch path keeps working.
     from . import scene as _scene_mod
+    try:
+        startup_conn = backend.get_connection()
+    except Exception:
+        startup_conn = None
     logger.emit_session_meta(
         scene=_scene_mod.get_scene(),
         scene_source=scene_source,
+        ssid=startup_conn.ssid if startup_conn else None,
+        gateway_ip=startup_conn.router_ip if startup_conn else None,
     )
 
     poller = WiFiPoller(backend)

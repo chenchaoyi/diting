@@ -11,6 +11,26 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.7.1] — 2026-05-23
+
+Patch release. **`session_meta` JSONL header now carries the at-
+launch SSID + gateway_ip** — pre-v1.7.1 the call ran before the
+first WiFi poll completed and the first line of every session log
+reported `ssid: null` / `gateway_ip: null` even when the host was
+associated. Downstream consumers (the analyzer, the `--for-llm`
+prompt bundle, third-party `jq` scripts) would misread the
+session as having started disassociated.
+
+### Fixed
+- **`emit_session_meta` populates SSID + gateway from a synchronous
+  startup `get_connection()`.** Both call sites (`_run_monitor` in
+  `cli.py`, `DitingApp.__init__` in `tui.py`) now fetch the
+  connection once before the JSONL header is written. Failure
+  (helper not ready, no Wi-Fi yet) is absorbed as `None` so the
+  no-Wi-Fi cold-launch path keeps working. Pre-existing race
+  shipped with v1.6.0; surfaced by the v1.7.0 release-binary
+  smoke audit.
+
 ## [1.7.0] — 2026-05-23
 
 Minor release. **LAN identification expansion** — the LAN view now

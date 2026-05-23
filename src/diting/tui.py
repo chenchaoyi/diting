@@ -6211,13 +6211,28 @@ class DitingApp(App):
             else EventLogger.disabled()
         )
         # Session header — written immediately so any subsequent
-        # emit_* (which may fire before the first ConnectionUpdate
-        # gives us SSID / gateway) lands AFTER the session_meta
-        # line. SSID / gateway are filled in here if known at this
-        # point, else null; downstream consumers expect the field
-        # to exist either way. No-op on the disabled logger.
+        # emit_* lands AFTER the session_meta line. Synchronously
+        # fetch the current connection ONCE here (before the
+        # WiFiPoller's async loop has had a chance to publish its
+        # first snapshot) so SSID + gateway_ip carry the actual
+        # at-launch values rather than null. Pre-v1.7.1 the call
+        # ran before the first poll completed, so every session_meta
+        # reported `ssid: null` / `gateway_ip: null` even when the
+        # user was associated — broke the analyzer's "session
+        # started on AP X" timeline. `get_connection()` is sync
+        # and cheap; failure (no Wi-Fi yet, helper not ready) is
+        # absorbed as None so the no-Wi-Fi path keeps working.
+        try:
+            startup_conn = backend.get_connection()
+        except Exception:
+            startup_conn = None
+        startup_ssid = startup_conn.ssid if startup_conn else None
+        startup_gateway = startup_conn.router_ip if startup_conn else None
         self._event_logger.emit_session_meta(
-            scene=scene, scene_source=scene_source,
+            scene=scene,
+            scene_source=scene_source,
+            ssid=startup_ssid,
+            gateway_ip=startup_gateway,
         )
         self._event_log_path = event_log_path
         # Per-(event_type, target) last-emit monotonic timestamp,

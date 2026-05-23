@@ -1126,3 +1126,70 @@ def test_bonjour_detail_modal_tracks_selection_on_arrow_keys():
             await pilot.press("q")
 
     asyncio.run(go())
+
+
+# ---------- v1.7.1 regression: session_meta carries at-launch SSID + gateway ----------
+
+
+def test_app_session_meta_carries_startup_ssid_and_gateway(tmp_path):
+    """v1.7.1 regression: DitingApp.__init__ must synchronously fetch
+    backend.get_connection() and pass ssid + gateway_ip into
+    emit_session_meta. Pre-v1.7.1 the call ran before the first
+    WiFi poll completed and every session_meta carried `ssid: null`
+    / `gateway_ip: null` even when the host was associated."""
+    import json
+
+    log_path = tmp_path / "events.jsonl"
+    DitingApp(
+        _FakeBackend(),
+        _INVENTORY,
+        event_log_path=str(log_path),
+    )
+    # __init__ alone (no .run()) is enough — emit_session_meta is
+    # called synchronously inside __init__.
+    [first] = log_path.read_text().splitlines()
+    meta = json.loads(first)
+    assert meta["type"] == "session_meta"
+    assert meta["ssid"] == "testnet"          # from _FakeBackend.get_connection
+    assert meta["gateway_ip"] == "10.0.0.1"   # ditto
+    assert meta["diting_version"]  # populated
+    assert meta["scene"] == "home"           # DitingApp default
+
+
+class _BackendThatRaisesOnGetConnection(WiFiBackend):
+    """Backend whose get_connection raises (helper not ready, etc.).
+    The session_meta path must absorb the exception and write null
+    for ssid / gateway_ip rather than crashing app startup."""
+
+    name = "raising"
+
+    def __init__(self) -> None:
+        self._helper_path = None
+
+    def get_connection(self) -> Connection | None:
+        raise OSError("helper not ready")
+
+    def scan(self) -> list[ScanResult]:
+        return []
+
+    def permission_state(self) -> Any:
+        return "unknown"
+
+
+def test_app_session_meta_absorbs_get_connection_failure(tmp_path):
+    """When backend.get_connection() raises (e.g. helper bundle not
+    finished launching), session_meta still writes successfully with
+    ssid / gateway_ip set to None — the app startup must not crash."""
+    import json
+
+    log_path = tmp_path / "events.jsonl"
+    DitingApp(
+        _BackendThatRaisesOnGetConnection(),
+        _INVENTORY,
+        event_log_path=str(log_path),
+    )
+    [first] = log_path.read_text().splitlines()
+    meta = json.loads(first)
+    assert meta["type"] == "session_meta"
+    assert meta["ssid"] is None
+    assert meta["gateway_ip"] is None

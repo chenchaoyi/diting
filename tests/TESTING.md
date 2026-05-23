@@ -205,6 +205,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | Requirement | Test |
 |---|---|
 | `session_meta` line is first; carries scene + scene_source + diting_version + ssid + gateway_ip + hostname; emit is idempotent; disabled logger is no-op; null SSID / gateway are written through | `test_event_log.py::test_session_meta_writes_header_with_all_fields`, `::test_session_meta_is_first_when_emitted_first`, `::test_session_meta_is_idempotent`, `::test_session_meta_disabled_logger_is_no_op`, `::test_session_meta_accepts_null_ssid_and_gateway` |
+| **v1.7.1** — Both `DitingApp.__init__` and `_run_monitor` synchronously fetch `backend.get_connection()` BEFORE emitting `session_meta`, so the JSONL header carries the at-launch SSID + gateway_ip rather than null. Backend failures (helper not ready, no Wi-Fi yet) are absorbed as None | `test_tui_smoke.py::test_app_session_meta_carries_startup_ssid_and_gateway`, `::test_app_session_meta_absorbs_get_connection_failure` |
 | `--log` and `diting monitor` produce byte-identical streams | `test_event_log.py::test_to_path_writes_appendable_jsonl`, `::test_unicode_user_strings_survive_readable` (single shared writer class) |
 | Writer flushes after every event | `test_event_log.py::test_line_buffered_writes_are_visible_before_close` |
 | atexit hook closes writer cleanly | (gap — no direct test; behaviour validated by `test_line_buffered_writes_are_visible_before_close`) |
