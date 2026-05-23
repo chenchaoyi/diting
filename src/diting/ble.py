@@ -339,6 +339,43 @@ def load_ouis_layered(
     )
 
 
+def _split_mac_octets(identifier: str) -> list[str] | None:
+    """Tokenize a MAC string into 6 zero-padded 2-hex-char octets.
+
+    Handles all of:
+
+    - colon-separated full form: ``38:09:fb:0b:be:60``
+    - dash-separated full form: ``38-09-fb-0b-be-60``
+    - colon-separated with stripped leading zeros (macOS ``arp -an``
+      convention): ``24:f:9b:29:c:56`` → octets ``["24","0f","9b","29","0c","56"]``
+    - no-separator: ``3809fb0bbe60``
+
+    Returns ``None`` for inputs that don't parse cleanly. Callers
+    rely on this normalisation to key into the IEEE registry, which
+    is keyed by full 2-hex-char octets.
+    """
+    if not identifier:
+        return None
+    # Normalise separator to ":" so dash + colon both work.
+    s = identifier.replace("-", ":").lower()
+    if ":" in s:
+        parts = s.split(":")
+        if len(parts) != 6:
+            return None
+        out: list[str] = []
+        for p in parts:
+            if not p or len(p) > 2:
+                return None
+            if any(c not in "0123456789abcdef" for c in p):
+                return None
+            out.append(p.zfill(2))
+        return out
+    # No-separator form: must be exactly 12 hex chars.
+    if len(s) != 12 or any(c not in "0123456789abcdef" for c in s):
+        return None
+    return [s[i : i + 2] for i in range(0, 12, 2)]
+
+
 def lookup_oui_vendor(
     identifier: str | None,
     ouis: dict[str, str] | None = None,
@@ -358,19 +395,20 @@ def lookup_oui_vendor(
       tries the longest prefix first (36 → 28 → 24 bits). First
       match wins. Missing / empty dicts are skipped silently.
 
-    The function is tolerant of all common MAC separators: ``:``,
-    ``-``, or none. Lower-case input is recommended.
+    Tolerant of all common MAC separators (``:``, ``-``, none) AND
+    of stripped leading zeros per octet (macOS ``arp -an`` displays
+    `00:19` as `0:19`, `0f:9b` as `f:9b`, etc.). The tokenizer pads
+    every octet to 2 hex chars before keying.
     """
-    if not identifier:
-        return None
-    cleaned = identifier.replace("-", "").replace(":", "").lower()
-    if len(cleaned) < 6 or any(c not in "0123456789abcdef" for c in cleaned):
+    octets = _split_mac_octets(identifier) if identifier else None
+    if octets is None:
         return None
 
     # Legacy single-tier call: positional ``ouis`` was supplied AND
-    # the layered kwargs were NOT used. Behave exactly as before.
+    # the layered kwargs were NOT used. Behave exactly as before
+    # except for the now-correct zero-padded octet handling.
     if ouis is not None and ma_l is None and ma_m is None and ma_s is None:
-        prefix = f"{cleaned[0:2]}:{cleaned[2:4]}:{cleaned[4:6]}"
+        prefix = f"{octets[0]}:{octets[1]}:{octets[2]}"
         return ouis.get(prefix)
 
     # Layered lookup. Resolve ma_l from `ouis` if the caller passed
@@ -379,21 +417,18 @@ def lookup_oui_vendor(
     resolved_ma_m = ma_m if ma_m is not None else {}
     resolved_ma_s = ma_s if ma_s is not None else {}
 
-    if len(cleaned) >= 9 and resolved_ma_s:
-        key_36 = (
-            f"{cleaned[0:2]}:{cleaned[2:4]}:{cleaned[4:6]}:"
-            f"{cleaned[6:8]}:{cleaned[8]}"
-        )
+    ma_l_key = f"{octets[0]}:{octets[1]}:{octets[2]}"
+    if resolved_ma_s:
+        key_36 = f"{ma_l_key}:{octets[3]}:{octets[4][0]}"
         hit = resolved_ma_s.get(key_36)
         if hit:
             return hit
-    if len(cleaned) >= 7 and resolved_ma_m:
-        key_28 = f"{cleaned[0:2]}:{cleaned[2:4]}:{cleaned[4:6]}:{cleaned[6]}"
+    if resolved_ma_m:
+        key_28 = f"{ma_l_key}:{octets[3][0]}"
         hit = resolved_ma_m.get(key_28)
         if hit:
             return hit
-    key_24 = f"{cleaned[0:2]}:{cleaned[2:4]}:{cleaned[4:6]}"
-    return resolved_ma_l.get(key_24)
+    return resolved_ma_l.get(ma_l_key)
 
 
 # ---------- service category inference ----------

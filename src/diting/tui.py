@@ -1732,6 +1732,14 @@ _COL_LAN_AGE = 9
 
 
 _NEW_CHIP_WINDOW_S = 24 * 60 * 60  # rows with first_seen < this get [new]
+# Hosts whose first_seen falls within this grace of the LAN poller's
+# construction-time are treated as "this session's baseline" — the
+# poller is lazy-constructed on first `n`-cycle, so without a grace
+# every host that was already in the kernel ARP cache would carry
+# the `[new]` chip for the next 24 h. 5 minutes covers the initial
+# sweep + a couple of probe ticks; truly novel devices that join
+# after that still light up the chip.
+_NEW_CHIP_GRACE_S = 5 * 60
 
 
 def _lan_header_line() -> Text:
@@ -1761,12 +1769,23 @@ def _lan_age_text(host, now: datetime) -> str:
     return _format_duration_short(ago) + t(" ago")
 
 
-def _lan_row_line(host, now: datetime) -> Text:
+def _lan_row_line(
+    host,
+    now: datetime,
+    *,
+    chip_anchor: datetime | None = None,
+) -> Text:
     """Render one LANHost as a single-line row.
 
     Layout: ``[new]  ★  class  vendor  name  IP  MAC  last_seen``.
     Each fixed-width slot is padded to its column width so rows
     line up regardless of chip / star presence.
+
+    ``chip_anchor`` is the LAN poller's construction time, used to
+    suppress the `[new]` chip on rows that landed in the very first
+    sweep (those are session baseline, not "new"). When None (older
+    test fixtures) the grace check is skipped — chip fires whenever
+    `first_seen < 24 h` ago.
     """
     if host.is_randomised_mac:
         vendor_cell = t("(random MAC)")
@@ -1802,10 +1821,29 @@ def _lan_row_line(host, now: datetime) -> Text:
     # Chip slot. `[new]` rows highlight in dim cyan so the eye picks
     # them up while scanning the panel. Self / gateway are never
     # "new" — they exist before this session.
+    #
+    # Grace check: when chip_anchor is supplied (poller construction
+    # time), suppress the chip for hosts whose first_seen lands
+    # within the grace window of that anchor. Those are devices the
+    # initial sweep discovered — session baseline, not "new". Without
+    # this gate every host on the LAN would carry `[new]` for the
+    # first 24 h after the user enters the LAN view, making the chip
+    # universal noise (audit 2026-05-23, iteration 2).
+    is_within_window = (
+        (now - host.first_seen).total_seconds() < _NEW_CHIP_WINDOW_S
+    )
+    if chip_anchor is not None:
+        seen_after_grace = (
+            (host.first_seen - chip_anchor).total_seconds()
+            > _NEW_CHIP_GRACE_S
+        )
+    else:
+        seen_after_grace = True
     is_new = (
         not host.is_self
         and not host.is_gateway
-        and (now - host.first_seen).total_seconds() < _NEW_CHIP_WINDOW_S
+        and is_within_window
+        and seen_after_grace
     )
     if is_new:
         chip_text = t("[new]")
@@ -1901,11 +1939,17 @@ class LANPanel(VerticalScroll):
         update,
         *,
         selected_mac: str | None = None,
+        chip_anchor: datetime | None = None,
     ) -> None:
         """Refresh the panel from a ``LANInventoryUpdate``.
 
         ``update`` is ``None`` before the first sweep returns; the
         panel then renders only the sweeping placeholder.
+
+        ``chip_anchor`` is forwarded to ``_lan_row_line`` and is the
+        LAN poller's construction time — used to suppress the
+        `[new]` chip on rows that were observed in the initial
+        sweep (those are session baseline, not actually new).
         """
         body = self.query_one("#lan-body", Static)
         base_title = t("Nearby LAN hosts")
@@ -1925,7 +1969,7 @@ class LANPanel(VerticalScroll):
         lines: list[Text] = [_lan_header_line()]
         y_map: list[str | None] = [None]
         for host in update.hosts:
-            row = _lan_row_line(host, now)
+            row = _lan_row_line(host, now, chip_anchor=chip_anchor)
             if selected_mac is not None and host.mac == selected_mac:
                 row.stylize("reverse")
             lines.append(row)
@@ -2009,7 +2053,22 @@ def _event_format_line(event: object, inv: NetworkInventory) -> Text | None:
 
 
 def _ev_ts(event: object) -> str:
-    return event.timestamp.strftime("%H:%M:%S")  # type: ignore[union-attr]
+    """Render the event timestamp as the operator's local-clock time.
+
+    Event constructors throughout the project use
+    ``datetime.now(timezone.utc)`` for the ``timestamp`` field —
+    UTC-aware datetimes. Without an explicit ``.astimezone()`` the
+    UTC value gets formatted as-is and shows up offset by the
+    system's TZ delta from UTC (8 h in CN). Matching the JSONL
+    ``_iso`` helper's convention keeps the in-UI timestamp aligned
+    with the title-bar clock and with the logged JSONL ``ts``.
+
+    Naive datetimes fall through ``.astimezone()`` unchanged (it
+    treats them as local), preserving any in-test fixtures that
+    use naive `datetime(...)` objects.
+    """
+    ts = event.timestamp  # type: ignore[union-attr]
+    return ts.astimezone().strftime("%H:%M:%S")
 
 
 def _format_ble_device_seen_event(event: BLEDeviceSeenEvent) -> Text:
@@ -2100,7 +2159,7 @@ def _format_lan_host_dhcp_rotation_event(
 
 
 def _format_roam_event(event: RoamEvent, inv: NetworkInventory) -> Text:
-    ts = event.timestamp.strftime("%H:%M:%S")
+    ts = _ev_ts(event)
     prev = format_bssid(event.previous_bssid, event.previous_channel, inv)
     new = format_bssid(event.new_bssid, event.new_channel, inv)
     if inv.is_same_ap(event.previous_bssid, event.new_bssid):
@@ -2151,7 +2210,7 @@ def _roam_event_ssid_segment(event: RoamEvent) -> str:
 
 
 def _format_rf_stir_event(event: RFStirEvent) -> Text:
-    ts = event.timestamp.strftime("%H:%M:%S")
+    ts = _ev_ts(event)
     line = Text()
     line.append(f"{ts}  ", style="dim")
     style = "bold yellow" if event.confidence == "high" else "yellow"
@@ -2171,7 +2230,7 @@ def _format_rf_stir_event(event: RFStirEvent) -> Text:
 
 
 def _format_latency_spike_event(event: LatencySpikeEvent) -> Text:
-    ts = event.timestamp.strftime("%H:%M:%S")
+    ts = _ev_ts(event)
     line = Text()
     line.append(f"{ts}  ", style="dim")
     line.append(t("[LATENCY]") + "  ", style="bold red")
@@ -2194,7 +2253,7 @@ def _format_latency_spike_event(event: LatencySpikeEvent) -> Text:
 
 
 def _format_loss_burst_event(event: LossBurstEvent) -> Text:
-    ts = event.timestamp.strftime("%H:%M:%S")
+    ts = _ev_ts(event)
     line = Text()
     line.append(f"{ts}  ", style="dim")
     line.append(t("[LOSS]") + "  ", style="bold red")
@@ -2207,7 +2266,7 @@ def _format_loss_burst_event(event: LossBurstEvent) -> Text:
 
 
 def _format_link_state_event(event: LinkStateEvent) -> Text:
-    ts = event.timestamp.strftime("%H:%M:%S")
+    ts = _ev_ts(event)
     line = Text()
     line.append(f"{ts}  ", style="dim")
     line.append(t("[LINK]") + "  ", style="bold cyan")
@@ -5518,6 +5577,16 @@ class LANDetailScreen(ModalScreen):
             rows.append(_kv_line(t("Vendor"), t("(random MAC)")))
         else:
             rows.append(_kv_line(t("Vendor"), t("(unknown)")))
+        # Model row in the Identity section — prefer UPnP `<modelName>`
+        # (cleanest manufacturer string), fall back to `<friendlyName>`
+        # which usually carries the brand + product, e.g.
+        # `Living Room TV (Hisense 75U7K)` or `Apple HomePod`. Row is
+        # omitted when neither source has a value.
+        upnp_model = getattr(h, "upnp_model", None)
+        upnp_friendly = getattr(h, "upnp_friendly_name", None)
+        model_text = upnp_model or upnp_friendly
+        if model_text:
+            rows.append(_kv_line(t("Model"), model_text))
         if h.is_self:
             rows.append(_kv_line(t("Role"), t("this Mac")))
         elif h.is_gateway:
@@ -5538,8 +5607,17 @@ class LANDetailScreen(ModalScreen):
         ttl_val = getattr(h, "ttl", None)
         if ttl_val is not None:
             ttl_klass = getattr(h, "ttl_class", None)
+            # Suppress the parenthesised class label for the
+            # gateway. CN consumer routers (H3C / Huawei / some
+            # TP-Link firmwares) ship with TTL=128 and would
+            # render as `TTL 128 (windows)` — accurate per the
+            # heuristic but visually misleading. Per the
+            # 2026-05-23 tui-audit (iteration 7), suppress for
+            # gateways only; non-gateway rows keep the class
+            # as a useful OS-family signal.
+            show_klass = ttl_klass and not h.is_gateway
             ttl_text = (
-                f"{ttl_val} ({t(ttl_klass)})" if ttl_klass else str(ttl_val)
+                f"{ttl_val} ({t(ttl_klass)})" if show_klass else str(ttl_val)
             )
             rows.append(_kv_line(t("TTL"), ttl_text))
         rows.append(_kv_line(
@@ -5557,6 +5635,33 @@ class LANDetailScreen(ModalScreen):
         else:
             rows.append(Text(
                 "  " + t("(no Bonjour services)"),
+                style="dim italic",
+            ))
+
+        # Active discovery section — NBNS / UPnP enrichments captured
+        # by the Phase 2 active-probe layer. Always-rendered (so the
+        # user can tell at a glance whether probing has run for this
+        # host); a placeholder takes the slot when no field is set.
+        nbns_name = getattr(h, "nbns_name", None)
+        upnp_server = getattr(h, "upnp_server", None)
+        rows.append(Text(""))
+        rows.append(Text(t("Active discovery"), style="bold"))
+        if any((nbns_name, upnp_server, upnp_friendly, upnp_model)):
+            if nbns_name:
+                rows.append(_kv_line(t("NBNS"), nbns_name))
+            if upnp_server:
+                rows.append(_kv_line(t("UPnP server"), upnp_server))
+            if upnp_friendly:
+                rows.append(_kv_line(t("Friendly name"), upnp_friendly))
+            # Show the UPnP modelName here too — duplicated with the
+            # Identity row when both are set, but the explicit
+            # `Model:` here documents the source. Skip when both
+            # fields collapse to the same string.
+            if upnp_model and upnp_model != model_text:
+                rows.append(_kv_line(t("Model"), upnp_model))
+        else:
+            rows.append(Text(
+                "  " + t("(not probed)"),
                 style="dim italic",
             ))
 
@@ -6803,9 +6908,18 @@ class DitingApp(App):
             macs = {h.mac for h in self._latest_lan.hosts}
             if self._lan_selected_mac not in macs:
                 self._lan_selected_mac = None
+        # Forward the LAN poller's construction time as the chip
+        # anchor so `[new]` only fires on hosts that landed AFTER
+        # the initial sweep (audit 2026-05-23 iteration 2 fix).
+        chip_anchor = (
+            getattr(self._lan_inventory_poller, "_constructed_at", None)
+            if self._lan_inventory_poller is not None
+            else None
+        )
         panel.update_hosts(
             self._latest_lan,
             selected_mac=self._lan_selected_mac,
+            chip_anchor=chip_anchor,
         )
         if self._view_mode == "lan":
             self._refresh_environment_panel()

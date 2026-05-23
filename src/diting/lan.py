@@ -129,6 +129,37 @@ _ARP_LINE_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+
+def _is_multicast_dest_mac(mac: str) -> bool:
+    """Return True for IPv4 / IPv6 multicast destination MACs.
+
+    The kernel ARP cache occasionally carries these as a side
+    effect of any process (including diting's own SSDP M-SEARCH)
+    sending to a multicast group. They are NOT real LAN hosts —
+    they're destination MACs for multicast groups and have no
+    associated device.
+
+    Filtered ranges:
+    - ``01:00:5e:00:00:00`` – ``01:00:5e:7f:ff:ff``: IPv4 multicast
+      (224.0.0.0/4) per RFC 1112 §6.4.
+    - ``33:33:00:00:00:00`` – ``33:33:ff:ff:ff:ff``: IPv6 multicast
+      per RFC 2464 §7.
+    """
+    # Pad each octet to 2 chars so stripped-zero arp output still
+    # matches (``1:0:5e:*`` → ``01:00:5e:*``).
+    parts = mac.lower().split(":")
+    if len(parts) != 6:
+        return False
+    try:
+        padded = [p.zfill(2) for p in parts]
+    except Exception:
+        return False
+    if padded[0] == "01" and padded[1] == "00" and padded[2] == "5e":
+        return True
+    if padded[0] == "33" and padded[1] == "33":
+        return True
+    return False
+
 # macOS `ping -c 1` writes a single sample line containing
 # `time=X.XXX ms` (decimal varies; some locales use `,` decimal
 # separator but macOS pings always print `.`). This regex pulls the
@@ -537,6 +568,12 @@ def _read_arp_cache(*, runner=None) -> list[tuple[str, str, str]]:
         if not m:
             continue
         ip, mac, iface = m.group(1), m.group(2).lower(), m.group(3)
+        # Skip multicast destination MACs — these are not real LAN
+        # hosts; they leak into `arp -an` whenever any process sends
+        # to a multicast group (diting's own SSDP M-SEARCH triggers
+        # `01:00:5e:7f:ff:fa`, mDNS triggers `01:00:5e:00:00:fb`).
+        if _is_multicast_dest_mac(mac):
+            continue
         result.append((ip, mac, iface))
     return result
 
@@ -633,6 +670,14 @@ class LANInventoryPoller:
         self._one_shot_probe_armed: bool = False
 
         self._stopped = False
+        # Wall-clock instant the poller was constructed. The TUI's
+        # `[new]` chip uses this as a grace anchor: hosts whose
+        # first_seen falls within `_NEW_CHIP_GRACE_S` of this timestamp
+        # are treated as "this session's baseline" rather than "newly
+        # appeared", since the LAN poller is lazy-constructed on first
+        # `n`-cycle and would otherwise stamp every existing host
+        # with first_seen=now, making the chip universal noise.
+        self._constructed_at: datetime = datetime.now(timezone.utc)
         self._state: dict[str, LANHost] = {}
         self._queue: asyncio.Queue[LANInventoryUpdate] = asyncio.Queue()
         # Transition events (LANHostSeenEvent / LANHostLeftEvent /

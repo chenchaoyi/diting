@@ -189,6 +189,21 @@ _RULES: tuple[Rule, ...] = (
         "nas",
     ),
 
+    # Speakers (HomePod / Sonos) — `_raop` is the AirPlay receiver
+    # service published by audio-only Apple devices; HomePods AND
+    # iPads / iPhones can publish AirPlay, but only audio-output
+    # devices publish `_raop._tcp`. Order matters: this rule MUST
+    # come before the AirPlay-as-tv rule so HomePods don't get
+    # mis-classified.
+    (
+        lambda h: _bonjour_has(h, ("_raop", "_spotify-connect", "sonos")),
+        "speaker",
+    ),
+    (
+        lambda h: _has_any(_lower(h.vendor_raw), _SPEAKER_VENDOR_NEEDLES),
+        "speaker",
+    ),
+
     # TVs — UPnP server header is the most reliable signal because
     # smart TVs almost always run a UPnP MediaRenderer.
     (
@@ -200,8 +215,23 @@ _RULES: tuple[Rule, ...] = (
         ),
         "tv",
     ),
+    # Cast / Android-TV protocols are TV-specific (no phone / speaker
+    # publishes them).
     (
-        lambda h: _bonjour_has(h, ("airplay", "googlecast", "_androidtvremote2")),
+        lambda h: _bonjour_has(h, ("googlecast", "_androidtvremote2")),
+        "tv",
+    ),
+    # AirPlay alone is ambiguous — iPad, iPhone, HomePod, AND Apple TV
+    # all publish it. Treat as tv ONLY when no phone / speaker
+    # companion signal is present (the speaker rule above already
+    # claimed `_raop`-bearing hosts; this leaves Apple TV — which
+    # publishes AirPlay without `_raop` — and third-party AirPlay-
+    # capable TVs).
+    (
+        lambda h: _bonjour_has(h, ("airplay",))
+        and not _bonjour_has(
+            h, ("_companion-link", "apple companion", "_apple-mobdev2"),
+        ),
         "tv",
     ),
     (
@@ -209,18 +239,9 @@ _RULES: tuple[Rule, ...] = (
         "tv",
     ),
 
-    # Speakers — Bonjour or vendor.
-    (
-        lambda h: _bonjour_has(h, ("_spotify-connect", "sonos", "_raop")),
-        "speaker",
-    ),
-    (
-        lambda h: _has_any(_lower(h.vendor_raw), _SPEAKER_VENDOR_NEEDLES),
-        "speaker",
-    ),
-
-    # Phones — Apple Continuity / Companion Bonjour or NBNS suffix
-    # of phones never appears on LAN; rely on Bonjour signal only.
+    # Phones — Apple Continuity / Companion Bonjour. Falls through
+    # the TV rules above only when AirPlay is paired with
+    # `_companion-link`, i.e. an iPad / iPhone / Mac.
     (
         lambda h: _bonjour_has(
             h, ("_companion-link", "apple companion", "_apple-mobdev2"),
@@ -251,7 +272,6 @@ _RULES: tuple[Rule, ...] = (
     # Self is always the user's Mac — laptop or desktop, but the
     # row already shows "this Mac" so we don't need to disambiguate
     # the class. Defer to TTL-based fallback below.
-    # (No explicit rule for is_self; falls through to TTL.)
 
     # TTL fallbacks — least confident, deliberately last. Windows
     # is the only OS family with a distinct initial TTL among

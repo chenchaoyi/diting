@@ -242,6 +242,13 @@ _ZH: dict[str, str] = {
     # consented one-shot probe sweep is in flight.
     "[new]": "[新]",
     "[probing]": "[探测中]",
+    # LAN detail modal — Active discovery section (Phase 2/4).
+    "Model": "型号",
+    "Active discovery": "主动探测",
+    "NBNS": "NBNS",
+    "UPnP server": "UPnP 标识",
+    "Friendly name": "友好名称",
+    "(not probed)": "（未主动探测）",
     # Public-scene one-shot consent modal. Each string here gets a
     # ZH translation so DITING_LANG=zh users see the same flow in
     # their language.

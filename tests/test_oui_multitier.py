@@ -137,3 +137,56 @@ def test_load_ouis_layered_real_files_match_bundled_keys() -> None:
     # Apple's 38:09:fb is a stable historical assignment that won't
     # disappear from MA-L.
     assert ma_l.get("38:09:fb") is not None
+
+
+# ---------- stripped-leading-zero octet handling (macOS arp -an form) ----------
+
+
+def test_lookup_handles_stripped_zero_octets_in_first_three() -> None:
+    """macOS `arp -an` strips leading zeros per octet: `0f:9b` →
+    `f:9b`, `08` → `8`, `00:19` → `0:19`. The lookup must pad each
+    octet to 2 hex chars before keying or it mis-aligns into the
+    wrong prefix and returns None.
+    """
+    ma_l = {
+        "24:0f:9b": "Hangzhou Hikvision Digital Technology Co.,Ltd.",
+        "a0:92:08": "Tuya Smart Inc.",
+        "04:99:b9": "Apple, Inc.",
+        "d0:88:0c": "Apple, Inc.",
+        "f4:39:09": "Hewlett Packard",
+        "90:f7:b2": "New H3C Technologies Co., Ltd",
+    }
+    # Each pair: (arp-form MAC, expected vendor)
+    pairs = [
+        ("24:f:9b:29:c:56", "Hangzhou Hikvision Digital Technology Co.,Ltd."),
+        ("a0:92:8:f6:4b:e2", "Tuya Smart Inc."),
+        ("4:99:b9:b0:35:29", "Apple, Inc."),
+        ("d0:88:c:7c:1a:f8", "Apple, Inc."),
+        ("f4:39:9:fa:f8:8e", "Hewlett Packard"),
+        ("90:f7:b2:69:0:19", "New H3C Technologies Co., Ltd"),  # 5th octet stripped
+    ]
+    for mac, expected in pairs:
+        got = lookup_oui_vendor(mac, ma_l=ma_l)
+        assert got == expected, f"{mac} expected {expected!r}, got {got!r}"
+
+
+def test_lookup_legacy_signature_also_handles_stripped_zero_octets() -> None:
+    """The legacy `lookup_oui_vendor(mac, ouis)` form was the original
+    broken path; assert the fix flows through it too."""
+    ouis = {"24:0f:9b": "Hikvision"}
+    assert lookup_oui_vendor("24:f:9b:29:c:56", ouis) == "Hikvision"
+
+
+def test_lookup_rejects_malformed_octet_count() -> None:
+    """Colon-separated MAC with the wrong octet count is rejected."""
+    ouis = {"38:09:fb": "Apple, Inc."}
+    assert lookup_oui_vendor("38:09:fb", ouis) is None  # only 3 octets
+    assert lookup_oui_vendor("38:09:fb:0b:be", ouis) is None  # only 5
+    assert lookup_oui_vendor("38:09:fb:0b:be:60:00", ouis) is None  # 7
+
+
+def test_lookup_rejects_oversize_octets() -> None:
+    """Each octet must be 1 or 2 hex chars. A 3-char octet means
+    the input is corrupted, not stripped-zero — refuse it."""
+    ouis = {"38:09:fb": "Apple, Inc."}
+    assert lookup_oui_vendor("38:09:fbc:0b:be:60", ouis) is None

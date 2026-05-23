@@ -133,6 +133,16 @@ def test_sonos_bonjour_signals_speaker():
     assert classify(h) == "speaker"
 
 
+def test_homepod_airplay_plus_raop_signals_speaker_not_tv():
+    """HomePods publish AirPlay alongside `_raop._tcp` (the AirPlay
+    receiver protocol used by audio-output devices). The speaker
+    rule must win over the AirPlay-as-tv rule — regression for the
+    2026-05-23 tui-audit where a 'Blue-Pod' HomePod was being
+    classified as `tv`."""
+    h = _host(bonjour_services=("AirPlay", "_raop"))
+    assert classify(h) == "speaker"
+
+
 def test_bose_vendor_signals_speaker():
     h = _host(vendor_raw="Bose Corporation")
     assert classify(h) == "speaker"
@@ -162,6 +172,23 @@ def test_smb_bonjour_signals_nas():
 def test_apple_companion_signals_phone():
     h = _host(bonjour_services=("_companion-link",))
     assert classify(h) == "phone"
+
+
+def test_ipad_airplay_plus_companion_link_signals_phone_not_tv():
+    """iPads / iPhones with screen-mirroring active publish BOTH
+    `AirPlay` AND `_companion-link`. The phone class must win —
+    regression for the 2026-05-23 tui-audit where an iPad serial
+    `L19L6JC6Q2` was classified as `tv`."""
+    h = _host(bonjour_services=("AirPlay", "_companion-link"))
+    assert classify(h) == "phone"
+
+
+def test_apple_tv_airplay_alone_still_signals_tv():
+    """Apple TV publishes AirPlay without `_raop` or
+    `_companion-link` in its non-paired state. The AirPlay-only
+    branch should still route to `tv`."""
+    h = _host(bonjour_services=("AirPlay",))
+    assert classify(h) == "tv"
 
 
 # ---------- gaming ----------

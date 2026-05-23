@@ -351,6 +351,55 @@ not an arp line
     assert ("10.0.0.50", "aa:bb:cc:dd:ee:ff", "bridge100") in triples
 
 
+def test_arp_parse_filters_ipv4_multicast_destination_macs():
+    """The kernel ARP cache picks up multicast destination MACs as
+    a side effect of any UDP send to a multicast group (mDNS,
+    SSDP). Those are not real LAN hosts — they should not appear
+    in the LAN panel."""
+    text = """\
+? (192.168.1.1) at 00:11:22:33:44:55 on en0 [ethernet]
+? (224.0.0.251) at 1:0:5e:0:0:fb on en0 [ethernet]
+? (239.255.255.250) at 1:0:5e:7f:ff:fa on en0 [ethernet]
+? (192.168.1.42) at de:ad:be:ef:00:01 on en0 [ethernet]
+"""
+    triples = _read_arp_cache(runner=lambda: text)
+    macs = {mac for _ip, mac, _iface in triples}
+    assert "00:11:22:33:44:55" in macs
+    assert "de:ad:be:ef:00:01" in macs
+    # Multicast destinations stripped.
+    assert "1:0:5e:0:0:fb" not in macs
+    assert "1:0:5e:7f:ff:fa" not in macs
+    assert len(triples) == 2
+
+
+def test_arp_parse_filters_ipv6_multicast_destination_macs():
+    text = """\
+? (192.168.1.1) at 00:11:22:33:44:55 on en0 [ethernet]
+? (ff02::fb) at 33:33:0:0:0:fb on en0 [ethernet]
+? (ff02::1) at 33:33:0:0:0:1 on en0 [ethernet]
+"""
+    triples = _read_arp_cache(runner=lambda: text)
+    macs = {mac for _ip, mac, _iface in triples}
+    assert "00:11:22:33:44:55" in macs
+    assert "33:33:0:0:0:fb" not in macs
+    assert "33:33:0:0:0:1" not in macs
+
+
+def test_is_multicast_dest_mac_unit():
+    from diting.lan import _is_multicast_dest_mac
+    # IPv4 multicast range 01:00:5e:00:00:00 – 01:00:5e:7f:ff:ff.
+    assert _is_multicast_dest_mac("01:00:5e:00:00:fb")
+    assert _is_multicast_dest_mac("1:0:5e:7f:ff:fa")  # stripped-zero form
+    # IPv6 multicast all 33:33:*.
+    assert _is_multicast_dest_mac("33:33:00:00:00:fb")
+    assert _is_multicast_dest_mac("33:33:ff:ff:ff:ff")
+    # Universal MAC outside both ranges.
+    assert not _is_multicast_dest_mac("aa:bb:cc:dd:ee:ff")
+    assert not _is_multicast_dest_mac("00:11:22:33:44:55")
+    # Apple OUI; never multicast.
+    assert not _is_multicast_dest_mac("38:09:fb:0b:be:60")
+
+
 def test_ip_in_network_accepts_host_ip_in_range():
     import ipaddress
     from diting.lan import _ip_in_network

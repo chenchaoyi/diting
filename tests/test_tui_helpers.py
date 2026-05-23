@@ -2343,6 +2343,10 @@ def _lan_host(
     ttl=None,
     ttl_class=None,
     device_class=None,
+    nbns_name=None,
+    upnp_server=None,
+    upnp_friendly_name=None,
+    upnp_model=None,
 ):
     from datetime import datetime, timezone
     from diting.lan import LANHost
@@ -2363,6 +2367,10 @@ def _lan_host(
         ttl=ttl,
         ttl_class=ttl_class,
         device_class=device_class,
+        nbns_name=nbns_name,
+        upnp_server=upnp_server,
+        upnp_friendly_name=upnp_friendly_name,
+        upnp_model=upnp_model,
     )
 
 
@@ -2632,6 +2640,137 @@ def test_lan_detail_shows_ttl_row_without_class():
     assert "90" in rendered
 
 
+def test_lan_detail_shows_active_discovery_section_with_nbns():
+    """When NBNS / UPnP enrichments are present the Active discovery
+    section renders them; the placeholder is absent."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(
+        bonjour_services=(),
+        nbns_name="LAB-PRINTER-01",
+        upnp_server="Linux/3.10 UPnP/1.0 HiSenseTV/2024.01",
+        upnp_friendly_name="Living Room TV",
+        upnp_model="HiSense 75U7K",
+    )
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Active discovery" in rendered
+    assert "LAB-PRINTER-01" in rendered
+    assert "Linux/3.10 UPnP/1.0 HiSenseTV/2024.01" in rendered
+    assert "Living Room TV" in rendered
+    assert "HiSense 75U7K" in rendered
+    # Placeholder is absent when at least one field is present.
+    assert "(not probed)" not in rendered
+
+
+def test_lan_detail_shows_active_discovery_placeholder_when_nothing_probed():
+    """A host whose four active-discovery fields are all None
+    renders the section header + `(not probed)` placeholder."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(bonjour_services=())
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Active discovery" in rendered
+    assert "(not probed)" in rendered
+
+
+def test_lan_detail_identity_shows_model_when_upnp_model_set():
+    """The Identity section gains a `Model:` row when UPnP discovery
+    populated `upnp_model`."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(
+        bonjour_services=(),
+        upnp_model="HiSense 75U7K",
+    )
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Model" in rendered
+    assert "HiSense 75U7K" in rendered
+
+
+def test_lan_detail_identity_falls_back_to_friendly_name_when_no_model():
+    """When `upnp_model` is None but `upnp_friendly_name` is set,
+    the Identity Model row falls back to the friendly name."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(
+        bonjour_services=(),
+        upnp_friendly_name="Living Room TV",
+    )
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    # First occurrence is the Identity Model row.
+    assert rendered.index("Living Room TV") >= 0
+
+
+def test_lan_detail_identity_omits_model_when_neither_field_set():
+    """No UPnP model AND no UPnP friendly name → no Model row in
+    Identity. Keeps the section tight for hosts that haven't been
+    probed."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(bonjour_services=())
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    # Active discovery section header still appears but Identity
+    # has no Model row, so the only "Model" string would be in the
+    # Active discovery section — and that section shows
+    # "(not probed)" here. Hence "Model" should NOT appear.
+    assert "Model" not in rendered
+
+
+def test_lan_detail_ttl_row_suppresses_class_for_gateway():
+    """CN consumer routers (H3C / Huawei / some TP-Link firmwares)
+    ship with TTL=128, which our `windows` heuristic catches. For
+    the gateway row that label is more confusing than useful — the
+    is_gateway rule already wins router-class, and 'TTL 128 (windows)'
+    on a router reads wrong. Suppress the parenthesised label for
+    gateways only — non-gateway rows keep it."""
+    from diting.tui import LANDetailScreen
+    from dataclasses import replace as _replace
+    host = _lan_host(is_gateway=True, bonjour_services=())
+    host = _replace(host, ttl=128, ttl_class="windows")
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "TTL" in rendered
+    assert "128" in rendered
+    # Gateway: parenthesised class is suppressed.
+    assert "windows" not in rendered.lower()
+    assert "(" not in rendered.split("TTL")[1].split("Reachable")[0]
+
+
+def test_lan_detail_ttl_row_keeps_class_for_non_gateway():
+    """Sanity that the gateway-only suppression doesn't strip the
+    label from regular hosts too — a Windows desktop should still
+    show `TTL 128 (windows)`."""
+    from diting.tui import LANDetailScreen
+    from dataclasses import replace as _replace
+    host = _lan_host(is_gateway=False, bonjour_services=())
+    host = _replace(host, ttl=128, ttl_class="windows")
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "128" in rendered
+    assert "windows" in rendered.lower()
+
+
 def test_lan_detail_omits_ttl_row_when_ttl_none():
     from diting.tui import LANDetailScreen
     host = _lan_host(bonjour_services=())
@@ -2739,6 +2878,53 @@ def test_lan_row_new_chip_absent_for_gateway():
     assert "[new]" not in row.plain
 
 
+def test_lan_row_new_chip_suppressed_for_initial_sweep_with_anchor():
+    """A host whose `first_seen` lands within the grace window of the
+    poller's `_constructed_at` (`chip_anchor`) is considered session
+    baseline — `[new]` chip must NOT fire. Regression for the
+    2026-05-23 tui-audit where every host on the user's home network
+    carried `[new]` because the LAN poller is lazy-constructed and
+    stamps first_seen=now on the initial sweep."""
+    from datetime import timedelta
+    from dataclasses import replace as _replace
+    from diting.tui import _lan_row_line
+    host = _lan_host(vendor="Apple, Inc.", bonjour_services=())
+    # First sweep fires ~3s after the poller starts.
+    anchor = host.last_seen - timedelta(seconds=3)
+    host = _replace(host, first_seen=anchor + timedelta(seconds=1))
+    row = _lan_row_line(host, now=host.last_seen, chip_anchor=anchor)
+    assert "[new]" not in row.plain
+
+
+def test_lan_row_new_chip_still_fires_after_grace_with_anchor():
+    """A host that joined the network well after the poller started
+    (outside the grace window) should still trip the chip — that's
+    the case the chip exists for."""
+    from datetime import timedelta
+    from dataclasses import replace as _replace
+    from diting.tui import _lan_row_line
+    host = _lan_host(vendor="Apple, Inc.", bonjour_services=())
+    # Poller has been running for an hour; this host showed up 5
+    # minutes ago — that's a truly new device, fire the chip.
+    anchor = host.last_seen - timedelta(hours=1)
+    host = _replace(host, first_seen=host.last_seen - timedelta(minutes=5))
+    row = _lan_row_line(host, now=host.last_seen, chip_anchor=anchor)
+    assert "[new]" in row.plain
+
+
+def test_lan_row_new_chip_falls_back_to_old_behavior_without_anchor():
+    """Existing test fixtures + back-compat callers that don't pass
+    `chip_anchor` keep the original 24-h-window-only semantics. The
+    grace check is opt-in."""
+    from datetime import timedelta
+    from dataclasses import replace as _replace
+    from diting.tui import _lan_row_line
+    host = _lan_host(vendor="Apple, Inc.", bonjour_services=())
+    host = _replace(host, first_seen=host.last_seen - timedelta(hours=2))
+    row = _lan_row_line(host, now=host.last_seen)  # no chip_anchor
+    assert "[new]" in row.plain
+
+
 def test_lan_header_line_includes_class_column_before_vendor():
     from diting.tui import _lan_header_line
     header = _lan_header_line().plain
@@ -2794,6 +2980,48 @@ def test_lan_probe_consent_modal_footer_shows_wait_during_cooldown():
     assert (
         "wait 2s" in footer or "等待 2 秒" in footer
     )
+
+
+def test_event_ts_renders_local_time_for_utc_aware_event(monkeypatch):
+    """A UTC-aware event timestamp must render as the operator's
+    local time in the events panel — matches the JSONL `_iso`
+    contract. Regression for the audit finding where 16:19 local
+    rendered as 08:19 in the events modal."""
+    import time
+    from datetime import datetime, timezone
+    from diting.events import LANHostSeenEvent
+    from diting.tui import _ev_ts
+
+    monkeypatch.setenv("TZ", "Asia/Shanghai")
+    try:
+        time.tzset()
+    except AttributeError:
+        pass  # Windows — tzset doesn't exist; the test still passes
+    ev = LANHostSeenEvent(
+        timestamp=datetime(2026, 5, 23, 8, 19, 13, tzinfo=timezone.utc),
+        mac="aa:bb:cc:dd:ee:ff", ip="0.0.0.0",
+        vendor=None, hostname=None, bonjour_name=None,
+        is_randomised_mac=False,
+    )
+    # 08:19:13 UTC → 16:19:13 in Asia/Shanghai (UTC+8).
+    assert _ev_ts(ev) == "16:19:13"
+
+
+def test_event_ts_handles_naive_datetime():
+    """Naive datetimes fall through `.astimezone()` (which treats them
+    as local) unchanged. Existing test fixtures that build naive
+    timestamps keep working."""
+    from datetime import datetime
+    from diting.events import LANHostSeenEvent
+    from diting.tui import _ev_ts
+    ev = LANHostSeenEvent(
+        timestamp=datetime(2026, 5, 23, 14, 30, 45),  # no tzinfo
+        mac="aa:bb:cc:dd:ee:ff", ip="0.0.0.0",
+        vendor=None, hostname=None, bonjour_name=None,
+        is_randomised_mac=False,
+    )
+    # Naive datetime stays at its own clock face.
+    assert _ev_ts(ev) == "14:30:45"
 
 
 def test_lan_probe_consent_action_confirm_is_silent_during_cooldown():
