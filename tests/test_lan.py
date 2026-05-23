@@ -661,6 +661,39 @@ def test_oui_refresh_script_dedupes_repeated_assignments():
     assert out == {"aa:bb:cc": "First Variant Inc"}
 
 
+def test_oui_refresh_script_parses_wireshark_manuf_all_three_tiers():
+    """The Wireshark `manuf` fallback splits a single file into the
+    three tiers by `/N` prefix-bit notation."""
+    mod = _refresh_ouis_module()
+    manuf_text = (
+        "# comment line ignored\n"
+        "00:00:01         \tXerox        \tXerox Corporation\n"
+        "00:55:DA:00/28   \tShinkoTechno \tShinko Technos co.,ltd.\n"
+        "00:1B:C5:00:00/36\tConverging   \tConverging Systems Inc.\n"
+    )
+    out = mod.parse_wireshark_manuf(manuf_text)
+    assert out["MA-L"] == {"00:00:01": "Xerox Corporation"}
+    assert out["MA-M"] == {"00:55:da:0": "Shinko Technos co.,ltd."}
+    assert out["MA-S"] == {"00:1b:c5:00:0": "Converging Systems Inc."}
+
+
+def test_oui_refresh_script_wireshark_manuf_skips_unknown_widths():
+    """Wireshark sometimes carries non-standard widths in `manuf`
+    (custom annotations). Those entries get skipped, not mis-keyed."""
+    mod = _refresh_ouis_module()
+    manuf_text = (
+        "AB:CD:EF:00/20\tWeirdWidth  \tShould Be Skipped\n"
+        "AB:CD:EF      \tValidLong   \tValid 24-bit Entry\n"
+    )
+    out = mod.parse_wireshark_manuf(manuf_text)
+    assert "MA-L" in out
+    assert out["MA-L"] == {"ab:cd:ef": "Valid 24-bit Entry"}
+    # No MA-M / MA-S entries because /20 was rejected and the second
+    # line was 24-bit.
+    assert out["MA-M"] == {}
+    assert out["MA-S"] == {}
+
+
 def test_lan_host_last_reachable_at_none_when_never_reached(monkeypatch):
     """Host appeared in the kernel ARP cache (e.g. from before diting
     started) but the sweep has never gotten a ping reply.
