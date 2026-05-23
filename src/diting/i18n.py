@@ -210,12 +210,75 @@ _ZH: dict[str, str] = {
     "Role": "角色",
     "Reverse DNS": "反向 DNS",
     "Latency": "延迟",
+    "TTL": "TTL",
     "Reachable": "可达",
     "this sweep": "此次扫描",
     "never": "从未",
     "(no Bonjour services)": "（无 Bonjour 服务）",
     "First seen": "首次出现",
     "Last seen": "上次出现",
+    # LAN device-class values. Surfaced in the Class row of the
+    # detail modal and, in Phase 4, the new Class column on the LAN
+    # row. Translated only at render time via t() so the JSONL
+    # event log carries the EN tokens.
+    "Class": "分类",
+    "phone": "手机",
+    "tablet": "平板",
+    "laptop": "笔记本",
+    "desktop": "台式机",
+    "tv": "电视",
+    "camera": "摄像头",
+    "smart-home": "智能家居",
+    "printer": "打印机",
+    "nas": "NAS",
+    "gaming": "游戏机",
+    "speaker": "音箱",
+    "router": "路由器",
+    # TTL fingerprint class names — surfaced parenthesised in the
+    # TTL row, e.g. `TTL 64 (unix)`.
+    "unix": "Unix 族",
+    "windows": "Windows",
+    # LAN UX chips. `[new]` flags rows where first_seen is within
+    # the last 24 h; `[probing]` shows in the LAN subtitle while a
+    # consented one-shot probe sweep is in flight.
+    "[new]": "[新]",
+    "[probing]": "[探测中]",
+    # LAN detail modal — Active discovery section (Phase 2/4).
+    "Model": "型号",
+    "Active discovery": "主动探测",
+    "NBNS": "NBNS",
+    "UPnP server": "UPnP 标识",
+    "Friendly name": "友好名称",
+    "(not probed)": "（未主动探测）",
+    # Bonjour detail modal — LAN cross-reference section (Tier B).
+    # "LAN host" + "class" already catalogued above (LAN detail modal).
+    "vendor (OUI)": "厂商 (OUI)",
+    # Public-scene one-shot consent modal. Each string here gets a
+    # ZH translation so DITING_LANG=zh users see the same flow in
+    # their language.
+    "Active LAN probing": "LAN 主动探测",
+    "Scene:": "场景：",
+    "Network:": "网络：",
+    "(disassociated)": "（未连接 Wi-Fi）",
+    "Active probing sends UDP packets to OTHER hosts on this network:": (
+        "主动探测会向当前网络中的**其他**设备发送 UDP 报文："
+    ),
+    "On a public network you accept that:": "在公共网络下你需要明确：",
+    "other guests' devices receive your probes": (
+        "其他客人的设备会收到你的探测包"
+    ),
+    "hotel / airport IDS may flag this as scanning": (
+        "酒店 / 机场的 IDS 可能将其判定为扫描行为"
+    ),
+    "captive portals may rate-limit or disconnect": (
+        "网关 captive portal 可能限速甚至踢出网络"
+    ),
+    "One-shot probe. Re-confirm next time.": (
+        "单次探测。下次再按需重新确认。"
+    ),
+    "esc cancel": "esc 取消",
+    "wait 2s": "等待 2 秒",
+    "y probe now": "y 立即探测",
     "Esc / i to close": "Esc / i 关闭",
     " ago": "前",
     "now": "刚刚",
@@ -351,6 +414,7 @@ _ZH: dict[str, str] = {
     "{n}s": "{n}s",
     "now": "刚刚",
     "vendor": "厂商",
+    "class": "分类",
     "name": "名称",
     "services": "服务",
     "last seen": "最近见到",

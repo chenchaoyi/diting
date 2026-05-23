@@ -746,6 +746,16 @@ def _usage() -> str:
         "                          default (home=5s / office=15s / public=30s /\n"
         "                          audit=0s). Named + connected peripherals\n"
         "                          bypass. (env: DITING_BLE_PRESENCE_GATE)\n"
+        "  DITING_LAN_PROBE=0|1    override scene's LAN active-probe default.\n"
+        "                          1 forces NBNS / SSDP / mDNS-meta probes on;\n"
+        "                          0 forces them off. Scene defaults: home /\n"
+        "                          office / audit on, public off. Public-scene\n"
+        "                          one-shot consent (uppercase P in LAN view)\n"
+        "                          ignores this var. Env-only.\n"
+        "  DITING_LAN_UPNP_FETCH=0|1\n"
+        "                          gate the optional HTTP fetch of UPnP LOCATION\n"
+        "                          URLs (for friendlyName / modelName). Default\n"
+        "                          1; M-SEARCH still runs when 0. Env-only.\n"
         "  --version, -V           print the running version and exit\n"
         "  -h, --help              show this message\n"
     )
@@ -1109,6 +1119,34 @@ def _resolve_ble_presence_gate(
         return scene_default
 
 
+def _resolve_lan_active_probe_with_warning(
+    *,
+    scene_default: bool,
+) -> bool:
+    """Resolve LAN active-probe flag at startup with stderr warning.
+
+    Delegates the parse to ``lan_probes.resolve_lan_active_probe``;
+    additionally prints a single stderr warning when
+    ``DITING_LAN_PROBE`` is set to a non-empty value other than
+    ``0`` or ``1``, then falls through to the scene default. Blank
+    env var is treated as absent and is NOT a warning condition.
+    """
+    from . import lan_probes as _lan_probes
+
+    raw = os.environ.get("DITING_LAN_PROBE")
+    if raw is not None:
+        stripped = raw.strip()
+        if stripped not in ("", "0", "1"):
+            print(t(
+                "warning: DITING_LAN_PROBE={raw!r} is not '0' or '1'; "
+                "using scene default ({default})",
+                raw=raw, default="on" if scene_default else "off",
+            ), file=sys.stderr)
+    return _lan_probes.resolve_lan_active_probe(
+        scene_default=scene_default,
+    )
+
+
 def _extract_notify_arg(argv: list[str]) -> bool:
     """Pop ``--notify`` from ``argv`` in place; return True if present.
 
@@ -1133,6 +1171,8 @@ def _run_tui(
     ble_presence_gate_s: float = 5.0,
     scene: str = "home",
     scene_source: str = "default",
+    lan_active_probe: bool = True,
+    lan_upnp_fetch: bool = True,
 ) -> None:
     # Imported lazily so `diting once` and `diting watch` do not
     # pull in textual / rich on every invocation.
@@ -1163,6 +1203,8 @@ def _run_tui(
         scene_source=scene_source,
         event_log_path=log_path,
         notify=notify,
+        lan_active_probe=lan_active_probe,
+        lan_upnp_fetch=lan_upnp_fetch,
     ).run()
     # Post-exit hint pointing at the analyze command. Prints AFTER
     # the alt-screen tears down so the user sees it on the same
@@ -1415,6 +1457,14 @@ def main() -> None:
     scene_gate_default = _scene_mod.scene_defaults(scene_name).get(
         "ble_presence_gate_s", 5.0,
     )
+    scene_lan_probe_default = _scene_mod.scene_defaults(scene_name).get(
+        "lan_active_probe", True,
+    )
+    from . import lan_probes as _lan_probes
+    lan_active_probe = _resolve_lan_active_probe_with_warning(
+        scene_default=scene_lan_probe_default,
+    )
+    lan_upnp_fetch = _lan_probes.resolve_upnp_fetch_enabled()
     if not args:
         _run_tui(
             log_path=log_path,
@@ -1424,6 +1474,8 @@ def main() -> None:
             ),
             scene=scene_name,
             scene_source=scene_source,
+            lan_active_probe=lan_active_probe,
+            lan_upnp_fetch=lan_upnp_fetch,
         )
         return
     cmd = args[0]

@@ -332,5 +332,12 @@ def test_load_wifi_ouis_ships_full_ieee_registry():
     ouis = load_wifi_ouis()
     assert len(ouis) > 5000
     # Two long-stable OUIs we expect to find in every IEEE snapshot.
-    assert ouis.get("00:0b:85") == "Cisco Systems, Inc"
-    assert ouis.get("00:1d:0f") == "TP-LINK TECHNOLOGIES CO.,LTD."
+    # Casing varies by data source: IEEE direct writes all-caps, the
+    # Wireshark `manuf` mirror titlecases. Both forms refer to the
+    # same vendor — assert on the word-shape (case-insensitive
+    # substring) so this test doesn't oscillate with which source
+    # last refreshed the bundled file.
+    cisco = (ouis.get("00:0b:85") or "").lower()
+    assert "cisco systems" in cisco
+    tp_link = (ouis.get("00:1d:0f") or "").lower()
+    assert "tp-link" in tp_link and "technologies" in tp_link

@@ -126,6 +126,31 @@ def test_scene_defaults_unknown_scene_raises() -> None:
         scene.scene_defaults("shop")
 
 
+def test_scene_defaults_lan_active_probe_home_office_audit_true() -> None:
+    """`lan_active_probe` defaults to True for the three scenes where
+    the user has a moral claim to probe the network."""
+    assert scene.scene_defaults("home")["lan_active_probe"] is True
+    assert scene.scene_defaults("office")["lan_active_probe"] is True
+    assert scene.scene_defaults("audit")["lan_active_probe"] is True
+
+
+def test_scene_defaults_lan_active_probe_public_false() -> None:
+    """Public scene defaults to passive — other guests' devices
+    must not be probed unless the user explicitly consents via the
+    one-shot override."""
+    assert scene.scene_defaults("public")["lan_active_probe"] is False
+
+
+def test_scene_defaults_lan_active_probe_is_defensively_readable() -> None:
+    """Callers must be able to use .get() with a default so adding
+    new knob keys in the future is backward-compatible."""
+    for name in scene.valid_scenes():
+        val = scene.scene_defaults(name).get("lan_active_probe", "missing")
+        assert val in (True, False, "missing"), (
+            f"scene {name!r} has surprising lan_active_probe value: {val!r}"
+        )
+
+
 def test_callers_can_read_knobs_defensively() -> None:
     """The dict.get() pattern lets future scene knobs land without
     breaking older callers. Critical for the P3 follow-up that will

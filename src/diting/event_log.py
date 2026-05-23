@@ -44,6 +44,7 @@ from .events import (
     BLEDeviceSeenEvent,
     BonjourServiceLeftEvent,
     BonjourServiceSeenEvent,
+    LANActiveProbeConsentedEvent,
     LANHostDHCPRotationEvent,
     LANHostLeftEvent,
     LANHostSeenEvent,
@@ -563,6 +564,27 @@ class EventLogger:
             payload["hostname"] = event.hostname
         if event.bonjour_name is not None:
             payload["bonjour_name"] = event.bonjour_name
+        self._write(payload)
+
+    def emit_lan_active_probe_consented(
+        self, event: LANActiveProbeConsentedEvent,
+    ) -> None:
+        """Audit-trail entry: user explicitly consented to a one-shot
+        LAN active-probe in public scene. See proposal D3 / D12 in
+        `openspec/changes/expand-lan-identification/design.md`.
+        """
+        if self._sink is None:
+            return
+        payload: dict[str, Any] = {
+            "ts": _iso(event.timestamp),
+            "type": "lan_active_probe_consented",
+            "scene": event.scene,
+            "nbns_packets": event.nbns_packets,
+            "ssdp_packets": event.ssdp_packets,
+            "mdns_packets": event.mdns_packets,
+        }
+        if event.ssid is not None:
+            payload["ssid"] = event.ssid
         self._write(payload)
 
     # ---------- lifecycle ----------

@@ -119,18 +119,23 @@ def resolve_scene(
 def scene_defaults(scene: str) -> dict[str, Any]:
     """Return the per-scene knob map.
 
-    Keys defined in Phase 1:
+    Keys defined so far:
 
     - ``ble_presence_gate_s`` (float) — BLE anonymous-advert presence
       gate, seconds.
     - ``llm_prior`` (str) — short plain-language baseline expectation,
       injected into ``--for-llm`` prompts so the LLM interprets the
       data under the right priors.
+    - ``lan_active_probe`` (bool) — whether the LAN inventory poller
+      may default to sending NBNS / SSDP M-SEARCH / active mDNS
+      probes for this scene. True for home / office / audit; False
+      for public. Env var ``DITING_LAN_PROBE=0|1`` overrides at
+      process startup.
 
     Future phases may add more keys (``roam_notify_threshold``,
-    ``bonjour_categories_visible``, ``lan_inventory_default``,
-    ``event_throttle``). Callers SHALL read defensively with
-    ``.get(name, default)`` so adding a key isn't a breaking change.
+    ``bonjour_categories_visible``, ``event_throttle``). Callers
+    SHALL read defensively with ``.get(name, default)`` so adding a
+    key isn't a breaking change.
 
     Raises :class:`ValueError` on unknown scene names.
     """
@@ -153,6 +158,7 @@ def scene_defaults(scene: str) -> dict[str, Any]:
 _DEFAULTS: dict[str, dict[str, Any]] = {
     HOME: {
         "ble_presence_gate_s": 5.0,
+        "lan_active_probe": True,
         "llm_prior": (
             "small known network — novelty matters. Sparse RF, "
             "stable AP, ~10-15 BLE devices typical. Look for new "
@@ -161,6 +167,7 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
     },
     OFFICE: {
         "ble_presence_gate_s": 15.0,
+        "lan_active_probe": True,
         "llm_prior": (
             "dense enterprise environment — baseline churn expected. "
             "50+ BLE devices, 100+ BSSIDs typical. Continuous Apple "
@@ -171,6 +178,11 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
     },
     PUBLIC: {
         "ble_presence_gate_s": 30.0,
+        # Public-scene default is passive — no UDP probes go to other
+        # guests' devices unless the user opts in via the public-
+        # scene one-shot consent flow (uppercase P) or sets the env
+        # override DITING_LAN_PROBE=1.
+        "lan_active_probe": False,
         "llm_prior": (
             "hostile shared WiFi — cardinality is noise. Cafe / "
             "train / plane / public hotspot. Almost every identifier "
@@ -181,6 +193,7 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
     },
     AUDIT: {
         "ble_presence_gate_s": 0.0,
+        "lan_active_probe": True,
         "llm_prior": (
             "raw capture — no filtering applied. User is actively "
             "investigating (security research / device debug / "

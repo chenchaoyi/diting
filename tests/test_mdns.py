@@ -870,3 +870,43 @@ def test_poller_active_probe_refresh_does_not_re_emit_seen(
     # Second drain must be empty — update on an existing key is not
     # a re-seen.
     assert second == []
+
+
+# ---------- send_meta_query (active mDNS browse) ----------
+
+
+def test_send_meta_query_returns_false_when_zeroconf_not_started():
+    """Before `events()` is iterated, `_zc` is None — the meta-query
+    must fail-soft (return False, not raise)."""
+    poller = BonjourPoller(snapshot_interval_s=0.05, ttl_s=60)
+    assert poller._zc is None
+    assert poller.send_meta_query() is False
+
+
+def test_send_meta_query_returns_true_when_zeroconf_running():
+    """When the zeroconf instance exists, the meta-query emits one
+    PTR question for the meta-service record. We mock `_zc.send`
+    to verify the outgoing message carries that question."""
+    poller = BonjourPoller(snapshot_interval_s=0.05, ttl_s=60)
+    mock_zc = MagicMock()
+    poller._zc = mock_zc
+    assert poller.send_meta_query() is True
+    mock_zc.send.assert_called_once()
+    sent_msg = mock_zc.send.call_args.args[0]
+    # The outgoing DNSOutgoing should have exactly one question for
+    # _services._dns-sd._meta._tcp.local. with type PTR (12).
+    questions = getattr(sent_msg, "questions", None)
+    assert questions is not None and len(questions) == 1
+    q = questions[0]
+    assert q.name == "_services._dns-sd._meta._tcp.local."
+    assert q.type == 12  # _TYPE_PTR
+
+
+def test_send_meta_query_swallows_zeroconf_exceptions():
+    """zeroconf internals can raise on closed loops / interface
+    teardown. The meta-query path must never propagate."""
+    poller = BonjourPoller(snapshot_interval_s=0.05, ttl_s=60)
+    mock_zc = MagicMock()
+    mock_zc.send.side_effect = RuntimeError("loop closed")
+    poller._zc = mock_zc
+    assert poller.send_meta_query() is False

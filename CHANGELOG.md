@@ -11,6 +11,108 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-05-23
+
+Minor release. **LAN identification expansion** — the LAN view now
+recognises far more devices on a typical CN home / office network
+by layering four new identification sources on top of the existing
+ARP + ICMP + OUI + Bonjour stack: multi-tier IEEE OUI registry
+lookup, NBNS / SSDP / active mDNS probes, ICMP TTL fingerprinting,
+and a rules-table device-class classifier. The probe layer is
+scene-gated — `home` / `office` / `audit` default to active,
+`public` defaults to passive but offers a one-shot consent override
+via the new uppercase `P` keybinding (with 2-second cooldown +
+JSONL audit event).
+
+The LAN row layout reorganises per a UX benchmark of Fing Desktop:
+the class column moves to the leftmost data position (it carries
+more signal than vendor when scanning a list), and rows whose
+`first_seen < 24 h` are prefixed with a `[new]` chip so unfamiliar
+devices stand out.
+
+### Added
+- **Multi-tier IEEE OUI registry.** Three bundled JSON files
+  (`wifi_ouis.json` MA-L, `wifi_ouis_ma_m.json` MA-M,
+  `wifi_ouis_ma_s.json` MA-S) — 57 211 vendor mappings total. The
+  lookup function tries 36-bit → 28-bit → 24-bit, longest prefix
+  wins. CN white-label IoT vendors (Tuya / Aqara / Tapo / Imou)
+  that only registered MA-S sub-allocations now resolve to their
+  real brand. `scripts/refresh_ouis.py` extended with
+  `--source ieee|wireshark|auto` — auto-falls back to the
+  Wireshark `manuf` mirror when IEEE direct is unreachable
+  (CN-network-friendly default).
+- **Vendor display normalization.** Raw IEEE strings get stripped
+  of trailing corporate-form tokens (`CO., LTD`, `CORPORATION`,
+  `INC`, `TECHNOLOGIES`) and leading geographic prefixes
+  (`SHENZHEN`, `HANGZHOU`, `BEIJING`); titlecased with acronym
+  preservation (`HP`, `IBM`, `ASUS`, `H3C`, `TP-Link`).
+  `NEW H3C TECHNOLOGIES CO., LTD` → `New H3C`. Raw form
+  preserved on a dim continuation line in the detail modal.
+- **Active LAN discovery layer** (new module
+  `src/diting/lan_probes.py`): NBNS Status Query (RFC 1002
+  wildcard `*`), SSDP M-SEARCH, active mDNS browse for the
+  `_services._dns-sd._meta._tcp.local.` record, plus optional
+  HTTP fetch of UPnP `LOCATION` XML for `friendlyName` +
+  `modelName`. All three phases run concurrently via
+  `asyncio.gather`, each fail-soft on exception. Zero new
+  third-party deps — stdlib `socket` + `urllib` + `xml.etree`
+  (defused against external entities). No new TCC permissions.
+- **Scene-gated active probing.**
+  `scene_defaults()["lan_active_probe"]` is `True` for home /
+  office / audit, `False` for public. `DITING_LAN_PROBE=0|1`
+  overrides; `DITING_LAN_UPNP_FETCH=0|1` separately gates the
+  LOCATION-XML fetch.
+- **Public-scene one-shot consent override.** Uppercase `P` in
+  the LAN view opens `LANProbeConsentScreen` enumerating exactly
+  what packets will be sent and the consequences (other guests'
+  devices, IDS flagging, captive-portal disconnect). Confirm with
+  `y` after a **2-second cooldown** to run ONE active-probe
+  sweep; cooldown defeats muscle-memory press-through.
+  Subsequent sweeps revert to passive; re-press `P` to re-consent.
+- **`LANActiveProbeConsentedEvent` JSONL event.** Written on each
+  consent press, carrying `scene`, `ssid`, and the planned packet
+  counts. Audit-only — never emitted for scene-default or
+  env-forced probing.
+- **`[probing]` subtitle chip.** Shows in the LAN view's subtitle
+  while a consented one-shot probe sweep is queued; clears when
+  the resulting snapshot lands.
+- **TTL fingerprint.** `_ping_one` now also parses the ICMP echo's
+  `ttl=N` segment; `LANHost.ttl` carries the raw value,
+  `LANHost.ttl_class` carries the coarse bucket (`unix` = 50-64,
+  `windows` = 100-128, `router` = 200-255, None otherwise).
+  Surfaces in the detail modal's Network section as
+  `TTL 64 (unix)`. Zero additional traffic.
+- **Device-class classifier** (new module
+  `src/diting/lan_classify.py`). Pure function over the augmented
+  LANHost returns one of 12 classes: `phone | tablet | laptop | desktop |
+  tv | camera | smart-home | printer | nas | gaming | speaker |
+  router`, or None. Total function — never raises on any field
+  combination.
+- **LAN row layout: class column + `[new]` chip.** Per Fing UX
+  benchmark, the class column is the leftmost data column (it
+  disambiguates faster than vendor — a "New H3C" OUI can be a
+  router, AP, switch, or IoT bridge). Rows with `first_seen <
+  24 h` carry a `[new]` chip in dim cyan; self / gateway never
+  carry the chip.
+- **Detail modal — Class + TTL + Active-discovery rows.**
+  Identity section gains `Class:` (when classifier fires); new
+  Active-discovery section consolidates NBNS name, UPnP server
+  header, UPnP friendlyName, UPnP modelName. Network section
+  gains `TTL: <value> (<class>)` when ICMP returned a TTL.
+- **EN ↔ ZH i18n** for every new string: 11 class names, 2 TTL
+  classes, `[new]` / `[probing]` chips, full consent modal copy.
+
+### Documentation
+- **`README.md` + `docs/zh/README.md`** gain a `## LAN
+  identification` section covering the multi-tier OUI, the four
+  enrichment layers, the scene-gating matrix, and the
+  public-scene consent flow with an ASCII mock of the modal.
+
+### Spec
+- Single OpenSpec change `expand-lan-identification` (proposal +
+  design.md + tasks.md + seven spec deltas: `lan-inventory`,
+  `scenes`, `events`, `event-log`, `tui-shell`, `i18n`, `cli`).
+
 ## [1.6.0] — 2026-05-22
 
 Minor release. **Scene awareness** — diting now carries an explicit

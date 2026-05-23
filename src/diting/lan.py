@@ -36,12 +36,13 @@ from datetime import datetime, timezone
 
 from typing import Any
 
-from .ble import load_ouis, lookup_oui_vendor
+from .ble import load_ouis_layered, lookup_oui_vendor
 from .events import (
     LANHostDHCPRotationEvent,
     LANHostLeftEvent,
     LANHostSeenEvent,
 )
+from .lan_classify import classify as _classify_device
 from .mdns import BonjourPoller
 from .models import Connection
 
@@ -73,6 +74,38 @@ class LANHost:
     is_randomised_mac: bool
     last_rtt_ms: float | None = None
     last_reachable_at: datetime | None = None
+    # Raw IEEE registry string before _normalize_vendor() ran. Kept so
+    # the detail modal can surface both forms — the row gets the short
+    # normalized name, the modal lets the user reconcile odd cases.
+    vendor_raw: str | None = None
+    # Active-discovery enrichments. All None when the active-probe
+    # phase did not run for this host (scene-gated, or the host
+    # didn't reply). The fields default to None so existing test
+    # fixtures + JSONL consumers stay valid.
+    nbns_name: str | None = None
+    upnp_server: str | None = None
+    upnp_friendly_name: str | None = None
+    upnp_model: str | None = None
+    # Raw IP TTL from the most recent successful ICMP echo, plus
+    # a coarse class derived via `ttl_class_for`: "unix" / "windows"
+    # / "router" / None. Presentational only — never affects events
+    # or analyzer aggregation.
+    ttl: int | None = None
+    ttl_class: str | None = None
+    # Output of the device-class inference rules in
+    # `src/diting/lan_classify.py`. One of `phone | tablet | laptop |
+    # desktop | tv | camera | smart-home | printer | nas | gaming
+    # | speaker | router`, or None when no rule fires. Presentational
+    # only.
+    device_class: str | None = None
+    # Apple hardware model identifier (e.g. ``Mac14,2``,
+    # ``AudioAccessory6,1``, ``iPhone16,1``) extracted from Bonjour
+    # TXT records published by the host's AirPlay / Apple-Companion /
+    # mobdev services. The high-confidence classifier signal —
+    # Apple's own product code maps unambiguously to laptop /
+    # speaker / phone / tv. None when no Bonjour-side TXT record
+    # carried a `model=` entry.
+    bonjour_model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,11 +137,71 @@ _ARP_LINE_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+
+def _is_multicast_dest_mac(mac: str) -> bool:
+    """Return True for IPv4 / IPv6 multicast destination MACs.
+
+    The kernel ARP cache occasionally carries these as a side
+    effect of any process (including diting's own SSDP M-SEARCH)
+    sending to a multicast group. They are NOT real LAN hosts —
+    they're destination MACs for multicast groups and have no
+    associated device.
+
+    Filtered ranges:
+    - ``01:00:5e:00:00:00`` – ``01:00:5e:7f:ff:ff``: IPv4 multicast
+      (224.0.0.0/4) per RFC 1112 §6.4.
+    - ``33:33:00:00:00:00`` – ``33:33:ff:ff:ff:ff``: IPv6 multicast
+      per RFC 2464 §7.
+    """
+    # Pad each octet to 2 chars so stripped-zero arp output still
+    # matches (``1:0:5e:*`` → ``01:00:5e:*``).
+    parts = mac.lower().split(":")
+    if len(parts) != 6:
+        return False
+    try:
+        padded = [p.zfill(2) for p in parts]
+    except Exception:
+        return False
+    if padded[0] == "01" and padded[1] == "00" and padded[2] == "5e":
+        return True
+    if padded[0] == "33" and padded[1] == "33":
+        return True
+    return False
+
 # macOS `ping -c 1` writes a single sample line containing
 # `time=X.XXX ms` (decimal varies; some locales use `,` decimal
 # separator but macOS pings always print `.`). This regex pulls the
 # RTT in milliseconds.
 _PING_RTT_RE = re.compile(r"time=([\d.]+)\s*ms", flags=re.IGNORECASE)
+
+# macOS `ping -c 1` also reports `ttl=N` in the same sample line.
+# Used by the device-class heuristics to discriminate Linux / Mac /
+# iOS / Android (TTL ≈ 64) vs Windows (≈ 128) vs legacy routers
+# (≈ 255). Same packet — no additional traffic.
+_PING_TTL_RE = re.compile(r"ttl=(\d+)", flags=re.IGNORECASE)
+
+
+def ttl_class_for(ttl: int | None) -> str | None:
+    """Map a raw IP TTL value to a coarse OS-family class.
+
+    The IETF-canonical initial TTLs are 64 (Unix-family: Linux,
+    macOS, iOS, Android, BSDs) and 128 (Windows). Some legacy
+    routers advertise 255. We absorb single-digit hop decrements
+    by accepting a small range below each canonical anchor.
+
+    Returns ``None`` for values outside any recognised band or
+    when ``ttl`` is None — the field is presentational, never
+    load-bearing.
+    """
+    if ttl is None:
+        return None
+    if 50 <= ttl <= 64:
+        return "unix"
+    if 100 <= ttl <= 128:
+        return "windows"
+    if 200 <= ttl <= 255:
+        return "router"
+    return None
 
 
 def _ip_in_network(ip: str, network: ipaddress.IPv4Network) -> bool:
@@ -137,6 +230,151 @@ def _is_randomised_mac(mac: str) -> bool:
     except (ValueError, IndexError):
         return False
     return bool(first_octet & 0x02)
+
+
+# Tokens stripped from the trailing end of an IEEE registry string.
+# Order matters: longer multi-word tokens go first so they match
+# before their substrings.
+_TRAILING_NOISE_TOKENS: tuple[str, ...] = (
+    "CO., LTD.",
+    "CO.,LTD.",
+    "CO., LTD",
+    "CO.,LTD",
+    "CO. LTD",
+    "CO LTD",
+    "CO.,",
+    "CO.",
+    "CO",
+    "CORPORATION",
+    "CORP.",
+    "CORP",
+    "LIMITED",
+    "LTD.",
+    "LTD",
+    "INC.",
+    "INC",
+    "GMBH",
+    "LLC",
+    "B.V.",
+    "BV",
+    "S.A.",
+    "SA",
+    "COMPANY",
+    "TECHNOLOGIES",
+    "TECHNOLOGY",
+    "ELECTRONICS",
+    "ELECTRONIC",
+)
+
+# Geographic prefixes stripped from the leading end. Chinese city
+# names bloat the column without identifying the company; the actual
+# brand follows.
+_LEADING_NOISE_TOKENS: tuple[str, ...] = (
+    "SHENZHEN",
+    "HANGZHOU",
+    "BEIJING",
+    "SHANGHAI",
+    "GUANGZHOU",
+    "DONGGUAN",
+    "CHENGDU",
+    "NANJING",
+    "SUZHOU",
+    "TIANJIN",
+)
+
+# Acronyms / brand names that must NOT be titlecased. Keyed by the
+# titlecased form Python would produce so the lookup is cheap.
+_ACRONYM_OVERRIDES: dict[str, str] = {
+    "Hp": "HP",
+    "Ibm": "IBM",
+    "Asus": "ASUS",
+    "Asrock": "ASRock",
+    "Lg": "LG",
+    "H3C": "H3C",
+    "Tp-Link": "TP-Link",
+    "D-Link": "D-Link",
+    "Zte": "ZTE",
+    "Tcl": "TCL",
+    "Lge": "LGE",
+    "Mtk": "MTK",
+    "Hkc": "HKC",
+    "Vmware": "VMware",
+    "Ipad": "iPad",
+    "Iphone": "iPhone",
+    "Imac": "iMac",
+    "Iot": "IoT",
+}
+
+_VENDOR_DISPLAY_WIDTH = 16
+
+
+def _normalize_vendor(name: str | None) -> str | None:
+    """Return a short, readable display form of an IEEE vendor string.
+
+    Drops trailing corporate-form noise (``CO., LTD``, ``CORPORATION``,
+    ``LTD``, ``INC``, ``TECHNOLOGIES`` …), drops leading Chinese-city
+    prefixes (``SHENZHEN``, ``HANGZHOU`` …), titlecases the remainder
+    while preserving registered acronyms via ``_ACRONYM_OVERRIDES``,
+    and truncates to ``_VENDOR_DISPLAY_WIDTH`` characters with an
+    ellipsis when the result is still too long.
+
+    Returns ``None`` when input is ``None`` or empty. Idempotent: a
+    name that already passed through normalization is unchanged.
+    """
+    if not name:
+        return None
+
+    s = name.strip()
+    if not s:
+        return None
+
+    # Strip leading geographic prefixes, repeating in case the
+    # registry packs more than one (rare but defensive).
+    changed = True
+    while changed:
+        changed = False
+        upper = s.upper()
+        for prefix in _LEADING_NOISE_TOKENS:
+            if upper.startswith(prefix + " "):
+                s = s[len(prefix) + 1 :].lstrip()
+                changed = True
+                break
+
+    # Strip trailing corporate-form noise, repeating so e.g.
+    # "FOO TECHNOLOGIES CO., LTD" peels both tokens.
+    changed = True
+    while changed:
+        changed = False
+        # Strip trailing comma / whitespace so token comparison lands
+        # cleanly.
+        s = s.rstrip(" ,.;")
+        upper = s.upper()
+        for tok in _TRAILING_NOISE_TOKENS:
+            if upper.endswith(" " + tok) or upper == tok:
+                s = s[: len(s) - len(tok)].rstrip(" ,.;")
+                changed = True
+                break
+
+    s = s.strip(" ,.;")
+    if not s:
+        return None
+
+    # Titlecase while preserving acronyms. Python's str.title() is
+    # naive — "H3C" becomes "H3C" (digits split the word so the C
+    # stays upper) but other registered tokens like "ASUS" become
+    # "Asus" so we map them back.
+    out_tokens: list[str] = []
+    for raw in s.split():
+        tc = raw.title()
+        out_tokens.append(_ACRONYM_OVERRIDES.get(tc, tc))
+    out = " ".join(out_tokens)
+
+    # Truncate to display width with an ellipsis. ``str`` len here is
+    # fine — the OUI registry is ASCII; CJK glyphs are translated by
+    # i18n.t() at the render site, not at the OUI layer.
+    if len(out) > _VENDOR_DISPLAY_WIDTH:
+        out = out[: _VENDOR_DISPLAY_WIDTH - 1].rstrip() + "…"
+    return out
 
 
 def _effective_cap_prefix() -> int:
@@ -211,15 +449,16 @@ def _detect_subnet(
 
 async def _ping_one(
     ip: str, *, timeout_ms: int = _PING_TIMEOUT_MS,
-) -> tuple[bool, float | None]:
+) -> tuple[bool, float | None, int | None]:
     """Send one ICMP echo via unprivileged ``ping``.
 
-    Returns ``(reachable, rtt_ms)``:
-    - ``(True, <rtt>)`` when ``ping`` exits 0 and stdout contains a
-      parseable ``time=X.XXX ms`` segment
-    - ``(True, None)`` when ``ping`` exits 0 but stdout is
-      unparseable (locale quirk, weird build)
-    - ``(False, None)`` when ``ping`` exits non-zero or the
+    Returns ``(reachable, rtt_ms, ttl)``:
+    - ``(True, <rtt>, <ttl>)`` when ``ping`` exits 0 and stdout
+      contains both parseable ``time=X.XXX ms`` and ``ttl=N`` segments
+    - ``(True, <rtt>, None)`` when RTT parses but TTL doesn't (rare)
+    - ``(True, None, <ttl>)`` when TTL parses but RTT doesn't (rare)
+    - ``(True, None, None)`` when neither parses
+    - ``(False, None, None)`` when ``ping`` exits non-zero or the
       subprocess errors out
     """
     try:
@@ -236,17 +475,25 @@ async def _ping_one(
         stdout_bytes, _ = await proc.communicate()
         rc = proc.returncode
     except (OSError, asyncio.CancelledError):
-        return False, None
+        return False, None, None
     if rc != 0:
-        return False, None
+        return False, None, None
     text = stdout_bytes.decode("ascii", errors="replace")
-    m = _PING_RTT_RE.search(text)
-    if not m:
-        return True, None
-    try:
-        return True, float(m.group(1))
-    except ValueError:
-        return True, None
+    rtt_match = _PING_RTT_RE.search(text)
+    ttl_match = _PING_TTL_RE.search(text)
+    rtt_ms: float | None = None
+    if rtt_match:
+        try:
+            rtt_ms = float(rtt_match.group(1))
+        except ValueError:
+            rtt_ms = None
+    ttl: int | None = None
+    if ttl_match:
+        try:
+            ttl = int(ttl_match.group(1))
+        except ValueError:
+            ttl = None
+    return True, rtt_ms, ttl
 
 
 async def _sweep(
@@ -254,17 +501,17 @@ async def _sweep(
     *,
     concurrency: int = _PING_CONCURRENCY,
     timeout_ms: int = _PING_TIMEOUT_MS,
-) -> dict[str, tuple[bool, float | None]]:
+) -> dict[str, tuple[bool, float | None, int | None]]:
     """Ping every IP in ``hosts`` with bounded concurrency.
 
-    Returns ``{ip: (reachable, rtt_ms)}``. The side-effect we ALSO
-    care about is the populated kernel ARP cache; the merge step in
-    ``LANInventoryPoller`` reads ``arp -an`` after the sweep
-    completes.
+    Returns ``{ip: (reachable, rtt_ms, ttl)}``. The side-effect we
+    ALSO care about is the populated kernel ARP cache; the merge
+    step in ``LANInventoryPoller`` reads ``arp -an`` after the
+    sweep completes.
     """
     sem = asyncio.Semaphore(concurrency)
 
-    async def _one(ip: str) -> tuple[str, tuple[bool, float | None]]:
+    async def _one(ip: str) -> tuple[str, tuple[bool, float | None, int | None]]:
         async with sem:
             result = await _ping_one(ip, timeout_ms=timeout_ms)
             return ip, result
@@ -272,12 +519,34 @@ async def _sweep(
     pairs = await asyncio.gather(
         *[_one(ip) for ip in hosts], return_exceptions=True,
     )
-    out: dict[str, tuple[bool, float | None]] = {}
+    out: dict[str, tuple[bool, float | None, int | None]] = {}
     for p in pairs:
         if isinstance(p, tuple) and len(p) == 2:
             ip, result = p
             out[ip] = result
     return out
+
+
+def _unpack_sweep_entry(
+    entry,
+) -> tuple[bool, float | None, int | None]:
+    """Normalise a sweep-result tuple into the 3-element shape.
+
+    Tolerates both the new (reachable, rtt, ttl) form and the legacy
+    (reachable, rtt) form so existing tests that build synthetic
+    sweep_results dicts keep working without migration.
+    """
+    if entry is None:
+        return False, None, None
+    if not isinstance(entry, tuple):
+        return False, None, None
+    if len(entry) >= 3:
+        return entry[0], entry[1], entry[2]
+    if len(entry) == 2:
+        return entry[0], entry[1], None
+    if len(entry) == 1:
+        return entry[0], None, None
+    return False, None, None
 
 
 def _read_arp_cache(*, runner=None) -> list[tuple[str, str, str]]:
@@ -307,6 +576,12 @@ def _read_arp_cache(*, runner=None) -> list[tuple[str, str, str]]:
         if not m:
             continue
         ip, mac, iface = m.group(1), m.group(2).lower(), m.group(3)
+        # Skip multicast destination MACs — these are not real LAN
+        # hosts; they leak into `arp -an` whenever any process sends
+        # to a multicast group (diting's own SSDP M-SEARCH triggers
+        # `01:00:5e:7f:ff:fa`, mDNS triggers `01:00:5e:00:00:fb`).
+        if _is_multicast_dest_mac(mac):
+            continue
         result.append((ip, mac, iface))
     return result
 
@@ -333,32 +608,82 @@ def _strip_local_suffix(host: str | None) -> str | None:
     return h or None
 
 
+# TXT-record keys that carry Apple's hardware model identifier
+# (`Mac14,2` / `iPad14,3` / `AudioAccessory6,1` / `iPhone16,1` /
+# `AppleTV14,1`). Different Apple Continuity protocols use
+# different key names for the same kind of value:
+#
+#   `_airplay._tcp.local.`        → `model=…`
+#   `_companion-link._tcp.local.` → `rpMd=…`  (rendezvous-protocol Model)
+#   `_raop._tcp.local.`           → `am=…`    (Apple Model)
+#
+# A random-MAC iPad that only publishes `_companion-link` is
+# identifiable as a tablet purely via `rpMd=iPad14,3` in that
+# service's TXT — without falling back to the user-controllable
+# Bonjour name.
+_APPLE_MODEL_TXT_KEYS: tuple[str, ...] = ("model", "rpMd", "am")
+
+
+def _bonjour_extract_apple_model(txt: dict[str, str] | None) -> str | None:
+    """Pull Apple's hardware-model identifier out of a Bonjour TXT
+    record. Tries the documented Continuity-protocol keys in turn;
+    first non-empty hit wins. Returns None when no key carries a
+    model code.
+    """
+    if not txt:
+        return None
+    for key in _APPLE_MODEL_TXT_KEYS:
+        value = txt.get(key)
+        if value:
+            return value
+    return None
+
+
 def _build_bonjour_index(
     bonjour_poller: BonjourPoller | None,
-) -> dict[str, tuple[str | None, tuple[str, ...]]]:
-    """Walk ``BonjourPoller._state`` once, return ``{ip: (host, services)}``.
+) -> dict[str, tuple[str | None, tuple[str, ...], str | None]]:
+    """Walk ``BonjourPoller._state`` once, return
+    ``{ip: (host, services, apple_model)}``.
 
     ``services`` is a tuple of unique ``category`` strings across every
-    Bonjour entry whose ``addresses`` contains the IP. The LAN poller
-    does NOT mutate Bonjour state.
+    Bonjour entry whose ``addresses`` contains the IP.
+
+    ``apple_model`` is Apple's hardware identifier (``Mac14,2``,
+    ``iPad14,3``, ``AudioAccessory6,1``, ``iPhone16,1``,
+    ``AppleTV14,1``, etc.) extracted from any TXT record's
+    ``model`` / ``rpMd`` / ``am`` key on this host. First non-empty
+    value wins. None when no Bonjour entry for the IP carried a
+    model-code field.
+
+    The LAN poller does NOT mutate Bonjour state.
     """
     if bonjour_poller is None:
         return {}
 
-    by_ip: dict[str, tuple[str | None, list[str]]] = {}
+    by_ip: dict[str, tuple[str | None, list[str], str | None]] = {}
     for dev in bonjour_poller._state.values():
         host = _strip_local_suffix(dev.host)
+        txt_model = _bonjour_extract_apple_model(dev.txt)
         for ip in dev.addresses:
-            entry = by_ip.setdefault(ip, (host, []))
-            cur_host, cats = entry
+            entry = by_ip.setdefault(ip, (host, [], None))
+            cur_host, cats, cur_model = entry
             # First match wins for host name (rare virtual-host case).
             if cur_host is None and host is not None:
                 cur_host = host
             if dev.category and dev.category not in cats:
                 cats.append(dev.category)
-            by_ip[ip] = (cur_host, cats)
+            # First-wins for the model code — different Apple
+            # services (AirPlay model, _companion-link rpMd, _raop am)
+            # can disagree on capitalisation; first stable hit is
+            # enough for classification.
+            if cur_model is None and txt_model:
+                cur_model = txt_model
+            by_ip[ip] = (cur_host, cats, cur_model)
 
-    return {ip: (host, tuple(cats)) for ip, (host, cats) in by_ip.items()}
+    return {
+        ip: (host, tuple(cats), model)
+        for ip, (host, cats, model) in by_ip.items()
+    }
 
 
 class LANInventoryPoller:
@@ -380,6 +705,8 @@ class LANInventoryPoller:
         bonjour_poller: BonjourPoller | None = None,
         sweep_interval_s: float = 60.0,
         ping_timeout_ms: int = _PING_TIMEOUT_MS,
+        active_probe_enabled: bool = False,
+        upnp_fetch_enabled: bool = True,
     ) -> None:
         # ``connection_provider`` is a no-arg callable returning a
         # ``Connection`` (or None) — usually ``backend.get_connection``.
@@ -389,8 +716,26 @@ class LANInventoryPoller:
         self._bonjour_poller = bonjour_poller
         self._sweep_interval_s = sweep_interval_s
         self._ping_timeout_ms = ping_timeout_ms
+        # Active-discovery layer gating. Scene + env resolved at app
+        # startup; the poller sees the final boolean. False keeps the
+        # passive-only behaviour from previous versions.
+        self._active_probe_enabled = active_probe_enabled
+        self._upnp_fetch_enabled = upnp_fetch_enabled
+        # Public-scene one-shot consent override: when True, the
+        # next sweep runs the active-discovery phase once and clears
+        # the flag. Set from the LANProbeConsentScreen modal in
+        # tui.py; this poller never sets it itself.
+        self._one_shot_probe_armed: bool = False
 
         self._stopped = False
+        # Wall-clock instant the poller was constructed. The TUI's
+        # `[new]` chip uses this as a grace anchor: hosts whose
+        # first_seen falls within `_NEW_CHIP_GRACE_S` of this timestamp
+        # are treated as "this session's baseline" rather than "newly
+        # appeared", since the LAN poller is lazy-constructed on first
+        # `n`-cycle and would otherwise stamp every existing host
+        # with first_seen=now, making the chip universal noise.
+        self._constructed_at: datetime = datetime.now(timezone.utc)
         self._state: dict[str, LANHost] = {}
         self._queue: asyncio.Queue[LANInventoryUpdate] = asyncio.Queue()
         # Transition events (LANHostSeenEvent / LANHostLeftEvent /
@@ -399,7 +744,12 @@ class LANInventoryPoller:
         # mono-typed (snapshots only) and existing tests keep working.
         self._pending_transitions: list[Any] = []
         self._sweep_wakeup: asyncio.Event | None = None
-        self._ouis: dict[str, str] | None = None
+        # Three-tier OUI registry. None until the first sweep loads it;
+        # subsequent sweeps reuse the same dicts. The tuple shape is
+        # (ma_l, ma_m, ma_s) per `load_ouis_layered`'s contract.
+        self._oui_layers: tuple[
+            dict[str, str], dict[str, str], dict[str, str]
+        ] | None = None
 
     def drain_transitions(self) -> list[Any]:
         """Pop transition events accumulated during recent sweep
@@ -494,6 +844,21 @@ class LANInventoryPoller:
             triples, conn=conn, now=now, sweep_results=sweep_results,
         )
 
+        # Active-discovery phase. Runs when the scene/env has the
+        # capability enabled OR when the public-scene one-shot
+        # override has armed the next sweep. Probe enrichments are
+        # merged into the per-host state via _apply_probe_results.
+        probe_armed = (
+            self._active_probe_enabled or self._one_shot_probe_armed
+        )
+        if probe_armed:
+            await self._run_active_probes(conn=conn)
+            # One-shot consumes itself — subsequent sweeps revert to
+            # scene/env default. Cleared whether or not any host
+            # actually responded; the user already paid the consent
+            # cost for this single tick.
+            self._one_shot_probe_armed = False
+
         update = LANInventoryUpdate(
             hosts=tuple(sorted(self._state.values(), key=_sort_key)),
             subnet=cidr,
@@ -513,10 +878,27 @@ class LANInventoryPoller:
         *,
         conn: Connection,
         now: datetime,
-        sweep_results: dict[str, tuple[bool, float | None]] | None = None,
+        sweep_results: dict | None = None,
     ) -> None:
-        if self._ouis is None:
-            self._ouis = load_ouis()
+        if self._oui_layers is None:
+            self._oui_layers = load_ouis_layered()
+        ma_l, ma_m, ma_s = self._oui_layers
+
+        def _resolve_vendor(mac_lc: str, randomised: bool) -> tuple[
+            str | None, str | None,
+        ]:
+            """Return (normalized display vendor, raw IEEE vendor).
+
+            Randomised MACs are not in the registry by construction;
+            short-circuit both forms to None so the caller still records
+            `is_randomised_mac` truthfully without paying the lookup.
+            """
+            if randomised:
+                return None, None
+            raw = lookup_oui_vendor(
+                mac_lc, ma_l=ma_l, ma_m=ma_m, ma_s=ma_s,
+            )
+            return _normalize_vendor(raw), raw
 
         bonjour_index = _build_bonjour_index(self._bonjour_poller)
 
@@ -544,24 +926,33 @@ class LANInventoryPoller:
         sweep_results = sweep_results or {}
 
         def _rtt_for(existing_entry, ip_addr):
-            """Return (last_rtt_ms, last_reachable_at) for this tick.
+            """Return (last_rtt_ms, last_reachable_at, ttl) for this tick.
 
             Pulls from the sweep result if the host responded; falls
             back to the existing entry's values when the host was
             silent this sweep (so a temporarily-quiet host's
             last-known RTT stays visible in the modal). Returns
-            (None, None) for never-reached hosts.
+            (None, None, None) for never-reached hosts.
             """
-            sweep_entry = sweep_results.get(ip_addr)
-            if sweep_entry is not None:
-                reachable, rtt_ms = sweep_entry
-                if reachable:
-                    return rtt_ms, now
+            reachable, rtt_ms, ttl = _unpack_sweep_entry(
+                sweep_results.get(ip_addr),
+            )
+            if reachable:
+                # Inherit prior TTL only when this sweep didn't see
+                # one — a sweep that returned with no ttl segment
+                # (rare locale quirk) shouldn't blank a known value.
+                if ttl is None and existing_entry is not None:
+                    ttl = existing_entry.ttl
+                return rtt_ms, now, ttl
             # Sweep got no reply this tick — preserve existing
             # last-known values if we have them.
             if existing_entry is not None:
-                return existing_entry.last_rtt_ms, existing_entry.last_reachable_at
-            return None, None
+                return (
+                    existing_entry.last_rtt_ms,
+                    existing_entry.last_reachable_at,
+                    existing_entry.ttl,
+                )
+            return None, None, None
 
         # Snapshot self too: we don't appear in our own ARP cache,
         # but the user wants to see "this Mac" pinned at the top.
@@ -572,22 +963,30 @@ class LANInventoryPoller:
             # self on macOS is trivially ~0.1 ms and informative).
             # If the sweep happens to have a result for our IP, use
             # it; otherwise mark self as reachable=now with no RTT.
-            self_sweep = sweep_results.get(conn.ip_address)
-            if self_sweep is not None and self_sweep[0]:
-                self_rtt, self_reach = self_sweep[1], now
+            self_reachable, self_rtt_from_sweep, self_ttl_from_sweep = (
+                _unpack_sweep_entry(sweep_results.get(conn.ip_address))
+            )
+            if self_reachable:
+                self_rtt, self_reach = self_rtt_from_sweep, now
+                self_ttl = (
+                    self_ttl_from_sweep
+                    if self_ttl_from_sweep is not None
+                    else (self_entry.ttl if self_entry else None)
+                )
             else:
                 self_rtt = self_entry.last_rtt_ms if self_entry else None
                 self_reach = (
                     now if self_entry is None else self_entry.last_reachable_at
                 )
-            self._state[iface_mac_lc] = LANHost(
+                self_ttl = self_entry.ttl if self_entry else None
+            self_randomised = _is_randomised_mac(iface_mac_lc)
+            self_vendor, self_vendor_raw = _resolve_vendor(
+                iface_mac_lc, self_randomised,
+            )
+            self_host = LANHost(
                 mac=iface_mac_lc,
                 ip=conn.ip_address,
-                vendor=(
-                    lookup_oui_vendor(iface_mac_lc, self._ouis)
-                    if not _is_randomised_mac(iface_mac_lc)
-                    else None
-                ),
+                vendor=self_vendor,
                 hostname=(self_entry.hostname if self_entry else None),
                 bonjour_name=None,
                 bonjour_services=(),
@@ -595,9 +994,15 @@ class LANInventoryPoller:
                 last_seen=now,
                 is_gateway=False,
                 is_self=True,
-                is_randomised_mac=_is_randomised_mac(iface_mac_lc),
+                is_randomised_mac=self_randomised,
                 last_rtt_ms=self_rtt,
                 last_reachable_at=self_reach,
+                vendor_raw=self_vendor_raw,
+                ttl=self_ttl,
+                ttl_class=ttl_class_for(self_ttl),
+            )
+            self._state[iface_mac_lc] = replace(
+                self_host, device_class=_classify_device(self_host),
             )
 
         # Track MACs we observed this tick so we can detect departures
@@ -612,14 +1017,12 @@ class LANInventoryPoller:
             observed_macs.add(mac_lc)
             existing = self._state.get(mac_lc)
             randomised = _is_randomised_mac(mac_lc)
-            vendor = (
-                lookup_oui_vendor(mac_lc, self._ouis)
-                if not randomised
-                else None
+            vendor, vendor_raw = _resolve_vendor(mac_lc, randomised)
+            bonjour_host, bonjour_cats, bonjour_model = bonjour_index.get(
+                ip, (None, (), None),
             )
-            bonjour_host, bonjour_cats = bonjour_index.get(ip, (None, ()))
             hostname = rdns_results.get(ip, existing.hostname if existing else None)
-            last_rtt_ms, last_reachable_at = _rtt_for(existing, ip)
+            last_rtt_ms, last_reachable_at, ttl = _rtt_for(existing, ip)
             is_gateway_now = (router_ip is not None and ip == router_ip)
             is_self_now = (mac_lc == iface_mac_lc)
             host_entry = LANHost(
@@ -636,6 +1039,13 @@ class LANInventoryPoller:
                 is_randomised_mac=randomised,
                 last_rtt_ms=last_rtt_ms,
                 last_reachable_at=last_reachable_at,
+                vendor_raw=vendor_raw,
+                ttl=ttl,
+                ttl_class=ttl_class_for(ttl),
+                bonjour_model=bonjour_model,
+            )
+            host_entry = replace(
+                host_entry, device_class=_classify_device(host_entry),
             )
             # Special-case: self may also appear in ARP (rare; mostly
             # not, since we ARP others). If it does, merge — keep
@@ -712,6 +1122,134 @@ class LANInventoryPoller:
                 ),
             ))
             self._state.pop(mac_lc, None)
+
+    async def _run_active_probes(self, *, conn: Connection) -> None:
+        """Three-phase active discovery, gated upstream by scene/env.
+
+        Phase A — NBNS Status Query (unicast UDP 137) to every silent
+        host (no Bonjour name, no reverse-DNS hostname).
+        Phase B — SSDP M-SEARCH multicast (UDP 1900) once; replies
+        merged into per-host upnp_* fields.
+        Phase C — active mDNS browse-query via the BonjourPoller (the
+        passive listener already captures responses).
+
+        Phases A + B + C run concurrently via ``asyncio.gather``;
+        the SSDP listen window (~3 s) is the wall-clock floor. Any
+        single phase failure is swallowed — enrichments are best-
+        effort.
+        """
+        from . import lan_probes as _lp  # local to keep top-level deps thin
+
+        # Candidate hosts for NBNS: those with no friendly name yet.
+        # Self / gateway are NOT excluded — Windows-flavoured gateways
+        # (some H3C / TP-Link / Mikrotik) do reply to NBNS.
+        nbns_targets: list[str] = []
+        for mac_lc, h in self._state.items():
+            if h.is_self:
+                continue
+            if h.bonjour_name or h.hostname:
+                continue
+            nbns_targets.append(h.ip)
+
+        async def _nbns_phase() -> dict[str, str | None]:
+            try:
+                return await _lp.probe_nbns(nbns_targets)
+            except Exception:
+                return {ip: None for ip in nbns_targets}
+
+        async def _ssdp_phase() -> dict[str, _lp.SSDPResponse]:
+            try:
+                results = await _lp.probe_ssdp()
+            except Exception:
+                return {}
+            if not self._upnp_fetch_enabled:
+                return results
+            # Enrich each response with friendlyName + modelName
+            # via the LOCATION fetch. Concurrent, fail-soft.
+            async def _enrich(ip: str, r: _lp.SSDPResponse) -> tuple[
+                str, _lp.SSDPResponse,
+            ]:
+                friendly, model = await _lp.fetch_upnp_location(r.location)
+                from dataclasses import replace as _replace
+                return ip, _replace(r, friendly_name=friendly, model_name=model)
+            try:
+                enriched = await asyncio.gather(
+                    *[_enrich(ip, r) for ip, r in results.items()],
+                    return_exceptions=True,
+                )
+            except Exception:
+                return results
+            out: dict[str, _lp.SSDPResponse] = dict(results)
+            for entry in enriched:
+                if isinstance(entry, tuple) and len(entry) == 2:
+                    ip, r = entry
+                    out[ip] = r
+            return out
+
+        async def _mdns_phase() -> None:
+            if self._bonjour_poller is None:
+                return
+            try:
+                self._bonjour_poller.send_meta_query()
+            except Exception:
+                pass
+
+        nbns_results, ssdp_results, _ = await asyncio.gather(
+            _nbns_phase(), _ssdp_phase(), _mdns_phase(),
+            return_exceptions=False,
+        )
+
+        # Merge enrichments into the existing state entries. Look up
+        # by IP since that's what the probes give us back.
+        if nbns_results or ssdp_results:
+            self._apply_probe_results(nbns_results, ssdp_results)
+
+    def _apply_probe_results(
+        self,
+        nbns_results: dict[str, str | None],
+        ssdp_results: dict[str, "_lp.SSDPResponse | None"],  # type: ignore[name-defined]
+    ) -> None:
+        """Merge probe enrichments into ``self._state``.
+
+        Keyed by IP. Hosts that don't appear in either probe map are
+        left untouched. Replaces the LANHost entry with an updated
+        copy via ``dataclasses.replace`` to preserve immutability.
+        """
+        from dataclasses import replace
+        # Build an IP → mac_lc lookup once.
+        by_ip: dict[str, str] = {h.ip: mac_lc for mac_lc, h in self._state.items()}
+        ips_touched: set[str] = set(nbns_results.keys()) | set(ssdp_results.keys())
+        for ip in ips_touched:
+            mac_lc = by_ip.get(ip)
+            if mac_lc is None:
+                continue
+            host = self._state[mac_lc]
+            nbns_name = nbns_results.get(ip)
+            ssdp = ssdp_results.get(ip)
+            new = replace(
+                host,
+                nbns_name=nbns_name if nbns_name else host.nbns_name,
+                upnp_server=(
+                    ssdp.server if ssdp and ssdp.server else host.upnp_server
+                ),
+                upnp_friendly_name=(
+                    ssdp.friendly_name
+                    if ssdp and ssdp.friendly_name
+                    else host.upnp_friendly_name
+                ),
+                upnp_model=(
+                    ssdp.model_name
+                    if ssdp and ssdp.model_name
+                    else host.upnp_model
+                ),
+            )
+            # Re-classify now that the probe fields are populated —
+            # rules like "Hikvision server header → camera" rely on
+            # upnp_server / nbns_name that didn't exist at first-merge
+            # time.
+            self._state[mac_lc] = replace(
+                new, device_class=_classify_device(new),
+            )
 
 
 def _sort_key(h: LANHost) -> tuple[int, int, tuple[int, ...]]:

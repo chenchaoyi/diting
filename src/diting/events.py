@@ -172,6 +172,29 @@ class LANHostDHCPRotationEvent:
     bonjour_name: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class LANActiveProbeConsentedEvent:
+    """User explicitly accepted the public-scene LAN active-probe
+    risk via the LANProbeConsentScreen modal.
+
+    Emitted exactly once per consent press; never emitted for the
+    scene-default active-probe path (home / office / audit) or for
+    the env-forced path (``DITING_LAN_PROBE=1``). The event marks
+    the moment of consent so post-hoc JSONL replay can distinguish
+    "user accepted the risk here" from background probe activity.
+    """
+
+    timestamp: datetime
+    scene: str  # Always "public" in v1; field reserved for future scenes.
+    ssid: str | None  # Connected SSID at consent time; None if disassociated.
+    # Counts of UDP packets the upcoming sweep WILL send. nbns_packets
+    # is per-host (the count of silent hosts the probe will query);
+    # ssdp_packets + mdns_packets are fixed at 1 each (one multicast).
+    nbns_packets: int
+    ssdp_packets: int
+    mdns_packets: int
+
+
 # Union of every event the ring buffer accepts. ``RoamEvent`` is
 # imported from poller so we don't redefine it.
 Event = (
