@@ -10,6 +10,92 @@
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-05-23
+
+Minor release。**LAN 识别能力扩展** —— LAN 视图现在能识别国内
+家庭 / 办公网里更多种类的设备。在原有的 ARP + ICMP + OUI +
+Bonjour 栈之上叠加了四层新识别源：多层级 IEEE OUI 注册表查询、
+NBNS / SSDP / 主动 mDNS 探测、ICMP TTL 指纹，以及一张规则表
+驱动的设备分类器。探测层按 scene 门控 —— `home` / `office` /
+`audit` 默认主动，`public` 默认 passive，但通过新加的大写 `P`
+键提供"用户自担"的单次确认开关（含 2 秒冷却 + JSONL 审计事件）。
+
+LAN 行的列布局参考 Fing Desktop 重新组织：class 列移到最左侧
+（在扫描列表时，分类比厂商更有信息量），首次出现时间 < 24 小时
+的行前面带 `[新]` chip，陌生设备一眼能挑出来。
+
+### 新增
+- **多层级 IEEE OUI 注册表。** 三个 bundled JSON 文件
+  （`wifi_ouis.json` MA-L，`wifi_ouis_ma_m.json` MA-M，
+  `wifi_ouis_ma_s.json` MA-S）—— 一共 57 211 条厂商映射。查询
+  函数按 36 位 → 28 位 → 24 位走，最长前缀胜出。CN 小白牌
+  IoT 厂商（Tuya / Aqara / Tapo / Imou）只在 MA-S 注册过子段，
+  这下能解析到真实品牌了。`scripts/refresh_ouis.py` 新增
+  `--source ieee|wireshark|auto` —— IEEE 直连失败时自动 fallback
+  到 Wireshark `manuf` 镜像（CN 网络友好默认行为）。
+- **厂商名规范化。** 把 IEEE 原文剥掉公司形态尾缀
+  （`CO., LTD` / `CORPORATION` / `INC` / `TECHNOLOGIES`）和
+  开头的地理前缀（`SHENZHEN` / `HANGZHOU` / `BEIJING`），
+  titlecase 同时保留缩写（`HP` / `IBM` / `ASUS` / `H3C` /
+  `TP-Link`）。`NEW H3C TECHNOLOGIES CO., LTD` → `New H3C`。
+  详情模态里以 dim 续行保留 IEEE 原文以便核对。
+- **主动 LAN 探测层**（新模块 `src/diting/lan_probes.py`）：
+  NBNS Status Query（RFC 1002 通配符 `*`）、SSDP M-SEARCH、
+  主动 mDNS browse 查询 `_services._dns-sd._meta._tcp.local.`
+  记录，可选地 HTTP 拉取 UPnP `LOCATION` XML 提取
+  `friendlyName` + `modelName`。三个 phase 通过
+  `asyncio.gather` 并发，每个独立 fail-soft。零新第三方依赖
+  —— 全用 stdlib `socket` + `urllib` + `xml.etree`（已防外部
+  实体）。无新 TCC 权限。
+- **主动探测按 scene 门控。**
+  `scene_defaults()["lan_active_probe"]` 在 home / office /
+  audit 是 `True`，在 public 是 `False`。`DITING_LAN_PROBE=0|1`
+  覆盖；`DITING_LAN_UPNP_FETCH=0|1` 单独控制 LOCATION-XML
+  HTTP 拉取。
+- **Public scene 单次确认开关。** LAN 视图下大写 `P` 打开
+  `LANProbeConsentScreen`，明确列出会发什么包（NBNS UDP 137
+  unicast / SSDP UDP 1900 multicast / mDNS UDP 5353 multicast）
+  和后果（其他客人设备会收到、IDS 可能告警、captive portal
+  可能限速或踢出）。等 **2 秒冷却** 后按 `y` 运行**一次**
+  主动探测 sweep；冷却用来防误触。之后所有 sweep 都回到
+  passive；要再扫一次需要重新按 `P` 重新确认。
+- **`LANActiveProbeConsentedEvent` JSONL 事件。** 每次按下 `y`
+  确认时写一条，带 `scene` / `ssid` / 即将发送的包数。仅审计
+  用 —— scene 默认开或 env 强制开的探测不写。
+- **`[探测中]` subtitle chip。** 在 LAN 视图的 subtitle 里显示，
+  从用户确认开始到结果 snapshot 到达。
+- **TTL 指纹。** `_ping_one` 现在解析 ICMP 回包里的 `ttl=N`；
+  `LANHost.ttl` 保留原值，`LANHost.ttl_class` 是分桶（`unix`
+  = 50-64，`windows` = 100-128，`router` = 200-255，其他 None）。
+  详情模态的 Network 段显示 `TTL 64 (unix)`。零额外流量。
+- **设备分类器**（新模块 `src/diting/lan_classify.py`）。
+  一张规则表消费 vendor / Bonjour 类目 / NBNS / UPnP 字段 / TTL，
+  输出 11 类之一：`phone | laptop | desktop | tv | camera |
+  smart-home | printer | nas | gaming | speaker | router` 或
+  None。纯函数 —— 对任何字段组合都不抛。
+- **LAN 行布局：class 列 + `[new]` chip。** 按 Fing UX 实证，
+  class 列放到 vendor **左侧**（"New H3C" OUI 可以是路由器 /
+  AP / 交换机 / IoT 桥，class 比 vendor 区分得更快）。
+  `first_seen < 24h` 的行带 dim cyan 的 `[新]` chip；
+  self / gateway 永不带。
+- **详情模态：Class + TTL + Active discovery 段。**
+  Identity 段新增 `Class:` 行（分类器命中时）；新的
+  Active discovery 段汇总 NBNS 名 / UPnP server 头 / UPnP
+  friendlyName / UPnP modelName。Network 段新增
+  `TTL: <值> (<class>)`（TTL 已知时）。
+- **EN ↔ ZH i18n** 覆盖每个新字符串：11 个 class 名、2 个 TTL
+  class、`[新]` / `[探测中]` chip、整个确认模态的所有文案。
+
+### 文档
+- **`README.md` + `docs/zh/README.md`** 新增 `## LAN 识别能力`
+  章节，覆盖多层级 OUI、四层富集机制、scene 门控矩阵、Public
+  scene 的确认流程（含模态 ASCII mock）。
+
+### 规范
+- 一个 OpenSpec change `expand-lan-identification`（proposal +
+  design.md + tasks.md + 七个 spec delta：`lan-inventory`、
+  `scenes`、`events`、`event-log`、`tui-shell`、`i18n`、`cli`）。
+
 ## [1.6.0] — 2026-05-22
 
 Minor release。**场景感知** —— diting 现在明确知道「你身处什么

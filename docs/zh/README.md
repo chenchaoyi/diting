@@ -193,6 +193,87 @@ analyze` 按场景分组做跨会话聚合；`--for-llm` bundle 会把场景的
 `--ble-presence-gate D` 仍然可以覆盖场景默认的门控，给你单次
 会话的精细控制空间。
 
+## LAN 识别能力
+
+LAN 视图（第四次按 `n`）通过 ARP + ICMP 扫遍本地 /24 子网的每一
+台主机，再分层富集：
+
+- **多层级 OUI 查询** —— IEEE MA-L（24 位）→ MA-M（28 位）→
+  MA-S（36 位），最长前缀胜出。三个 JSON 一共带 ~5.7 万条厂商
+  映射，所以 Tuya / Aqara / Tapo / Imou 这类只在 MA-S 注册子段
+  的小白牌 IoT 厂商也能被命中。
+- **厂商名规范化** —— 把 IEEE 原文缩短为列宽内可读形式
+  （`NEW H3C TECHNOLOGIES CO., LTD` → `New H3C`，
+  `SHENZHEN BILIAN ELECTRONIC CO.,LTD` → `Bilian`）。原文在
+  详情模态里以 dim 续行展示，方便核对。
+- **反向 DNS + Bonjour 交叉引用** —— 路由器有 PTR 记录时走
+  `gethostbyaddr`；同时遍历当前的 Bonjour 状态，把对得上 IP
+  的 host 名 + service 类目带进来。
+- **主动探测** —— NBNS Status Query（UDP 137 unicast）、SSDP
+  M-SEARCH（UDP 1900 multicast）、以及一条 mDNS browse query
+  到 meta-service 记录。可选地再 HTTP 拉一下 UPnP LOCATION
+  XML，提取 `friendlyName` + `modelName`。这一层是给那些不发
+  Bonjour 也没有反向 DNS 的设备（多数 Windows 机器、摄像头、
+  智能电视、NAS）打开身份的关键。
+- **TTL 指纹** —— ICMP 回包本来就带 TTL，diting 把它分桶为
+  `unix`（50-64）/ `windows`（100-128）/ `router`（200-255），
+  在详情模态里渲染为 `TTL 64 (unix)`。
+- **设备分类** —— 一张规则表消费 vendor、Bonjour 类目、
+  NBNS / UPnP 字段、TTL，输出 11 类之一：`phone | laptop |
+  desktop | tv | camera | smart-home | printer | nas | gaming
+  | speaker | router`。在 LAN 行的最左侧数据列展示。
+
+首次出现时间在 24 小时以内的行，前面带 `[新]` chip，让陌生
+设备一眼能挑出来。
+
+### 主动探测按场景门控
+
+主动探测是 LAN 识别里**唯一向其他主机发包**的一环。为了保持
+礼貌，diting 按当前 scene 决定要不要默认开：
+
+| 场景     | NBNS + SSDP + mDNS-meta | 理由                                                                              |
+|----------|--------------------------|-----------------------------------------------------------------------------------|
+| `home`   | 默认开                   | 自己的网络，探测的是自己买的设备                                                    |
+| `office` | 默认开                   | 公司网络底噪里本来就有这些协议，多发不显眼                                          |
+| `audit`  | 默认开                   | 你正在主动排查，把能挖的都挖出来                                                    |
+| `public` | **默认关**               | 咖啡馆 / 酒店 / 机场 —— 不是你的网络，别人的设备没同意被你扫                       |
+
+两个 env 在启动时可以覆盖 scene 默认值：
+
+- `DITING_LAN_PROBE=0|1` —— 不管 scene 如何，强制把探测关掉 / 打开
+- `DITING_LAN_UPNP_FETCH=0|1` —— 控制 UPnP LOCATION URL 的可选
+  HTTP 拉取（`0` 时 M-SEARCH 仍然发，但跳过后续的 fetch）。默认开。
+
+### Public scene 的一次性确认
+
+在 `public` scene 下，LAN 视图的大写 **`P`** 键打开一个确认
+模态：
+
+```
+┌─ LAN 主动探测 ────────────────────────────────────────┐
+│  场景：public        网络：HotelGuest                 │
+│                                                       │
+│  主动探测会向当前网络中的**其他**设备发送 UDP 报文：  │
+│    · NBNS UDP 137 unicast                             │
+│    · SSDP M-SEARCH UDP 1900 multicast                 │
+│    · mDNS UDP 5353 multicast                          │
+│                                                       │
+│  在公共网络下你需要明确：                             │
+│    · 其他客人的设备会收到你的探测包                   │
+│    · 酒店 / 机场的 IDS 可能将其判定为扫描行为         │
+│    · 网关 captive portal 可能限速甚至踢出网络         │
+│                                                       │
+│  单次探测。下次再按需重新确认。                       │
+│                                                       │
+│  [ esc 取消 ]   [ 等待 2 秒 ]                         │
+└───────────────────────────────────────────────────────┘
+```
+
+等 2 秒冷却之后按 `y`（冷却用来防误触），运行**一次**主动探测
+sweep 并向 JSONL log 写入 `lan_active_probe_consented` 这一行。
+之后所有 sweep 都回到 passive；每次按 `P` 都会重新弹模态，没有
+sticky state。
+
 ## 名字由来
 
 **谛听** 是中国佛教传说中的一头神兽 —— 地藏王菩萨的坐骑。

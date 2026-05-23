@@ -2644,6 +2644,171 @@ def test_lan_detail_omits_ttl_row_when_ttl_none():
     assert "TTL" not in rendered
 
 
+# ---------- Phase 4: LAN row layout (class column + [new] chip) ----------
+
+
+def test_lan_row_includes_class_column_when_device_class_set():
+    from datetime import timedelta
+    from dataclasses import replace as _replace
+    from diting.tui import _lan_row_line
+    host = _lan_host(device_class="tv", vendor="Hisense", bonjour_services=())
+    # Push first_seen back 48 h so the [new] chip is NOT present —
+    # this test isolates the class column.
+    host = _replace(
+        host,
+        first_seen=host.first_seen - timedelta(hours=48),
+        last_seen=host.last_seen - timedelta(hours=48),
+    )
+    row = _lan_row_line(host, now=host.last_seen)
+    rendered = row.plain
+    assert "tv" in rendered
+    assert "Hisense" in rendered
+    # `tv` must appear BEFORE `Hisense` (class is leftmost data
+    # column per the Fing-inspired layout).
+    assert rendered.index("tv") < rendered.index("Hisense")
+
+
+def test_lan_row_class_column_blank_when_device_class_none():
+    from datetime import timedelta
+    from dataclasses import replace as _replace
+    from diting.tui import _lan_row_line, _COL_LAN_CLASS
+    host = _lan_host(device_class=None, vendor="Apple, Inc.", bonjour_services=())
+    host = _replace(
+        host,
+        first_seen=host.first_seen - timedelta(hours=48),
+        last_seen=host.last_seen - timedelta(hours=48),
+    )
+    row = _lan_row_line(host, now=host.last_seen)
+    rendered = row.plain
+    # No class label rendered, but column-width spacing is preserved.
+    # Length of the prefix slot + star + class column should be at
+    # least 7 + 2 + 8 = 17 cells.
+    # We assert via the vendor coming AFTER 17 cells of padding.
+    assert "Apple" in rendered
+    assert rendered.index("Apple") >= _COL_LAN_CLASS
+
+
+def test_lan_row_new_chip_present_when_first_seen_within_24h():
+    from datetime import timedelta
+    from dataclasses import replace as _replace
+    from diting.tui import _lan_row_line
+    host = _lan_host(vendor="Apple, Inc.", bonjour_services=())
+    # first_seen 2 h ago — within the 24 h window.
+    host = _replace(
+        host, first_seen=host.last_seen - timedelta(hours=2),
+    )
+    row = _lan_row_line(host, now=host.last_seen)
+    assert "[new]" in row.plain
+
+
+def test_lan_row_new_chip_absent_when_first_seen_outside_24h():
+    from datetime import timedelta
+    from dataclasses import replace as _replace
+    from diting.tui import _lan_row_line
+    host = _lan_host(vendor="Apple, Inc.", bonjour_services=())
+    host = _replace(
+        host, first_seen=host.last_seen - timedelta(hours=48),
+    )
+    row = _lan_row_line(host, now=host.last_seen)
+    assert "[new]" not in row.plain
+
+
+def test_lan_row_new_chip_absent_for_self():
+    from datetime import timedelta
+    from dataclasses import replace as _replace
+    from diting.tui import _lan_row_line
+    # Self is fresh-looking but conceptually never new — it
+    # represents the user's own machine.
+    host = _lan_host(is_self=True, vendor="Apple, Inc.", bonjour_services=())
+    host = _replace(
+        host, first_seen=host.last_seen - timedelta(minutes=5),
+    )
+    row = _lan_row_line(host, now=host.last_seen)
+    assert "[new]" not in row.plain
+
+
+def test_lan_row_new_chip_absent_for_gateway():
+    from datetime import timedelta
+    from dataclasses import replace as _replace
+    from diting.tui import _lan_row_line
+    host = _lan_host(is_gateway=True, vendor="New H3C", bonjour_services=())
+    host = _replace(
+        host, first_seen=host.last_seen - timedelta(minutes=5),
+    )
+    row = _lan_row_line(host, now=host.last_seen)
+    assert "[new]" not in row.plain
+
+
+def test_lan_header_line_includes_class_column_before_vendor():
+    from diting.tui import _lan_header_line
+    header = _lan_header_line().plain
+    assert "class" in header
+    assert "vendor" in header
+    assert header.index("class") < header.index("vendor")
+
+
+# ---------- Phase 4: LANProbeConsentScreen modal contents ----------
+
+
+def test_lan_probe_consent_modal_body_lists_packets_and_consequences():
+    from diting.tui import LANProbeConsentScreen
+    screen = LANProbeConsentScreen(scene="public", ssid="HotelGuest")
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "public" in rendered
+    assert "HotelGuest" in rendered
+    assert "NBNS" in rendered and "137" in rendered
+    assert "SSDP" in rendered and "1900" in rendered
+    assert "mDNS" in rendered and "5353" in rendered
+    # Consequences statement is present.
+    assert (
+        "guests' devices" in rendered
+        or "guests" in rendered
+        or "其他客人" in rendered  # ZH catalog
+    )
+
+
+def test_lan_probe_consent_modal_renders_disassociated_when_ssid_none():
+    from diting.tui import LANProbeConsentScreen
+    screen = LANProbeConsentScreen(scene="public", ssid=None)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert (
+        "(disassociated)" in rendered or "（未连接 Wi-Fi）" in rendered
+    )
+
+
+def test_lan_probe_consent_modal_footer_shows_wait_during_cooldown():
+    """Right after instantiation, before on_mount fires, the
+    cooldown is not yet elapsed. `_render_footer` returns the
+    `wait 2s` form."""
+    from diting.tui import LANProbeConsentScreen
+    screen = LANProbeConsentScreen(scene="public", ssid="x")
+    # _opened_at is None until on_mount — _cooldown_elapsed() returns
+    # False so the footer renders the wait form.
+    footer = screen._render_footer().plain
+    assert (
+        "wait 2s" in footer or "等待 2 秒" in footer
+    )
+
+
+def test_lan_probe_consent_action_confirm_is_silent_during_cooldown():
+    """During the cooldown, `action_confirm` must be a pure no-op —
+    no exception, no event logged, modal stays open."""
+    from diting.tui import LANProbeConsentScreen
+    screen = LANProbeConsentScreen(scene="public", ssid="x")
+    # _opened_at is None → cooldown not elapsed.
+    assert screen._cooldown_elapsed() is False
+    # The action must not raise and must not invoke any app-side
+    # callback. We assert by checking the screen has no app yet —
+    # any attempt to call self.app.pop_screen would AttributeError.
+    screen.action_confirm()  # silent no-op
+
+
 def test_lan_detail_modal_renders_latency_row_when_rtt_known():
     """`Latency  2.4 ms` row appears in the Network section when
     last_rtt_ms is known."""

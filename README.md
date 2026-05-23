@@ -209,6 +209,97 @@ reads office-mode noise as "expected baseline" rather than
 `--ble-presence-gate D` continues to override the scene's gate
 when you want fine control for one session.
 
+## LAN identification
+
+The LAN view (fourth `n` press) discovers every host on the local
+/24 via ARP + ICMP sweep, then enriches each row through a layered
+identification stack:
+
+- **Multi-tier OUI lookup** — IEEE MA-L (24-bit) → MA-M (28-bit) →
+  MA-S (36-bit), longest prefix wins. The bundled JSONs together
+  carry ~57k vendor mappings, so small white-label IoT vendors
+  (Tuya / Aqara / Tapo / Imou …) that only registered MA-S
+  sub-allocations still resolve to a real name.
+- **Vendor normalization** — the raw IEEE string is shortened for
+  display (`NEW H3C TECHNOLOGIES CO., LTD` → `New H3C`,
+  `SHENZHEN BILIAN ELECTRONIC CO.,LTD` → `Bilian`). The original
+  text is preserved on a dim continuation line in the detail modal.
+- **Reverse DNS + Bonjour cross-reference** — `gethostbyaddr`
+  hostname when the router publishes PTR records, plus a sweep of
+  the live Bonjour state for any device matching this IP.
+- **Active discovery** — NBNS Status Query (UDP 137 unicast),
+  SSDP M-SEARCH (UDP 1900 multicast), and an mDNS browse query
+  for the meta-service record. Optionally fetches the UPnP
+  LOCATION XML for `friendlyName` + `modelName`. Layered on top
+  so a host that publishes neither Bonjour nor reverse DNS — most
+  Windows machines, IP cameras, smart TVs, NAS — still becomes
+  identifiable.
+- **TTL fingerprint** — the ICMP echo already returns a TTL value;
+  diting buckets it into `unix` (50-64), `windows` (100-128), or
+  `router` (200-255). Surfaces in the detail modal as e.g.
+  `TTL 64 (unix)`.
+- **Device class** — a rules-table classifier consumes vendor,
+  Bonjour categories, NBNS / UPnP fields, and TTL to assign one
+  of: `phone | laptop | desktop | tv | camera | smart-home |
+  printer | nas | gaming | speaker | router`. Rendered as the
+  leftmost data column on each row.
+
+Rows whose `first_seen < 24 h` are prefixed with a `[new]` chip
+so unfamiliar devices stand out at a glance.
+
+### Active probing is scene-aware
+
+The active-discovery layer is the one piece of LAN identification
+that **sends packets to other hosts**. To stay polite about that,
+diting gates the layer through the active scene:
+
+| Scene    | NBNS + SSDP + mDNS-meta | Why                                                                                  |
+|----------|--------------------------|--------------------------------------------------------------------------------------|
+| `home`   | on by default            | Your own network. Probes go to devices you bought.                                   |
+| `office` | on by default            | Corp networks already see this traffic from every other device.                      |
+| `audit`  | on by default            | You're actively investigating; probe everything.                                     |
+| `public` | **off by default**       | Coffee shops / hotels / airports — you don't own the network, other guests do.       |
+
+Two env vars override the scene default at startup:
+
+- `DITING_LAN_PROBE=0|1` — force probing off / on regardless of
+  scene.
+- `DITING_LAN_UPNP_FETCH=0|1` — gate the optional HTTP fetch of
+  UPnP LOCATION URLs (set to `0` to keep M-SEARCH on but skip the
+  follow-up fetch). Default on.
+
+### Public-scene one-shot consent
+
+In `public` scene the LAN view binds uppercase **`P`** to a
+consent modal:
+
+```
+┌─ Active LAN probing ──────────────────────────────────┐
+│  Scene: public        Network: HotelGuest             │
+│                                                       │
+│  Active probing sends UDP packets to OTHER hosts on   │
+│  this network:                                        │
+│    · NBNS UDP 137 unicast                             │
+│    · SSDP M-SEARCH UDP 1900 multicast                 │
+│    · mDNS UDP 5353 multicast                          │
+│                                                       │
+│  On a public network you accept that:                 │
+│    · other guests' devices receive your probes        │
+│    · hotel / airport IDS may flag this as scanning    │
+│    · captive portals may rate-limit or disconnect     │
+│                                                       │
+│  One-shot probe. Re-confirm next time.                │
+│                                                       │
+│  [ esc cancel ]   [ wait 2s ]                         │
+└───────────────────────────────────────────────────────┘
+```
+
+Press `y` after a 2-second cooldown (defeats muscle-memory
+press-through) to run **one** active-probe sweep and write a
+`lan_active_probe_consented` line to your JSONL log. Subsequent
+sweeps revert to passive — every press of `P` re-opens the
+modal, no sticky state.
+
 ## The name
 
 **diting (谛听)** is a mythical beast in Chinese Buddhist lore —

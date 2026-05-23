@@ -16,6 +16,7 @@ from diting.events import (
     BLEDeviceSeenEvent,
     BonjourServiceLeftEvent,
     BonjourServiceSeenEvent,
+    LANActiveProbeConsentedEvent,
     LANHostDHCPRotationEvent,
     LANHostLeftEvent,
     LANHostSeenEvent,
@@ -373,4 +374,77 @@ def test_disabled_logger_swallows_all_seven_new_methods():
         timestamp=_T, mac="aa:bb:cc:dd:ee:ff",
         previous_ip="0.0.0.0", new_ip="0.0.0.1",
         vendor=None, hostname=None, bonjour_name=None,
+    ))
+
+
+# ---------- LANActiveProbeConsentedEvent ----------
+
+
+def test_lan_active_probe_consented_dataclass_carries_required_fields():
+    ev = LANActiveProbeConsentedEvent(
+        timestamp=_T,
+        scene="public",
+        ssid="HotelGuest",
+        nbns_packets=8,
+        ssdp_packets=1,
+        mdns_packets=1,
+    )
+    assert ev.scene == "public"
+    assert ev.ssid == "HotelGuest"
+    assert ev.nbns_packets == 8
+    assert ev.ssdp_packets == 1
+    assert ev.mdns_packets == 1
+
+
+def test_lan_active_probe_consented_logger_writes_jsonl(tmp_path):
+    path = tmp_path / "consent.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_lan_active_probe_consented(LANActiveProbeConsentedEvent(
+        timestamp=_T,
+        scene="public",
+        ssid="HotelGuest",
+        nbns_packets=8,
+        ssdp_packets=1,
+        mdns_packets=1,
+    ))
+    logger.close()
+    [row] = _read_jsonl(path)
+    assert row["type"] == "lan_active_probe_consented"
+    assert row["scene"] == "public"
+    assert row["ssid"] == "HotelGuest"
+    assert row["nbns_packets"] == 8
+    assert row["ssdp_packets"] == 1
+    assert row["mdns_packets"] == 1
+
+
+def test_lan_active_probe_consented_omits_ssid_when_none(tmp_path):
+    path = tmp_path / "consent.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_lan_active_probe_consented(LANActiveProbeConsentedEvent(
+        timestamp=_T,
+        scene="public",
+        ssid=None,
+        nbns_packets=0,
+        ssdp_packets=1,
+        mdns_packets=1,
+    ))
+    logger.close()
+    [row] = _read_jsonl(path)
+    assert "ssid" not in row
+    assert row["scene"] == "public"
+    assert row["nbns_packets"] == 0
+
+
+def test_lan_active_probe_consented_logger_with_none_path_is_noop():
+    """Constructed with path=None, every emit_* must be a silent
+    no-op. The TUI uses this shape when --log is absent."""
+    logger = EventLogger(None)
+    # Must NOT raise.
+    logger.emit_lan_active_probe_consented(LANActiveProbeConsentedEvent(
+        timestamp=_T,
+        scene="public",
+        ssid="x",
+        nbns_packets=1,
+        ssdp_packets=1,
+        mdns_packets=1,
     ))

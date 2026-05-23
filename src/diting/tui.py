@@ -603,6 +603,12 @@ def _help_content() -> tuple[Text, Text]:
     # (priority + show=False).
     line("↑/↓", t("list cursor — move selection up / down (Wi-Fi / BLE / Bonjour / LAN)"))
     line("enter / i", t("inspect the selected row (open detail modal)"))
+    # Uppercase P — public-scene one-shot consent. Hidden from the
+    # footer but listed here so users can find it.
+    line("P", t(
+        "LAN view, public scene only: open consent modal for a "
+        "one-shot active probe (NBNS / SSDP / mDNS) — see below"
+    ))
 
     section(t("Events modal (m)"))
     body.append(t(
@@ -625,6 +631,25 @@ def _help_content() -> tuple[Text, Text]:
         "  Apple Continuity protocol parsing for AirDrop / AirPods /\n"
         "  Watch pairing / Hotspot etc. RSSI is EMA-smoothed for the\n"
         "  sort key so the row order stops jiggling on packet jitter.\n"
+    ))
+
+    section(t("LAN view"))
+    body.append(t(
+        "  Toggle with n (fourth in the cycle). ARP + ICMP sweep of the\n"
+        "  local /24, enriched with: multi-tier OUI lookup (MA-L / MA-M /\n"
+        "  MA-S, longest-prefix wins), reverse DNS, Bonjour cross-ref,\n"
+        "  NBNS Status Query, SSDP M-SEARCH, UPnP friendlyName + modelName,\n"
+        "  active mDNS browse, ICMP TTL fingerprint. Each row carries a\n"
+        "  one-word class (phone / laptop / tv / camera / smart-home /\n"
+        "  printer / nas / gaming / speaker / router); `[new]` chip flags\n"
+        "  hosts first seen within the last 24 h.\n\n"
+        "  Active discovery (NBNS / SSDP / mDNS-meta) is scene-gated:\n"
+        "  home / office / audit default on, public defaults off. The\n"
+        "  env var DITING_LAN_PROBE=0|1 overrides; DITING_LAN_UPNP_FETCH=0\n"
+        "  keeps M-SEARCH on but skips the HTTP fetch of LOCATION XML.\n"
+        "  On public Wi-Fi, uppercase P opens a consent modal — confirm\n"
+        "  with y after a 2-second cooldown to run ONE active-probe sweep\n"
+        "  and write a lan_active_probe_consented JSONL event.\n"
     ))
 
     section(t("AP aliases (optional)"))
@@ -1691,10 +1716,14 @@ class BonjourPanel(VerticalScroll):
 
 # ---------- LAN-inventory column widths ----------
 
-# Vendor / name / IP / MAC / age column widths. Keep these snug
-# enough that a 100-col terminal fits a row without wrapping, but
-# wide enough for typical content (Apple, Inc., 192.168.255.255,
-# 84:2f:57:9b:15:59).
+# Per Phase 4 design (D13 in expand-lan-identification): class column
+# moves to the leftmost data position, following the Fing UX
+# convention that Type is the column users scan first. The chip slot
+# (always emitted, padded when no chip applies) gives `[new]` rows
+# the same indent as old rows so the columns stay aligned.
+_COL_LAN_CHIP = 7   # "[new]  " or 7 spaces; ZH is 5 cells, padded.
+_COL_LAN_STAR = 2   # "★ " for self/gateway, "  " otherwise.
+_COL_LAN_CLASS = 8
 _COL_LAN_VENDOR = 18
 _COL_LAN_NAME = 22
 _COL_LAN_IP = 15
@@ -1702,10 +1731,20 @@ _COL_LAN_MAC = 18
 _COL_LAN_AGE = 9
 
 
+_NEW_CHIP_WINDOW_S = 24 * 60 * 60  # rows with first_seen < this get [new]
+
+
 def _lan_header_line() -> Text:
-    """Column-header row for the LAN panel."""
+    """Column-header row for the LAN panel.
+
+    Class column header is positioned to the left of vendor per the
+    Fing-inspired layout. The chip + star slots are blank cells in
+    the header so the data rows line up underneath.
+    """
     line = Text()
-    line.append("  ")
+    line.append(pad_cells("", _COL_LAN_CHIP))
+    line.append(pad_cells("", _COL_LAN_STAR))
+    line.append(pad_cells(t("class"), _COL_LAN_CLASS) + "  ", style="bold dim")
     line.append(pad_cells(t("vendor"), _COL_LAN_VENDOR) + "  ", style="bold dim")
     line.append(pad_cells(t("name"), _COL_LAN_NAME) + "  ", style="bold dim")
     line.append(pad_cells(t("IP"), _COL_LAN_IP) + "  ", style="bold dim")
@@ -1723,7 +1762,12 @@ def _lan_age_text(host, now: datetime) -> str:
 
 
 def _lan_row_line(host, now: datetime) -> Text:
-    """Render one LANHost as a single-line row."""
+    """Render one LANHost as a single-line row.
+
+    Layout: ``[new]  ★  class  vendor  name  IP  MAC  last_seen``.
+    Each fixed-width slot is padded to its column width so rows
+    line up regardless of chip / star presence.
+    """
     if host.is_randomised_mac:
         vendor_cell = t("(random MAC)")
         vendor_style = "dim italic"
@@ -1755,8 +1799,35 @@ def _lan_row_line(host, now: datetime) -> Text:
         name_style = "dim"
         star = "  "
 
+    # Chip slot. `[new]` rows highlight in dim cyan so the eye picks
+    # them up while scanning the panel. Self / gateway are never
+    # "new" — they exist before this session.
+    is_new = (
+        not host.is_self
+        and not host.is_gateway
+        and (now - host.first_seen).total_seconds() < _NEW_CHIP_WINDOW_S
+    )
+    if is_new:
+        chip_text = t("[new]")
+    else:
+        chip_text = ""
+
+    # Class slot. Empty padding when the classifier didn't fire. The
+    # class string itself routes through t() so the ZH catalog
+    # translates `tv` → `电视` etc.
+    klass = getattr(host, "device_class", None)
+    class_cell = t(klass) if klass else ""
+
     line = Text()
+    line.append(
+        pad_cells(chip_text, _COL_LAN_CHIP),
+        style="dim cyan" if is_new else "dim",
+    )
     line.append(star, style="yellow")
+    line.append(
+        pad_cells(class_cell, _COL_LAN_CLASS) + "  ",
+        style="cyan" if klass else "dim",
+    )
     line.append(
         fit_cells(vendor_cell, _COL_LAN_VENDOR) + "  ",
         style=vendor_style,
@@ -5503,6 +5574,167 @@ class LANDetailScreen(ModalScreen):
         return Group(*rows)
 
 
+_PROBE_CONSENT_COOLDOWN_S = 2.0
+
+
+class LANProbeConsentScreen(ModalScreen):
+    """Public-scene one-shot consent modal for active LAN probing.
+
+    Opened by uppercase ``P`` when active scene is ``public`` and
+    ``DITING_LAN_PROBE`` is unset (i.e. probing is currently off).
+    Enumerates the packets that will be sent and the consequences;
+    confirms via ``y`` after a 2-second cooldown that defeats
+    muscle-memory press-through.
+
+    On confirm:
+
+    1. Append a ``LANActiveProbeConsentedEvent`` to the JSONL log.
+    2. Set the poller's ``_one_shot_probe_armed = True`` flag.
+    3. Call ``poller.force_now()`` to trigger an immediate sweep.
+    4. Close the modal.
+
+    See `openspec/changes/expand-lan-identification/design.md` D3 /
+    D12 for the design rationale, and the spec delta under
+    `specs/lan-inventory/spec.md` for the requirement text.
+    """
+
+    BINDINGS = [
+        Binding("escape", "app.pop_screen", "Cancel"),
+        Binding("q", "app.pop_screen", "Cancel"),
+        Binding("y", "confirm", "Confirm"),
+    ]
+
+    DEFAULT_CSS = """
+    LANProbeConsentScreen {
+        align: center middle;
+    }
+    LANProbeConsentScreen > #lan-probe-box {
+        width: 78;
+        height: auto;
+        max-height: 80%;
+        border: heavy $warning;
+        padding: 1 2;
+        background: $surface;
+    }
+    LANProbeConsentScreen #lan-probe-body {
+        height: auto;
+    }
+    LANProbeConsentScreen #lan-probe-footer {
+        height: 1;
+    }
+    """
+
+    def __init__(self, *, scene: str, ssid: str | None) -> None:
+        super().__init__()
+        self._scene = scene
+        self._ssid = ssid
+        self._opened_at: float | None = None
+        # Wall-clock used for the cooldown; set in on_mount. We use
+        # the asyncio loop time so the cooldown reflects time since
+        # the modal mounted, not since this object was instantiated.
+
+    def compose(self) -> ComposeResult:
+        body = Static(self._render_body(), id="lan-probe-body")
+        footer = Static(self._render_footer(), id="lan-probe-footer")
+        yield Vertical(body, footer, id="lan-probe-box")
+
+    def on_mount(self) -> None:
+        import asyncio as _asyncio
+        try:
+            self._opened_at = _asyncio.get_event_loop().time()
+        except RuntimeError:
+            self._opened_at = 0.0
+        self.query_one("#lan-probe-box").border_title = t("Active LAN probing")
+        # Refresh the footer once the cooldown elapses so the user
+        # sees the affordance flip from "wait 2s" to "y probe now".
+        self.set_timer(
+            _PROBE_CONSENT_COOLDOWN_S, self._refresh_footer,
+        )
+
+    def _refresh_footer(self) -> None:
+        try:
+            footer = self.query_one("#lan-probe-footer", Static)
+        except Exception:
+            return
+        footer.update(self._render_footer())
+
+    def _render_body(self) -> Group:
+        ssid_display = self._ssid if self._ssid else t("(disassociated)")
+        rows: list[Text] = []
+        rows.append(_kv_line(t("Scene:"), self._scene))
+        rows.append(_kv_line(t("Network:"), ssid_display))
+        rows.append(Text(""))
+        rows.append(Text(
+            t("Active probing sends UDP packets to OTHER hosts on this network:"),
+            style="white",
+        ))
+        rows.append(Text("  · NBNS UDP 137 unicast", style="dim"))
+        rows.append(Text("  · SSDP M-SEARCH UDP 1900 multicast", style="dim"))
+        rows.append(Text("  · mDNS UDP 5353 multicast", style="dim"))
+        rows.append(Text(""))
+        rows.append(Text(
+            t("On a public network you accept that:"),
+            style="bold yellow",
+        ))
+        rows.append(Text(
+            "  · " + t("other guests' devices receive your probes"),
+            style="yellow",
+        ))
+        rows.append(Text(
+            "  · " + t("hotel / airport IDS may flag this as scanning"),
+            style="yellow",
+        ))
+        rows.append(Text(
+            "  · " + t("captive portals may rate-limit or disconnect"),
+            style="yellow",
+        ))
+        rows.append(Text(""))
+        rows.append(Text(
+            t("One-shot probe. Re-confirm next time."),
+            style="dim italic",
+        ))
+        return Group(*rows)
+
+    def _cooldown_elapsed(self) -> bool:
+        if self._opened_at is None:
+            return False
+        try:
+            import asyncio as _asyncio
+            now = _asyncio.get_event_loop().time()
+        except RuntimeError:
+            return True
+        return (now - self._opened_at) >= _PROBE_CONSENT_COOLDOWN_S
+
+    def _render_footer(self) -> Text:
+        line = Text()
+        line.append("[ " + t("esc cancel") + " ]", style="reverse dim")
+        line.append("   ")
+        if self._cooldown_elapsed():
+            line.append(
+                "[ " + t("y probe now") + " ]", style="reverse bold",
+            )
+        else:
+            line.append("[ " + t("wait 2s") + " ]", style="dim")
+        return line
+
+    def action_confirm(self) -> None:
+        """y-key handler. Silent no-op when the 2 s cooldown hasn't
+        elapsed (defeats muscle-memory press-through)."""
+        if not self._cooldown_elapsed():
+            return
+        # Hand off to the App to actually fire the probe + log the
+        # consent event. Keeps state mutation off the modal class.
+        callback = getattr(self.app, "_consent_one_shot_lan_probe", None)
+        if callable(callback):
+            try:
+                callback(scene=self._scene, ssid=self._ssid)
+            except Exception:
+                # The hand-off must not raise out of a key handler —
+                # the modal still closes either way.
+                pass
+        self.app.pop_screen()
+
+
 def _format_reachable(
     last_reachable_at: datetime | None,
     now: datetime,
@@ -5682,6 +5914,11 @@ class DitingApp(App):
         Binding("up", "select_prev", show=False, priority=True),
         Binding("down", "select_next", show=False, priority=True),
         Binding("enter,i", "inspect_selected", show=False, priority=True),
+        # Uppercase P — public-scene one-shot LAN active-probe consent.
+        # Hidden from the footer; only active when on the LAN view
+        # AND scene is public AND DITING_LAN_PROBE is unset. All
+        # three gates are enforced in action_open_lan_probe_consent.
+        Binding("P", "open_lan_probe_consent", show=False),
     ]
 
     def __init__(
@@ -6537,6 +6774,12 @@ class DitingApp(App):
                     # Modal-sync so the open detail tracks the latest
                     # snapshot (preserves selection across re-sort).
                     self._sync_open_detail_modal()
+                    # Refresh subtitle so the [probing] chip drops off
+                    # after the consented one-shot sweep completes.
+                    # The poller clears _one_shot_probe_armed inside
+                    # _do_sweep_and_emit before yielding; by the time
+                    # we land here the flag is False.
+                    self.sub_title = self._build_subtitle()
         except (asyncio.CancelledError, GeneratorExit):
             raise
         except Exception:
@@ -7183,6 +7426,78 @@ class DitingApp(App):
         self._refresh_lan_panel()
         self.push_screen(LANDetailScreen(host=host))
 
+    def action_open_lan_probe_consent(self) -> None:
+        """Open the public-scene one-shot LAN probe consent modal.
+
+        Three gates: we must be on the LAN view, the scene must be
+        ``public``, and probing must currently be off (i.e. the
+        scene default isn't overridden by ``DITING_LAN_PROBE=1``).
+        Outside any of those, the key is a no-op — keeps muscle
+        memory from accidentally bringing up the dialog where it
+        wouldn't change anything.
+        """
+        if self._view_mode != "lan":
+            return
+        if self._scene != "public":
+            return
+        if self._lan_active_probe:
+            # Active-probe is already on (scene default OR env
+            # override); the modal would just be busy-work.
+            return
+        ssid = None
+        conn = getattr(self, "_latest_connection", None)
+        if conn is not None:
+            ssid = getattr(conn, "ssid", None)
+        self.push_screen(
+            LANProbeConsentScreen(scene=self._scene, ssid=ssid),
+        )
+
+    def _consent_one_shot_lan_probe(
+        self, *, scene: str, ssid: str | None,
+    ) -> None:
+        """Hand-off from ``LANProbeConsentScreen.action_confirm``.
+
+        Logs the consent JSONL event, arms the poller's one-shot
+        flag, and kicks an immediate sweep. The modal closes
+        itself.
+        """
+        from .events import LANActiveProbeConsentedEvent
+        poller = self._lan_inventory_poller
+        # Estimate the packets this consented sweep will send. NBNS
+        # targets are silent hosts; SSDP + mDNS are 1 multicast each.
+        nbns_targets = 0
+        if poller is not None:
+            for host in poller._state.values():
+                if host.is_self:
+                    continue
+                if host.bonjour_name or host.hostname:
+                    continue
+                nbns_targets += 1
+        # Emit the audit event regardless of whether the poller
+        # exists — consent was given; the user's decision belongs
+        # in the log even if the probe couldn't run.
+        try:
+            self._event_logger.emit_lan_active_probe_consented(
+                LANActiveProbeConsentedEvent(
+                    timestamp=datetime.now(timezone.utc),
+                    scene=scene,
+                    ssid=ssid,
+                    nbns_packets=nbns_targets,
+                    ssdp_packets=1,
+                    mdns_packets=1,
+                )
+            )
+        except Exception:
+            # Logging failure must not block the probe arming.
+            pass
+        if poller is not None:
+            poller._one_shot_probe_armed = True
+            poller.force_now()
+            # Bump the subtitle so the user sees the `[probing]`
+            # chip immediately.
+            if self._view_mode == "lan":
+                self.sub_title = self._build_subtitle()
+
     def _sync_open_detail_modal(self) -> None:
         """If a detail modal is currently on the screen stack, ask it
         to re-render against the App's latest selection. Walks the
@@ -7341,6 +7656,11 @@ class DitingApp(App):
             sweep_s = int(getattr(self._lan_inventory_poller, "_sweep_interval_s", 0))
             if sweep_s:
                 bits.append(t("sweep {n}s", n=sweep_s))
+            # [probing] chip while a consented one-shot active-probe
+            # sweep is queued or in flight. Cleared by the consumer
+            # task after the resulting LANInventoryUpdate lands.
+            if getattr(self._lan_inventory_poller, "_one_shot_probe_armed", False):
+                bits.append(t("[probing]"))
         # Scene chip — the localised name of the active scene
         # (`home` / `office` / `public` / `audit` in EN; `家` /
         # `公司` / `公共` / `排查` in ZH). Brackets are part of the
