@@ -5425,6 +5425,12 @@ class LANDetailScreen(ModalScreen):
         rows.append(Text(t("Identity"), style="bold"))
         rows.append(_kv_line(t("Name"),
             h.bonjour_name or h.hostname or t("—")))
+        # Class row appears only when the classifier resolved something.
+        # The class string itself is i18n-passed at render time so the
+        # ZH catalog can translate `tv` → `电视` etc.
+        device_class = getattr(h, "device_class", None)
+        if device_class:
+            rows.append(_kv_line(t("Class"), t(device_class)))
         if h.vendor:
             rows.append(_kv_line(t("Vendor"), h.vendor))
             # When normalization changed the IEEE registry name (most
@@ -5458,6 +5464,13 @@ class LANDetailScreen(ModalScreen):
             rows.append(_kv_line(
                 t("Latency"), f"{h.last_rtt_ms:.1f} ms",
             ))
+        ttl_val = getattr(h, "ttl", None)
+        if ttl_val is not None:
+            ttl_klass = getattr(h, "ttl_class", None)
+            ttl_text = (
+                f"{ttl_val} ({t(ttl_klass)})" if ttl_klass else str(ttl_val)
+            )
+            rows.append(_kv_line(t("TTL"), ttl_text))
         rows.append(_kv_line(
             t("Reachable"),
             _format_reachable(h.last_reachable_at, now),

@@ -210,12 +210,33 @@ _ZH: dict[str, str] = {
     "Role": "角色",
     "Reverse DNS": "反向 DNS",
     "Latency": "延迟",
+    "TTL": "TTL",
     "Reachable": "可达",
     "this sweep": "此次扫描",
     "never": "从未",
     "(no Bonjour services)": "（无 Bonjour 服务）",
     "First seen": "首次出现",
     "Last seen": "上次出现",
+    # LAN device-class values. Surfaced in the Class row of the
+    # detail modal and, in Phase 4, the new Class column on the LAN
+    # row. Translated only at render time via t() so the JSONL
+    # event log carries the EN tokens.
+    "Class": "分类",
+    "phone": "手机",
+    "laptop": "笔记本",
+    "desktop": "台式机",
+    "tv": "电视",
+    "camera": "摄像头",
+    "smart-home": "智能家居",
+    "printer": "打印机",
+    "nas": "NAS",
+    "gaming": "游戏机",
+    "speaker": "音箱",
+    "router": "路由器",
+    # TTL fingerprint class names — surfaced parenthesised in the
+    # TTL row, e.g. `TTL 64 (unix)`.
+    "unix": "Unix 族",
+    "windows": "Windows",
     "Esc / i to close": "Esc / i 关闭",
     " ago": "前",
     "now": "刚刚",

@@ -224,9 +224,10 @@ def test_ping_one_returns_rtt_on_zero_exit(monkeypatch):
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
         return await _ping_one("192.168.1.1")
 
-    reachable, rtt = asyncio.run(_go())
+    reachable, rtt, ttl = asyncio.run(_go())
     assert reachable is True
     assert rtt == pytest.approx(2.439, abs=0.001)
+    assert ttl == 64
 
 
 def test_ping_one_returns_none_rtt_on_nonzero_exit(monkeypatch):
@@ -237,19 +238,19 @@ def test_ping_one_returns_none_rtt_on_nonzero_exit(monkeypatch):
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
         return await _ping_one("192.168.1.1")
 
-    assert asyncio.run(_go()) == (False, None)
+    assert asyncio.run(_go()) == (False, None, None)
 
 
 def test_ping_one_returns_true_none_when_stdout_unparseable(monkeypatch):
     async def _go():
         async def _fake_exec(*_args, **_kwargs):
-            # Exit 0 but stdout has no "time=X ms" segment.
+            # Exit 0 but stdout has no "time=X ms" or "ttl=N" segment.
             return _fake_ping_proc(0, b"weird-build-output-without-rtt")
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
         return await _ping_one("192.168.1.1")
 
-    assert asyncio.run(_go()) == (True, None)
+    assert asyncio.run(_go()) == (True, None, None)
 
 
 def test_ping_one_returns_false_none_on_oserror(monkeypatch):
@@ -260,7 +261,7 @@ def test_ping_one_returns_false_none_on_oserror(monkeypatch):
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
         return await _ping_one("192.168.1.1")
 
-    assert asyncio.run(_go()) == (False, None)
+    assert asyncio.run(_go()) == (False, None, None)
 
 
 # ---------- _sweep ----------
@@ -446,9 +447,9 @@ async def _stub_sweep(hosts, **_kwargs):
 
 
 def test_sweep_returns_per_ip_results_dict(monkeypatch):
-    """`_sweep` must return ``{ip: (reachable, rtt_ms)}`` not None.
-    The merge step reads this dict to populate `last_rtt_ms` /
-    `last_reachable_at` on each LANHost."""
+    """`_sweep` must return ``{ip: (reachable, rtt_ms, ttl)}`` not
+    None. The merge step reads this dict to populate `last_rtt_ms`,
+    `last_reachable_at`, and the new `ttl` field on each LANHost."""
     from diting.lan import _sweep
 
     async def _go():
@@ -466,9 +467,10 @@ def test_sweep_returns_per_ip_results_dict(monkeypatch):
     assert isinstance(result, dict)
     assert "192.168.1.1" in result
     assert "192.168.1.2" in result
-    reachable, rtt = result["192.168.1.1"]
+    reachable, rtt, ttl = result["192.168.1.1"]
     assert reachable is True
     assert rtt == pytest.approx(2.0, abs=0.001)
+    assert ttl == 64
 
 
 def test_lan_host_last_rtt_ms_populated_from_sweep(monkeypatch):
@@ -905,6 +907,230 @@ def test_vendor_raw_none_when_oui_misses(monkeypatch):
     assert host.vendor is None
     assert host.vendor_raw is None
     assert host.is_randomised_mac is False
+
+
+# ---------- TTL bucket + ttl_class helper (Phase 3) ----------
+
+
+def test_unpack_sweep_entry_handles_three_tuple():
+    from diting.lan import _unpack_sweep_entry
+    assert _unpack_sweep_entry((True, 2.4, 64)) == (True, 2.4, 64)
+
+
+def test_unpack_sweep_entry_handles_legacy_two_tuple():
+    from diting.lan import _unpack_sweep_entry
+    # Existing fixtures that pre-date Phase 3 still pass 2-tuples.
+    # The unpacker must yield None for the TTL slot so the caller
+    # can compose without branching.
+    assert _unpack_sweep_entry((True, 2.4)) == (True, 2.4, None)
+
+
+def test_unpack_sweep_entry_handles_none():
+    from diting.lan import _unpack_sweep_entry
+    assert _unpack_sweep_entry(None) == (False, None, None)
+
+
+def test_ttl_class_unix_band():
+    from diting.lan import ttl_class_for
+    assert ttl_class_for(64) == "unix"
+    assert ttl_class_for(50) == "unix"
+
+
+def test_ttl_class_windows_band():
+    from diting.lan import ttl_class_for
+    assert ttl_class_for(128) == "windows"
+    assert ttl_class_for(100) == "windows"
+
+
+def test_ttl_class_router_band():
+    from diting.lan import ttl_class_for
+    assert ttl_class_for(255) == "router"
+    assert ttl_class_for(200) == "router"
+
+
+def test_ttl_class_decremented_hop_still_unix():
+    from diting.lan import ttl_class_for
+    # Two-hop decrement from 64 → 62. The 50-64 band absorbs
+    # single-digit hop decrements.
+    assert ttl_class_for(62) == "unix"
+
+
+def test_ttl_class_out_of_range_returns_none():
+    from diting.lan import ttl_class_for
+    assert ttl_class_for(40) is None
+    assert ttl_class_for(90) is None  # gap between unix and windows
+    assert ttl_class_for(180) is None  # gap between windows and router
+
+
+def test_ttl_class_none_input_returns_none():
+    from diting.lan import ttl_class_for
+    assert ttl_class_for(None) is None
+
+
+def test_lan_host_ttl_populated_from_sweep(monkeypatch):
+    """When the sweep result carries a TTL, the merged LANHost
+    surfaces both the raw value and the derived class."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    poller._oui_layers = ({}, {}, {})
+    conn = _make_conn()
+
+    async def _go():
+        now = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "08:11:22:33:44:55", "en0")],
+            conn=conn,
+            now=now,
+            sweep_results={"192.168.1.42": (True, 2.4, 128)},
+        )
+        return poller._state["08:11:22:33:44:55"]
+
+    host = asyncio.run(_go())
+    assert host.ttl == 128
+    assert host.ttl_class == "windows"
+
+
+def test_lan_host_ttl_preserved_when_silent_tick(monkeypatch):
+    """A host that ping-replied once with TTL=64 and then went
+    silent must keep its `ttl` populated — the modal still shows it."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    poller._oui_layers = ({}, {}, {})
+    conn = _make_conn()
+
+    async def _go():
+        now = datetime.now(timezone.utc)
+        # Tick 1: TTL captured.
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "08:11:22:33:44:55", "en0")],
+            conn=conn,
+            now=now,
+            sweep_results={"192.168.1.42": (True, 2.4, 64)},
+        )
+        # Tick 2: silent.
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "08:11:22:33:44:55", "en0")],
+            conn=conn,
+            now=now,
+            sweep_results={"192.168.1.42": (False, None, None)},
+        )
+        return poller._state["08:11:22:33:44:55"]
+
+    host = asyncio.run(_go())
+    assert host.ttl == 64
+    assert host.ttl_class == "unix"
+
+
+def test_lan_host_ttl_class_derived_from_ttl_value(monkeypatch):
+    """The ttl_class is derived from ttl, not from a separate
+    sweep_results slot — sanity that the bucketing happens in the
+    merge step."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    poller._oui_layers = ({}, {}, {})
+    conn = _make_conn()
+
+    async def _go():
+        now = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "08:11:22:33:44:55", "en0")],
+            conn=conn,
+            now=now,
+            sweep_results={"192.168.1.42": (True, 2.4, 250)},
+        )
+        return poller._state["08:11:22:33:44:55"]
+
+    host = asyncio.run(_go())
+    assert host.ttl == 250
+    assert host.ttl_class == "router"
+
+
+# ---------- classifier wired into merge / probe paths ----------
+
+
+def test_merge_populates_device_class_when_classifier_matches(monkeypatch):
+    """Vendor lookup yields a router-class string; the merge step
+    must populate `device_class` on the resulting LANHost."""
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    # Pre-seed an OUI dict that resolves the MAC to a router vendor.
+    poller._oui_layers = (
+        {"08:11:22": "Tp-Link Technologies Co.,Ltd."}, {}, {},
+    )
+    conn = _make_conn()
+
+    async def _go():
+        now = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "08:11:22:33:44:55", "en0")],
+            conn=conn,
+            now=now,
+            sweep_results={"192.168.1.42": (True, 2.4, 64)},
+        )
+        return poller._state["08:11:22:33:44:55"]
+
+    host = asyncio.run(_go())
+    assert host.device_class == "router"
+
+
+def test_apply_probe_results_reclassifies_after_upnp_lands(monkeypatch):
+    """A host with no vendor-side signal first merges with
+    device_class=None. After the active-discovery phase populates
+    the UPnP server header, _apply_probe_results must re-run the
+    classifier — the same row goes from class=None to class=`tv`."""
+    from diting.lan_probes import SSDPResponse
+
+    async def _no_rdns(_ip, *, timeout_s=0.5):
+        return None
+
+    monkeypatch.setattr("diting.lan._reverse_dns", _no_rdns)
+    poller = LANInventoryPoller(connection_provider=lambda: None)
+    poller._oui_layers = ({}, {}, {})  # vendor lookup misses
+    conn = _make_conn()
+
+    async def _seed():
+        now = datetime.now(timezone.utc)
+        await poller._merge_arp_into_state(
+            [("192.168.1.42", "08:11:22:33:44:55", "en0")],
+            conn=conn,
+            now=now,
+            sweep_results={"192.168.1.42": (True, 2.4, 64)},
+        )
+
+    asyncio.run(_seed())
+    # Initially: no signals → class None.
+    assert poller._state["08:11:22:33:44:55"].device_class is None
+
+    # Probe phase brings a UPnP server header that signals TV.
+    poller._apply_probe_results(
+        {},
+        {
+            "192.168.1.42": SSDPResponse(
+                ip="192.168.1.42",
+                server="Linux/3.10 UPnP/1.0 HiSense/2024.01",
+                location=None,
+                usn=None,
+                st=None,
+            ),
+        },
+    )
+    assert poller._state["08:11:22:33:44:55"].device_class == "tv"
 
 
 # ---------- active-discovery integration (Phase 2) ----------

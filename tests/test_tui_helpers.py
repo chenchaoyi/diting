@@ -2340,6 +2340,9 @@ def _lan_host(
     is_self=False,
     is_gateway=False,
     is_randomised_mac=False,
+    ttl=None,
+    ttl_class=None,
+    device_class=None,
 ):
     from datetime import datetime, timezone
     from diting.lan import LANHost
@@ -2357,6 +2360,9 @@ def _lan_host(
         is_self=is_self,
         is_randomised_mac=is_randomised_mac,
         vendor_raw=vendor_raw,
+        ttl=ttl,
+        ttl_class=ttl_class,
+        device_class=device_class,
     )
 
 
@@ -2563,6 +2569,79 @@ def test_lan_detail_omits_raw_continuation_when_raw_none():
         getattr(r, "plain", str(r)) for r in body.renderables
     )
     assert rendered.count("Apple, Inc.") == 1
+
+
+# ---------- Phase 3: Class + TTL rows ----------
+
+
+def test_lan_detail_shows_class_row_when_device_class_present():
+    from diting.tui import LANDetailScreen
+    host = _lan_host(device_class="tv", bonjour_services=())
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Class" in rendered
+    assert "tv" in rendered
+
+
+def test_lan_detail_omits_class_row_when_device_class_none():
+    """A row whose classifier didn't fire must not show a `Class:`
+    line — empty value would just be noise."""
+    from diting.tui import LANDetailScreen
+    host = _lan_host(device_class=None, bonjour_services=())
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "Class" not in rendered
+
+
+def test_lan_detail_shows_ttl_row_with_class():
+    from diting.tui import LANDetailScreen
+    from dataclasses import replace as _replace
+    host = _lan_host(bonjour_services=())
+    host = _replace(host, ttl=64, ttl_class="unix")
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "TTL" in rendered
+    assert "64" in rendered
+    # TTL class is rendered parenthesised. Match the class token
+    # itself rather than the parenthesis to stay i18n-tolerant.
+    assert "unix" in rendered
+
+
+def test_lan_detail_shows_ttl_row_without_class():
+    """A TTL value outside the bucketed bands (ttl_class=None) still
+    shows the raw value — just without the parenthesised class."""
+    from diting.tui import LANDetailScreen
+    from dataclasses import replace as _replace
+    host = _lan_host(bonjour_services=())
+    host = _replace(host, ttl=90, ttl_class=None)
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "TTL" in rendered
+    assert "90" in rendered
+
+
+def test_lan_detail_omits_ttl_row_when_ttl_none():
+    from diting.tui import LANDetailScreen
+    host = _lan_host(bonjour_services=())
+    assert host.ttl is None
+    screen = LANDetailScreen(host=host)
+    body = screen._render_body()
+    rendered = "\n".join(
+        getattr(r, "plain", str(r)) for r in body.renderables
+    )
+    assert "TTL" not in rendered
 
 
 def test_lan_detail_modal_renders_latency_row_when_rtt_known():

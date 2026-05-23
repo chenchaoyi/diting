@@ -42,6 +42,7 @@ from .events import (
     LANHostLeftEvent,
     LANHostSeenEvent,
 )
+from .lan_classify import classify as _classify_device
 from .mdns import BonjourPoller
 from .models import Connection
 
@@ -85,6 +86,18 @@ class LANHost:
     upnp_server: str | None = None
     upnp_friendly_name: str | None = None
     upnp_model: str | None = None
+    # Raw IP TTL from the most recent successful ICMP echo, plus
+    # a coarse class derived via `ttl_class_for`: "unix" / "windows"
+    # / "router" / None. Presentational only — never affects events
+    # or analyzer aggregation.
+    ttl: int | None = None
+    ttl_class: str | None = None
+    # Output of the device-class inference rules in
+    # `src/diting/lan_classify.py`. One of `phone | laptop |
+    # desktop | tv | camera | smart-home | printer | nas | gaming
+    # | speaker | router`, or None when no rule fires. Presentational
+    # only.
+    device_class: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +134,35 @@ _ARP_LINE_RE = re.compile(
 # separator but macOS pings always print `.`). This regex pulls the
 # RTT in milliseconds.
 _PING_RTT_RE = re.compile(r"time=([\d.]+)\s*ms", flags=re.IGNORECASE)
+
+# macOS `ping -c 1` also reports `ttl=N` in the same sample line.
+# Used by the device-class heuristics to discriminate Linux / Mac /
+# iOS / Android (TTL ≈ 64) vs Windows (≈ 128) vs legacy routers
+# (≈ 255). Same packet — no additional traffic.
+_PING_TTL_RE = re.compile(r"ttl=(\d+)", flags=re.IGNORECASE)
+
+
+def ttl_class_for(ttl: int | None) -> str | None:
+    """Map a raw IP TTL value to a coarse OS-family class.
+
+    The IETF-canonical initial TTLs are 64 (Unix-family: Linux,
+    macOS, iOS, Android, BSDs) and 128 (Windows). Some legacy
+    routers advertise 255. We absorb single-digit hop decrements
+    by accepting a small range below each canonical anchor.
+
+    Returns ``None`` for values outside any recognised band or
+    when ``ttl`` is None — the field is presentational, never
+    load-bearing.
+    """
+    if ttl is None:
+        return None
+    if 50 <= ttl <= 64:
+        return "unix"
+    if 100 <= ttl <= 128:
+        return "windows"
+    if 200 <= ttl <= 255:
+        return "router"
+    return None
 
 
 def _ip_in_network(ip: str, network: ipaddress.IPv4Network) -> bool:
@@ -368,15 +410,16 @@ def _detect_subnet(
 
 async def _ping_one(
     ip: str, *, timeout_ms: int = _PING_TIMEOUT_MS,
-) -> tuple[bool, float | None]:
+) -> tuple[bool, float | None, int | None]:
     """Send one ICMP echo via unprivileged ``ping``.
 
-    Returns ``(reachable, rtt_ms)``:
-    - ``(True, <rtt>)`` when ``ping`` exits 0 and stdout contains a
-      parseable ``time=X.XXX ms`` segment
-    - ``(True, None)`` when ``ping`` exits 0 but stdout is
-      unparseable (locale quirk, weird build)
-    - ``(False, None)`` when ``ping`` exits non-zero or the
+    Returns ``(reachable, rtt_ms, ttl)``:
+    - ``(True, <rtt>, <ttl>)`` when ``ping`` exits 0 and stdout
+      contains both parseable ``time=X.XXX ms`` and ``ttl=N`` segments
+    - ``(True, <rtt>, None)`` when RTT parses but TTL doesn't (rare)
+    - ``(True, None, <ttl>)`` when TTL parses but RTT doesn't (rare)
+    - ``(True, None, None)`` when neither parses
+    - ``(False, None, None)`` when ``ping`` exits non-zero or the
       subprocess errors out
     """
     try:
@@ -393,17 +436,25 @@ async def _ping_one(
         stdout_bytes, _ = await proc.communicate()
         rc = proc.returncode
     except (OSError, asyncio.CancelledError):
-        return False, None
+        return False, None, None
     if rc != 0:
-        return False, None
+        return False, None, None
     text = stdout_bytes.decode("ascii", errors="replace")
-    m = _PING_RTT_RE.search(text)
-    if not m:
-        return True, None
-    try:
-        return True, float(m.group(1))
-    except ValueError:
-        return True, None
+    rtt_match = _PING_RTT_RE.search(text)
+    ttl_match = _PING_TTL_RE.search(text)
+    rtt_ms: float | None = None
+    if rtt_match:
+        try:
+            rtt_ms = float(rtt_match.group(1))
+        except ValueError:
+            rtt_ms = None
+    ttl: int | None = None
+    if ttl_match:
+        try:
+            ttl = int(ttl_match.group(1))
+        except ValueError:
+            ttl = None
+    return True, rtt_ms, ttl
 
 
 async def _sweep(
@@ -411,17 +462,17 @@ async def _sweep(
     *,
     concurrency: int = _PING_CONCURRENCY,
     timeout_ms: int = _PING_TIMEOUT_MS,
-) -> dict[str, tuple[bool, float | None]]:
+) -> dict[str, tuple[bool, float | None, int | None]]:
     """Ping every IP in ``hosts`` with bounded concurrency.
 
-    Returns ``{ip: (reachable, rtt_ms)}``. The side-effect we ALSO
-    care about is the populated kernel ARP cache; the merge step in
-    ``LANInventoryPoller`` reads ``arp -an`` after the sweep
-    completes.
+    Returns ``{ip: (reachable, rtt_ms, ttl)}``. The side-effect we
+    ALSO care about is the populated kernel ARP cache; the merge
+    step in ``LANInventoryPoller`` reads ``arp -an`` after the
+    sweep completes.
     """
     sem = asyncio.Semaphore(concurrency)
 
-    async def _one(ip: str) -> tuple[str, tuple[bool, float | None]]:
+    async def _one(ip: str) -> tuple[str, tuple[bool, float | None, int | None]]:
         async with sem:
             result = await _ping_one(ip, timeout_ms=timeout_ms)
             return ip, result
@@ -429,12 +480,34 @@ async def _sweep(
     pairs = await asyncio.gather(
         *[_one(ip) for ip in hosts], return_exceptions=True,
     )
-    out: dict[str, tuple[bool, float | None]] = {}
+    out: dict[str, tuple[bool, float | None, int | None]] = {}
     for p in pairs:
         if isinstance(p, tuple) and len(p) == 2:
             ip, result = p
             out[ip] = result
     return out
+
+
+def _unpack_sweep_entry(
+    entry,
+) -> tuple[bool, float | None, int | None]:
+    """Normalise a sweep-result tuple into the 3-element shape.
+
+    Tolerates both the new (reachable, rtt, ttl) form and the legacy
+    (reachable, rtt) form so existing tests that build synthetic
+    sweep_results dicts keep working without migration.
+    """
+    if entry is None:
+        return False, None, None
+    if not isinstance(entry, tuple):
+        return False, None, None
+    if len(entry) >= 3:
+        return entry[0], entry[1], entry[2]
+    if len(entry) == 2:
+        return entry[0], entry[1], None
+    if len(entry) == 1:
+        return entry[0], None, None
+    return False, None, None
 
 
 def _read_arp_cache(*, runner=None) -> list[tuple[str, str, str]]:
@@ -702,7 +775,7 @@ class LANInventoryPoller:
         *,
         conn: Connection,
         now: datetime,
-        sweep_results: dict[str, tuple[bool, float | None]] | None = None,
+        sweep_results: dict | None = None,
     ) -> None:
         if self._oui_layers is None:
             self._oui_layers = load_ouis_layered()
@@ -750,24 +823,33 @@ class LANInventoryPoller:
         sweep_results = sweep_results or {}
 
         def _rtt_for(existing_entry, ip_addr):
-            """Return (last_rtt_ms, last_reachable_at) for this tick.
+            """Return (last_rtt_ms, last_reachable_at, ttl) for this tick.
 
             Pulls from the sweep result if the host responded; falls
             back to the existing entry's values when the host was
             silent this sweep (so a temporarily-quiet host's
             last-known RTT stays visible in the modal). Returns
-            (None, None) for never-reached hosts.
+            (None, None, None) for never-reached hosts.
             """
-            sweep_entry = sweep_results.get(ip_addr)
-            if sweep_entry is not None:
-                reachable, rtt_ms = sweep_entry
-                if reachable:
-                    return rtt_ms, now
+            reachable, rtt_ms, ttl = _unpack_sweep_entry(
+                sweep_results.get(ip_addr),
+            )
+            if reachable:
+                # Inherit prior TTL only when this sweep didn't see
+                # one — a sweep that returned with no ttl segment
+                # (rare locale quirk) shouldn't blank a known value.
+                if ttl is None and existing_entry is not None:
+                    ttl = existing_entry.ttl
+                return rtt_ms, now, ttl
             # Sweep got no reply this tick — preserve existing
             # last-known values if we have them.
             if existing_entry is not None:
-                return existing_entry.last_rtt_ms, existing_entry.last_reachable_at
-            return None, None
+                return (
+                    existing_entry.last_rtt_ms,
+                    existing_entry.last_reachable_at,
+                    existing_entry.ttl,
+                )
+            return None, None, None
 
         # Snapshot self too: we don't appear in our own ARP cache,
         # but the user wants to see "this Mac" pinned at the top.
@@ -778,19 +860,27 @@ class LANInventoryPoller:
             # self on macOS is trivially ~0.1 ms and informative).
             # If the sweep happens to have a result for our IP, use
             # it; otherwise mark self as reachable=now with no RTT.
-            self_sweep = sweep_results.get(conn.ip_address)
-            if self_sweep is not None and self_sweep[0]:
-                self_rtt, self_reach = self_sweep[1], now
+            self_reachable, self_rtt_from_sweep, self_ttl_from_sweep = (
+                _unpack_sweep_entry(sweep_results.get(conn.ip_address))
+            )
+            if self_reachable:
+                self_rtt, self_reach = self_rtt_from_sweep, now
+                self_ttl = (
+                    self_ttl_from_sweep
+                    if self_ttl_from_sweep is not None
+                    else (self_entry.ttl if self_entry else None)
+                )
             else:
                 self_rtt = self_entry.last_rtt_ms if self_entry else None
                 self_reach = (
                     now if self_entry is None else self_entry.last_reachable_at
                 )
+                self_ttl = self_entry.ttl if self_entry else None
             self_randomised = _is_randomised_mac(iface_mac_lc)
             self_vendor, self_vendor_raw = _resolve_vendor(
                 iface_mac_lc, self_randomised,
             )
-            self._state[iface_mac_lc] = LANHost(
+            self_host = LANHost(
                 mac=iface_mac_lc,
                 ip=conn.ip_address,
                 vendor=self_vendor,
@@ -805,6 +895,11 @@ class LANInventoryPoller:
                 last_rtt_ms=self_rtt,
                 last_reachable_at=self_reach,
                 vendor_raw=self_vendor_raw,
+                ttl=self_ttl,
+                ttl_class=ttl_class_for(self_ttl),
+            )
+            self._state[iface_mac_lc] = replace(
+                self_host, device_class=_classify_device(self_host),
             )
 
         # Track MACs we observed this tick so we can detect departures
@@ -822,7 +917,7 @@ class LANInventoryPoller:
             vendor, vendor_raw = _resolve_vendor(mac_lc, randomised)
             bonjour_host, bonjour_cats = bonjour_index.get(ip, (None, ()))
             hostname = rdns_results.get(ip, existing.hostname if existing else None)
-            last_rtt_ms, last_reachable_at = _rtt_for(existing, ip)
+            last_rtt_ms, last_reachable_at, ttl = _rtt_for(existing, ip)
             is_gateway_now = (router_ip is not None and ip == router_ip)
             is_self_now = (mac_lc == iface_mac_lc)
             host_entry = LANHost(
@@ -840,6 +935,11 @@ class LANInventoryPoller:
                 last_rtt_ms=last_rtt_ms,
                 last_reachable_at=last_reachable_at,
                 vendor_raw=vendor_raw,
+                ttl=ttl,
+                ttl_class=ttl_class_for(ttl),
+            )
+            host_entry = replace(
+                host_entry, device_class=_classify_device(host_entry),
             )
             # Special-case: self may also appear in ARP (rare; mostly
             # not, since we ARP others). If it does, merge — keep
@@ -1037,7 +1137,13 @@ class LANInventoryPoller:
                     else host.upnp_model
                 ),
             )
-            self._state[mac_lc] = new
+            # Re-classify now that the probe fields are populated —
+            # rules like "Hikvision server header → camera" rely on
+            # upnp_server / nbns_name that didn't exist at first-merge
+            # time.
+            self._state[mac_lc] = replace(
+                new, device_class=_classify_device(new),
+            )
 
 
 def _sort_key(h: LANHost) -> tuple[int, int, tuple[int, ...]]:
