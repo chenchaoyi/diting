@@ -21,12 +21,14 @@ For every new English string introduced by the `expand-lan-identification` chang
 | `laptop` (class value) | `笔记本` |
 | `desktop` (class value) | `台式机` |
 | `tv` (class value) | `电视` |
-| `iot` (class value) | `IoT` |
+| `camera` (class value) | `摄像头` |
+| `smart-home` (class value) | `智能家居` |
 | `printer` (class value) | `打印机` |
 | `nas` (class value) | `NAS` |
 | `gaming` (class value) | `游戏机` |
 | `speaker` (class value) | `音箱` |
 | `router` (class value) | `路由器` |
+| `Model:` (modal label, identity section) | `型号：` |
 | `Active LAN probing` (modal title) | `LAN 主动探测` |
 | `Scene:` (modal label) | `场景：` |
 | `Network:` (modal label) | `网络：` |

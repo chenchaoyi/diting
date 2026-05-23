@@ -232,6 +232,8 @@ RULES = [
     (lambda h: h.bonjour_services and "AirPlay" in h.bonjour_services
               and "Apple TV" in (h.upnp_friendly_name or ""), "tv"),
     (lambda h: h.upnp_server and "SmartTV" in h.upnp_server.lower(), "tv"),
+    (lambda h: h.vendor_raw and any(t in h.vendor_raw.lower()
+              for t in ("hikvision", "dahua", "axis communications")), "camera"),
     (lambda h: h.bonjour_services and "_companion-link._tcp" in str(h.bonjour_services), "phone"),
     (lambda h: h.vendor_raw and "TP-LINK" in h.vendor_raw.upper(), "router"),
     (lambda h: h.is_gateway, "router"),
@@ -243,7 +245,17 @@ RULES = [
 First match wins. Return None when no rule fires (row shows blank
 class).
 
-Classes: `phone | laptop | desktop | tv | iot | printer | nas | gaming | speaker | router`.
+Classes: `phone | laptop | desktop | tv | camera | smart-home | printer | nas | gaming | speaker | router`.
+
+**Class vocabulary rationale (from Fing UX reference, see D14):** the
+`iot` class from the original draft was too coarse — Fing's data
+shows that on CN home networks IP cameras (`hikvision` / `dahua` /
+`tapo` / `imou`) and smart-home hubs (`tuya` / `xiaomi` / `aqara`)
+co-exist in large numbers and have very different security
+implications. `camera` is broken out as its own class because
+"how many cameras are silently on my Wi-Fi" is a top concern;
+`smart-home` replaces `iot` so the label reads as a domain rather
+than an opaque acronym.
 
 ### D11. `[new]` chip on rows new today
 
@@ -271,15 +283,70 @@ class LANActiveProbeConsentedEvent:
 Emitted via the existing `EventLogger.append()` path. Lands in JSONL
 as one line, indexed under `lan_active_probe_consented` type.
 
-### D13. UI surface — one new column, no layout disruption
+### D13. UI surface — class column first, no layout disruption
 
-`_COL_LAN_CLASS = 8` inserted between vendor and name. Existing
-vendor/name/IP/MAC/age columns keep their widths. New chip prefix
-adds `[new]  ` to rows that qualify.
+`_COL_LAN_CLASS = 8` cells, inserted as the **first** data column —
+to the left of vendor. Existing vendor / name / IP / MAC / age
+columns retain their widths and order. New chip prefix adds
+`[new]  ` to rows that qualify.
 
-Detail modal gets two new sections: `Active discovery` (NBNS name,
-UPnP server, UPnP friendlyName, mDNS extras) and `Class:` line in
-the Identity section.
+Final row layout (left → right):
+
+```
+[new]  class    vendor              name                    IP               MAC                last seen
+```
+
+Putting class first follows the Fing UX reference (D14) — Type is
+the column users scan with first, more than vendor. A H3C OUI can
+be a router, an AP, a switch, or an IoT bridge; the class column
+disambiguates faster than vendor.
+
+Detail modal gets two new sections plus a `Class:` and `Model:`
+line in the Identity section:
+
+- Identity section gains `Class:` (from `device_class`) and
+  `Model:` (preferring `upnp_model`, falling back to the
+  parenthesised "(year)" / "(generation)" portion of
+  `upnp_friendly_name` when no explicit model field).
+- New `Active discovery` section consolidates NBNS name, UPnP
+  server header, UPnP friendly name, and mDNS-meta extras.
+
+### D14. Fing UX reference
+
+Fing Desktop (4.0) was reviewed as a UX benchmark on 2026-05-23.
+Adopted patterns:
+
+- **Type-first column ordering.** Fing's leftmost data column is
+  Type (Router / IP Camera / NAS / Laptop / etc.). Adopted as D13
+  above — diting's class column moves to the leftmost data position.
+- **Cross-protocol identification (NBNS + UPnP + mDNS).** Fing
+  surfaces Hikvision DS Series for a /36 IoT camera that has no
+  Bonjour publication; this is the NBNS+UPnP composite path D6
+  / D7 already encode. Adopted as-is.
+- **Class vocabulary granularity.** Fing's `IP Camera` /
+  `Smart Device` / `Voice Control` taxonomy informed the
+  D10 vocabulary split (separate `camera` class, `smart-home`
+  replaces `iot`).
+- **Model in detail view.** Fing's Model column (e.g.
+  `Apple MacBook Pro M4 Pro (16") (2024)`) is the single most
+  user-facing identification string. Detail modal gains a `Model:`
+  row sourced from UPnP `modelName` + `friendlyName`.
+
+Explicitly NOT adopted from Fing:
+
+- Type icons (PNG glyphs) — TUI single-cell column can't host them
+  legibly; would force a non-portable Unicode glyph set.
+- Sidebar nav (Overview / Devices / People / Timeline / Internet /
+  Setup / Security) — diting uses `n` to cycle between four panels,
+  the established TUI idiom.
+- "People" association — privacy / maintenance burden too high
+  for the value.
+- Active TCP probing / port-scan-style "Security" pane — conflicts
+  with the lan-inventory ICMP-only / consented-active-probe posture.
+- Right-side filter dropdowns (Status / Type / Brand) — `/`-search
+  and `s` sort cover the same need with less screen budget.
+- Status pill column ("Online") — `last seen` already conveys
+  reachability; a separate column would duplicate.
 
 ## Risks / Trade-offs
 

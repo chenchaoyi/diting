@@ -50,7 +50,7 @@ The poller MAY, when permitted by the active scene's `lan_active_probe` knob (or
 - `last_reachable_at: datetime | None` (UTC timestamp of the most recent successful ICMP echo)
 - `ttl: int | None` (raw IP TTL from the most recent successful ICMP echo; `None` until the host has responded once)
 - `ttl_class: str | None` (one of `"unix"` for TTL ≈ 64, `"windows"` for ≈ 128, `"router"` for ≈ 255, or `None`)
-- `device_class: str | None` (output of the device-class inference rules — one of `phone | laptop | desktop | tv | iot | printer | nas | gaming | speaker | router`, or `None` when no rule fires)
+- `device_class: str | None` (output of the device-class inference rules — one of `phone | laptop | desktop | tv | camera | smart-home | printer | nas | gaming | speaker | router`, or `None` when no rule fires)
 - `is_gateway: bool`
 - `is_self: bool`
 - `is_randomised_mac: bool`
@@ -227,7 +227,7 @@ The TTL class is **presentational** — incorrect classification does NOT affect
 ### Requirement: Each `LANHost` SHALL carry an inferred device class
 A new module `src/diting/lan_classify.py` SHALL expose `classify(host: LANHost) -> str | None`. The function SHALL apply a documented rules table over the host's fields (`vendor_raw`, `bonjour_services`, `nbns_name`, `upnp_server`, `upnp_friendly_name`, `ttl_class`, `is_gateway`, `is_self`) and return the first matching class or `None`.
 
-Classes SHALL be exactly one of: `phone | laptop | desktop | tv | iot | printer | nas | gaming | speaker | router`.
+Classes SHALL be exactly one of: `phone | laptop | desktop | tv | camera | smart-home | printer | nas | gaming | speaker | router`.
 
 The classifier SHALL be a pure function over `LANHost` (no I/O, no global state) and SHALL NOT raise on any combination of input fields.
 
@@ -242,6 +242,14 @@ The classifier output is **presentational** — incorrect classification does NO
 #### Scenario: UPnP server header signals TV
 - **WHEN** a host has `upnp_server` matching `/smarttv|hisense|samsung-tv|lge-tv/i`
 - **THEN** `classify()` returns `"tv"`
+
+#### Scenario: Hikvision / Dahua / Axis vendor signals camera
+- **WHEN** a host has `vendor_raw` matching one of `hikvision`, `dahua`, `axis communications`, `tapo`, `imou` (case-insensitive)
+- **THEN** `classify()` returns `"camera"`
+
+#### Scenario: Tuya / Xiaomi smart-home gateway signals smart-home
+- **WHEN** a host has `vendor_raw` matching `tuya`, `xiaomi`, `aqara`, or `mijia` (case-insensitive) AND no signal pointing to phone / camera / printer
+- **THEN** `classify()` returns `"smart-home"`
 
 #### Scenario: Gateway flag wins router class
 - **WHEN** a host has `is_gateway=True`

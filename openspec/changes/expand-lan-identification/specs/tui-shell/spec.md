@@ -9,7 +9,7 @@ The `i` keystroke is **view-contextual**: on Wi-Fi it opens `WifiDetailScreen`, 
 
 `LANDetailScreen` SHALL render five sections:
 
-1. **Identity** — Name, Class (when `device_class` is non-None), Vendor (normalized display), Vendor (IEEE) (dim continuation line with the raw IEEE registry string when `vendor_raw != vendor`), Role (when self or gateway).
+1. **Identity** — Name, Class (when `device_class` is non-None), Vendor (normalized display), Vendor (IEEE) (dim continuation line with the raw IEEE registry string when `vendor_raw != vendor`), **Model** (when `upnp_model` is non-None, falling back to a parenthesised "(year)" / "(generation)" substring of `upnp_friendly_name` when that contains one), Role (when self or gateway).
 2. **Network** — IP, MAC, Reverse DNS (when present), **Latency** (when `last_rtt_ms` is known), **TTL** (when `ttl` is known, format `<value> (<class>)` e.g. `64 (unix)`), **Reachable** (always rendered).
 3. **Active discovery** — NBNS name, UPnP server header, UPnP friendly name, UPnP model. Section header is always rendered when active probing has run for this host; lines are omitted individually when their respective field is None. When no active-discovery field is populated, render a single dim-italic placeholder line `(not probed)` (EN) / `（未主动探测）` (ZH).
 4. **Bonjour services** — list of category names when `bonjour_services` is non-empty; otherwise a single dim-italic placeholder line `(no Bonjour services)` (EN) / `（无 Bonjour 服务）` (ZH).
@@ -32,7 +32,7 @@ The **Reachable** row SHALL render:
 
 #### Scenario: User opens LAN detail on a host with NBNS + UPnP enrichment
 - **WHEN** the user opens LANDetailScreen on a host whose `nbns_name="LAB-PRINTER-01"`, `upnp_server="Linux/3.10 UPnP/1.0 HiSense"`, `upnp_friendly_name="Living Room TV"`, `device_class="tv"`
-- **THEN** the Identity section's Class row renders `Class: tv`; the Active discovery section renders `NBNS LAB-PRINTER-01`, `UPnP server Linux/3.10 UPnP/1.0 HiSense`, `Friendly name Living Room TV`
+- **THEN** the Identity section's Class row renders `Class: tv`; the Model row renders `Model: Living Room TV` (from `upnp_friendly_name` when `upnp_model` is None); the Active discovery section renders `NBNS LAB-PRINTER-01`, `UPnP server Linux/3.10 UPnP/1.0 HiSense`, `Friendly name Living Room TV`
 
 #### Scenario: User opens LAN detail when no probe has run for that host
 - **WHEN** the user opens LANDetailScreen on a row whose four active-discovery fields are all None
@@ -45,15 +45,31 @@ The **Reachable** row SHALL render:
 ## ADDED Requirements
 
 ### Requirement: The LAN row SHALL include a one-cell Class column and prepend `[new]` chip for hosts new today
-The LAN panel's row layout SHALL gain a new fixed-width Class column inserted between the existing Vendor and Name columns. The column SHALL be `_COL_LAN_CLASS = 8` cells wide and render `LANHost.device_class` (or the empty string when None).
+The LAN panel's row layout SHALL gain a new fixed-width Class column inserted as the **leftmost data column** (immediately after the optional `[new]` chip and immediately before the existing Vendor column). The column SHALL be `_COL_LAN_CLASS = 8` cells wide and render `LANHost.device_class` (or the empty string when None).
 
-Rows whose `(now - first_seen) < 24 h` SHALL be prefixed with a `[new]` (EN) / `[新]` (ZH) chip in the existing dim-cyan style used by other subtitle chips. The chip prepends to the row line before the Vendor column. Rows older than 24 h SHALL NOT carry the chip.
+The final row layout (left → right) SHALL be:
 
-The column-header line SHALL be extended to include the new Class column header (`class`).
+```
+[new]  class    vendor              name                    IP               MAC                last seen
+```
+
+Rationale: putting class first follows the Fing UX reference (design D14) — Type is the column users scan first; the same vendor (e.g. H3C) can be a router / AP / switch / IoT bridge, and the class disambiguates faster than vendor.
+
+Rows whose `(now - first_seen) < 24 h` SHALL be prefixed with a `[new]` (EN) / `[新]` (ZH) chip in the existing dim-cyan style used by other subtitle chips. The chip prepends to the row line before the Class column. Rows older than 24 h SHALL NOT carry the chip.
+
+The column-header line SHALL be extended to place the new Class column header (`class`) before the Vendor column header (`vendor`).
 
 #### Scenario: Row for a TV first seen 2 hours ago
 - **WHEN** the LAN poller emits a snapshot where one host has `first_seen` 2 h ago, `device_class="tv"`, `vendor="Hisense"`, `nbns_name="LIVING-ROOM-TV"`
-- **THEN** the row line begins with `[new]` (in dim cyan), followed by `Hisense` (vendor), `tv` (class), `LIVING-ROOM-TV` (name), then IP, MAC, age
+- **THEN** the row line begins with `[new]` (in dim cyan), followed by `tv` (class), then `Hisense` (vendor), then `LIVING-ROOM-TV` (name), then IP, MAC, age
+
+#### Scenario: Row for an IP camera
+- **WHEN** the LAN poller emits a snapshot where one host has `device_class="camera"`, `vendor="Hikvision"`, `nbns_name=None`, `upnp_friendly_name="DS-2CD2143G2-IU"`
+- **THEN** the row's Class column renders `camera`; the Vendor column renders `Hikvision`; the Name column renders `DS-2CD2143G2-IU`
+
+#### Scenario: Row for a smart-home gateway
+- **WHEN** the LAN poller emits a snapshot where one host has `device_class="smart-home"`, `vendor="Tuya"`
+- **THEN** the row's Class column renders `smart-home`
 
 #### Scenario: Row for an old host with no class
 - **WHEN** the LAN poller emits a snapshot where one host has `first_seen` 48 h ago and `device_class=None`
