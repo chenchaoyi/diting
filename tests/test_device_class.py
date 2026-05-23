@@ -213,6 +213,25 @@ def test_nintendo_vendor_signals_gaming():
     assert classify(h) == "gaming"
 
 
+def test_sony_interactive_entertainment_signals_gaming_not_tv():
+    """PlayStation consoles register under "Sony Interactive
+    Entertainment Inc." in IEEE. The TV-vendor needle used to be
+    just `"sony"` which also matched the PS vendor, mis-routing
+    the user's PS5 Pro into `tv`. Regression for the 2026-05-23
+    re-audit follow-up — needle narrowed to `"sony corporation"`
+    so Bravia TVs still match but PlayStations fall through to
+    the gaming rule."""
+    h = _host(vendor_raw="Sony Interactive Entertainment Inc.")
+    assert classify(h) == "gaming"
+
+
+def test_sony_corporation_still_signals_tv():
+    """Sony's TV / Bravia IEEE registrant — must still match the
+    narrowed needle. Sanity that the fix didn't over-trim."""
+    h = _host(vendor_raw="Sony Corporation")
+    assert classify(h) == "tv"
+
+
 # ---------- router ----------
 
 

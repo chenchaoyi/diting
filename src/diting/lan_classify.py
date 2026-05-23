@@ -112,7 +112,11 @@ _TV_VENDOR_NEEDLES: tuple[str, ...] = (
     "lge",
     "lg electronics",
     "samsung electronics",
-    "sony",
+    # "Sony Corporation" is the Bravia / TV IEEE registrant.
+    # NOT just "sony" — that also matches "Sony Interactive
+    # Entertainment Inc." (PlayStation), which we route to
+    # gaming via _GAMING_VENDOR_NEEDLES.
+    "sony corporation",
     "tcl",
     "skyworth",
     "konka",
