@@ -10,6 +10,39 @@
 
 ## [Unreleased]
 
+## [1.7.2] — 2026-05-25
+
+Patch release。两轮 `/tui-audit` 在真实的公司 Wi-Fi + 密集 BLE
+环境里挖出的十处细节修复 —— 三个 TUI 渲染层修复（英文 locale）
++ 七处中文文案修复。全部都是显示层改动；不动 JSONL 协议、不
+动权限边界。
+
+### 修复
+- **`_read_arp_cache` 在采集时即对每个 MAC octet 做零位补齐。**
+  macOS `arp -an` 把每段的前导零裁掉（网关原本渲染成
+  `14:51:7e:71:5a:1` 而不是 `:01`）；LAN 详情弹窗和 LAN 行列现在
+  渲染标准 IEEE 802 形式。对已补齐的输入幂等；覆盖所有下游消费
+  方（`LANHost.mac`、JSONL 转场事件、LAN 列表、LAN 详情）。
+- **BLE 行渲染器对高熵本地名替换为 `(临时标识)`。** Apple Continuity
+  Find-My 信标（`NZ1NhvIw3H5T5cSy3kULrJ` 这类字符串）和 Huami /
+  Amazfit 序列号（`Z-GM0YXG6A`）此前被当成可读设备名展示。新增
+  `_looks_like_rotating_id(name)` 谓词匹配 `^[A-Za-z0-9+/=_-]{16,}$`
+  （无空白字符、无 Apple 产品前缀）；BLE 详情弹窗补一行 `原始名称：`
+  让 helper 上报的原值依旧可查。
+- **EventsScreen 弹窗折叠连续重复的 BLE-seen 行。** 数据层按
+  identifier 去重是对的，但 Apple Continuity / Microsoft CDP 会
+  不停换 identifier，每个换都触发一条 seen 事件，弹窗里全是
+  `设备出现：Apple, Inc. · (匿名)`，把 roam / DHCP / LAN 主机到达
+  这些真正关心的事件淹掉了。弹窗渲染器现在把连续 `(vendor, name_label)`
+  相同的行折成一行 `×N → HH:MM:SS`。磁盘上的 JSONL 日志不变。
+- **ZH 目录补齐 2026-05-25 中文版审计发现的七处文案缺口。**
+  Shift-P / 公共场景帮助行原本没翻译；Bonjour `service` 排序标记
+  自映射（渲染成 `排序：service`）；基础知识弹窗的 `Noise / SNR`
+  小节标题自映射；裸 `" ago"` 键丢了前导空格（`8s前` 和 `5s 前扫描`
+  在同一屏并存）；Apple Continuity 协议名半翻译成 `Apple 配对` /
+  `Apple 邻近`（`配对` 在中文里读作蓝牙配对 —— 不是协议的本意）；
+  BLE 详情广告间隔提示保留了英文语序。这些都统一了。
+
 ## [1.7.1] — 2026-05-23
 
 Patch release。**`session_meta` JSONL 头部现在带启动时的 SSID + 网关 IP** —— v1.7.1 之前，emit_session_meta 在第一次 WiFi 轮询完成前调用，每个 session log 的首行都把 `ssid` / `gateway_ip` 写成 `null`，哪怕主机一直是连着 Wi-Fi 的。下游消费者（analyzer、`--for-llm` 提示包、第三方 `jq` 脚本）会把会话误读为"启动时未关联 Wi-Fi"。

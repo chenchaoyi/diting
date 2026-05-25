@@ -11,6 +11,48 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.7.2] — 2026-05-25
+
+Patch release. Ten polish fixes surfaced by two `/tui-audit` passes
+against a real corporate Wi-Fi + dense BLE environment — three TUI
+display-layer fixes (EN locale) and seven ZH copy-quality fixes.
+All changes are display-only; no JSONL contract changes, no
+permission surface changes.
+
+### Fixed
+- **`_read_arp_cache` zero-pads each MAC octet at ingest.** macOS
+  `arp -an` strips leading zeros (gateway rendered as
+  `14:51:7e:71:5a:1` instead of `:01`); the LAN detail modal and
+  LAN row column now render the canonical IEEE 802 form. Idempotent
+  on already-padded input; covers every downstream consumer
+  (`LANHost.mac`, JSONL transition events, LAN list, LAN detail).
+- **BLE row renderer substitutes `(rotating ID)` for high-entropy
+  local names.** Apple Continuity Find-My beacons
+  (`NZ1NhvIw3H5T5cSy3kULrJ`-shaped strings) and Huami / Amazfit
+  serials (`Z-GM0YXG6A`) were masquerading as human-readable
+  device names. The new `_looks_like_rotating_id(name)` predicate
+  matches `^[A-Za-z0-9+/=_-]{16,}$` (no whitespace, no Apple
+  product prefix); the BLE detail modal gains a `Raw name:` row
+  so the helper-emitted string is still reachable.
+- **EventsScreen modal collapses consecutive duplicate BLE-seen
+  rows.** Source-side dedup is per-identifier; rotating identifiers
+  (Apple Continuity, MS CDP) each emit a fresh seen event, so the
+  modal was a flood of `device seen: Apple, Inc. · (anonymous)`
+  lines that drowned out roam / DHCP / LAN host arrival events.
+  Modal renderer now folds runs of identical `(vendor, name_label)`
+  rows into one `×N → HH:MM:SS` line. JSONL log on disk is
+  unchanged.
+- **ZH catalog closes seven copy gaps from the 2026-05-25 ZH-locale
+  audit.** The shift-P / public-scene help line had no ZH
+  translation; the Bonjour `service` sort token was self-mapped
+  (`排序：service`); the basics-modal section heading `Noise / SNR`
+  was self-mapped while every peer translated; the bare `" ago"`
+  key dropped its leading space (`8s前` vs `5s 前扫描`); Apple
+  Continuity protocol names half-translated to `Apple 配对` /
+  `Apple 邻近` (with `配对` reading as Bluetooth pairing in Chinese
+  — the wrong mental model); and the BLE detail ad-interval hint
+  preserved EN word order. All now consistent.
+
 ## [1.7.1] — 2026-05-23
 
 Patch release. **`session_meta` JSONL header now carries the at-
