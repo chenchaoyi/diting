@@ -549,11 +549,39 @@ def _unpack_sweep_entry(
     return False, None, None
 
 
+def _canon_mac(raw: str) -> str | None:
+    """Return ``raw`` as ``aa:bb:cc:dd:ee:ff`` — lowercase, every octet
+    zero-padded to two hex digits.
+
+    macOS `arp -an` strips leading zeros from each MAC octet, so the
+    raw capture can read `14:51:7e:71:5a:1` (gateway) or `24:f:9b:…`
+    (Apple Vision Pro). Downstream consumers want the canonical IEEE
+    802 representation. Returns None when the input does not parse as
+    a 6-octet MAC.
+    """
+    parts = raw.split(":")
+    if len(parts) != 6:
+        return None
+    out: list[str] = []
+    for p in parts:
+        if not p or len(p) > 2:
+            return None
+        try:
+            out.append(f"{int(p, 16):02x}")
+        except ValueError:
+            return None
+    return ":".join(out)
+
+
 def _read_arp_cache(*, runner=None) -> list[tuple[str, str, str]]:
     """Return ``(ip, mac, iface)`` triples from ``arp -an``.
 
     Skips lines whose MAC is ``<incomplete>`` — those are sweep
-    attempts that got no ARP reply.
+    attempts that got no ARP reply. Each MAC is normalised to the
+    canonical zero-padded lowercase form via :func:`_canon_mac` so
+    every downstream consumer (LAN list, detail modal, JSONL
+    transition events) sees the same shape regardless of macOS's
+    leading-zero stripping.
     """
     if runner is None:
         def runner() -> str:
@@ -575,7 +603,10 @@ def _read_arp_cache(*, runner=None) -> list[tuple[str, str, str]]:
         m = _ARP_LINE_RE.search(line)
         if not m:
             continue
-        ip, mac, iface = m.group(1), m.group(2).lower(), m.group(3)
+        mac = _canon_mac(m.group(2))
+        if mac is None:
+            continue
+        ip, iface = m.group(1), m.group(3)
         # Skip multicast destination MACs — these are not real LAN
         # hosts; they leak into `arp -an` whenever any process sends
         # to a multicast group (diting's own SSDP M-SEARCH triggers

@@ -404,6 +404,9 @@ _ZH: dict[str, str] = {
     "Closest  ": "最强  ",
     "(none)": "(无)",
     "(anonymous)": "(匿名)",
+    "(rotating ID)": "(临时标识)",
+    "Raw name": "原始名称",
+    "  ×{n}": "  ×{n}",
     "(+{n} folded)": "(已折叠 {n})",
     "{n} other": "{n} 其他",
     # Service-category labels for ble.py.service_category() return values

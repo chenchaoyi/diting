@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from rich.text import Text
 
 from diting.ble import BLEDevice
 from diting.environment import APBaseline, RFStirEvent
@@ -575,6 +576,104 @@ def test_ble_row_line_name_unknown_when_no_signal():
     d = _ble_dev(name=None, type=None, device_class=None)
     text = _row_text(d)
     assert "(unknown)" in text
+
+
+# --- Rotating-identifier name guard (v1.7.2) ------------------------
+
+def test_ble_looks_like_rotating_id_predicate_true_on_apple_continuity_shape():
+    from diting.tui import _looks_like_rotating_id
+    # 22-char base64-ish string Apple Continuity emits in the name
+    # slot when the advertisement is a Find My / Handoff beacon.
+    assert _looks_like_rotating_id("NZ1NhvIw3H5T5cSy3kULrJ") is True
+
+
+def test_ble_looks_like_rotating_id_predicate_true_on_huami_serial():
+    from diting.tui import _looks_like_rotating_id
+    # Z-prefixed Huami / Amazfit watch serials.
+    assert _looks_like_rotating_id("Z-GM0YXG6A") is False  # too short
+    assert _looks_like_rotating_id("Z-GM0YXG6A1234567") is True
+    # Long all-hex identifier (no Apple prefix).
+    assert _looks_like_rotating_id("abcdef0123456789abcd") is True
+
+
+def test_ble_looks_like_rotating_id_predicate_false_on_iphone_prefix():
+    from diting.tui import _looks_like_rotating_id
+    # Apple-product prefix lock — even if the suffix looks random,
+    # the name is meant to be human-readable.
+    assert _looks_like_rotating_id("iPhone") is False
+    assert _looks_like_rotating_id("Mac1234567890ABCDEF") is False
+    assert _looks_like_rotating_id("AirPodsXYZABC0123456") is False
+    assert _looks_like_rotating_id("HomePod-Living-Room-1234") is False  # has '-' but space-free still locked by prefix
+
+
+def test_ble_looks_like_rotating_id_predicate_false_on_whitespace_name():
+    from diting.tui import _looks_like_rotating_id
+    # Any whitespace disqualifies — "real" device names use spaces.
+    assert _looks_like_rotating_id("ccy's Magic Keyboard") is False
+    assert _looks_like_rotating_id("HW Watch GT") is False
+    assert _looks_like_rotating_id("Living Room TV") is False
+
+
+def test_ble_looks_like_rotating_id_predicate_false_on_short_name():
+    from diting.tui import _looks_like_rotating_id
+    # 15 chars or fewer never trigger the guard.
+    assert _looks_like_rotating_id("abc") is False
+    assert _looks_like_rotating_id("ABCDEFGHIJKLMNO") is False
+    # Exactly 16 chars — the threshold.
+    assert _looks_like_rotating_id("ABCDEFGHIJKLMNOP") is True
+
+
+def test_ble_looks_like_rotating_id_predicate_false_on_none():
+    from diting.tui import _looks_like_rotating_id
+    assert _looks_like_rotating_id(None) is False
+    assert _looks_like_rotating_id("") is False
+
+
+def test_ble_row_name_substitutes_rotating_id_placeholder():
+    """The row renderer hands the helper-emitted rotating-identifier
+    string to the guard and renders `(rotating ID)` instead."""
+    d = _ble_dev(name="NZ1NhvIw3H5T5cSy3kULrJ")
+    text = _row_text(d)
+    assert "(rotating ID)" in text
+    # The raw value SHALL NOT appear in the list row.
+    assert "NZ1NhvIw3H5T5cSy3kULrJ" not in text
+
+
+def test_ble_row_name_preserves_real_apple_device_name():
+    """Apple prefix is in the allowlist; real iPhone / Mac names
+    render verbatim with no `(rotating ID)` substitution."""
+    d = _ble_dev(name="iPhone")
+    text = _row_text(d)
+    assert "iPhone" in text
+    assert "(rotating ID)" not in text
+
+
+def test_ble_detail_renders_raw_name_row_when_rotating_id():
+    """When the predicate fires, BLEDetailScreen's Identity section
+    gains a `Raw name:` row so the user can still see what the
+    helper actually advertised."""
+    from diting.tui import BLEDetailScreen
+    d = _ble_dev(name="NZ1NhvIw3H5T5cSy3kULrJ")
+    out = Text()
+    screen = BLEDetailScreen(device=d)
+    screen._section_identity(out)
+    rendered = out.plain
+    assert "Raw name" in rendered
+    assert "NZ1NhvIw3H5T5cSy3kULrJ" in rendered
+    # `name:` row shows the placeholder, not the raw value.
+    assert "(rotating ID)" in rendered
+
+
+def test_ble_detail_omits_raw_name_row_when_name_none():
+    """Anonymous device (name=None) has nothing to surface — no
+    `Raw name:` row, no `(rotating ID)` placeholder."""
+    from diting.tui import BLEDetailScreen
+    d = _ble_dev(name=None)
+    out = Text()
+    screen = BLEDetailScreen(device=d)
+    screen._section_identity(out)
+    rendered = out.plain
+    assert "Raw name" not in rendered
 
 
 def test_ble_row_line_services_no_longer_duplicates_type():
@@ -3355,3 +3454,146 @@ def test_events_screen_filter_keys_map_to_buckets_in_order():
     assert bindings_by_action["set_filter('ble')"] == "5"
     assert bindings_by_action["set_filter('bonjour')"] == "6"
     assert bindings_by_action["set_filter('lan')"] == "7"
+
+
+# --- EventsScreen consecutive BLE-seen grouping (v1.7.2) ------------
+
+def _ble_seen(ts_sec: int, vendor: str | None, name: str | None,
+              identifier: str | None = None):
+    """Compact factory for BLEDeviceSeenEvent fixtures."""
+    from datetime import datetime, timezone
+    from diting.events import BLEDeviceSeenEvent
+    return BLEDeviceSeenEvent(
+        timestamp=datetime(2026, 5, 25, 18, 10, ts_sec, tzinfo=timezone.utc),
+        identifier=identifier or f"id-{ts_sec}",
+        name=name, vendor=vendor, rssi_dbm=-70, service_categories=(),
+    )
+
+
+def test_events_screen_collapses_three_consecutive_identical_ble_seens():
+    from diting.tui import _group_consecutive_ble_seen
+    events = [
+        _ble_seen(33, "Apple, Inc.", None, "a"),
+        _ble_seen(34, "Apple, Inc.", None, "b"),
+        _ble_seen(36, "Apple, Inc.", None, "c"),
+    ]
+    grouped = _group_consecutive_ble_seen(events)
+    assert len(grouped) == 1
+    rep, count, latest = grouped[0]
+    assert rep is events[0]
+    assert count == 3
+    assert latest is events[-1]
+
+
+def test_events_screen_does_not_collapse_across_vendor_change():
+    from diting.tui import _group_consecutive_ble_seen
+    events = [
+        _ble_seen(33, "Apple, Inc.", None, "a"),
+        _ble_seen(34, "Microsoft", None, "b"),
+    ]
+    grouped = _group_consecutive_ble_seen(events)
+    assert len(grouped) == 2
+    assert all(count == 1 and latest is None
+               for _ev, count, latest in grouped)
+
+
+def test_events_screen_non_ble_event_breaks_the_grouping_run():
+    from diting.tui import _group_consecutive_ble_seen
+    from diting.poller import RoamEvent
+    from datetime import datetime, timezone
+    roam = RoamEvent(
+        timestamp=datetime(2026, 5, 25, 18, 10, 35, tzinfo=timezone.utc),
+        previous_bssid="aa:bb:cc:dd:ee:01", new_bssid="aa:bb:cc:dd:ee:02",
+        previous_channel=36, new_channel=44,
+        previous_ssid="diting", new_ssid="diting",
+    )
+    events = [
+        _ble_seen(33, "Apple, Inc.", None, "a"),
+        _ble_seen(34, "Apple, Inc.", None, "b"),
+        roam,
+        _ble_seen(36, "Apple, Inc.", None, "c"),
+    ]
+    grouped = _group_consecutive_ble_seen(events)
+    # Two BLE folded → one row, roam → one row, trailing BLE → one row.
+    assert len(grouped) == 3
+    assert grouped[0][1] == 2
+    assert grouped[1][0] is roam and grouped[1][1] == 1
+    assert grouped[2][1] == 1
+
+
+def test_events_screen_collapses_rotating_id_label_across_different_identifiers():
+    """Three Apple-Continuity-shaped names with DIFFERENT raw values
+    still fold because the label `(rotating ID)` is the same."""
+    from diting.tui import _group_consecutive_ble_seen
+    events = [
+        _ble_seen(33, "Apple, Inc.", "NZ1NhvIw3H5T5cSy3kULrJ", "a"),
+        _ble_seen(34, "Apple, Inc.", "Mc7g8sUZpL0eX2qY4Wt1Pq", "b"),
+        _ble_seen(35, "Apple, Inc.", "qFt5kJ2sLm9wXyZpQrBaUd", "c"),
+    ]
+    grouped = _group_consecutive_ble_seen(events)
+    assert len(grouped) == 1
+    assert grouped[0][1] == 3
+
+
+def test_events_screen_grouped_row_renders_arrow_to_latest_timestamp():
+    from diting.tui import _format_ble_device_seen_event
+    first = _ble_seen(33, "Apple, Inc.", None, "a")
+    latest = _ble_seen(36, "Apple, Inc.", None, "c")
+    text = _format_ble_device_seen_event(
+        first, count=3, latest=latest,
+    ).plain
+    assert "×3" in text
+    # Timestamps render in local time; compute the expected prefix /
+    # arrow from the events' own timezone-aware values so the test
+    # passes regardless of the runner's TZ.
+    first_local = first.timestamp.astimezone().strftime("%H:%M:%S")
+    latest_local = latest.timestamp.astimezone().strftime("%H:%M:%S")
+    assert text.startswith(first_local)
+    assert f"→ {latest_local}" in text
+
+
+def test_events_screen_jsonl_log_untouched_by_modal_grouping():
+    """Grouping is render-only. The underlying event objects, and any
+    per-event JSONL serialization the EventLogger would do, must not
+    see the `×N` suffix or the folded representation."""
+    from diting.events import event_to_jsonl
+    ev = _ble_seen(33, "Apple, Inc.", None, "a")
+    line = event_to_jsonl(ev)
+    assert '"type":"ble_device_seen"' in line.replace(" ", "")
+    assert "×" not in line
+    # The per-event renderer also stays at count=1 by default.
+    from diting.tui import _format_ble_device_seen_event
+    text = _format_ble_device_seen_event(ev).plain
+    assert "×" not in text
+
+
+def test_events_screen_filter_then_group_order_is_filter_first():
+    """Filtering to a non-BLE bucket suppresses every BLE row before
+    grouping runs; no `×N` row survives. Switching back to BLE
+    re-runs grouping over the filtered-down set."""
+    from diting.tui import _events_filter_match, _group_consecutive_ble_seen
+    from diting.poller import RoamEvent
+    from datetime import datetime, timezone
+    roam = RoamEvent(
+        timestamp=datetime(2026, 5, 25, 18, 10, 35, tzinfo=timezone.utc),
+        previous_bssid="aa:bb:cc:dd:ee:01", new_bssid="aa:bb:cc:dd:ee:02",
+        previous_channel=36, new_channel=44,
+        previous_ssid="diting", new_ssid="diting",
+    )
+    events = [
+        _ble_seen(33, "Apple, Inc.", None, "a"),
+        _ble_seen(34, "Apple, Inc.", None, "b"),
+        roam,
+    ]
+    # Filter to roam first.
+    filtered_roam = [ev for ev in events
+                     if _events_filter_match(ev, "roam")]
+    grouped_roam = _group_consecutive_ble_seen(filtered_roam)
+    assert len(grouped_roam) == 1
+    assert grouped_roam[0][0] is roam
+    # Filter to BLE — now grouping fires over the BLE-only set.
+    filtered_ble = [ev for ev in events
+                    if _events_filter_match(ev, "ble")]
+    grouped_ble = _group_consecutive_ble_seen(filtered_ble)
+    assert len(grouped_ble) == 1
+    assert grouped_ble[0][1] == 2
