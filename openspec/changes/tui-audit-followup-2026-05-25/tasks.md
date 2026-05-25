@@ -49,6 +49,16 @@
   - rotating-ID label fold (three different identifier names from the same vendor all collapse under `(rotating ID) ×3`)
   - filter to roam suppresses BLE entirely; switching back to BLE recomputes grouping over the filtered list
 
+## 4b. Fix 4 — ZH catalog copy gaps (2026-05-25 ZH-locale audit)
+
+- [ ] 4b.1 Add the missing `"LAN view, public scene only: open consent modal for a one-shot active probe (NBNS / SSDP / mDNS) — see below"` key to the ZH catalog in `src/diting/i18n.py` — the EN string at `tui.py:609-611` currently falls through to itself in ZH.
+- [ ] 4b.2 Change the self-mapped `"service": "service"` entry in `i18n.py` (line ~313) to `"service": "服务"`. Verify no caller compares against the EN display form rather than the canonical internal token (the sort-mode dispatch keys live on `_sort_mode`, not on the displayed string).
+- [ ] 4b.3 Change the self-mapped basics-modal section heading `"Noise / SNR": "Noise / SNR"` (i18n.py ~1096) to `"Noise / SNR": "Noise / 信噪比"`. Mirror the half-EN-half-ZH shape that `RSSI / 信号` already uses.
+- [ ] 4b.4 Change `" ago": "前"` (i18n.py:283) to `" ago": " 前"` so the bare time-ago key preserves its leading space. Verify the five concat sites (`tui.py:1783, 4112, 5954, 5957, 6140`) now render `8s 前`.
+- [ ] 4b.5 Change the Apple-Continuity category translations to brand-verbatim — `"Apple Companion": "Apple Companion"` (replaces `Apple 配对` at i18n.py:294) and add `"Apple Nearby": "Apple Nearby"` if the key isn't already self-mapped. Half-translated `Apple 邻近` SHALL NOT survive the change.
+- [ ] 4b.6 Reorder the BLE detail Activity ad-interval hint in ZH — the key is `"~{n} ms between ads"` or close; ZH currently echoes EN word order. Update to `"广告间隔约 {n} ms"` (or whichever placeholder name the EN key uses; preserve it exactly per the placeholder-parity requirement).
+- [ ] 4b.7 Re-run the ZH-locale audit to confirm every defect listed in iterations 1.1 / 2.1 / 3.1 / 4.1 / 5.1 / 6.1 / 8.1 of `/private/tmp/wfs-tui-audit-20260525-185519/findings.md` is gone.
+
 ## 5. Snapshot regression
 
 - [ ] 5.1 Run `uv run python scripts/tui_snapshot.py --mode regression`. All existing fixtures SHALL pass — none of them rely on un-padded MACs, high-entropy BLE names, or anti-grouped event flood.

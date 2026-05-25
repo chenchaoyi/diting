@@ -4448,7 +4448,9 @@ class BLEDetailScreen(ModalScreen):
             span = (d.last_seen - d.first_seen).total_seconds()
             if d.ad_count >= 2 and span > 0:
                 interval_ms = (span / max(1, d.ad_count - 1)) * 1000.0
-                ad_str += f"  (~{interval_ms:.0f} ms {t('between ads')})"
+                ad_str += "  (" + t(
+                    "~{n} ms between ads", n=f"{interval_ms:.0f}",
+                ) + ")"
             self._label(out, t("ad count"), ad_str)
         if d.merged_count > 1:
             self._label(out, t("merged"),

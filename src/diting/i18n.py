@@ -174,6 +174,10 @@ _ZH: dict[str, str] = {
     "Toggle Wi-Fi / BLE / Bonjour / LAN view": "切换 Wi-Fi / BLE / Bonjour / LAN 视图",
     "cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour → LAN": "切换附近视图：Wi-Fi BSSID → BLE → Bonjour → LAN",
     "list cursor — move selection up / down (Wi-Fi / BLE / Bonjour / LAN)": "列表光标 —— 上 / 下移动选择（Wi-Fi / BLE / Bonjour / LAN）",
+    # Shift-P keybinding help — must keep the EN side and the ZH side as
+    # a SINGLE concatenated string; `t()` is called at `tui.py:609`
+    # against the joined form, not the two physical-source lines.
+    "LAN view, public scene only: open consent modal for a one-shot active probe (NBNS / SSDP / mDNS) — see below": "LAN 视图（仅公共场景）：打开一次性主动探测（NBNS / SSDP / mDNS）的同意弹窗 —— 详见下方",
     # ---- mDNS / Bonjour panel ----
     "Nearby Bonjour devices": "附近 Bonjour 设备",
     "(no Bonjour devices yet — scanning...)": "(暂未发现 Bonjour 设备 —— 搜索中...)",
@@ -280,7 +284,7 @@ _ZH: dict[str, str] = {
     "wait 2s": "等待 2 秒",
     "y probe now": "y 立即探测",
     "Esc / i to close": "Esc / i 关闭",
-    " ago": "前",
+    " ago": " 前",
     "now": "刚刚",
     "—": "—",
     # Bonjour service categories.
@@ -291,7 +295,10 @@ _ZH: dict[str, str] = {
     "File share": "文件共享",
     "Mac": "Mac",
     "HomeKit": "HomeKit",
-    "Apple Companion": "Apple 配对",
+    # Apple Continuity protocol — keep the brand string verbatim. `配对`
+    # (pèiduì) reads as Bluetooth pairing in Chinese, a different
+    # mental model than what `_companion-link._tcp` actually represents.
+    "Apple Companion": "Apple Companion",
     "Screen sharing": "屏幕共享",
     "SSH": "SSH",
     "HTTP": "HTTP",
@@ -310,7 +317,7 @@ _ZH: dict[str, str] = {
     "PAUSED": "已暂停",
     "ap": "AP",
     "signal": "信号",
-    "service": "service",
+    "service": "服务",
     "by-host": "按 host",
     "view: {mode}": "视图：{mode}",
     "wifi": "Wi-Fi",
@@ -445,7 +452,12 @@ _ZH: dict[str, str] = {
     "Activity": "活动",
     "first seen": "首次见到",
     "ago": "前",
+    # Idiomatic ZH ordering puts the value last; the EN-shape
+    # "(~1772 ms 两次广播间隔)" reads as if value and noun were
+    # transposed. The key carries the value placeholder explicitly so
+    # both sides can re-arrange independently.
     "between ads": "两次广播间隔",
+    "~{n} ms between ads": "广告间隔约 {n} ms",
     "ad count": "广播次数",
     "merged": "合并",
     "rotated UUIDs folded": "已折叠轮换 UUID",
@@ -552,7 +564,9 @@ _ZH: dict[str, str] = {
     "Tethering target": "热点共享端",
     "Tethering source": "热点客户端",
     "Nearby Action": "附近请求",
-    "Apple Proximity": "Apple 邻近",
+    # Half-translated `Apple 邻近` reads as an incomplete adjective phrase;
+    # keep the brand string verbatim like Apple Companion / AirPlay.
+    "Apple Proximity": "Apple Proximity",
     "MS device beacon": "Microsoft 信标",
 
     # ---- CLI --help ----
@@ -1093,7 +1107,7 @@ _ZH: dict[str, str] = {
     "RF environment": "RF 环境",
     "BLE": "BLE",
     "RSSI / Signal": "RSSI / 信号",
-    "Noise / SNR": "Noise / SNR",
+    "Noise / SNR": "Noise / 信噪比",
     "Band": "频段",
     "Width": "带宽",
     "Security": "加密",

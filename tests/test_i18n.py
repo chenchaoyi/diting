@@ -129,3 +129,74 @@ def test_pad_cells_handles_mixed_ascii_and_cjk():
 def test_set_lang_rejects_unknown_value():
     with pytest.raises(ValueError):
         i18n.set_lang("ja")
+
+
+# ---------- v1.7.2 ZH catalog gaps from the 2026-05-25 audit -------
+
+def test_zh_catalog_has_lan_probe_help_string():
+    """The shift-P keybinding help line — the single concatenated EN
+    sentence at `tui.py:609-611` — must be translated; the audit
+    found it falling through to English in the help modal."""
+    i18n.set_lang(i18n.ZH)
+    key = (
+        "LAN view, public scene only: open consent modal for a "
+        "one-shot active probe (NBNS / SSDP / mDNS) — see below"
+    )
+    rendered = i18n.t(key)
+    assert rendered != key, "ZH catalog still falling through to EN"
+    assert "LAN 视图" in rendered
+    assert "公共场景" in rendered
+    assert "NBNS / SSDP / mDNS" in rendered
+
+
+def test_zh_catalog_translates_service_sort_token():
+    """`"service": "service"` was self-mapped, leaking `排序：service`
+    on the Bonjour panel border subtitle."""
+    i18n.set_lang(i18n.ZH)
+    assert i18n.t("service") == "服务"
+
+
+def test_zh_catalog_translates_noise_snr_heading():
+    """Basics-modal section heading was self-mapped while every peer
+    heading is translated."""
+    i18n.set_lang(i18n.ZH)
+    assert i18n.t("Noise / SNR") == "Noise / 信噪比"
+
+
+def test_zh_catalog_preserves_leading_space_on_ago_key():
+    """`" ago" -> "前"` dropped the leading space, producing `8s前` at
+    every `_format_duration_short(ago) + t(" ago")` site while the
+    `"  · {n}s ago"` template form rendered `5s 前...` (with space).
+    The two forms now read consistently."""
+    i18n.set_lang(i18n.ZH)
+    assert i18n.t(" ago") == " 前"
+    # Verify the concat-at-call-site shape that callers actually use.
+    assert "8s" + i18n.t(" ago") == "8s 前"
+
+
+def test_zh_catalog_keeps_apple_companion_brand_verbatim():
+    """`Apple Companion -> Apple 配对` read as Bluetooth pairing in
+    Chinese — wrong mental model for Continuity handoff."""
+    i18n.set_lang(i18n.ZH)
+    assert i18n.t("Apple Companion") == "Apple Companion"
+    # And the misleading translation MUST NOT survive.
+    assert "配对" not in i18n.t("Apple Companion")
+
+
+def test_zh_catalog_keeps_apple_proximity_brand_verbatim():
+    """Half-translated `Apple 邻近` was an incomplete adjective
+    phrase; revert to brand verbatim like AirPlay / AirPods."""
+    i18n.set_lang(i18n.ZH)
+    assert i18n.t("Apple Proximity") == "Apple Proximity"
+    assert "邻近" not in i18n.t("Apple Proximity")
+
+
+def test_zh_catalog_reorders_between_ads_hint_value_last():
+    """EN `~1772 ms between ads` in ZH should put the value last
+    (`广告间隔约 1772 ms`), not echo the EN word order."""
+    i18n.set_lang(i18n.ZH)
+    rendered = i18n.t("~{n} ms between ads", n="1772")
+    assert rendered == "广告间隔约 1772 ms"
+    # The EN render goes through `t()` too — verify it didn't break.
+    i18n.set_lang(i18n.EN)
+    assert i18n.t("~{n} ms between ads", n="1772") == "~1772 ms between ads"

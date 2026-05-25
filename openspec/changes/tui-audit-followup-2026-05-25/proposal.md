@@ -50,6 +50,31 @@ SHALL remain visible in the BLE detail modal under a new `Raw name:`
 row so users investigating a specific device can still see exactly
 what the helper reported.
 
+### Fix 4 — ZH catalog gaps surfaced by the 18:55 ZH-locale audit
+
+Running the same audit under `DITING_LANG=zh` surfaced seven copy
+defects, all confined to `src/diting/i18n.py`:
+
+- the entire shift-P / public-scene help line is missing from the ZH
+  catalog and falls back to raw English in the help modal
+- `"service"` is self-mapped (`"service" → "service"`), so the
+  Bonjour panel renders `排序：service` instead of `排序：服务`
+- the basics-modal section heading `Noise / SNR` is self-mapped
+  while every peer (`RSSI / 信号`, `频段`, `信道`, `带宽`, `加密`,
+  `漫游`, `房间`) is translated
+- `" ago" → "前"` drops the leading space, producing `8s前` in the
+  LAN diagnostics / detail "可达" row and the BLE detail Activity
+  rows, while the `"  · {n}s ago"` template form renders `5s 前扫描`
+  with the space — two duration shapes coexist in the same screen
+- `Apple Companion → Apple 配对` reads as "Bluetooth pairing" in
+  Chinese, a different mental model than what
+  `_companion-link._tcp` actually represents (Apple Continuity)
+- `Apple Nearby Info → Apple 邻近` is a half-translation that reads
+  as an incomplete adjective phrase
+- the ZH catalog entry for the Activity ad-interval hint preserves
+  EN word order (`(~1772 ms 两次广播间隔)`) where ZH idiomatic
+  ordering puts the value last (`(两次广告间隔约 1772 ms)`)
+
 ### Fix 3 — Events modal collapses consecutive duplicate BLE-seen rows
 
 In the events modal renderer (Events panel in `src/diting/tui.py`,
@@ -79,6 +104,12 @@ heterogeneous events intact.
   `BLEDeviceSeenEvent` rows with a `×N` suffix. The JSONL contract
   in `event-log` is unchanged — this is a display-layer addition
   only.
+- `i18n`: new requirement that the ZH catalog SHALL ship
+  translations for the seven copy defects above; in particular,
+  no self-mapped ZH entry where a peer key is translated, no
+  partial-translation Apple-Continuity protocol names, and a
+  uniform `{n}s 前` (with leading space) shape for the bare
+  `" ago"` key.
 
 ## Impact
 
@@ -97,4 +128,4 @@ heterogeneous events intact.
 - **Dependencies**: none.
 - **Permissions / privacy**: none. All three changes are
   display-only.
-- **Spec deltas**: `lan-inventory`, `bluetooth-scanning`, `tui-shell`.
+- **Spec deltas**: `lan-inventory`, `bluetooth-scanning`, `tui-shell`, `i18n`.

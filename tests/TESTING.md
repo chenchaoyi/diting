@@ -242,6 +242,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | JSONL keys stay English in ZH UI | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
 | Acronyms (SSID/BSSID/RSSI/...) untranslated | (review-enforced — catalog convention) |
 | Catalog `{placeholder}` parity preserved | (review-enforced — would surface as KeyError at render) |
+| **v1.7.2** — ZH catalog closes the seven copy gaps from the 2026-05-25 ZH-locale audit: the shift-P / public-scene help line is translated end-to-end; `service` sort-mode token renders as `服务`; `Noise / SNR` heading reads `Noise / 信噪比`; bare `" ago"` key keeps its leading space (`8s 前`); Apple Continuity protocol names (Apple Companion / Apple Proximity) stay brand-verbatim instead of half-translating; BLE detail ad-interval hint reorders to value-last (`广告间隔约 1772 ms`) | `test_i18n.py::test_zh_catalog_has_lan_probe_help_string`, `::test_zh_catalog_translates_service_sort_token`, `::test_zh_catalog_translates_noise_snr_heading`, `::test_zh_catalog_preserves_leading_space_on_ago_key`, `::test_zh_catalog_keeps_apple_companion_brand_verbatim`, `::test_zh_catalog_keeps_apple_proximity_brand_verbatim`, `::test_zh_catalog_reorders_between_ads_hint_value_last` |
 
 ### `inventory`
 

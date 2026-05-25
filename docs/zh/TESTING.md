@@ -233,6 +233,7 @@
 | ZH UI 的 JSONL 键依然英文 | `test_event_log.py::test_schema_keys_stay_english_under_zh_locale` |
 | 缩写（SSID/BSSID/RSSI 等）不译 | (review-enforced — 目录约定) |
 | 目录里 `{placeholder}` 同步保留 | (review-enforced — 缺失会在渲染时 KeyError) |
+| **v1.7.2** —— ZH 目录补齐 2026-05-25 中文版审计发现的七处文案缺口：Shift-P / 公共场景帮助行完整翻译；`service` 排序标记译为「服务」；`Noise / SNR` 标题译为「Noise / 信噪比」；裸 `" ago"` key 保留前导空格（`8s 前`）；Apple Continuity 协议名（Apple Companion / Apple Proximity）保留品牌字面而不半译；BLE 详情广告间隔提示改为值后置（「广告间隔约 1772 ms」） | `test_i18n.py::test_zh_catalog_has_lan_probe_help_string`、`::test_zh_catalog_translates_service_sort_token`、`::test_zh_catalog_translates_noise_snr_heading`、`::test_zh_catalog_preserves_leading_space_on_ago_key`、`::test_zh_catalog_keeps_apple_companion_brand_verbatim`、`::test_zh_catalog_keeps_apple_proximity_brand_verbatim`、`::test_zh_catalog_reorders_between_ads_hint_value_last` |
 
 ### `inventory`
 
