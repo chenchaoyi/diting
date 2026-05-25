@@ -385,6 +385,57 @@ def test_arp_parse_filters_ipv6_multicast_destination_macs():
     assert "33:33:0:0:0:1" not in macs
 
 
+def test_arp_parse_zero_pads_stripped_octets():
+    """macOS `arp -an` emits leading-zero-stripped octets (e.g.
+    `14:51:7e:71:5a:1` rather than `14:51:7e:71:5a:01`). The
+    `_read_arp_cache` boundary zero-pads each octet so every
+    downstream consumer (LAN list, detail modal, JSONL events)
+    sees the canonical IEEE 802 form.
+    """
+    text = """\
+? (11.10.128.1) at 14:51:7e:71:5a:1 on en0 [ethernet]
+? (10.0.0.2) at 24:f:9b:29:c:56 on en0 [ethernet]
+"""
+    triples = _read_arp_cache(runner=lambda: text)
+    macs = {mac for _ip, mac, _iface in triples}
+    assert "14:51:7e:71:5a:01" in macs
+    assert "24:0f:9b:29:0c:56" in macs
+    # The un-padded forms must NOT survive ingest.
+    assert "14:51:7e:71:5a:1" not in macs
+    assert "24:f:9b:29:c:56" not in macs
+
+
+def test_arp_parse_idempotent_on_already_padded_mac():
+    text = "? (10.0.0.7) at aa:bb:cc:dd:ee:ff on en0 [ethernet]\n"
+    triples = _read_arp_cache(runner=lambda: text)
+    assert ("10.0.0.7", "aa:bb:cc:dd:ee:ff", "en0") in triples
+
+
+def test_arp_parse_lowercases_upper_input():
+    text = "? (10.0.0.8) at AA:BB:CC:DD:EE:F on en0 [ethernet]\n"
+    triples = _read_arp_cache(runner=lambda: text)
+    macs = {mac for _ip, mac, _iface in triples}
+    # Last octet was a single hex char in upper case; canon
+    # lowercases AND zero-pads it.
+    assert "aa:bb:cc:dd:ee:0f" in macs
+
+
+def test_canon_mac_handles_all_zero_octets():
+    from diting.lan import _canon_mac
+    assert _canon_mac("0:0:0:0:0:0") == "00:00:00:00:00:00"
+    # Already canonical.
+    assert _canon_mac("00:00:00:00:00:00") == "00:00:00:00:00:00"
+    # Mixed.
+    assert _canon_mac("0:1:0:2:0:3") == "00:01:00:02:00:03"
+    # Wrong octet count → None.
+    assert _canon_mac("aa:bb:cc:dd:ee") is None
+    assert _canon_mac("aa:bb:cc:dd:ee:ff:00") is None
+    # Non-hex octet → None.
+    assert _canon_mac("aa:bb:cc:dd:ee:gz") is None
+    # Oversize octet (3 chars) → None.
+    assert _canon_mac("aa:bb:cc:dd:ee:0ff") is None
+
+
 def test_is_multicast_dest_mac_unit():
     from diting.lan import _is_multicast_dest_mac
     # IPv4 multicast range 01:00:5e:00:00:00 – 01:00:5e:7f:ff:ff.

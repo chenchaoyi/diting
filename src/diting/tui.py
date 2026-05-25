@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -890,8 +891,13 @@ class EventsScreen(ModalScreen):
             body_lines: list[Text] = [Text(t("(no events yet)"), style="dim italic")]
         else:
             body_lines = []
-            for ev in events:
-                line = _event_format_line(ev, inv)
+            for ev, count, latest in _group_consecutive_ble_seen(events):
+                if isinstance(ev, BLEDeviceSeenEvent):
+                    line = _format_ble_device_seen_event(
+                        ev, count=count, latest=latest,
+                    )
+                else:
+                    line = _event_format_line(ev, inv)
                 if line is not None:
                     body_lines.append(line)
 
@@ -2079,14 +2085,89 @@ def _ev_ts(event: object) -> str:
     return ts.astimezone().strftime("%H:%M:%S")
 
 
-def _format_ble_device_seen_event(event: BLEDeviceSeenEvent) -> Text:
+def _group_consecutive_ble_seen(
+    events: list[object],
+) -> list[tuple[object, int, "BLEDeviceSeenEvent | None"]]:
+    """Run-length-encode consecutive `BLEDeviceSeenEvent`s in
+    ``events`` that share the same ``(vendor, name_label)`` tuple.
+
+    Returns a list of ``(representative_event, count, latest_event)``
+    triples preserving original event order. For non-BLE-seen events
+    and standalone BLE-seen events, ``count == 1`` and
+    ``latest_event is None``. Render-only — the input list is never
+    mutated and the underlying EventRing / JSONL log are unchanged.
+    """
+    out: list[tuple[object, int, BLEDeviceSeenEvent | None]] = []
+    run: list[BLEDeviceSeenEvent] = []
+    run_key: tuple[str | None, str] | None = None
+
+    def flush() -> None:
+        if not run:
+            return
+        first = run[0]
+        latest = run[-1] if len(run) >= 2 else None
+        out.append((first, len(run), latest))
+        run.clear()
+
+    for ev in events:
+        if isinstance(ev, BLEDeviceSeenEvent):
+            key = (ev.vendor, _ble_seen_name_label(ev))
+            if run and key == run_key:
+                run.append(ev)
+                continue
+            flush()
+            run.append(ev)
+            run_key = key
+        else:
+            flush()
+            run_key = None
+            out.append((ev, 1, None))
+    flush()
+    return out
+
+
+def _ble_seen_name_label(event: BLEDeviceSeenEvent) -> str:
+    """Locale-stable label used for both display and grouping.
+
+    Anonymous → `(anonymous)`. High-entropy rotating identifiers →
+    `(rotating ID)`. Anything else → the raw name verbatim. Different
+    rotating-ID strings collapse under the same label so a single
+    physical device cycling identifiers folds into one `×N` row.
+    """
+    if not event.name:
+        return t("(anonymous)")
+    if _looks_like_rotating_id(event.name):
+        return t("(rotating ID)")
+    return event.name
+
+
+def _format_ble_device_seen_event(
+    event: BLEDeviceSeenEvent,
+    *,
+    count: int = 1,
+    latest: BLEDeviceSeenEvent | None = None,
+) -> Text:
+    """Render one BLE-seen row.
+
+    The optional ``count`` / ``latest`` parameters drive the
+    EventsScreen modal's consecutive-duplicate grouping. When
+    ``count >= 2``, the row gains a ``  ×N  → HH:MM:SS`` suffix
+    pointing at the most-recent event in the run; the leading
+    timestamp stays on the earliest. The JSONL log and per-event
+    EventsPanel render path keep calling this with the default
+    ``count=1`` so neither is affected.
+    """
     line = Text()
     line.append(f"{_ev_ts(event)}  ", style="dim")
     line.append(t("[BLE]") + "  ", style="bold blue")
     line.append(t("device seen: "), style="white")
     vendor = event.vendor or t("(unknown)")
-    name = event.name or t("(anonymous)")
+    name = _ble_seen_name_label(event)
     line.append(f"{vendor}  ·  {name}", style="white")
+    if count >= 2:
+        line.append(t("  ×{n}", n=count), style="cyan")
+        if latest is not None and latest is not event:
+            line.append(f"  → {_ev_ts(latest)}", style="dim")
     return line
 
 
@@ -3421,6 +3502,39 @@ def _fit_vendor(name: str) -> str:
     return pad_cells(truncated + "…", _COL_BLE_VENDOR)
 
 
+# High-entropy local-name shapes that BLE devices publish in lieu of
+# a real device name: Apple Continuity Find-My / Handoff rotating IDs
+# (`NZ1NhvIw3H5T5cSy3kULrJ`), Huami / Amazfit serial codes
+# (`Z-GM0YXG6A`), and similar opaque strings. The predicate is
+# deliberately narrow — it must NOT match legitimate device names
+# like `iPhone`, `ccy's iPhone 15 Pro Max`, `HW Watch GT`, or `abc`.
+_ROTATING_ID_RE = re.compile(r"^[A-Za-z0-9+/=_\-]{16,}$")
+_REAL_NAME_PREFIXES: tuple[str, ...] = (
+    "iphone", "ipad", "mac", "airpods", "homepod",
+    "apple tv", "apple watch", "beats",
+)
+
+
+def _looks_like_rotating_id(name: str | None) -> bool:
+    """Return True when ``name`` reads like a rotating-identifier
+    string rather than a human-readable device name.
+
+    Used by the BLE row renderer to substitute the locale-stable
+    `(rotating ID)` placeholder so the panel doesn't read opaque
+    base64-shaped strings as if they were device names. The raw
+    value is preserved on `BLEDevice.name` and surfaced by the BLE
+    detail modal under a `Raw name:` row.
+    """
+    if not name:
+        return False
+    if any(ch.isspace() for ch in name):
+        return False
+    lo = name.lower()
+    if any(lo.startswith(pfx) for pfx in _REAL_NAME_PREFIXES):
+        return False
+    return bool(_ROTATING_ID_RE.match(name))
+
+
 def _ble_header_line() -> Text:
     h = Text(style="bold dim")
     h.append(
@@ -3455,7 +3569,15 @@ def _ble_row_line(d: BLEDevice, now: datetime) -> Text:
     # tagged it `Find My target` no longer reads as "(unknown) /
     # Find My target · Find My" — it reads "Find My target /
     # Find My", with the Name column doing real work.
-    if d.name:
+    if d.name and _looks_like_rotating_id(d.name):
+        # Helper handed us a rotating-identifier string (Apple
+        # Continuity, Huami serial, etc.) — render the placeholder
+        # so the panel doesn't read base64-shaped strings as real
+        # device names. BLEDetailScreen still surfaces the raw value
+        # under `Raw name:`.
+        name_text = t("(rotating ID)")
+        name_style = "dim italic"
+    elif d.name:
         name_text = d.name
         name_style = "white"
     elif d.type:
@@ -3508,8 +3630,15 @@ def _ble_connected_row_line(d: BLEDevice) -> Text:
     helper's next snapshot prunes them). The remaining columns mirror
     the advertising row layout so both sections align visually.
     """
-    name_text = d.name or t("(unknown)")
-    name_style = "white" if d.name else "dim italic"
+    if d.name and _looks_like_rotating_id(d.name):
+        name_text = t("(rotating ID)")
+        name_style = "dim italic"
+    elif d.name:
+        name_text = d.name
+        name_style = "white"
+    else:
+        name_text = t("(unknown)")
+        name_style = "dim italic"
     label_text = _ble_label_summary(d)
     id_short = d.identifier[:8]
     dash = "—"
@@ -4227,7 +4356,14 @@ class BLEDetailScreen(ModalScreen):
     def _section_identity(self, out: Text) -> None:
         d = self._device
         self._heading(out, t("Identity"))
-        self._label(out, t("name"), d.name)
+        if d.name and _looks_like_rotating_id(d.name):
+            # List view substituted `(rotating ID)` for the name
+            # column; surface the helper's raw string here so the
+            # user can still see exactly what was advertised.
+            self._label(out, t("name"), t("(rotating ID)"))
+            self._label(out, t("Raw name"), d.name)
+        else:
+            self._label(out, t("name"), d.name)
         vendor_str = d.vendor
         if vendor_str and d.vendor_id is not None:
             vendor_str = f"{d.vendor}  (cid {d.vendor_id} / 0x{d.vendor_id:04x})"
@@ -4312,7 +4448,9 @@ class BLEDetailScreen(ModalScreen):
             span = (d.last_seen - d.first_seen).total_seconds()
             if d.ad_count >= 2 and span > 0:
                 interval_ms = (span / max(1, d.ad_count - 1)) * 1000.0
-                ad_str += f"  (~{interval_ms:.0f} ms {t('between ads')})"
+                ad_str += "  (" + t(
+                    "~{n} ms between ads", n=f"{interval_ms:.0f}",
+                ) + ")"
             self._label(out, t("ad count"), ad_str)
         if d.merged_count > 1:
             self._label(out, t("merged"),
