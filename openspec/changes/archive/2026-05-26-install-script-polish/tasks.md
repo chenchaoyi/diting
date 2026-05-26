@@ -53,18 +53,18 @@
 - [x] 7.2 `uv run python scripts/tui_snapshot.py --mode regression` — unaffected, green
 - [x] 7.3 `openspec validate --specs --strict` — green
 - [x] 7.4 `openspec validate install-script-polish --strict` — green
-- [ ] 7.5 `shellcheck install.sh` — clean (no new warnings introduced; existing baseline preserved)
+- [x] 7.5 `shellcheck install.sh` — clean (no new warnings introduced; existing baseline preserved)
 
 ## 8. Manual visual check
 
-- [ ] 8.1 Run `DITING_INSTALL_TESTONLY=1 bash install.sh` in iTerm2 (UTF-8, no NO_COLOR) — confirm TIER FULL renders header + six steps + summary.
-- [ ] 8.2 Run `NO_COLOR=1 DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm TIER PLAIN.
-- [ ] 8.3 Run `DITING_INSTALL_TESTONLY=1 bash install.sh | cat` — confirm TIER LOG.
-- [ ] 8.4 Run `DITING_INSTALL_FORMAT=log DITING_INSTALL_TESTONLY=1 bash install.sh` in iTerm2 — confirm override forces LOG even on TTY.
-- [ ] 8.5 Run `DITING_INSTALL_TESTONLY=1 LANG=zh_CN.UTF-8 bash install.sh` — confirm ZH guidance lines appear under step 6, six-step structure intact.
+- [x] 8.1 Run `DITING_INSTALL_TESTONLY=1 bash install.sh` in iTerm2 (UTF-8, no NO_COLOR) — confirm TIER FULL renders header + six steps + summary.
+- [x] 8.2 Run `NO_COLOR=1 DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm TIER PLAIN.
+- [x] 8.3 Run `DITING_INSTALL_TESTONLY=1 bash install.sh | cat` — confirm TIER LOG.
+- [x] 8.4 Run `DITING_INSTALL_FORMAT=log DITING_INSTALL_TESTONLY=1 bash install.sh` in iTerm2 — confirm override forces LOG even on TTY.
+- [x] 8.5 Run `DITING_INSTALL_TESTONLY=1 LANG=zh_CN.UTF-8 bash install.sh` — confirm ZH guidance lines appear under step 6, six-step structure intact.
 
 ## 9. Wrap-up
 
 - [x] 9.1 EN ↔ ZH parity check on the new TESTING entries.
-- [ ] 9.2 Commit and push the branch `feat/install-script-polish`.
-- [ ] 9.3 Open the PR using the repo template.
+- [x] 9.2 Commit and push the branch `feat/install-script-polish`.
+- [x] 9.3 Open the PR using the repo template.

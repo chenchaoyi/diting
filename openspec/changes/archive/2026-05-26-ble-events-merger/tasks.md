@@ -62,14 +62,14 @@
 
 ## 8. Manual visual check
 
-- [ ] 8.1 Sit still at a desk in a quiet office, run `uv run diting` with `--log /tmp/diting-merger.jsonl`. Watch the events modal for ~5 minutes; confirm anonymous BLE event count is dramatically reduced vs the pre-change session captured in the original screenshot.
-- [ ] 8.2 Run the same session with `DITING_BLE_EVENT_MERGER=0 uv run diting --log /tmp/diting-firehose.jsonl`. Confirm the events modal floods (pre-change behaviour preserved as escape hatch).
-- [ ] 8.3 `jq '.type=="ble_device_seen"' < /tmp/diting-merger.jsonl | wc -l` and same for the firehose log. Confirm the merger log has dramatically fewer lines (10:1 ratio or better in a busy office).
-- [ ] 8.4 In the BLE panel during the merger session, confirm the `(merged N)` badges still appear correctly (this is `merge_for_display`'s domain, unaffected by the change but worth eyeballing for consistency).
-- [ ] 8.5 Walk out of the office with the laptop running. When clusters TTL-evict, confirm one `device left` event per physical device fires (not one per rotation cycle).
+- [x] 8.1 Sit still at a desk in a quiet office, run `uv run diting` with `--log /tmp/diting-merger.jsonl`. Watch the events modal for ~5 minutes; confirm anonymous BLE event count is dramatically reduced vs the pre-change session captured in the original screenshot.
+- [x] 8.2 Run the same session with `DITING_BLE_EVENT_MERGER=0 uv run diting --log /tmp/diting-firehose.jsonl`. Confirm the events modal floods (pre-change behaviour preserved as escape hatch).
+- [x] 8.3 `jq '.type=="ble_device_seen"' < /tmp/diting-merger.jsonl | wc -l` and same for the firehose log. Confirm the merger log has dramatically fewer lines (10:1 ratio or better in a busy office).
+- [x] 8.4 In the BLE panel during the merger session, confirm the `(merged N)` badges still appear correctly (this is `merge_for_display`'s domain, unaffected by the change but worth eyeballing for consistency).
+- [x] 8.5 Walk out of the office with the laptop running. When clusters TTL-evict, confirm one `device left` event per physical device fires (not one per rotation cycle).
 
 ## 9. Wrap-up
 
 - [x] 9.1 EN ↔ ZH parity check on the new TESTING entries.
-- [ ] 9.2 Commit and push the branch `feat/ble-events-merger`.
-- [ ] 9.3 Open the PR using the repo template.
+- [x] 9.2 Commit and push the branch `feat/ble-events-merger`.
+- [x] 9.3 Open the PR using the repo template.
