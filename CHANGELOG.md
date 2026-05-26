@@ -11,6 +11,43 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.7.3] — 2026-05-26
+
+Patch release. **Startup is no longer a frozen-looking wait.** The
+6-15s synchronous TCC-probe phase inside `_ensure_helper_ready`
+(a real Wi-Fi scan + a CoreBluetooth state poll) is now wrapped in
+a pre-alt-screen splash that renders the canonical pixel-art beast
+with a micro-motion animation and a ticking status block, so the
+user sees what diting is doing instead of staring at a silent
+terminal. **Wall-clock latency is unchanged** — perceived-latency
+only. A later release can layer on TCC-result caching for the
+wall-clock win.
+
+### Added
+- **Startup splash with three-tier render ladder.** Tier A
+  (interactive TTY ≥ 30 cols): Rich `Live` driving 3 frames at 4 Hz
+  + three-line status block (`[..]` → `[✓]` / `[✗]`). Tier B (TTY
+  < 30 cols): one static frame + `\r` status overwrites. Tier C
+  (non-TTY: pipes, dumb terms): single plain `diting starting...`
+  line, no cursor games. Detection via `console.is_terminal` and
+  `console.size.width`; the test harness exercises all three tiers
+  with stub Consoles.
+- **Micro-motion brand mark.** Three frames (canonical → ear-twitch
+  → canonical → eye-blink), each differing from its neighbour by ≤
+  2 cells. Silhouette and brand-orange palette stay 100% identical
+  across frames per the "do not redesign the mark" rule in
+  `CLAUDE.md`. The canonical pose is byte-equal to the running
+  TUI header's `_LOGO_MARK_ART`.
+- **Per-step probe status.** `_ensure_helper_ready` now hands
+  `(label, callable)` pairs to `splash.run_with_splash()`; the
+  status block ticks `helper located` / `checking Location
+  Services` / `checking Bluetooth` as each probe resolves. Falsy
+  returns mark `[✗]`; raised exceptions re-raise AFTER teardown
+  so upstream error paths continue to fire.
+- **i18n.** ZH catalog gains `diting 启动中…`, `已找到 helper`,
+  `检查 Location Services`, `检查 Bluetooth`. The two macOS-product
+  acronyms stay verbatim per the acronym-preservation rule.
+
 ## [1.7.2] — 2026-05-25
 
 Patch release. Ten polish fixes surfaced by two `/tui-audit` passes

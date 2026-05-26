@@ -10,6 +10,36 @@
 
 ## [Unreleased]
 
+## [1.7.3] — 2026-05-26
+
+Patch release。**启动不再像「卡住了」。** `_ensure_helper_ready`
+里那段同步 TCC 探测（真 Wi-Fi 扫描 + CoreBluetooth 状态轮询，
+6-15 秒）现在外套一层 alt-screen 之前的 splash —— 画面里有标志
+性的像素野兽小动作，下面一栏状态行随每一步探测的完成一格格点亮，
+用户能看到 diting 在干什么，不用对着一个没声音的终端发呆。
+**实际等待时间不变** —— 只是把感受拉得不那么难熬。后续可以再加
+一层 TCC 结果缓存来真正缩短墙钟时间。
+
+### 新增
+- **启动 splash 三层渲染降级。** Tier A（交互式 TTY，≥ 30 列）：
+  Rich `Live` 以 4 Hz 循环 3 帧 + 三行状态块（`[..]` → `[✓]` /
+  `[✗]`）。Tier B（TTY，< 30 列）：单帧静态 + `\r` 覆盖状态行。
+  Tier C（非 TTY：管道、dumb 终端）：只打一行 `diting starting...`，
+  不做光标控制。通过 `console.is_terminal` 与 `console.size.width`
+  探测；测试用 stub Console 覆盖了三层。
+- **品牌野兽微动效。** 三帧（standard → 抖耳 → standard → 眨眼），
+  相邻帧最多差 2 个 cell。轮廓和品牌橙调色板逐帧保持完全一致 ——
+  遵循 `CLAUDE.md` 的 "do not redesign the mark" 硬规。standard
+  这帧和运行态 TUI 头部的 `_LOGO_MARK_ART` 字节相同。
+- **每步探测的可见状态。** `_ensure_helper_ready` 现在把
+  `(label, callable)` 元组传给 `splash.run_with_splash()`；状态块
+  根据探测结果依次点亮 `helper located` / `checking Location
+  Services` / `checking Bluetooth`。返回 falsy 标 `[✗]`；抛异常
+  在 teardown 之后重抛，保证上层错误路径继续生效。
+- **i18n。** ZH 目录新增 `diting 启动中…`、`已找到 helper`、
+  `检查 Location Services`、`检查 Bluetooth`。两个 macOS 产品缩写
+  按现有缩写保留规则保持英文。
+
 ## [1.7.2] — 2026-05-25
 
 Patch release。两轮 `/tui-audit` 在真实的公司 Wi-Fi + 密集 BLE
