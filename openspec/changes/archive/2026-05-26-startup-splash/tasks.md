@@ -46,14 +46,14 @@
 
 ## 7. Manual visual check
 
-- [ ] 7.1 Run `uv run diting` in a normal-width iTerm2 tab; confirm splash renders without flicker, status ticks visibly through the three steps, teardown is clean.
-- [ ] 7.2 Run `uv run diting | cat`; confirm Tier C fallback prints `diting starting...` and nothing else.
-- [ ] 7.3 Run `uv run diting` in a 20-column window; confirm Tier B static frame + `\r` updates.
-- [ ] 7.4 Run `DITING_LANG=zh uv run diting`; confirm the three status labels read in Chinese.
-- [ ] 7.5 With Bluetooth permission temporarily revoked (TCC reset), confirm splash shows `[✗] 检查 Bluetooth` and the existing missing-permission prompt flow runs unaffected after teardown.
+- [x] 7.1 Run `uv run diting` in a normal-width iTerm2 tab; confirm splash renders without flicker, status ticks visibly through the three steps, teardown is clean.
+- [x] 7.2 Run `uv run diting | cat`; confirm Tier C fallback prints `diting starting...` and nothing else.
+- [x] 7.3 Run `uv run diting` in a 20-column window; confirm Tier B static frame + `\r` updates.
+- [x] 7.4 Run `DITING_LANG=zh uv run diting`; confirm the three status labels read in Chinese.
+- [x] 7.5 With Bluetooth permission temporarily revoked (TCC reset), confirm splash shows `[✗] 检查 Bluetooth` and the existing missing-permission prompt flow runs unaffected after teardown.
 
 ## 8. Wrap-up
 
 - [x] 8.1 EN ↔ ZH parity check on `i18n.py` and the TESTING entries.
-- [ ] 8.2 Commit and push the branch `feat/startup-splash`.
-- [ ] 8.3 Open the PR using the repo template.
+- [x] 8.2 Commit and push the branch `feat/startup-splash`.
+- [x] 8.3 Open the PR using the repo template.
