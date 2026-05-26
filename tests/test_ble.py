@@ -1761,3 +1761,311 @@ def test_poller_pending_identifier_graduates_when_name_appears_in_later_advert()
     # Out of PENDING, into PRESENT.
     assert "MAC_A" not in poller._pending_seen
     assert "MAC_A" in poller._seen_identifiers
+
+
+# ---------- v1.8.0 cluster-keyed transition events ----------
+#
+# The merger applies merge_for_display's fingerprint to the
+# transition emitter so one physical device's rotation through N
+# privacy-rotated identifiers fires ONE BLEDeviceSeenEvent + ONE
+# BLEDeviceLeftEvent across the cluster's session, not N+N.
+
+
+def _build_ble_device_anon(
+    identifier: str,
+    *,
+    vendor_id: int | None = 76,  # Apple
+    name: str | None = None,
+    rssi_dbm: int | None = -55,
+    first_seen: datetime | None = None,
+    last_seen: datetime | None = None,
+    services: tuple[str, ...] = (),
+) -> BLEDevice:
+    """Variant of `_build_ble_device` for clustering tests — defaults
+    to anonymous (name=None) so the cluster fingerprint exercises
+    the common Apple Continuity / Microsoft CDP rotation shape."""
+    t = first_seen or datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+    t_last = last_seen or t
+    return BLEDevice(
+        identifier=identifier,
+        name=name,
+        vendor="Apple, Inc." if vendor_id == 76 else None,
+        vendor_id=vendor_id,
+        services=services,
+        rssi_dbm=rssi_dbm,
+        is_connectable=True,
+        first_seen=t,
+        last_seen=t_last,
+        ad_count=1,
+    )
+
+
+def test_cluster_one_iphone_rotating_four_identifiers_fires_one_seen_one_left():
+    """Single physical device rotates through 4 identifiers in one
+    session. Fingerprint matches (same vendor, same name=None,
+    RSSI within ±10 dB). Exactly one seen + one left across the
+    whole rotation; both events carry the FIRST identifier as
+    their representative."""
+    from datetime import timedelta
+    from diting.events import BLEDeviceLeftEvent, BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0, presence_gate_s=0.0)
+    t0 = datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+    # Identifier 1 arrives.
+    poller._devices["ID_1"] = _build_ble_device_anon(
+        "ID_1", rssi_dbm=-50, first_seen=t0, last_seen=t0,
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=1))
+    # Identifier 2 arrives at t+10 (rotation), within RSSI window.
+    poller._devices["ID_2"] = _build_ble_device_anon(
+        "ID_2", rssi_dbm=-52,
+        first_seen=t0 + timedelta(seconds=10),
+        last_seen=t0 + timedelta(seconds=10),
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=11))
+    # Identifier 3 arrives at t+20.
+    poller._devices["ID_3"] = _build_ble_device_anon(
+        "ID_3", rssi_dbm=-48,
+        first_seen=t0 + timedelta(seconds=20),
+        last_seen=t0 + timedelta(seconds=20),
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=21))
+    # Identifier 4 arrives at t+30, ID_1 ages out (TTL exceeded
+    # since last_seen=t0). Partial departure — no left expected.
+    poller._devices["ID_4"] = _build_ble_device_anon(
+        "ID_4", rssi_dbm=-51,
+        first_seen=t0 + timedelta(seconds=30),
+        last_seen=t0 + timedelta(seconds=30),
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=31))
+
+    out = poller.drain_transitions()
+    seens = [t for t in out if isinstance(t, BLEDeviceSeenEvent)]
+    lefts = [t for t in out if isinstance(t, BLEDeviceLeftEvent)]
+    assert len(seens) == 1, f"expected one cluster seen, got {len(seens)}"
+    assert seens[0].identifier == "ID_1", "representative is the first graduated"
+    assert lefts == [], "partial cluster departure must be silent"
+
+    # Now age out all remaining identifiers — cluster fires its left.
+    # Don't clear() (that would empty the `before` snapshot inside
+    # _detect_transitions); just advance the clock past TTL so the
+    # internal expire pass evicts naturally.
+    poller._detect_transitions(t0 + timedelta(seconds=120))
+    out = poller.drain_transitions()
+    lefts = [t for t in out if isinstance(t, BLEDeviceLeftEvent)]
+    assert len(lefts) == 1, "exactly one left when last cluster member evicts"
+    assert lefts[0].identifier == "ID_1", "left identifier matches the cluster representative"
+
+
+def test_cluster_two_devices_at_different_rssi_buckets_fire_separately():
+    """Two physically distinct devices at -50 dBm and -75 dBm
+    (>10 dB apart) form two clusters; two seens fire."""
+    from datetime import timedelta
+    from diting.events import BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake", presence_gate_s=0.0)
+    t0 = datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+    poller._devices["NEAR"] = _build_ble_device_anon("NEAR", rssi_dbm=-50, first_seen=t0)
+    poller._devices["FAR"] = _build_ble_device_anon("FAR", rssi_dbm=-75, first_seen=t0)
+    poller._detect_transitions(t0 + timedelta(seconds=1))
+
+    out = poller.drain_transitions()
+    seens = [t for t in out if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seens) == 2
+    idents = {s.identifier for s in seens}
+    assert idents == {"NEAR", "FAR"}
+    # Two clusters in the index.
+    assert len(poller._clusters) == 2
+
+
+def test_cluster_presence_gate_failing_flit_does_not_claim_cluster():
+    """Anonymous identifier evicted before its presence-gate window
+    matures must not create or join any cluster."""
+    from datetime import timedelta
+
+    poller = BLEPoller("/fake", ttl_s=2.0, presence_gate_s=5.0)
+    t0 = datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+    poller._devices["FLIT"] = _build_ble_device_anon(
+        "FLIT", first_seen=t0, last_seen=t0,
+    )
+    # Observe at t+1 — gate still pending.
+    poller._detect_transitions(t0 + timedelta(seconds=1))
+    # At t+3, TTL evicts (last_seen=t0, ttl=2s).
+    poller._detect_transitions(t0 + timedelta(seconds=3))
+
+    out = poller.drain_transitions()
+    assert out == [], "no transitions for gate-failing flit"
+    assert "FLIT" not in poller._identifier_to_cluster
+    assert poller._clusters == {}
+
+
+def test_cluster_disabled_via_env_restores_per_identifier_semantics():
+    """`enable_cluster_merger=False` makes every identifier graduation
+    fire its own seen and every TTL eviction fire its own left."""
+    from datetime import timedelta
+    from diting.events import BLEDeviceLeftEvent, BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0, presence_gate_s=0.0,
+                       enable_cluster_merger=False)
+    t0 = datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+    poller._devices["ID_1"] = _build_ble_device_anon("ID_1", rssi_dbm=-50, first_seen=t0)
+    poller._devices["ID_2"] = _build_ble_device_anon("ID_2", rssi_dbm=-50, first_seen=t0)
+    poller._detect_transitions(t0 + timedelta(seconds=1))
+
+    out = poller.drain_transitions()
+    seens = [t for t in out if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seens) == 2, "per-identifier semantics: one seen per identifier"
+
+
+def test_cluster_partial_departure_silent():
+    """A cluster with 3 active identifiers losing one to TTL must
+    NOT fire a left event; the cluster persists with 2 members."""
+    from datetime import timedelta
+    from diting.events import BLEDeviceLeftEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0, presence_gate_s=0.0)
+    t0 = datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+    for ident in ("ID_1", "ID_2", "ID_3"):
+        poller._devices[ident] = _build_ble_device_anon(
+            ident, rssi_dbm=-50, first_seen=t0, last_seen=t0,
+        )
+    poller._detect_transitions(t0 + timedelta(seconds=1))
+    poller.drain_transitions()  # discard the one cluster seen
+
+    # ID_1 ages out (last_seen=t0, ttl=30s, now=t0+40 evicts).
+    # ID_2 + ID_3 are refreshed at t0+30 so they survive.
+    poller._devices["ID_2"] = _build_ble_device_anon(
+        "ID_2", rssi_dbm=-50, first_seen=t0,
+        last_seen=t0 + timedelta(seconds=30),
+    )
+    poller._devices["ID_3"] = _build_ble_device_anon(
+        "ID_3", rssi_dbm=-50, first_seen=t0,
+        last_seen=t0 + timedelta(seconds=30),
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=40))
+
+    out = poller.drain_transitions()
+    lefts = [t for t in out if isinstance(t, BLEDeviceLeftEvent)]
+    assert lefts == [], "partial cluster departure must be silent"
+    # Cluster still exists.
+    assert len(poller._clusters) == 1
+    cluster = next(iter(poller._clusters.values()))
+    assert cluster.active_members == {"ID_2", "ID_3"}
+
+
+def test_cluster_lifetime_ends_then_device_returns_fires_fresh_seen():
+    """When a cluster's last member evicts and the cluster is
+    destroyed, a later identifier matching the same fingerprint
+    creates a NEW cluster and fires a fresh seen event."""
+    from datetime import timedelta
+    from diting.events import BLEDeviceLeftEvent, BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0, presence_gate_s=0.0)
+    t0 = datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+
+    # Phase 1: device shows up.
+    poller._devices["ID_1"] = _build_ble_device_anon(
+        "ID_1", rssi_dbm=-50, first_seen=t0, last_seen=t0,
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=1))
+    # Phase 2: TTL evicts naturally (last_seen=t0, ttl=30, now=t0+60).
+    poller._detect_transitions(t0 + timedelta(seconds=60))
+    # Phase 3: device returns 20 min later under a fresh identifier.
+    later = t0 + timedelta(seconds=20 * 60)
+    poller._devices["ID_2"] = _build_ble_device_anon(
+        "ID_2", rssi_dbm=-50, first_seen=later, last_seen=later,
+    )
+    poller._detect_transitions(later + timedelta(seconds=1))
+
+    out = poller.drain_transitions()
+    seens = [t for t in out if isinstance(t, BLEDeviceSeenEvent)]
+    lefts = [t for t in out if isinstance(t, BLEDeviceLeftEvent)]
+    # Two clusters' worth of events: original session + return.
+    assert len(seens) == 2
+    assert len(lefts) == 1
+    assert seens[0].identifier == "ID_1"
+    assert seens[1].identifier == "ID_2"
+    assert lefts[0].identifier == "ID_1"
+
+
+def test_cluster_fully_anonymous_devices_each_get_own_cluster():
+    """Devices with both `vendor_id=None` AND `name=None` are
+    unmergeable per `merge_for_display`'s rule — each gets its
+    own single-member cluster and fires its own seen."""
+    from datetime import timedelta
+    from diting.events import BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake", presence_gate_s=0.0)
+    t0 = datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+    poller._devices["A1"] = _build_ble_device_anon(
+        "A1", vendor_id=None, name=None, rssi_dbm=-50, first_seen=t0,
+    )
+    poller._devices["A2"] = _build_ble_device_anon(
+        "A2", vendor_id=None, name=None, rssi_dbm=-50, first_seen=t0,
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=1))
+
+    out = poller.drain_transitions()
+    seens = [t for t in out if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seens) == 2, "fully-anonymous devices do not merge"
+
+
+def test_cluster_fingerprint_constants_shared_with_merge_for_display():
+    """Both the BLE-panel merger and the transition emitter MUST
+    read the same threshold constants from `diting.ble` — prevents
+    silent drift between the live view and the events stream."""
+    from diting.ble import _RSSI_WINDOW_DB, _JACCARD_THRESHOLD, merge_for_display
+    import inspect
+
+    assert isinstance(_RSSI_WINDOW_DB, int)
+    assert isinstance(_JACCARD_THRESHOLD, float)
+    # `merge_for_display`'s default rssi_window_db must equal the
+    # module-level constant (not a literal). Inspecting the
+    # signature catches a future contributor hard-coding `10` in
+    # the default and drifting from the cluster merger.
+    sig = inspect.signature(merge_for_display)
+    assert sig.parameters["rssi_window_db"].default == _RSSI_WINDOW_DB
+
+
+def test_cluster_representative_id_survives_when_first_member_evicts():
+    """Cluster's stored `representative_id` is the FIRST graduated
+    identifier and does not rotate even if that identifier itself
+    is the first to TTL-evict."""
+    from datetime import timedelta
+    from diting.events import BLEDeviceLeftEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0, presence_gate_s=0.0)
+    t0 = datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+    poller._devices["FIRST"] = _build_ble_device_anon(
+        "FIRST", rssi_dbm=-50, first_seen=t0, last_seen=t0,
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=1))
+    # SECOND joins the cluster at t+10 and gets refreshed beyond
+    # FIRST's TTL window.
+    poller._devices["SECOND"] = _build_ble_device_anon(
+        "SECOND", rssi_dbm=-50,
+        first_seen=t0 + timedelta(seconds=10),
+        last_seen=t0 + timedelta(seconds=10),
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=11))
+    # FIRST evicts at t+40 (last_seen=t0, ttl=30s), SECOND refreshed.
+    poller._devices["SECOND"] = _build_ble_device_anon(
+        "SECOND", rssi_dbm=-50,
+        first_seen=t0 + timedelta(seconds=10),
+        last_seen=t0 + timedelta(seconds=40),
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=41))
+    # Cluster persists; representative is still FIRST.
+    cluster = next(iter(poller._clusters.values()))
+    assert cluster.representative_id == "FIRST"
+    assert cluster.active_members == {"SECOND"}
+    # SECOND evicts at t+80 (last_seen=t0+40, ttl=30, now=t0+80
+    # → 40 s past, TTL exceeded) → cluster fires left under FIRST.
+    poller._detect_transitions(t0 + timedelta(seconds=80))
+    out = poller.drain_transitions()
+    lefts = [t for t in out if isinstance(t, BLEDeviceLeftEvent)]
+    assert len(lefts) == 1
+    assert lefts[0].identifier == "FIRST", (
+        "cluster left event carries the cluster's representative ID, "
+        "not the most-recently-evicted member"
+    )
