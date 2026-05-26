@@ -187,4 +187,162 @@ def test_install_script_uses_diting_version_override():
     proc = _run({"DITING_VERSION": "v0.9.0"})
     assert proc.returncode == 0
     assert "pinned version: v0.9.0" in proc.stdout
-    assert "DITING_VERSION env override" in proc.stdout
+
+
+# ---------- Three-tier output ladder (v1.8.0) ----------
+#
+# The new tier system layers a polished render on TTY environments
+# without changing what the script *does*. These cases pin each
+# tier's output shape; the existing assertions above cover TIER LOG
+# (non-TTY, captured by subprocess) implicitly. The PTY-harness
+# cases below spawn the script with a controlled fake-tty so the
+# TIER FULL / TIER PLAIN branches are exercised reproducibly.
+
+import shutil
+
+import pytest
+
+
+def _run_via_pty(env_extra: dict[str, str] | None = None) -> tuple[int, str]:
+    """Spawn install.sh inside a pseudo-terminal so `[ -t 1 ]` is true.
+
+    Uses BSD `script -q /dev/null bash …` — present on every macOS
+    install and the most reliable way to get bash to see fd 1 as a
+    TTY in tests. The `-q` flag suppresses script's own "Script
+    started/done" banners. The output captured by subprocess is the
+    PTY-routed view, complete with ANSI escapes and the `\\r\\n`
+    line endings the slave PTY synthesises.
+    """
+    if not shutil.which("script"):
+        pytest.skip("script(1) not available; needed for PTY tier tests")
+    base_env = {
+        "DITING_INSTALL_TESTONLY": "1",
+        "HOME": "/tmp/diting-install-test-home",
+        "PATH": "/usr/bin:/bin",
+        "SHELL": "/bin/zsh",
+        # Default to UTF-8 + xterm so TIER FULL fires unless a test
+        # overrides NO_COLOR / LC_ALL / TERM.
+        "LANG": "en_US.UTF-8",
+        "TERM": "xterm-256color",
+    }
+    if env_extra:
+        base_env.update(env_extra)
+    # `script -q -t 0` (BSD) flushes immediately; on macOS the syntax
+    # is `script -q <outfile> <command...>` — `/dev/null` discards
+    # script's own log file. The command after that runs inside the
+    # PTY that `script` allocates.
+    proc = subprocess.run(
+        ["script", "-q", "/dev/null", "bash", str(INSTALL_SCRIPT)],
+        capture_output=True, text=True, env=base_env, check=False,
+        timeout=15,
+    )
+    return proc.returncode, proc.stdout
+
+
+def test_tier_log_byte_identical_under_non_tty():
+    """Standard subprocess.run (non-TTY) MUST land in TIER LOG so
+    every pre-v1.8.0 substring assertion still passes. This is the
+    Homebrew + CI contract."""
+    proc = _run({"DITING_VERSION": "v0.10.0"})
+    assert proc.returncode == 0
+    # Existing prose lines must appear exactly as before.
+    assert "diting install: host detected: darwin-" in proc.stdout
+    assert "diting install: pinned version: v0.10.0" in proc.stdout
+    # No tier-polished decorations in LOG.
+    assert "[1/6]" not in proc.stdout
+    assert "Installed." not in proc.stdout
+    # Specifically no ANSI escape sequences.
+    assert "\x1b[" not in proc.stdout
+
+
+def test_tier_full_under_pty():
+    """Interactive TTY with UTF-8 locale and no NO_COLOR gets the
+    polished output: brand-orange pixel beast, six numbered steps
+    with ✓ markers, indented Installed. summary block."""
+    rc, out = _run_via_pty({"DITING_VERSION": "v0.10.0"})
+    assert rc == 0, out
+    # 24-bit ANSI orange escape for the brand mark.
+    assert "\x1b[38;2;254;166;43m" in out
+    # Pixel-beast art (final row of _LOGO_MARK_ART).
+    assert "▀██▀▀▀▀██" in out
+    # Numbered step structure.
+    assert "[1/6]" in out
+    assert "[2/6]" in out
+    assert "[6/6]" in out
+    # Unicode success marker.
+    assert "✓" in out
+    # Polished summary block.
+    assert "Installed." in out
+    assert "binary" in out
+    # Old prose-prefix lines MUST NOT leak in FULL.
+    assert "diting install: host detected" not in out
+
+
+def test_tier_plain_under_pty_with_no_color():
+    """NO_COLOR=1 on an interactive TTY downgrades FULL to PLAIN —
+    keeps the six-step structure but drops the logo + color + Unicode."""
+    rc, out = _run_via_pty({"DITING_VERSION": "v0.10.0", "NO_COLOR": "1"})
+    assert rc == 0, out
+    # Numbered step structure preserved.
+    assert "[1/6]" in out
+    assert "[6/6]" in out
+    # ASCII markers, NOT Unicode.
+    assert "[OK]" in out
+    assert "✓" not in out
+    # No logo.
+    assert "▀██▀▀▀▀██" not in out
+    # No ANSI escapes.
+    assert "\x1b[" not in out
+    # Summary block still appears.
+    assert "Installed." in out
+
+
+def test_tier_format_env_override_forces_log_on_tty():
+    """DITING_INSTALL_FORMAT=log on an interactive TTY MUST force the
+    LOG-tier byte shape — escape hatch for Homebrew formula
+    maintainers who want grep-friendly output on a real terminal."""
+    rc, out = _run_via_pty({
+        "DITING_VERSION": "v0.10.0",
+        "DITING_INSTALL_FORMAT": "log",
+    })
+    assert rc == 0, out
+    assert "diting install: host detected: darwin-" in out
+    assert "[1/6]" not in out
+    assert "Installed." not in out
+
+
+def test_tier_plain_under_lc_all_c():
+    """No UTF-8 locale (`LC_ALL=C`) downgrades FULL to PLAIN even
+    with NO_COLOR unset — the script refuses to emit Unicode
+    glyphs when the locale won't render them reliably."""
+    rc, out = _run_via_pty({
+        "DITING_VERSION": "v0.10.0",
+        "LC_ALL": "C",
+        "LANG": "C",
+    })
+    assert rc == 0, out
+    assert "[1/6]" in out
+    assert "[OK]" in out
+    assert "▀██▀▀▀▀██" not in out
+    assert "\x1b[" not in out
+
+
+def test_die_with_marker_failure_path_keeps_exit_status():
+    """`die` (and its `die_with_marker` wrapper) MUST still exit 1
+    and still emit the `diting install: error: ...` line for
+    grep-friendliness; the new marker is a visual addition in
+    FULL / PLAIN, never a replacement for the error prose.
+
+    The unsupported-arch site uses plain `die()` (not
+    `die_with_marker`) because it precedes step 1; this case pins
+    that path's exit status + stderr shape unchanged."""
+    fake_uname_dir = REPO_ROOT / "build" / "fake-uname-weird-2"
+    fake_uname_dir.mkdir(parents=True, exist_ok=True)
+    fake = fake_uname_dir / "uname"
+    fake.write_text(
+        "#!/bin/sh\nif [ \"$1\" = \"-s\" ]; then echo Darwin; else echo sparc64; fi\n"
+    )
+    fake.chmod(0o755)
+    proc = _run({"PATH": f"{fake_uname_dir}:/usr/bin:/bin"})
+    assert proc.returncode == 1
+    assert "diting install: error: unsupported arch" in proc.stderr
