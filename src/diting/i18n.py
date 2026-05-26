@@ -170,6 +170,14 @@ _ZH: dict[str, str] = {
     "Sort": "排序",
     "Re-roam": "重选 AP",
     "View": "视图",  # legacy; kept for command-palette / Ctrl+P
+    # ---- Startup splash (v1.8.0) ----
+    # Pre-alt-screen status block. The two macOS-product strings
+    # (`Location Services`, `Bluetooth`) stay English per the acronym /
+    # brand-string rule already in this catalog.
+    "diting starting...": "diting 启动中…",
+    "helper located": "已找到 helper",
+    "checking Location Services": "检查 Location Services",
+    "checking Bluetooth": "检查 Bluetooth",
     "Toggle Wi-Fi / BLE / Bonjour view": "切换 Wi-Fi / BLE / Bonjour 视图",
     "Toggle Wi-Fi / BLE / Bonjour / LAN view": "切换 Wi-Fi / BLE / Bonjour / LAN 视图",
     "cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour → LAN": "切换附近视图：Wi-Fi BSSID → BLE → Bonjour → LAN",

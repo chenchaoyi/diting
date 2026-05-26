@@ -1324,8 +1324,29 @@ def _ensure_helper_ready() -> str | None:
     # — granting one without the other is a real (and historically
     # common) state, so we report them per-permission rather than as
     # a single boolean.
-    location_ok = _helper.has_permission(binary)
-    bluetooth_ok = _helper.has_bluetooth_permission(binary)
+    #
+    # The probes are wrapped in a startup splash so the multi-second
+    # CoreWLAN + CoreBluetooth blocking work is *legible* to the user
+    # rather than reading as a frozen terminal. The splash adds no
+    # measurable latency vs the bare probes; see `splash.py`.
+    from . import splash as _splash
+    helper_label = t("helper located")
+    location_label = t("checking Location Services")
+    bluetooth_label = t("checking Bluetooth")
+    steps = [
+        # Step 1 is a confirmation that we already have the helper —
+        # always succeeds at this point because the `find_helper` /
+        # `try_build` / version-rebuild prose above returned the
+        # binary path. Surfacing it as a step gives the splash three
+        # rows to render instead of two, and confirms to the user
+        # that the helper-locate phase already completed.
+        (helper_label, lambda: True),
+        (location_label, lambda: _helper.has_permission(binary)),
+        (bluetooth_label, lambda: _helper.has_bluetooth_permission(binary)),
+    ]
+    probe_results = _splash.run_with_splash(steps)
+    location_ok = probe_results[1]
+    bluetooth_ok = probe_results[2]
     if location_ok and bluetooth_ok:
         return binary
 
