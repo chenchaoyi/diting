@@ -368,3 +368,79 @@ def test_emit_scene_banner_none_input_is_no_op(monkeypatch, capsys) -> None:
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
+
+
+# ---------- Startup splash wire-up (v1.8.0) ----------
+
+def test_ensure_helper_ready_drives_splash_for_two_tcc_probes(
+    monkeypatch, tmp_path,
+) -> None:
+    """_ensure_helper_ready hands the three steps (helper / Location /
+    Bluetooth) to splash.run_with_splash; results are consumed back
+    into the existing location_ok / bluetooth_ok variables."""
+    from diting import _helper, splash
+
+    fake_binary = str(tmp_path / "diting-tianer")
+    # `find_helper` would normally probe the filesystem; force it
+    # to return our fake path so `_ensure_helper_ready` advances
+    # past the locate phase without ever calling `try_build`.
+    monkeypatch.setattr(_helper, "find_helper", lambda: fake_binary)
+    monkeypatch.setattr(_helper, "has_ble_scan_subcommand", lambda b: True)
+    monkeypatch.setattr(_helper, "has_permission", lambda b: True)
+    monkeypatch.setattr(_helper, "has_bluetooth_permission", lambda b: True)
+
+    captured: dict[str, object] = {}
+
+    def fake_run_with_splash(steps, *, console=None):
+        captured["steps"] = list(steps)
+        return [bool(fn()) for _label, fn in steps]
+
+    monkeypatch.setattr(splash, "run_with_splash", fake_run_with_splash)
+
+    result = cli._ensure_helper_ready()
+
+    assert result == fake_binary
+    assert len(captured["steps"]) == 3
+    labels = [label for label, _fn in captured["steps"]]
+    # Labels are i18n-resolved (EN at this point) — assert by EN key
+    # since the test runner is in EN locale by default.
+    assert labels[0] == "helper located"
+    assert labels[1] == "checking Location Services"
+    assert labels[2] == "checking Bluetooth"
+
+
+def test_ensure_helper_ready_consumes_splash_results_into_grant_flow(
+    monkeypatch, tmp_path, capsys,
+) -> None:
+    """When the splash reports Bluetooth as False, _ensure_helper_ready
+    SHALL fall into the existing missing-permission prompt path
+    (the `Permissions required:` instructional prose) after splash
+    teardown — unchanged by the splash refactor."""
+    from diting import _helper, splash
+
+    fake_binary = str(tmp_path / "Helper.app" / "Contents" / "MacOS" / "diting-tianer")
+    (tmp_path / "Helper.app" / "Contents" / "MacOS").mkdir(parents=True)
+    monkeypatch.setattr(_helper, "find_helper", lambda: fake_binary)
+    monkeypatch.setattr(_helper, "has_ble_scan_subcommand", lambda b: True)
+    monkeypatch.setattr(_helper, "has_permission", lambda b: True)
+    monkeypatch.setattr(_helper, "has_bluetooth_permission", lambda b: False)
+
+    def fake_run_with_splash(steps, *, console=None):
+        return [bool(fn()) for _label, fn in steps]
+
+    monkeypatch.setattr(splash, "run_with_splash", fake_run_with_splash)
+    # Stop the post-splash flow before `open` would actually fire.
+    import subprocess as _subprocess
+    monkeypatch.setattr(
+        _subprocess, "Popen",
+        lambda *args, **kwargs: None,
+    )
+    # Cut the grant-polling loop short by stubbing `time.sleep` to
+    # immediately overshoot the timeout.
+    import time as _time
+    monkeypatch.setattr(_time, "sleep", lambda _s: None)
+
+    cli._ensure_helper_ready()
+    captured = capsys.readouterr()
+    assert "Permissions required:" in captured.out
+    assert "Bluetooth (BLE devices view)" in captured.out

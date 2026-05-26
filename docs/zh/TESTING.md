@@ -168,6 +168,7 @@
 | `--config <PATH>` 覆盖 aps.yaml 搜索路径 | `test_network.py::test_resolve_config_path_env_override_wins`、`::test_resolve_config_path_no_env_falls_through_to_default` |
 | `--notify` 在默认 TUI 子命令与 `monitor` 上都可用 | `test_tui_smoke.py::test_app_with_notify_calls_watchdog_on_event`（TUI wire-up）；`test_watchdog.py::test_maybe_notify_fires_for_latency_spike`（monitor wire-up）；旗标解析 review-enforced |
 | `--version`（或 `-V`）打印 `diting <版本号>` 后退出 0，在 locale / TUI / helper 之前短路 | `test_cli.py::test_version_flag_prints_running_version`、`::test_version_flag_short_dash_v`、`::test_version_short_circuits_before_locale` |
+| **v1.8.0** —— 启动 splash 渲染先于 `_ensure_helper_ready` 的 TCC 探测：所有帧的行 / 列数与 `_LOGO_MARK_ART` 一致；相邻帧相差 ≤ 2 个 cell（保持轮廓）；Tier A 交互式 TTY → Rich `Live` 渲染节奏状态行；Tier B 窄 TTY（< 30 列）→ 静态帧 + `\r` 覆盖；Tier C 非 TTY → 一行 `diting starting...`；探测返回 falsy 时标 `[✗]`；探测抛异常时 teardown 后重抛；ZH locale 渲染翻译后的状态标签 | `test_splash.py::test_frames_share_row_and_column_count`、`::test_adjacent_frames_differ_by_at_most_two_cells`、`::test_run_with_splash_tier_c_non_tty`、`::test_run_with_splash_tier_b_narrow`、`::test_run_with_splash_tick_sequence`、`::test_run_with_splash_callable_falsy_marks_step_failed`、`::test_run_with_splash_callable_raising_reraises_after_teardown`、`::test_run_with_splash_zh_locale`；`test_cli.py::test_ensure_helper_ready_drives_splash_for_two_tcc_probes` |
 
 ### `environment-monitor`
 
