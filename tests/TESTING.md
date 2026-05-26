@@ -268,6 +268,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | PATH-update hint printed when `~/.local/bin` not on PATH (zsh / bash / fish detected) | `test_install.py::test_install_script_emits_zsh_path_hint`, `::test_install_script_silent_when_already_on_path` |
 | `DITING_VERSION=vX.Y.Z` env var pins the install to a specific tag | `test_install.py::test_install_script_uses_diting_version_override` |
 | Frozen-binary install coexists with `uv run diting` developer flow | (review-enforced — search-path priority pins the in-repo dev build first; tested via `test_helper.py::test_find_helper_repo_dev_build_shadows_application_support`) |
+| **v1.8.0** — Three-tier output ladder: TIER LOG (non-TTY) byte-identical to pre-change output so Homebrew + CI parsers keep working; TIER PLAIN (TTY + `NO_COLOR` / `LC_ALL=C` / `TERM=dumb`) keeps the six-step numbered structure with ASCII `[OK]` / `[FAIL]` markers; TIER FULL (TTY + UTF-8 + color) adds the pixel-beast header + 24-bit ANSI brand-orange + Unicode `✓` / `✗` markers + indented `Installed.` summary block. `DITING_INSTALL_FORMAT={full,plain,log}` overrides detection | `test_install.py::test_tier_log_byte_identical_under_non_tty`, `::test_tier_full_under_pty`, `::test_tier_plain_under_pty_with_no_color`, `::test_tier_format_env_override_forces_log_on_tty`, `::test_tier_plain_under_lc_all_c`, `::test_die_with_marker_failure_path_keeps_exit_status` |
 
 ### `lan-inventory`
 

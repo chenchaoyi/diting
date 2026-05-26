@@ -37,6 +37,77 @@ TMP_DIR=""
 # markers to assert branching coverage.
 TESTONLY="${DITING_INSTALL_TESTONLY:-}"
 
+# ---- output tier detection ----
+#
+# `install.sh` renders via one of three tiers depending on the runtime
+# environment. TIER LOG is byte-identical to the pre-v1.8.0 output and
+# is what every non-TTY consumer sees (Homebrew cask shell, CI, pipes,
+# `tests/test_install.py`). TIER PLAIN / TIER FULL polish the output
+# for interactive macOS terminals — same script behaviour, different
+# rendering. See `openspec/specs/installation/spec.md` for the full
+# selection rules.
+
+# Tier detection runs at the top level so `[ -t 1 ]` queries the
+# script's actual stdout — NOT the pipe of a command substitution.
+# We assign TIER directly rather than capturing via `$(detect_tier)`
+# because the `$()` form redirects fd 1 inside the subshell, which
+# makes `[ -t 1 ]` always report non-TTY (silently dropping every
+# interactive run to TIER LOG).
+
+# 1. Explicit user override always wins. Documented escape hatch for
+#    Homebrew formula maintainers / downstream consumers who want the
+#    machine-grep-friendly LOG format on an interactive terminal.
+case "${DITING_INSTALL_FORMAT:-}" in
+  log|plain|full)
+    TIER="${DITING_INSTALL_FORMAT}"
+    ;;
+  *)
+    if ! [ -t 1 ]; then
+      # 2. Non-TTY: pipes, cron, CI runners, Homebrew cask shell.
+      TIER="log"
+    elif [ -n "${NO_COLOR:-}" ]; then
+      # 3. NO_COLOR convention (https://no-color.org/) — any non-empty
+      #    value disables color, forcing TIER PLAIN even on a TTY.
+      TIER="plain"
+    else
+      case "${TERM:-}" in
+        dumb|"")
+          # 4. Dumb / unset terminals can't render ANSI cleanly.
+          TIER="plain"
+          ;;
+        *)
+          # 5+6. UTF-8 detection: LC_ALL > LC_CTYPE > LANG. Default
+          #     macOS shells set `en_US.UTF-8`; explicit `LC_ALL=C`
+          #     sessions drop to PLAIN.
+          _DITING_LOCALE="${LC_ALL:-${LC_CTYPE:-${LANG:-}}}"
+          case "${_DITING_LOCALE}" in
+            *UTF-8*|*UTF8*|*utf-8*|*utf8*) TIER="full" ;;
+            *)                              TIER="plain" ;;
+          esac
+          unset _DITING_LOCALE
+          ;;
+      esac
+    fi
+    ;;
+esac
+
+# ANSI escape constants. Only populated in TIER FULL; empty strings
+# elsewhere so the renderers can interpolate them unconditionally
+# without leaking escape bytes into PLAIN / LOG output. 24-bit color
+# (the `\033[38;2;R;G;B;m` form) is universally supported by every
+# modern macOS terminal — iTerm2, Terminal.app, Alacritty, kitty,
+# WezTerm — which is the only platform diting installs onto.
+if [ "$TIER" = "full" ]; then
+  ORANGE="$(printf '\033[38;2;254;166;43m')"
+  GREEN="$(printf '\033[32m')"
+  RED="$(printf '\033[31m')"
+  DIM="$(printf '\033[2m')"
+  BOLD="$(printf '\033[1m')"
+  RESET="$(printf '\033[0m')"
+else
+  ORANGE="" GREEN="" RED="" DIM="" BOLD="" RESET=""
+fi
+
 # ---- helpers ----
 
 die() {
@@ -44,8 +115,120 @@ die() {
   exit 1
 }
 
+# die_with_marker prints a tier-appropriate failure marker for the
+# named step before delegating to die(). Step-bound failure sites use
+# this; non-step failures (platform check, version resolve) keep
+# calling die() directly because they have no step number.
+die_with_marker() {
+  local step_n="$1"
+  shift
+  case "$TIER" in
+    full)
+      printf '%s[%s/6] %-10s%s %s%b%s\n' \
+        "" "$step_n" "FAIL" "" "${RED}" "✗${RESET}" "" >&2
+      ;;
+    plain)
+      printf '[%s/6] %-10s [FAIL]\n' "$step_n" "FAIL" >&2
+      ;;
+    log)
+      : # die() will emit the existing prefix line; no extra marker
+      ;;
+  esac
+  die "$*"
+}
+
 note() {
   echo "diting install: $*"
+}
+
+# step emits a numbered progress row in TIER FULL / TIER PLAIN, or
+# the existing `diting install: <log_text>` line in TIER LOG. Keeps
+# every existing test (which captures non-TTY → LOG) byte-equal.
+#
+# Usage: step <N> <label> <value> <log_text>
+#
+# When `log_text` is empty, the LOG branch SHALL emit nothing — used
+# by TESTONLY blocks where the corresponding `note "TESTONLY: would
+# …"` line already covers the LOG-tier output and emitting both
+# would break the byte-identical contract.
+step() {
+  local n="$1" label="$2" value="$3" log_text="$4"
+  case "$TIER" in
+    full)
+      printf '%b[%d/6]%b %-10s %s %b✓%b\n' \
+        "${DIM}" "$n" "${RESET}" "$label" "$value" "${GREEN}" "${RESET}"
+      ;;
+    plain)
+      printf '[%d/6] %-10s %s [OK]\n' "$n" "$label" "$value"
+      ;;
+    log)
+      # Empty log_text means the caller has already covered LOG-tier
+      # output (typically a `note "TESTONLY: …"` line right after).
+      # Use `if` (not `&&`) so an empty value doesn't trip `set -e`.
+      if [ -n "$log_text" ]; then note "$log_text"; fi
+      ;;
+  esac
+}
+
+# step_continuation prints an indented continuation line under the
+# preceding step row (used for the helper-prime guidance lines). In
+# LOG tier it delegates to `note` so existing log shape is preserved.
+step_continuation() {
+  local text="$1"
+  case "$TIER" in
+    full|plain)
+      printf '       %b%s%b\n' "${DIM}" "$text" "${RESET}"
+      ;;
+    log)
+      note "$text"
+      ;;
+  esac
+}
+
+# log_only_note prints a `note` line only in TIER LOG. Used where the
+# old script had two `note` calls for one logical step — the second
+# call's content moves into the summary block in FULL / PLAIN.
+log_only_note() {
+  if [ "$TIER" = "log" ]; then note "$1"; fi
+}
+
+# print_header renders the pixel-beast brand mark + tagline at the
+# very top of the install. TIER FULL only — TIER PLAIN drops the
+# logo to keep ASCII purity; TIER LOG keeps the old prefix-only feel.
+print_header() {
+  [ "$TIER" = "full" ] || return 0
+  printf '\n'
+  # Three-row Unicode half-block art, byte-equal to _LOGO_MARK_ART
+  # in src/diting/tui.py and the canonical splash frame.
+  printf '  %s█%s\n'         "${ORANGE}" "${RESET}"
+  printf '  %s█▀██████▄%s\n'  "${ORANGE}" "${RESET}"
+  printf '  %s▀██▀▀▀▀██%s\n'  "${ORANGE}" "${RESET}"
+  printf '\n'
+  printf '  %sditing installer%s · %s\n' "${BOLD}" "${RESET}" "${VERSION:-(version pending)}"
+  printf '\n'
+}
+
+# print_summary renders the end-of-install "Installed." block in
+# TIER FULL / TIER PLAIN. No-op in TIER LOG — the existing PATH-hint
+# tail keeps its role as the closer there.
+print_summary() {
+  case "$TIER" in
+    full|plain) ;;
+    log) return 0 ;;
+  esac
+  printf '\n'
+  printf '  %sInstalled.%s\n' "${BOLD}" "${RESET}"
+  printf '    %-8s %s\n' "binary" "${BIN_DIR}/diting"
+  if [ -z "$TESTONLY" ] && [ -n "${DST_BUNDLE:-}" ]; then
+    printf '    %-8s %s\n' "bundle" "${DST_BUNDLE}"
+  fi
+  # `next` line varies by PATH state — wired in the PATH-hint block
+  # at the script tail, which calls back into this helper via the
+  # SUMMARY_NEXT global.
+  if [ -n "${SUMMARY_NEXT:-}" ]; then
+    printf '    %-8s %s\n' "next" "${SUMMARY_NEXT}"
+  fi
+  printf '\n'
 }
 
 cleanup() {
@@ -99,13 +282,13 @@ case "$ARCH_RAW" in
     ;;
 esac
 
-note "host detected: darwin-${ARCH}"
-
-# ---- resolve version ----
+# ---- resolve version (must happen before print_header so the
+# tagline can show which version we're installing) ----
 
 if [ -n "${DITING_VERSION:-}" ]; then
   VERSION="$DITING_VERSION"
-  note "pinned version: $VERSION (DITING_VERSION env override)"
+  VERSION_LOG_TEXT="pinned version: $VERSION (DITING_VERSION env override)"
+  VERSION_DISPLAY="$VERSION (pinned)"
 else
   if [ -n "$TESTONLY" ]; then
     VERSION="v0.0.0-testonly"
@@ -118,8 +301,16 @@ else
   if [ -z "$VERSION" ]; then
     die "could not resolve latest release; set DITING_VERSION to override"
   fi
-  note "latest release: $VERSION"
+  VERSION_LOG_TEXT="latest release: $VERSION"
+  VERSION_DISPLAY="$VERSION"
 fi
+
+# Header + step 1 + step 2 land here so the user sees brand + first
+# two steps as soon as the version is resolved. The host arch is
+# already known from the platform check above.
+print_header
+step 1 "Host"    "darwin-${ARCH}"   "host detected: darwin-${ARCH}"
+step 2 "Release" "$VERSION_DISPLAY" "$VERSION_LOG_TEXT"
 
 # Strip the leading "v" for filenames: tag `v0.10.0` → tarball
 # `diting-0.10.0-darwin-arm64.tar.gz`.
@@ -131,32 +322,41 @@ SHASUMS_URL="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/SHASUM
 # ---- download + verify ----
 
 if [ -n "$TESTONLY" ]; then
+  # FULL / PLAIN render the polished step rows; LOG keeps the
+  # existing TESTONLY markers below (and `step "" log_text=""` is a
+  # no-op in LOG by contract).
+  step 3 "Download" "$TARBALL_NAME (testonly)" ""
+  step 4 "Verify"   "sha256 (testonly)"        ""
   note "TESTONLY: would download $TARBALL_URL"
   note "TESTONLY: would verify against $SHASUMS_URL"
 else
   TMP_DIR="$(mktemp -d -t diting-install.XXXXXX)"
-  note "downloading $TARBALL_NAME"
+  step 3 "Download" "$TARBALL_NAME" "downloading $TARBALL_NAME"
   curl -fsSL --output "${TMP_DIR}/${TARBALL_NAME}" "$TARBALL_URL" \
-    || die "tarball download failed: $TARBALL_URL"
+    || die_with_marker 3 "tarball download failed: $TARBALL_URL"
   curl -fsSL --output "${TMP_DIR}/SHASUMS256.txt" "$SHASUMS_URL" \
-    || die "SHASUMS256.txt download failed: $SHASUMS_URL"
+    || die_with_marker 3 "SHASUMS256.txt download failed: $SHASUMS_URL"
   EXPECTED_SHA="$(
     awk -v name="$TARBALL_NAME" '$2 == name { print $1 }' \
       "${TMP_DIR}/SHASUMS256.txt"
   )"
   if [ -z "$EXPECTED_SHA" ]; then
-    die "SHASUMS256.txt missing entry for $TARBALL_NAME"
+    die_with_marker 4 "SHASUMS256.txt missing entry for $TARBALL_NAME"
   fi
   ACTUAL_SHA="$(shasum -a 256 "${TMP_DIR}/${TARBALL_NAME}" | awk '{print $1}')"
   if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
-    die "sha256 mismatch on $TARBALL_NAME (expected $EXPECTED_SHA, got $ACTUAL_SHA)"
+    die_with_marker 4 "sha256 mismatch on $TARBALL_NAME (expected $EXPECTED_SHA, got $ACTUAL_SHA)"
   fi
-  note "sha256 verified: $ACTUAL_SHA"
+  # Step 4 display: truncate to first 8 hex chars + ellipsis so the
+  # row stays scannable; the full hash is still in $ACTUAL_SHA for
+  # any debug needs. LOG tier keeps the full hash for grep parity.
+  step 4 "Verify" "sha256 ${ACTUAL_SHA:0:8}…" "sha256 verified: $ACTUAL_SHA"
 fi
 
 # ---- extract ----
 
 if [ -n "$TESTONLY" ]; then
+  step 5 "Install" "${INSTALL_PREFIX} (testonly)" ""
   note "TESTONLY: would extract to ${INSTALL_PREFIX}"
   note "TESTONLY: would symlink ${BIN_DIR}/diting"
 else
@@ -170,7 +370,7 @@ else
   mkdir -p "$STAGE_DIR"
   tar -xzf "${TMP_DIR}/${TARBALL_NAME}" -C "$STAGE_DIR" --strip-components=1
   if [ ! -x "${STAGE_DIR}/libexec/diting/diting" ]; then
-    die "extracted tarball missing libexec/diting/diting"
+    die_with_marker 5 "extracted tarball missing libexec/diting/diting"
   fi
   if [ -d "$INSTALL_PREFIX" ]; then
     rm -rf "${INSTALL_PREFIX}.old"
@@ -179,8 +379,10 @@ else
   mv "$STAGE_DIR" "$INSTALL_PREFIX"
   rm -rf "${INSTALL_PREFIX}.old"
   ln -snf "${INSTALL_PREFIX}/libexec/diting/diting" "${BIN_DIR}/diting"
-  note "installed to ${INSTALL_PREFIX}"
-  note "symlinked ${BIN_DIR}/diting"
+  step 5 "Install" "${INSTALL_PREFIX}" "installed to ${INSTALL_PREFIX}"
+  # Symlink path goes into the summary block (FULL/PLAIN); LOG keeps
+  # the original second note line so its byte shape is unchanged.
+  log_only_note "symlinked ${BIN_DIR}/diting"
 fi
 
 # ---- prime helper bundle ----
@@ -189,6 +391,7 @@ DITING_LOCALE="$(detect_locale)"
 DITING_LOCALE_TAG="$(bundle_locale_tag "$DITING_LOCALE")"
 
 if [ -n "$TESTONLY" ]; then
+  step 6 "Helper" "${APP_SUPPORT_DIR}/diting-tianer.app (testonly)" ""
   note "TESTONLY: detected locale=${DITING_LOCALE} (tag=${DITING_LOCALE_TAG})"
   note "TESTONLY: would copy helper to ${APP_SUPPORT_DIR}"
   note "TESTONLY: would xattr -dr com.apple.quarantine"
@@ -198,7 +401,7 @@ else
   SRC_BUNDLE="${INSTALL_PREFIX}/share/diting-tianer.app"
   DST_BUNDLE="${APP_SUPPORT_DIR}/diting-tianer.app"
   if [ ! -d "$SRC_BUNDLE" ]; then
-    die "extracted tarball missing share/diting-tianer.app"
+    die_with_marker 6 "extracted tarball missing share/diting-tianer.app"
   fi
   rm -rf "$DST_BUNDLE"
   cp -R "$SRC_BUNDLE" "$DST_BUNDLE"
@@ -219,40 +422,69 @@ else
        "$DST_BUNDLE" \
        --args -AppleLanguages "(${DITING_LOCALE_TAG})" \
        2>/dev/null || true
-  note "helper bundle primed at ${DST_BUNDLE}"
+  step 6 "Helper" "${DST_BUNDLE}" "helper bundle primed at ${DST_BUNDLE}"
   if [ "$DITING_LOCALE" = "zh" ]; then
-    note "macOS 会依次弹出 3 个权限请求（定位 → 蓝牙 → 通知）— 请逐个点击 Allow"
-    note "helper 窗口在第 3 个授权完成后约 4 秒自动关闭"
-    note "升级用户：bundle cdhash 已变更，定位与蓝牙会重新询问一次"
+    step_continuation "macOS 会依次弹出 3 个权限请求（定位 → 蓝牙 → 通知）— 请逐个点击 Allow"
+    step_continuation "helper 窗口在第 3 个授权完成后约 4 秒自动关闭"
+    step_continuation "升级用户：bundle cdhash 已变更，定位与蓝牙会重新询问一次"
   else
-    note "macOS will prompt for Location → Bluetooth → Notifications in order — click Allow on each"
-    note "the helper window auto-closes ~4s after the third grant lands"
-    note "upgrading from v1.0.x: the bundle's cdhash changed, so Location + Bluetooth re-prompt once"
+    step_continuation "macOS will prompt for Location → Bluetooth → Notifications in order — click Allow on each"
+    step_continuation "the helper window auto-closes ~4s after the third grant lands"
+    step_continuation "upgrading from v1.0.x: the bundle's cdhash changed, so Location + Bluetooth re-prompt once"
   fi
 fi
 
-# ---- PATH hint ----
+# ---- PATH hint + summary block ----
+#
+# In TIER LOG we keep the existing prose-style closer that downstream
+# tests pin via substring match. In TIER FULL / TIER PLAIN we compute
+# the SUMMARY_NEXT message and let print_summary render the indented
+# `Installed.` block — the PATH-hint substance is identical, only the
+# layout differs.
 
 case ":$PATH:" in
   *":${BIN_DIR}:"*)
-    note "diting is on your PATH — run \`diting\`"
+    if [ "$TIER" = "log" ]; then
+      note "diting is on your PATH — run \`diting\`"
+    else
+      SUMMARY_NEXT="run \`diting\` (the splash will guide you through the TCC prompts)"
+    fi
     ;;
   *)
     # Detect the user's interactive shell to print the right hint.
     SHELL_NAME="$(basename "${SHELL:-/bin/zsh}")"
     case "$SHELL_NAME" in
       zsh)
-        echo "Add to ~/.zshrc:  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        if [ "$TIER" = "log" ]; then
+          echo "Add to ~/.zshrc:  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        else
+          SUMMARY_NEXT="add to ~/.zshrc:  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        fi
         ;;
       bash)
-        echo "Add to ~/.bashrc:  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        if [ "$TIER" = "log" ]; then
+          echo "Add to ~/.bashrc:  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        else
+          SUMMARY_NEXT="add to ~/.bashrc:  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        fi
         ;;
       fish)
-        echo "Add to ~/.config/fish/config.fish:  fish_add_path \$HOME/.local/bin"
+        if [ "$TIER" = "log" ]; then
+          echo "Add to ~/.config/fish/config.fish:  fish_add_path \$HOME/.local/bin"
+        else
+          SUMMARY_NEXT="add to ~/.config/fish/config.fish:  fish_add_path \$HOME/.local/bin"
+        fi
         ;;
       *)
-        echo "Add ${BIN_DIR} to your PATH (shell: ${SHELL_NAME})"
+        if [ "$TIER" = "log" ]; then
+          echo "Add ${BIN_DIR} to your PATH (shell: ${SHELL_NAME})"
+        else
+          SUMMARY_NEXT="add ${BIN_DIR} to your PATH (shell: ${SHELL_NAME})"
+        fi
         ;;
     esac
     ;;
 esac
+
+# Print the polished summary block (no-op in TIER LOG).
+print_summary

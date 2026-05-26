@@ -259,6 +259,7 @@
 | `~/.local/bin` 不在 PATH 时输出对应 shell 的 PATH 更新提示（zsh / bash / fish 三种） | `test_install.py::test_install_script_emits_zsh_path_hint`、`::test_install_script_silent_when_already_on_path` |
 | `DITING_VERSION=vX.Y.Z` 环境变量锁版本 | `test_install.py::test_install_script_uses_diting_version_override` |
 | 冻结二进制与 `uv run diting` 开发流共存 | （review-enforced — 搜索路径优先级把 in-repo 开发构建排在前；通过 `test_helper.py::test_find_helper_repo_dev_build_shadows_application_support` 验证） |
+| **v1.8.0** —— 三层输出梯度：TIER LOG（非 TTY）与改造前字节相同，保证 Homebrew + CI 解析继续可用；TIER PLAIN（TTY + `NO_COLOR` / `LC_ALL=C` / `TERM=dumb`）保留六步编号结构 + ASCII `[OK]` / `[FAIL]` 标记；TIER FULL（TTY + UTF-8 + 彩色）追加像素野兽 header + 24-bit ANSI 品牌橙 + Unicode `✓` / `✗` 标记 + 缩进 `Installed.` 收尾块。`DITING_INSTALL_FORMAT={full,plain,log}` 显式覆盖 | `test_install.py::test_tier_log_byte_identical_under_non_tty`、`::test_tier_full_under_pty`、`::test_tier_plain_under_pty_with_no_color`、`::test_tier_format_env_override_forces_log_on_tty`、`::test_tier_plain_under_lc_all_c`、`::test_die_with_marker_failure_path_keeps_exit_status` |
 
 ### `lan-inventory`
 
