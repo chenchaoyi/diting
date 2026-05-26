@@ -108,6 +108,11 @@ else
   ORANGE="" GREEN="" RED="" DIM="" BOLD="" RESET=""
 fi
 
+# MIRROR resolution happens later, AFTER the helpers section,
+# because the `die()` it calls on invalid values is defined there.
+# Kept near the top conceptually — see the `---- mirror resolution
+# ----` block below the helpers.
+
 # ---- helpers ----
 
 die() {
@@ -139,6 +144,80 @@ die_with_marker() {
 
 note() {
   echo "diting install: $*"
+}
+
+# download_with_fallback downloads `<url>` to `<dest>` via the
+# resolved MIRROR ladder. The third arg names a caller-provided
+# global that receives `github` or `ghproxy` indicating which path
+# served the bytes — used by the completion-notice flow so the
+# user sees which mirror fired.
+#
+# curl's `--max-time 20` is the wall-clock budget per attempt. The
+# slowest healthy international GitHub-asset download is ~5 s; the
+# CN failure mode usually completes the TCP handshake then stalls,
+# so 20 s gives generous headroom while still failing fast on
+# broken routes.
+#
+# `eval` is the standard pre-bash-4.3 indirection pattern; macOS
+# ships bash 3.2 by default and lacks `declare -n` nameref support.
+# Returns 0 on success, 1 on full failure of every path in the
+# resolved ladder.
+download_with_fallback() {
+  local url="$1" dest="$2" used_var="$3"
+  local proxy_url="https://ghproxy.com/${url}"
+  case "$MIRROR" in
+    github)
+      if curl --max-time 20 -fsSL --output "$dest" "$url"; then
+        eval "${used_var}=github"
+        return 0
+      fi
+      return 1
+      ;;
+    ghproxy)
+      if curl --max-time 20 -fsSL --output "$dest" "$proxy_url"; then
+        eval "${used_var}=ghproxy"
+        return 0
+      fi
+      return 1
+      ;;
+    auto)
+      if curl --max-time 20 -fsSL --output "$dest" "$url" 2>/dev/null; then
+        eval "${used_var}=github"
+        return 0
+      fi
+      note "$(mirror_fallback_notice)"
+      if curl --max-time 20 -fsSL --output "$dest" "$proxy_url"; then
+        eval "${used_var}=ghproxy"
+        return 0
+      fi
+      return 1
+      ;;
+  esac
+}
+
+# mirror_fallback_notice / mirror_completion_notice — locale-aware
+# copy used by the auto-ladder dispatcher. `detect_locale` is the
+# existing helper that derives EN vs ZH from `defaults read -g
+# AppleLanguages`; we cache the result in MIRROR_NOTICE_LOCALE on
+# first call so locale-detection runs at most once.
+mirror_fallback_notice() {
+  if [ -z "${MIRROR_NOTICE_LOCALE:-}" ]; then
+    MIRROR_NOTICE_LOCALE="$(detect_locale)"
+  fi
+  case "$MIRROR_NOTICE_LOCALE" in
+    zh) echo "GitHub 下载失败（网络可能受限）；切换到 ghproxy.com 镜像重试..." ;;
+    *)  echo "GitHub download failed (likely CN network); retrying via ghproxy.com mirror..." ;;
+  esac
+}
+
+mirror_completion_notice() {
+  if [ -z "${MIRROR_NOTICE_LOCALE:-}" ]; then
+    MIRROR_NOTICE_LOCALE="$(detect_locale)"
+  fi
+  case "$MIRROR_NOTICE_LOCALE" in
+    zh) echo "tarball 或 SHASUMS 通过 ghproxy.com 镜像下载；信任仍锚定于 SHA256" ;;
+    *)  echo "tarball or SHASUMS fetched via ghproxy.com mirror; trust anchored on SHA256" ;;
+  esac
 }
 
 # step emits a numbered progress row in TIER FULL / TIER PLAIN, or
@@ -265,6 +344,33 @@ bundle_locale_tag() {
   esac
 }
 
+# ---- mirror resolution ----
+#
+# DITING_INSTALL_MIRROR controls the download ladder for the tarball
+# and SHASUMS256.txt. GitHub Releases stays canonical (trust anchor);
+# the fallback is for CN networks where direct GitHub asset downloads
+# stall on `objects.githubusercontent.com`.
+#
+#   auto    — try GitHub first; on curl failure / 20 s timeout,
+#             retry via https://ghproxy.com/<github-url>. Default.
+#   github  — GitHub only; pre-change behaviour, no fallback.
+#   ghproxy — ghproxy.com only; skip the GitHub-first attempt for
+#             CN users who know GitHub is unreachable. Saves 20 s
+#             per install vs the auto ladder.
+#
+# Invalid values abort before any download work happens — the
+# install must not silently fall back to a default when the user
+# typed a mirror name that isn't supported.
+
+case "${DITING_INSTALL_MIRROR:-auto}" in
+  auto|github|ghproxy)
+    MIRROR="${DITING_INSTALL_MIRROR:-auto}"
+    ;;
+  *)
+    die "unknown DITING_INSTALL_MIRROR value: ${DITING_INSTALL_MIRROR} (expected auto|github|ghproxy)"
+    ;;
+esac
+
 # ---- platform check ----
 
 OS="$(uname -s)"
@@ -332,10 +438,12 @@ if [ -n "$TESTONLY" ]; then
 else
   TMP_DIR="$(mktemp -d -t diting-install.XXXXXX)"
   step 3 "Download" "$TARBALL_NAME" "downloading $TARBALL_NAME"
-  curl -fsSL --output "${TMP_DIR}/${TARBALL_NAME}" "$TARBALL_URL" \
-    || die_with_marker 3 "tarball download failed: $TARBALL_URL"
-  curl -fsSL --output "${TMP_DIR}/SHASUMS256.txt" "$SHASUMS_URL" \
-    || die_with_marker 3 "SHASUMS256.txt download failed: $SHASUMS_URL"
+  TARBALL_MIRROR=""
+  SHASUMS_MIRROR=""
+  download_with_fallback "$TARBALL_URL" "${TMP_DIR}/${TARBALL_NAME}" TARBALL_MIRROR \
+    || die_with_marker 3 "tarball download failed via github AND ghproxy.com: $TARBALL_URL"
+  download_with_fallback "$SHASUMS_URL" "${TMP_DIR}/SHASUMS256.txt" SHASUMS_MIRROR \
+    || die_with_marker 4 "SHASUMS256.txt download failed via github AND ghproxy.com: $SHASUMS_URL"
   EXPECTED_SHA="$(
     awk -v name="$TARBALL_NAME" '$2 == name { print $1 }' \
       "${TMP_DIR}/SHASUMS256.txt"
@@ -351,6 +459,12 @@ else
   # row stays scannable; the full hash is still in $ACTUAL_SHA for
   # any debug needs. LOG tier keeps the full hash for grep parity.
   step 4 "Verify" "sha256 ${ACTUAL_SHA:0:8}…" "sha256 verified: $ACTUAL_SHA"
+  # When either path served via ghproxy, surface the notice once
+  # AFTER SHA verification succeeded — confirms the bytes matched
+  # canonical regardless of which URL produced them.
+  if [ "$TARBALL_MIRROR" = "ghproxy" ] || [ "$SHASUMS_MIRROR" = "ghproxy" ]; then
+    note "$(mirror_completion_notice)"
+  fi
 fi
 
 # ---- extract ----

@@ -349,6 +349,22 @@ Pin a specific release:
 DITING_VERSION=v0.10.0 curl -fsSL https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh | bash
 ```
 
+From inside China? The installer automatically falls back to a public
+GitHub mirror ([`ghproxy.com`](https://ghproxy.com)) if the direct
+GitHub download stalls or times out (`curl --max-time 20`). The
+SHA256 verification still anchors on the canonical `SHASUMS256.txt`,
+so a hostile mirror would be caught by the hash mismatch. To skip the
+20-second GitHub-first wait once you know GitHub is unreachable from
+your network:
+
+```bash
+DITING_INSTALL_MIRROR=ghproxy curl -fsSL https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh | bash
+```
+
+`DITING_INSTALL_MIRROR=github` forces canonical-only (no fallback,
+pre-v1.8.0 behaviour) for users who need to keep the install in a
+single trust path.
+
 ### From source (for contributors)
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/), plus the
