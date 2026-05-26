@@ -10,6 +10,57 @@
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-05-26
+
+Minor release。**四个体验向特性一起落地**：三个改的是第一次见 diting
+的前 30 秒（启动 + 安装），第一个是终于把密集 BLE 环境下事件 modal
+里那条永远刷不停的噪声治理掉了。这些都不动 JSONL 协议、不动权限边界
+—— 只改 diting 用起来"是什么感觉"。
+
+### 新增
+
+- **alt-screen 之前的启动 splash + 像素野兽微动效。**
+  `_ensure_helper_ready` 里那段 6-15 秒的同步 TCC 探测（真 Wi-Fi
+  扫一次 + CoreBluetooth 状态轮询）现在外套一层 splash，画面是品牌
+  像素野兽（4 Hz 微动效 —— 抖耳 / 眨眼，轮廓和品牌橙调色板完全
+  一致，遵循「不要重画 mark」的硬规），下面三行状态块按步骤点亮。
+  三层渲染降级：交互式 TTY ≥ 30 列走 Rich `Live` + 帧循环；窄 TTY
+  退到单帧 + `\r` 覆盖；非 TTY（管道、dumb 终端）退到一行
+  `diting starting...`。墙钟时间不变 —— 只是感受变好。后续可以再
+  叠一层 TCC 结果缓存来真正缩短墙钟。
+- **`install.sh` 三层输出梯度。** v1.8.0 之前的 `curl … | bash`
+  输出是一连串 `diting install: …` 平铺日志，现在在交互式 macOS
+  终端上变成六步编号进度块 + `✓` 标记 + 缩进 `Installed.` 摘要块。
+  Tier FULL 多一张像素野兽 header + 24-bit ANSI 品牌橙；Tier PLAIN
+  在 `NO_COLOR=1` / `LC_ALL=C` / `TERM=dumb` 下退到 ASCII；
+  Tier LOG（非 TTY / Homebrew / CI / TESTONLY）与改造前字节相同，
+  保证下游解析继续可用。`DITING_INSTALL_FORMAT={full,plain,log}`
+  显式覆盖。
+- **CN 网络 GitHub 卡顿的 CDN 回退。** `install.sh` 先用
+  `curl --max-time 20` 试 canonical GitHub Releases；失败（典型的
+  CN → `objects.githubusercontent.com` 卡死）再回退到
+  `https://ghproxy.com/<github-url>`。GitHub 仍是信任锚 —— SHA256
+  校验对实际下到的字节做。`DITING_INSTALL_MIRROR={auto,github,ghproxy}`
+  环境变量覆盖（默认 `auto`）。回退触发时打一行提示（中文：
+  `tarball 或 SHASUMS 通过 ghproxy.com 镜像下载；信任仍锚定于
+  SHA256`）。
+- **BLE 转场事件按物理设备聚类。** v1.7.2 的连续重复折叠没解决核心
+  噪声 —— `BLEDeviceSeenEvent` / `BLEDeviceLeftEvent` 还是按
+  identifier 发，而隐私轮换让一台真设备每隔几分钟换一次身份。现在
+  事件触发逻辑和 BLE 视图 `(merged N)` 共用同一份指纹（`(vendor_id,
+  name)` 精确匹配 + RSSI ±10 dB + 服务 UUID Jaccard ≥ 0.5）。同一
+  台物理设备在整个会话里只发一次 seen + 一次 left。JSONL 协议不变
+  （字段、类型、代表 identifier 全部一致），下游消费方看到的事件
+  数变少但字节兼容。`DITING_BLE_EVENT_MERGER=0` 保留 per-identifier
+  逃生口（用于安全审计）。用户在办公室坐着不动时，事件 modal 从
+  原本的「90 秒 ~40 条匿名轮换噪声」变成基本静默。
+
+### 整理
+
+- `src/diting/ble.py` 拆出模块级 `_RSSI_WINDOW_DB` /
+  `_JACCARD_THRESHOLD` 常量，`merge_for_display`（BLE 视图）和新加
+  的转场 cluster index 共读，避免日后调参时两个路径漂移。
+
 ## [1.7.3] — 2026-05-26
 
 Patch release。**启动不再像「卡住了」。** `_ensure_helper_ready`
