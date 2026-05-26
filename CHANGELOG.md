@@ -11,6 +11,75 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-05-26
+
+Minor release. **Four polished-UX features land together.** Three on
+the installer / startup surface that the user sees in the first 30
+seconds of their first encounter with diting, and one (the BLE
+events merger) that finally tames the chronic noise the events modal
+showed in dense BLE environments. None of these change a JSONL
+contract or a permission surface; they all change what diting feels
+like to use.
+
+### Added
+
+- **Pre-alt-screen startup splash with micro-motion brand mark.**
+  The 6-15 s synchronous TCC-probe phase inside `_ensure_helper_ready`
+  (a real Wi-Fi scan + a CoreBluetooth state poll) is now wrapped in
+  a splash that renders the canonical pixel-art beast with a 4 Hz
+  micro-motion animation (ear-twitch / eye-blink — silhouette and
+  brand-orange palette stay 100 % identical across frames per the
+  "do not redesign the mark" rule) plus a three-line ticking status
+  block. Three-tier render ladder: interactive TTY ≥ 30 cols gets
+  Rich `Live` with cycling frames; narrow TTY gets a static frame
+  with `\r` updates; non-TTY (pipes, dumb terms) gets a single
+  `diting starting...` line. Wall-clock latency unchanged —
+  perceived-latency only. A later release can layer on TCC caching
+  for the wall-clock win.
+- **Three-tier output ladder for `install.sh`.** The
+  `curl … | bash` installer's pre-v1.8.0 wall of `diting install: …`
+  log lines is now a six-step numbered progress block with `✓`
+  markers and an indented `Installed.` summary block — on
+  interactive macOS terminals. Tier FULL adds the pixel-beast header
+  + 24-bit ANSI brand-orange; Tier PLAIN drops the logo + color on
+  `NO_COLOR=1` / `LC_ALL=C` / `TERM=dumb`; Tier LOG (non-TTY /
+  Homebrew / CI / TESTONLY) is byte-identical to today so downstream
+  parsers continue to work. `DITING_INSTALL_FORMAT={full,plain,log}`
+  overrides detection.
+- **CDN fallback for CN-network GitHub stalls.** `install.sh` tries
+  the canonical GitHub Releases URL first with `curl --max-time 20`;
+  on failure (the chronic CN→`objects.githubusercontent.com` stall),
+  retries via `https://ghproxy.com/<github-url>`. GitHub stays the
+  trust anchor — SHA256 verifies against whichever bytes downloaded.
+  `DITING_INSTALL_MIRROR={auto,github,ghproxy}` env override
+  (default `auto`). When the fallback fires the user sees a one-line
+  notice (EN: `tarball or SHASUMS fetched via ghproxy.com mirror;
+  trust anchored on SHA256`; ZH: `tarball 或 SHASUMS 通过 ghproxy.com
+  镜像下载；信任仍锚定于 SHA256`).
+- **BLE transition events keyed on physical-device clusters.** The
+  v1.7.2 consecutive-duplicate grouping in the events modal didn't
+  catch the dominant noise source — `BLEDeviceSeenEvent` /
+  `BLEDeviceLeftEvent` fired per privacy-rotated identifier even
+  though the live BLE panel already merged rotations via
+  `merge_for_display`. Now both code paths share the same
+  fingerprint (`(vendor_id, name)` exact + RSSI ±10 dB + service-UUID
+  Jaccard ≥ 0.5). A single physical device rotating through N
+  identifiers fires exactly one `seen` and exactly one `left`
+  across its session. JSONL schema unchanged (same fields, same
+  types, same representative identifier); external consumers see
+  fewer events with byte-identical shape. `DITING_BLE_EVENT_MERGER=0`
+  escape hatch restores per-identifier semantics for security
+  audits. A user sitting still in an office sees the events modal go
+  near-silent rather than the ~40 anonymous-rotation events / 90 s
+  flood of pre-v1.8.0.
+
+### Reorganised
+
+- `src/diting/ble.py` gains module-level `_RSSI_WINDOW_DB` /
+  `_JACCARD_THRESHOLD` constants read by both `merge_for_display`
+  (the live BLE panel) and the new transition cluster index, so
+  future tuning passes can't drift the two paths apart.
+
 ## [1.7.3] — 2026-05-26
 
 Patch release. **Startup is no longer a frozen-looking wait.** The
