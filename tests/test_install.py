@@ -346,3 +346,304 @@ def test_die_with_marker_failure_path_keeps_exit_status():
     proc = _run({"PATH": f"{fake_uname_dir}:/usr/bin:/bin"})
     assert proc.returncode == 1
     assert "diting install: error: unsupported arch" in proc.stderr
+
+
+# ---------- CDN-fallback download ladder (v1.8.0) ----------
+#
+# These cases exercise the `DITING_INSTALL_MIRROR` env var + the
+# `download_with_fallback` dispatcher. To avoid real network I/O,
+# tests use a curl shim on PATH that records every curl call and
+# either succeeds (writing a known-content tarball + matching
+# shasums) or fails on demand. The shim is reset between tests.
+
+
+def _make_curl_shim(
+    fake_bin: Path,
+    *,
+    fail_urls: list[str] | None = None,
+    served_tarball_bytes: bytes = b"fake-tarball-content\n",
+    served_shasums_text: str | None = None,
+) -> Path:
+    """Build a fake curl in `fake_bin` that records every call to
+    `<fake_bin>/curl.log` and writes deterministic payloads for the
+    happy-path URLs. URLs whose prefix matches any string in
+    `fail_urls` cause curl to exit non-zero (simulating a stalled
+    GitHub asset host).
+
+    SHASUMS payload contains the SHA256 of `served_tarball_bytes`
+    so the real install.sh SHA-verification step passes against
+    shim-produced bytes.
+    """
+    import hashlib
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    # Compute the SHA of the bytes the shim will write so SHASUMS
+    # matches. The real install.sh asserts the second column of a
+    # space-separated row equals the tarball filename.
+    sha = hashlib.sha256(served_tarball_bytes).hexdigest()
+    # Match install.sh's expected tarball filename for a v0.10.0
+    # arm64 (or x86_64 depending on host) build.
+    import platform
+    arch = "arm64" if platform.machine() in ("arm64", "aarch64") else "x86_64"
+    tarball_name = f"diting-0.10.0-darwin-{arch}.tar.gz"
+    default_shasums = f"{sha}  {tarball_name}\n"
+    shasums_payload = served_shasums_text or default_shasums
+
+    fail_list = " ".join(f'"{u}"' for u in (fail_urls or []))
+    curl = fake_bin / "curl"
+    # The shim emulates `curl [options] --output <dest> <url>`. It
+    # parses argv left-to-right: any --output / -o gives the dest,
+    # any positional starting with `http` is the url. Tail-end
+    # options like `2>/dev/null` (handled by the shell) are not
+    # part of argv.
+    curl.write_text(f"""#!/bin/sh
+# Fake curl for install.sh tests. Records the URL + dest into
+# curl.log; writes deterministic bytes for tarball / shasums URLs.
+
+LOG="{fake_bin}/curl.log"
+DEST=""
+URL=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --output|-o) DEST="$2"; shift 2 ;;
+    --max-time)   shift 2 ;;
+    -fsSL|-fsSLO|-sSL|-fsS|-fs|--silent|--fail|--show-error|--location|-L|-f|-s|-S)
+      shift ;;
+    http*) URL="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+echo "$URL -> $DEST" >> "$LOG"
+
+# Fail if the URL matches any prefix in fail_list.
+for FAIL_PREFIX in {fail_list}; do
+  case "$URL" in
+    "$FAIL_PREFIX"*) exit 28 ;;  # 28 = --max-time reached, common CN failure mode
+  esac
+done
+
+# Write deterministic payloads. The tarball gets the canonical
+# bytes; SHASUMS gets a single-row file that names that arch's
+# tarball filename. The api.github.com latest-release call would
+# go through the basic stdout path (no --output) — we don't shim
+# it because DITING_VERSION is always pinned in tests.
+case "$URL" in
+  *SHASUMS256.txt*)
+    printf '%s' '{shasums_payload}' > "$DEST"
+    ;;
+  *.tar.gz)
+    printf 'fake-tarball-content\\n' > "$DEST"
+    ;;
+  *)
+    # Anything else (release-API probe etc.) succeeds silently
+    [ -n "$DEST" ] && echo "" > "$DEST"
+    ;;
+esac
+exit 0
+""")
+    curl.chmod(0o755)
+    # Reset the log file so each test sees a clean record.
+    (fake_bin / "curl.log").write_text("")
+    return curl
+
+
+def _run_with_curl_shim(
+    test_name: str,
+    env_extra: dict[str, str] | None = None,
+    *,
+    fail_urls: list[str] | None = None,
+) -> tuple[subprocess.CompletedProcess, str]:
+    """Run install.sh with a per-test fake curl on PATH; return the
+    completed process plus the shim's call log content.
+
+    Drops TESTONLY so the real download path is exercised — the
+    shim handles "downloads".
+    """
+    fake_bin = REPO_ROOT / "build" / f"fake-curl-{test_name}"
+    if fake_bin.exists():
+        import shutil
+        shutil.rmtree(fake_bin)
+    _make_curl_shim(fake_bin, fail_urls=fail_urls)
+    env = {
+        "HOME": "/tmp/diting-install-test-home-cdn",
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "SHELL": "/bin/zsh",
+        "DITING_VERSION": "v0.10.0",
+        # Don't set TESTONLY — we want the real download/verify path.
+    }
+    if env_extra:
+        env.update(env_extra)
+    proc = subprocess.run(
+        ["bash", str(INSTALL_SCRIPT)],
+        capture_output=True, text=True, env=env, check=False, timeout=30,
+    )
+    log = (fake_bin / "curl.log").read_text()
+    return proc, log
+
+
+def test_mirror_env_default_auto_ladder():
+    """Unset MIRROR -> auto ladder selected; TESTONLY short-circuit
+    proceeds normally (the env-resolution branch is exercised but
+    no real download happens)."""
+    proc = _run({"DITING_VERSION": "v0.10.0"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    # No 'unknown' rejection.
+    assert "unknown DITING_INSTALL_MIRROR" not in proc.stderr
+
+
+def test_mirror_env_invalid_value_aborts():
+    """Bogus mirror value -> die before any download attempt."""
+    proc = _run({"DITING_VERSION": "v0.10.0", "DITING_INSTALL_MIRROR": "fastgit"})
+    assert proc.returncode == 1
+    assert "unknown DITING_INSTALL_MIRROR value: fastgit" in proc.stderr
+    assert "expected auto|github|ghproxy" in proc.stderr
+
+
+def test_mirror_env_github_only_skips_ghproxy_path():
+    """MIRROR=github + curl shim fails github URL -> install fails,
+    ghproxy URL is NOT attempted."""
+    proc, log = _run_with_curl_shim(
+        "github-only",
+        env_extra={"DITING_INSTALL_MIRROR": "github"},
+        fail_urls=["https://github.com/"],
+    )
+    assert proc.returncode == 1, proc.stdout
+    # github URL attempted
+    assert "https://github.com/" in log
+    # ghproxy URL NOT attempted
+    assert "https://ghproxy.com/" not in log
+
+
+def test_mirror_env_ghproxy_only_skips_github_path():
+    """MIRROR=ghproxy + curl shim succeeds on ghproxy -> install
+    proceeds, github URL is NOT attempted."""
+    proc, log = _run_with_curl_shim(
+        "ghproxy-only",
+        env_extra={"DITING_INSTALL_MIRROR": "ghproxy"},
+    )
+    # The shim writes fake tarball + matching shasums, so install
+    # SHOULD proceed through the download phase. It then tries to
+    # extract the fake tarball, which will fail because the fake
+    # content isn't a real .tar.gz. That's expected — we only
+    # care that the download dispatcher hit the right URLs.
+    # Assert at least one ghproxy URL attempt happened.
+    assert "https://ghproxy.com/https://github.com/" in log
+    # Direct github.com URL NOT attempted.
+    direct_github_attempts = [
+        line for line in log.splitlines()
+        if line.startswith("https://github.com/")
+    ]
+    assert direct_github_attempts == [], (
+        f"github URL attempted under MIRROR=ghproxy: {direct_github_attempts}"
+    )
+
+
+def test_auto_ladder_falls_back_when_github_fails():
+    """MIRROR=auto + github shim fails -> fallback notice prints,
+    ghproxy URL is attempted, completion notice fires after SHA
+    verify succeeds. Install will still fail at extract (fake
+    tarball isn't a real tar.gz) but the download + verify phase
+    completes."""
+    proc, log = _run_with_curl_shim(
+        "auto-fallback",
+        env_extra={"DITING_INSTALL_MIRROR": "auto"},
+        fail_urls=["https://github.com/chenchaoyi/diting"],
+    )
+    # Both github (failure) and ghproxy (success) attempted.
+    assert "https://github.com/chenchaoyi/diting" in log
+    assert "https://ghproxy.com/https://github.com/chenchaoyi/diting" in log
+    # Fallback notice fired.
+    assert "GitHub download failed (likely CN network); retrying via ghproxy.com mirror" in proc.stdout
+    # Completion notice fired (SHA verified, ghproxy served bytes).
+    assert "fetched via ghproxy.com mirror; trust anchored on SHA256" in proc.stdout
+
+
+def test_auto_ladder_emits_no_notice_when_github_succeeds():
+    """MIRROR=auto + github shim succeeds first try -> no fallback
+    notice, no completion notice (the mirror never fired)."""
+    proc, log = _run_with_curl_shim(
+        "auto-happy",
+        env_extra={"DITING_INSTALL_MIRROR": "auto"},
+        # No fail_urls -> github attempts succeed.
+    )
+    # Direct github URL was the one that served bytes.
+    assert "https://github.com/chenchaoyi/diting" in log
+    # No ghproxy attempt at all.
+    assert "https://ghproxy.com/" not in log
+    # No fallback notice, no completion notice.
+    assert "GitHub download failed" not in proc.stdout
+    assert "fetched via ghproxy.com mirror" not in proc.stdout
+
+
+def test_sha_verification_runs_against_ghproxy_served_bytes():
+    """SHA chain is anchored on bytes, not URL provenance. The
+    auto-ladder test above proves verify passes against ghproxy
+    bytes (matching SHASUMS). Here we negate: force the shim to
+    produce mismatched bytes and assert die_with_marker 4 fires
+    regardless of which path served them."""
+    fake_bin = REPO_ROOT / "build" / "fake-curl-sha-mismatch"
+    if fake_bin.exists():
+        import shutil
+        shutil.rmtree(fake_bin)
+    # SHASUMS will declare a hash for "fake-tarball-content\n",
+    # but the shim is overridden to actually write different bytes.
+    import platform
+    arch = "arm64" if platform.machine() in ("arm64", "aarch64") else "x86_64"
+    _make_curl_shim(
+        fake_bin,
+        served_tarball_bytes=b"fake-tarball-content\n",
+        # Force a SHASUMS entry that DOESN'T match what the shim
+        # actually writes. We supply a deliberately-wrong hash.
+        served_shasums_text=(
+            "0000000000000000000000000000000000000000000000000000000000000000  "
+            f"diting-0.10.0-darwin-{arch}.tar.gz\n"
+        ),
+    )
+    env = {
+        "HOME": "/tmp/diting-install-test-home-sha",
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "SHELL": "/bin/zsh",
+        "DITING_VERSION": "v0.10.0",
+        "DITING_INSTALL_MIRROR": "ghproxy",
+    }
+    proc = subprocess.run(
+        ["bash", str(INSTALL_SCRIPT)],
+        capture_output=True, text=True, env=env, check=False, timeout=30,
+    )
+    assert proc.returncode == 1
+    assert "sha256 mismatch" in proc.stderr
+
+
+def test_completion_notice_uses_zh_locale_when_helper_lang_is_zh():
+    """ZH-locale user triggering the fallback path gets the Chinese
+    copy on both the fallback-firing notice and the completion
+    notice. We stub `defaults read -g AppleLanguages` via a fake
+    /usr/bin/defaults on PATH that returns ("zh-Hans-CN")."""
+    fake_bin = REPO_ROOT / "build" / "fake-curl-zh-locale"
+    if fake_bin.exists():
+        import shutil
+        shutil.rmtree(fake_bin)
+    _make_curl_shim(
+        fake_bin,
+        fail_urls=["https://github.com/chenchaoyi/diting"],
+    )
+    # Shim defaults(1) to return a zh-prefixed language.
+    fake_defaults = fake_bin / "defaults"
+    fake_defaults.write_text(
+        '#!/bin/sh\necho \'("zh-Hans-CN", "en")\'\n'
+    )
+    fake_defaults.chmod(0o755)
+    env = {
+        "HOME": "/tmp/diting-install-test-home-zh",
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "SHELL": "/bin/zsh",
+        "DITING_VERSION": "v0.10.0",
+        "DITING_INSTALL_MIRROR": "auto",
+    }
+    proc = subprocess.run(
+        ["bash", str(INSTALL_SCRIPT)],
+        capture_output=True, text=True, env=env, check=False, timeout=30,
+    )
+    # ZH fallback-firing notice
+    assert "GitHub 下载失败" in proc.stdout
+    # ZH completion notice
+    assert "通过 ghproxy.com 镜像下载" in proc.stdout
