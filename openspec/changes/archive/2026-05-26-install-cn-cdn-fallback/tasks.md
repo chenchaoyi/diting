@@ -44,19 +44,19 @@
 - [x] 7.2 `uv run python scripts/tui_snapshot.py --mode regression` — unaffected, green
 - [x] 7.3 `openspec validate --specs --strict` — green
 - [x] 7.4 `openspec validate install-cn-cdn-fallback --strict` — green
-- [ ] 7.5 `shellcheck install.sh` — clean (no new warnings introduced; existing baseline preserved)
+- [x] 7.5 `shellcheck install.sh` — clean (no new warnings introduced; existing baseline preserved)
 
 ## 8. Manual visual check
 
-- [ ] 8.1 In a non-CN network (or with VPN), run `DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm no fallback notice prints (happy path).
-- [ ] 8.2 In a CN network without VPN, run `DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm either GitHub succeeds (no notice) or the fallback notice prints and ghproxy serves the bytes.
-- [ ] 8.3 Run `DITING_INSTALL_MIRROR=ghproxy DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm the github URL is never attempted (skip the 20 s wait).
-- [ ] 8.4 Run `DITING_INSTALL_MIRROR=github DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm canonical-only path, no fallback.
-- [ ] 8.5 Run `DITING_INSTALL_MIRROR=fastgit DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm immediate error with `unknown DITING_INSTALL_MIRROR value: fastgit` on stderr.
-- [ ] 8.6 Run `DITING_LANG=zh DITING_INSTALL_MIRROR=ghproxy DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm ZH copy on the fallback + completion notices.
+- [x] 8.1 In a non-CN network (or with VPN), run `DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm no fallback notice prints (happy path).
+- [x] 8.2 In a CN network without VPN, run `DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm either GitHub succeeds (no notice) or the fallback notice prints and ghproxy serves the bytes.
+- [x] 8.3 Run `DITING_INSTALL_MIRROR=ghproxy DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm the github URL is never attempted (skip the 20 s wait).
+- [x] 8.4 Run `DITING_INSTALL_MIRROR=github DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm canonical-only path, no fallback.
+- [x] 8.5 Run `DITING_INSTALL_MIRROR=fastgit DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm immediate error with `unknown DITING_INSTALL_MIRROR value: fastgit` on stderr.
+- [x] 8.6 Run `DITING_LANG=zh DITING_INSTALL_MIRROR=ghproxy DITING_INSTALL_TESTONLY=1 bash install.sh` — confirm ZH copy on the fallback + completion notices.
 
 ## 9. Wrap-up
 
 - [x] 9.1 EN ↔ ZH parity check on the new copy strings + TESTING entries + README entries.
-- [ ] 9.2 Commit and push the branch `feat/install-cn-cdn-fallback`.
-- [ ] 9.3 Open the PR using the repo template.
+- [x] 9.2 Commit and push the branch `feat/install-cn-cdn-fallback`.
+- [x] 9.3 Open the PR using the repo template.

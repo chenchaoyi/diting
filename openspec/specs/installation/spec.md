@@ -152,3 +152,4 @@ in-repo dev build when invoked through `uv run`.
 - **WHEN** the contributor deletes `~/.local/bin/diting` and `~/.local/share/diting/`
 - **THEN** `uv run diting` in the repo continues to work; the in-repo helper bundle is unaffected
 
+
