@@ -33,7 +33,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -1292,10 +1294,64 @@ def expire_devices(
     }
 
 
+# Cluster-fingerprint thresholds. Read by BOTH `merge_for_display`
+# (the live BLE panel's row folder) AND `BLEPoller._assign_to_cluster`
+# (the v1.8.0 transition-event merger). Sharing the constants keeps
+# the BLE panel's `(merged N)` view and the events modal's
+# cluster-keyed events in sync — a future tuning pass touches one
+# place and both code paths follow.
+_RSSI_WINDOW_DB: int = 10
+_JACCARD_THRESHOLD: float = 0.5
+
+
+def _fingerprint_matches(
+    state: BLEDevice,
+    *,
+    anchor_vendor_id: int | None,
+    anchor_name: str | None,
+    anchor_rssi: int,
+    cluster_services: frozenset[str] | set[str],
+    rssi_window_db: int = _RSSI_WINDOW_DB,
+    jaccard_threshold: float = _JACCARD_THRESHOLD,
+) -> bool:
+    """Return True when ``state`` should join a cluster with the given
+    anchor. Pure function — same logic both `merge_for_display` and
+    the transition-event merger use, so the BLE panel and the events
+    modal agree on "same physical device".
+
+    Devices where both ``vendor_id`` and ``name`` are None are flagged
+    unmergeable — matches `merge_for_display`'s existing exception.
+    """
+    if state.vendor_id is None and state.name is None:
+        return False
+    if state.vendor_id != anchor_vendor_id:
+        return False
+    if state.name != anchor_name:
+        return False
+    state_rssi = (
+        state.rssi_smooth if state.rssi_smooth is not None
+        else (state.rssi_dbm if state.rssi_dbm is not None else -200)
+    )
+    if abs(state_rssi - anchor_rssi) > rssi_window_db:
+        return False
+    # Jaccard overlap on service UUIDs. Skip when both sides have no
+    # services advertised — the prior RSSI + (vendor, name) check is
+    # already a strong indicator, and many BLE rows (iBeacon, Apple
+    # Continuity) advertise no service UUIDs at all.
+    state_services = set(state.services)
+    if not cluster_services and not state_services:
+        return True
+    union = cluster_services | state_services
+    inter = cluster_services & state_services
+    if not union:
+        return True
+    return (len(inter) / len(union)) >= jaccard_threshold
+
+
 def merge_for_display(
     devices: list[BLEDevice],
     *,
-    rssi_window_db: int = 10,
+    rssi_window_db: int = _RSSI_WINDOW_DB,
 ) -> list[BLEDevice]:
     """Fold rotated-UUID duplicates per the spec's fuzzy-merge rule.
 
@@ -1381,6 +1437,35 @@ def _fold_cluster(cluster: list[BLEDevice]) -> BLEDevice:
     )
 
 
+# ---------- transition-event cluster state ----------
+
+@dataclass
+class _BLECluster:
+    """Per-cluster bookkeeping for the v1.8.0 transition-event merger.
+
+    A cluster represents one physical device's session across many
+    privacy-rotated identifiers (Apple Continuity / Microsoft CDP).
+    Members join via `BLEPoller._assign_to_cluster` using the same
+    fingerprint `merge_for_display` uses, so the BLE panel and the
+    events modal agree on "same device".
+
+    The cluster is destroyed once `active_members` is empty — the
+    poller fires one `BLEDeviceLeftEvent` at that point. If the
+    physical device returns later under a new identifier, no
+    existing cluster matches (the prior one is gone) and a fresh
+    cluster + fresh `BLEDeviceSeenEvent` fire.
+    """
+    cluster_id: str
+    representative_id: str
+    vendor_id: int | None
+    name: str | None
+    anchor_rssi: int
+    service_uuids: set[str]
+    members: set[str]
+    active_members: set[str]
+    first_seen: datetime
+
+
 # ---------- poller ----------
 
 class BLEPoller:
@@ -1420,6 +1505,15 @@ class BLEPoller:
         # — they're already high-confidence. 0 disables the gate
         # entirely, restoring the original record-everything contract.
         presence_gate_s: float = 5.0,
+        # v1.8.0: collapse privacy-rotated identifiers into one
+        # cluster for transition-event emission. When True (default),
+        # one physical device that rotates through N identifiers
+        # fires exactly one seen + one left across its session. When
+        # False, the pre-v1.8.0 per-identifier firehose is preserved.
+        # The DITING_BLE_EVENT_MERGER=0 env var sets this to False
+        # when no explicit kwarg is supplied — escape hatch for
+        # security audits and per-identifier debugging.
+        enable_cluster_merger: bool | None = None,
         vendors: dict[int, str] | None = None,
         ouis: dict[str, str] | None = None,
         member_uuids: dict[str, str] | None = None,
@@ -1429,6 +1523,20 @@ class BLEPoller:
         self._ttl_s = ttl_s
         self._snapshot_interval_s = snapshot_interval_s
         self._presence_gate_s = presence_gate_s
+        # Resolve cluster-merger toggle. Kwarg wins over env so tests
+        # are deterministic. `DITING_BLE_EVENT_MERGER=0` (or `false`
+        # / `no`, case-insensitive) disables; anything else (including
+        # unset) keeps default True.
+        if enable_cluster_merger is None:
+            env_val = os.environ.get("DITING_BLE_EVENT_MERGER", "").strip().lower()
+            enable_cluster_merger = env_val not in ("0", "false", "no")
+        self._enable_cluster_merger = enable_cluster_merger
+        # v1.8.0 cluster index. _clusters keyed on a cluster_id (uuid4
+        # generated at cluster creation); _identifier_to_cluster is a
+        # reverse-lookup so TTL eviction can find the parent cluster
+        # in O(1) without scanning every cluster's members set.
+        self._clusters: dict[str, _BLECluster] = {}
+        self._identifier_to_cluster: dict[str, str] = {}
         self._vendors = vendors if vendors is not None else load_vendors()
         # OUI lookup is only consulted for connected peripherals (which
         # arrive without manufacturer_data). Lazy-load on first use; the
@@ -1603,6 +1711,53 @@ class BLEPoller:
             if self._permission_state in ("granted", "unknown"):
                 self._permission_state = "error"
 
+    def _assign_to_cluster(self, state: BLEDevice) -> str | None:
+        """Return the existing cluster_id ``state`` joins per the
+        shared `_fingerprint_matches` heuristic, or None if no match
+        exists (caller creates a fresh cluster).
+
+        Devices where both ``vendor_id`` and ``name`` are None are
+        always unmergeable (per `merge_for_display`'s rule): the
+        function returns None for them so the caller gives them their
+        own single-member cluster.
+        """
+        if not self._enable_cluster_merger:
+            return None
+        if state.vendor_id is None and state.name is None:
+            return None
+        for cid, cluster in self._clusters.items():
+            if _fingerprint_matches(
+                state,
+                anchor_vendor_id=cluster.vendor_id,
+                anchor_name=cluster.name,
+                anchor_rssi=cluster.anchor_rssi,
+                cluster_services=cluster.service_uuids,
+            ):
+                return cid
+        return None
+
+    def _create_cluster(self, ident: str, dev: BLEDevice) -> str:
+        """Create a new cluster anchored on ``ident`` and register the
+        reverse-index entry. Returns the new cluster_id."""
+        cid = uuid.uuid4().hex
+        anchor_rssi = (
+            dev.rssi_smooth if dev.rssi_smooth is not None
+            else (dev.rssi_dbm if dev.rssi_dbm is not None else -200)
+        )
+        self._clusters[cid] = _BLECluster(
+            cluster_id=cid,
+            representative_id=ident,
+            vendor_id=dev.vendor_id,
+            name=dev.name,
+            anchor_rssi=anchor_rssi,
+            service_uuids=set(dev.services),
+            members={ident},
+            active_members={ident},
+            first_seen=dev.first_seen,
+        )
+        self._identifier_to_cluster[ident] = cid
+        return cid
+
     def _detect_transitions(self, now: datetime) -> None:
         """Compute BLE seen / left transitions for this tick.
 
@@ -1651,10 +1806,29 @@ class BLEPoller:
             )
             if not graduates:
                 continue
-            # Emit seen with the device's own first_seen timestamp,
-            # NOT the graduation wall-clock — the JSONL log should
-            # answer "when did the device appear", not "when did the
-            # poller become confident".
+            # v1.8.0 cluster merger: when an identifier graduates,
+            # check if it matches an existing cluster's fingerprint.
+            # If yes, silently join (the cluster's existing seen
+            # already covered this physical device). If no, create
+            # a fresh cluster and emit seen for the cluster.
+            cid = self._assign_to_cluster(dev)
+            if cid is not None:
+                cluster = self._clusters[cid]
+                cluster.members.add(ident)
+                cluster.active_members.add(ident)
+                # Union new services into the cluster's set so future
+                # rotations with broader/narrower service lists still
+                # match the Jaccard threshold.
+                cluster.service_uuids |= set(dev.services)
+                self._identifier_to_cluster[ident] = cid
+                self._seen_identifiers.add(ident)
+                self._pending_seen.pop(ident, None)
+                continue
+            # Fresh cluster: emit seen with the device's own first_seen
+            # timestamp, NOT the graduation wall-clock — the JSONL log
+            # should answer "when did the device appear", not "when
+            # did the poller become confident".
+            self._create_cluster(ident, dev)
             ts = dev.first_seen or first_seen_at
             self._pending_transitions.append(BLEDeviceSeenEvent(
                 timestamp=ts,
@@ -1667,7 +1841,10 @@ class BLEPoller:
             self._seen_identifiers.add(ident)
             self._pending_seen.pop(ident, None)
         # Connected peripherals always bypass the gate — they're
-        # bonded by definition.
+        # bonded by definition. We also bypass the cluster merger
+        # for them: a connected peripheral has stable identity (no
+        # rotation), and each one is a real per-host pair worth
+        # surfacing on its own.
         for ident in list(self._connected.keys()):
             if ident not in self._seen_identifiers:
                 dev = self._connected[ident]
@@ -1705,6 +1882,48 @@ class BLEPoller:
                 continue
             if ident in self._departed_identifiers:
                 continue
+            # v1.8.0 cluster departure: a TTL-evicting identifier
+            # might be one of several members of its cluster. Only
+            # fire `left` when the LAST active member of the cluster
+            # has evicted; otherwise the physical device is still
+            # represented by remaining rotations.
+            cid = self._identifier_to_cluster.get(ident)
+            if cid is not None:
+                cluster = self._clusters[cid]
+                cluster.active_members.discard(ident)
+                self._departed_identifiers.add(ident)
+                if cluster.active_members:
+                    # Partial departure — silent.
+                    continue
+                # Full cluster departure: emit left under the
+                # cluster's representative identifier, measure
+                # seen_for_seconds from the cluster's first_seen
+                # to the most-recent member's last_seen.
+                rep_id = cluster.representative_id
+                seen_for = (
+                    (dev.last_seen - cluster.first_seen).total_seconds()
+                    if dev.last_seen and cluster.first_seen
+                    else 0.0
+                )
+                self._pending_transitions.append(BLEDeviceLeftEvent(
+                    timestamp=now,
+                    identifier=rep_id,
+                    name=dev.name,
+                    vendor=dev.vendor,
+                    last_rssi_dbm=dev.rssi_dbm,
+                    service_categories=_ble_service_categories(dev),
+                    seen_for_seconds=seen_for,
+                ))
+                # Tear down the cluster so a future re-arrival
+                # under a fresh identifier creates a NEW cluster
+                # (and fires a fresh seen — the device's return
+                # is a real event worth surfacing).
+                for member in cluster.members:
+                    self._identifier_to_cluster.pop(member, None)
+                del self._clusters[cid]
+                continue
+            # No cluster registered (e.g. cluster merger was disabled
+            # via env or kwarg). Fall back to per-identifier semantics.
             self._pending_transitions.append(BLEDeviceLeftEvent(
                 timestamp=now,
                 identifier=ident,
