@@ -11,6 +11,36 @@ behaviours between releases.
 
 ## [Unreleased]
 
+### Added
+
+- **`device_type` / `device_class` on BLE transition events.**
+  `BLEDeviceSeenEvent` and `BLEDeviceLeftEvent` now carry the Apple
+  Continuity advertisement type and Nearby-Info device class the BLE
+  list already decoded, so a device the list labels `iPhone` reads
+  `iPhone` in the events too instead of `(anonymous)`. JSONL gains
+  optional `device_type` / `device_class` keys (the Continuity type
+  serialises under `device_type`, never `type` — the envelope owns
+  `type`); both are omitted when absent, so old log lines stay
+  diff-stable.
+- **At-launch census fold in the events modal.** Every device already
+  in range when diting launches fires a `seen` in the first ~12 s — a
+  burst that buried the genuinely interesting mid-session events. The
+  `m` modal now folds that startup census into one summary row
+  (`session start · N devices already present (Apple ×8 · …)`) that
+  expands on Enter / `→`. Nothing is hidden: the row expands to every
+  folded device and the JSONL log keeps all of them. `BLEDeviceSeenEvent`
+  gains an `at_launch` flag (JSONL key emitted only when true).
+
+### Changed
+
+- **`(anonymous)` now means one thing everywhere.** BLE event labels
+  follow the same name cascade as the BLE list (helper name →
+  `(rotating ID)` → type → device class → placeholder) via a shared
+  resolver, and `(anonymous)` is reserved for the truly-silent case
+  (no vendor, name, type, class, or service categories) — matching the
+  diagnostic strip's count and the BLE list vendor cell. A device with
+  a known vendor but no name now reads `(unknown)`, not `(anonymous)`.
+
 ## [1.8.0] — 2026-05-26
 
 Minor release. **Four polished-UX features land together.** Three on

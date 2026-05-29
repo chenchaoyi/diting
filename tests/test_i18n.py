@@ -200,3 +200,23 @@ def test_zh_catalog_reorders_between_ads_hint_value_last():
     # The EN render goes through `t()` too — verify it didn't break.
     i18n.set_lang(i18n.EN)
     assert i18n.t("~{n} ms between ads", n="1772") == "~1772 ms between ads"
+
+
+def test_zh_catalog_has_census_summary_strings():
+    """The at-launch census summary row strings must be translated, not
+    fall through to EN in the events modal."""
+    i18n.set_lang(i18n.ZH)
+    assert i18n.t("session start") == "会话开始"
+    assert i18n.t("enter to expand") == "回车展开"
+    assert i18n.t("enter to collapse") == "回车收起"
+
+
+def test_zh_catalog_preserves_placeholder_in_devices_present():
+    """The `{n}` count placeholder must survive translation (and render
+    exactly once) in both locales."""
+    i18n.set_lang(i18n.ZH)
+    rendered = i18n.t("{n} devices already present", n=20)
+    assert rendered == "已在场 20 个设备"
+    assert rendered.count("20") == 1
+    i18n.set_lang(i18n.EN)
+    assert i18n.t("{n} devices already present", n=20) == "20 devices already present"

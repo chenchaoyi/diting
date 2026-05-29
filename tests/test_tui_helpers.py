@@ -3597,3 +3597,182 @@ def test_events_screen_filter_then_group_order_is_filter_first():
     grouped_ble = _group_consecutive_ble_seen(filtered_ble)
     assert len(grouped_ble) == 1
     assert grouped_ble[0][1] == 2
+
+
+# ---- events-cascade-census-fold: event-label cascade ----
+
+def _ble_seen_full(vendor, name=None, *, device_type=None,
+                   device_class=None, at_launch=False, ts_sec=10):
+    from dataclasses import replace
+    return replace(
+        _ble_seen(ts_sec, vendor, name),
+        device_type=device_type, device_class=device_class,
+        at_launch=at_launch,
+    )
+
+
+def test_format_ble_seen_uses_helper_name():
+    ev = _ble_seen_full("Apple, Inc.", "Magic Keyboard")
+    text = _event_text(ev)
+    assert "Magic Keyboard" in text
+    assert "(unknown)" not in text
+    assert "(anonymous)" not in text
+
+
+def test_format_ble_seen_falls_back_to_device_type():
+    ev = _ble_seen_full("Apple, Inc.", None, device_type="Find My target")
+    text = _event_text(ev)
+    assert "Find My target" in text
+    assert "(anonymous)" not in text
+
+
+def test_format_ble_seen_falls_back_to_device_class():
+    ev = _ble_seen_full("Apple, Inc.", None, device_class="iPhone")
+    text = _event_text(ev)
+    assert "Apple, Inc." in text
+    assert "iPhone" in text
+    assert "(anonymous)" not in text
+
+
+def test_format_ble_seen_unknown_when_vendor_only():
+    # Vendor resolved but no name / type / class → name slot is
+    # (unknown), NOT (anonymous): the device did broadcast a company id.
+    ev = _ble_seen_full("HUAWEI Technologies", None)
+    text = _event_text(ev)
+    assert "HUAWEI Technologies" in text
+    assert "(unknown)" in text
+    assert "(anonymous)" not in text
+
+
+def test_format_ble_seen_anonymous_only_when_truly_silent():
+    # Nothing at all → (anonymous) occupies the vendor slot (mirroring
+    # the BLE list cell), the name slot falls to (unknown).
+    ev = _ble_seen_full(None, None)
+    text = _event_text(ev)
+    assert "(anonymous)" in text
+    # Order: vendor slot is anonymous, name slot is unknown.
+    assert text.index("(anonymous)") < text.index("(unknown)")
+
+
+def test_format_ble_left_uses_cascade():
+    from datetime import datetime, timezone
+    from dataclasses import replace
+    from diting.events import BLEDeviceLeftEvent
+    ev = BLEDeviceLeftEvent(
+        timestamp=datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc),
+        identifier="abc", name=None, vendor="Apple, Inc.",
+        last_rssi_dbm=-80, service_categories=(), seen_for_seconds=12.0,
+    )
+    ev = replace(ev, device_class="iPhone")
+    text = _event_text(ev)
+    assert "iPhone" in text
+    assert "(anonymous)" not in text
+
+
+# ---- events-cascade-census-fold: at-launch census fold ----
+
+def test_events_screen_folds_at_launch_census_into_summary_row():
+    from diting.tui import _group_consecutive_ble_seen, _fold_at_launch_census, _CensusFold
+    events = [
+        _ble_seen_full("Apple, Inc.", None, at_launch=True, ts_sec=10),
+        _ble_seen_full("Apple, Inc.", None, at_launch=True, ts_sec=11),
+        _ble_seen_full("Apple, Inc.", None, at_launch=True, ts_sec=12),
+        _ble_seen_full("Microsoft", None, at_launch=True, ts_sec=13),
+        _ble_seen_full("Microsoft", None, at_launch=True, ts_sec=14),
+    ]
+    folded = _fold_at_launch_census(_group_consecutive_ble_seen(events))
+    assert len(folded) == 1
+    assert isinstance(folded[0], _CensusFold)
+    assert folded[0].total == 5
+
+
+def test_events_screen_census_summary_vendor_breakdown_top3():
+    from diting.tui import (
+        _group_consecutive_ble_seen, _fold_at_launch_census,
+        _format_census_summary, _CensusFold,
+    )
+    events = (
+        [_ble_seen_full("Apple, Inc.", None, at_launch=True, ts_sec=s) for s in (10, 11, 12)]
+        + [_ble_seen_full("Microsoft", None, at_launch=True, ts_sec=s) for s in (13, 14)]
+        + [_ble_seen_full("Samsung", None, at_launch=True, ts_sec=15)]
+        + [_ble_seen_full("Zyxel", None, at_launch=True, ts_sec=16)]
+    )
+    folded = _fold_at_launch_census(_group_consecutive_ble_seen(events))
+    fold = folded[0]
+    assert isinstance(fold, _CensusFold)
+    assert fold.total == 7
+    text = _format_census_summary(fold, expanded=False).plain
+    assert "7 devices already present" in text
+    assert "Apple, Inc. ×3" in text
+    assert "Microsoft ×2" in text
+    assert "Samsung ×1" in text
+    # Fourth vendor overflows into the ellipsis, not the inline list.
+    assert "Zyxel" not in text
+    assert "…" in text
+
+
+def test_events_screen_expand_collapse_census_summary():
+    from diting.tui import (
+        _group_consecutive_ble_seen, _fold_at_launch_census,
+        _format_census_summary,
+    )
+    events = [_ble_seen_full("Apple, Inc.", None, at_launch=True, ts_sec=s)
+              for s in (10, 11)]
+    fold = _fold_at_launch_census(_group_consecutive_ble_seen(events))[0]
+    assert "enter to expand" in _format_census_summary(fold, expanded=False).plain
+    assert "enter to collapse" in _format_census_summary(fold, expanded=True).plain
+
+
+def test_events_screen_mid_session_seen_not_folded():
+    from diting.tui import (
+        _group_consecutive_ble_seen, _fold_at_launch_census, _CensusFold,
+    )
+    # at_launch=False seens are genuine arrivals — never folded.
+    events = [
+        _ble_seen_full("Apple, Inc.", "Magic Keyboard", at_launch=False, ts_sec=20),
+        _ble_seen_full("Microsoft", "Surface", at_launch=False, ts_sec=21),
+    ]
+    folded = _fold_at_launch_census(_group_consecutive_ble_seen(events))
+    assert not any(isinstance(item, _CensusFold) for item in folded)
+    assert len(folded) == 2
+
+
+def test_events_screen_census_fold_respects_ble_filter():
+    from diting.tui import (
+        _events_filter_match, _group_consecutive_ble_seen,
+        _fold_at_launch_census, _CensusFold,
+    )
+    from diting.poller import RoamEvent
+    from datetime import datetime, timezone
+    roam = RoamEvent(
+        timestamp=datetime(2026, 5, 25, 18, 10, 35, tzinfo=timezone.utc),
+        previous_bssid="aa:bb:cc:dd:ee:01", new_bssid="aa:bb:cc:dd:ee:02",
+        previous_channel=36, new_channel=44,
+        previous_ssid="diting", new_ssid="diting",
+    )
+    events = [
+        _ble_seen_full("Apple, Inc.", None, at_launch=True, ts_sec=10),
+        _ble_seen_full("Apple, Inc.", None, at_launch=True, ts_sec=11),
+        roam,
+    ]
+    # Filter to roam → no BLE seens reach the fold → no census row.
+    filtered = [ev for ev in events if _events_filter_match(ev, "roam")]
+    folded = _fold_at_launch_census(_group_consecutive_ble_seen(filtered))
+    assert not any(isinstance(item, _CensusFold) for item in folded)
+    # Filter to BLE → the census fold reappears.
+    filtered_ble = [ev for ev in events if _events_filter_match(ev, "ble")]
+    folded_ble = _fold_at_launch_census(_group_consecutive_ble_seen(filtered_ble))
+    assert any(isinstance(item, _CensusFold) for item in folded_ble)
+
+
+def test_events_screen_jsonl_untouched_by_census_fold():
+    from diting.tui import _group_consecutive_ble_seen, _fold_at_launch_census
+    from diting.events import event_to_jsonl
+    ev = _ble_seen_full("Apple, Inc.", None, device_class="iPhone", at_launch=True)
+    # The log keeps every event with its at_launch flag — fold is render-only.
+    line = event_to_jsonl(ev).replace(" ", "")
+    assert '"at_launch":true' in line
+    # Folding does not mutate or drop the underlying event object.
+    folded = _fold_at_launch_census(_group_consecutive_ble_seen([ev]))
+    # A single device is not folded (total < 2) — passes straight through.
+    assert folded[0][0] is ev

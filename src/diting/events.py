@@ -101,6 +101,9 @@ class BLEDeviceSeenEvent:
     vendor: str | None
     rssi_dbm: int | None
     service_categories: tuple[str, ...]
+    device_type: str | None = None     # Continuity advert type (Find My target, …)
+    device_class: str | None = None    # Nearby-Info device class (iPhone, Mac, …)
+    at_launch: bool = False            # fired inside the poller's startup warmup
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +115,8 @@ class BLEDeviceLeftEvent:
     last_rssi_dbm: int | None
     service_categories: tuple[str, ...]
     seen_for_seconds: float
+    device_type: str | None = None
+    device_class: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,7 +318,10 @@ def _event_to_dict(event: Event) -> dict[str, Any]:
     # through unchanged so callers see [] for empty (informative —
     # "no services" is distinct from "field absent").
     if isinstance(event, BLEDeviceSeenEvent):
-        return _drop_none({
+        # Continuity type under `device_type`, NOT `type` (envelope owns
+        # `type`). device_type/class None-dropped; at_launch emitted only
+        # when True so legacy log lines stay diff-stable.
+        payload = _drop_none({
             "ts": ts,
             "type": "ble_device_seen",
             "identifier": event.identifier,
@@ -321,7 +329,12 @@ def _event_to_dict(event: Event) -> dict[str, Any]:
             "vendor": event.vendor,
             "rssi_dbm": event.rssi_dbm,
             "service_categories": list(event.service_categories),
+            "device_type": event.device_type,
+            "device_class": event.device_class,
         })
+        if event.at_launch:
+            payload["at_launch"] = True
+        return payload
     if isinstance(event, BLEDeviceLeftEvent):
         return _drop_none({
             "ts": ts,
@@ -332,6 +345,8 @@ def _event_to_dict(event: Event) -> dict[str, Any]:
             "last_rssi_dbm": event.last_rssi_dbm,
             "service_categories": list(event.service_categories),
             "seen_for_seconds": round(event.seen_for_seconds, 1),
+            "device_type": event.device_type,
+            "device_class": event.device_class,
         })
     if isinstance(event, BonjourServiceSeenEvent):
         return _drop_none({

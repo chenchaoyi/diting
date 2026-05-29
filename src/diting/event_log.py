@@ -449,6 +449,14 @@ class EventLogger:
             payload["vendor"] = event.vendor
         if event.rssi_dbm is not None:
             payload["rssi_dbm"] = event.rssi_dbm
+        # Device type under `device_type`, NOT `type` — the envelope
+        # already owns `type` for the event kind. Optional + None-omitted.
+        if event.device_type is not None:
+            payload["device_type"] = event.device_type
+        if event.device_class is not None:
+            payload["device_class"] = event.device_class
+        if event.at_launch:
+            payload["at_launch"] = True
         self._write(payload)
 
     def emit_ble_device_left(self, event: BLEDeviceLeftEvent) -> None:
@@ -467,6 +475,10 @@ class EventLogger:
             payload["vendor"] = event.vendor
         if event.last_rssi_dbm is not None:
             payload["last_rssi_dbm"] = event.last_rssi_dbm
+        if event.device_type is not None:
+            payload["device_type"] = event.device_type
+        if event.device_class is not None:
+            payload["device_class"] = event.device_class
         self._write(payload)
 
     def emit_bonjour_service_seen(self, event: BonjourServiceSeenEvent) -> None:
