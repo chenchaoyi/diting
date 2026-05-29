@@ -163,6 +163,10 @@ The exclusion is implemented via the `category_only=True` flag on `service_categ
 
 `--ble-presence-gate D` on the CLI SHALL override the scene-derived default — the explicit flag is narrower-scoped and always wins. A value of `0.0` (whether from `--scene audit` or from `--ble-presence-gate 0`) restores the pre-gate "every first-seen identifier fires seen on its first observation" behaviour, including for anonymous adverts; in that case PENDING is bypassed entirely.
 
+Every emitted `BLEDeviceSeenEvent` and `BLEDeviceLeftEvent` SHALL carry `device_type` and `device_class` copied from the cluster representative's `BLEDevice.type` / `BLEDevice.device_class` (the same `BLEDevice` whose `name` / `vendor` already populate the event). When the merger is disabled and events fall back to per-identifier semantics, the values come from that identifier's own `BLEDevice`.
+
+`BLEPoller` SHALL record a session start time at construction and SHALL set `BLEDeviceSeenEvent.at_launch = True` on every advertising-device seen emitted while `(now - started_at) < _LAUNCH_WARMUP_S` (a module-level constant, default 12.0 s); after the window closes `at_launch` SHALL be `False` for all subsequent seens for the rest of the session. Seens sourced from the `_connected` peripheral snapshot SHALL always carry `at_launch = False` regardless of timing — a bonded peripheral present at start is high-signal, never census. `at_launch` SHALL NOT affect graduation, gating, the cluster merger, or `BLEDeviceLeftEvent`; it is purely an annotation for the render layer.
+
 `BLEPoller` SHALL emit `BLEDeviceLeftEvent` when a PRESENT device's `last_seen` falls more than the existing TTL behind the latest snapshot AND the device is then removed from state.
 
 If a PENDING identifier is evicted from `_devices` (TTL elapses) before its presence-gate matures, the poller SHALL emit NO transition events for it — no seen, no left. The identifier returns to INIT silently; a future re-appearance from the same identifier opens a fresh PENDING window.
@@ -176,6 +180,22 @@ The `BLEPoller.events()` async iterator's union return type SHALL include `BLEDe
 #### Scenario: Named first advert bypasses the presence gate
 - **WHEN** an advertisement parses into a BLEDevice with `name = "Magic Keyboard"`, `vendor = "Apple, Inc."`, `identifier` not in `_state`
 - **THEN** `BLEDeviceSeenEvent` is yielded on the same `_detect_transitions` tick; the identifier moves directly to PRESENT without entering PENDING
+
+#### Scenario: Seen carries the device's decoded type and class
+- **WHEN** a graduating advertisement's `BLEDevice` has `type="Find My target"`, `device_class="iPhone"`
+- **THEN** the emitted `BLEDeviceSeenEvent` carries `device_type="Find My target"` and `device_class="iPhone"`
+
+#### Scenario: Seen inside the warmup window is tagged at_launch
+- **WHEN** the poller is constructed at t=0 and an advertising device graduates at t=4.0 (with `_LAUNCH_WARMUP_S = 12.0`)
+- **THEN** the emitted `BLEDeviceSeenEvent` carries `at_launch=True`
+
+#### Scenario: Seen after the warmup window is not at_launch
+- **WHEN** the poller is constructed at t=0 and an advertising device first appears and graduates at t=30.0
+- **THEN** the emitted `BLEDeviceSeenEvent` carries `at_launch=False`
+
+#### Scenario: Connected peripheral present at launch is not at_launch
+- **WHEN** a connected peripheral is in the `_connected` snapshot at t=2.0 (inside the warmup window)
+- **THEN** its `BLEDeviceSeenEvent` carries `at_launch=False` — connected peripherals are never folded into the census
 
 #### Scenario: Anonymous first advert below the gate is silent
 - **WHEN** an anonymous advertisement (no `name`, only `vendor`) populates `_devices[ident]` at t=0 with default `presence_gate_s = 5.0`, AND the identifier ages out via TTL at t=4
