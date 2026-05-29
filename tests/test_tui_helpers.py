@@ -3656,14 +3656,13 @@ def test_format_ble_seen_anonymous_only_when_truly_silent():
 
 def test_format_ble_left_uses_cascade():
     from datetime import datetime, timezone
-    from dataclasses import replace
     from diting.events import BLEDeviceLeftEvent
     ev = BLEDeviceLeftEvent(
         timestamp=datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc),
         identifier="abc", name=None, vendor="Apple, Inc.",
         last_rssi_dbm=-80, service_categories=(), seen_for_seconds=12.0,
+        device_class="iPhone",
     )
-    ev = replace(ev, device_class="iPhone")
     text = _event_text(ev)
     assert "iPhone" in text
     assert "(anonymous)" not in text
@@ -3684,6 +3683,9 @@ def test_events_screen_folds_at_launch_census_into_summary_row():
     assert len(folded) == 1
     assert isinstance(folded[0], _CensusFold)
     assert folded[0].total == 5
+    # Render-only: the fold references the original event objects, so the
+    # EventRing and JSONL log are never touched by the modal grouping.
+    assert folded[0].groups[0][0] is events[0]
 
 
 def test_events_screen_census_summary_vendor_breakdown_top3():
@@ -3765,14 +3767,14 @@ def test_events_screen_census_fold_respects_ble_filter():
     assert any(isinstance(item, _CensusFold) for item in folded_ble)
 
 
-def test_events_screen_jsonl_untouched_by_census_fold():
-    from diting.tui import _group_consecutive_ble_seen, _fold_at_launch_census
-    from diting.events import event_to_jsonl
-    ev = _ble_seen_full("Apple, Inc.", None, device_class="iPhone", at_launch=True)
-    # The log keeps every event with its at_launch flag — fold is render-only.
-    line = event_to_jsonl(ev).replace(" ", "")
-    assert '"at_launch":true' in line
-    # Folding does not mutate or drop the underlying event object.
+def test_events_screen_census_single_device_not_folded():
+    # A lone at-launch device reads worse as a one-line summary than as
+    # its own row, so the < 2 threshold passes it through unfolded — and
+    # the passthrough is the original triple (fold is render-only).
+    from diting.tui import (
+        _group_consecutive_ble_seen, _fold_at_launch_census, _CensusFold,
+    )
+    ev = _ble_seen_full("Apple, Inc.", None, at_launch=True)
     folded = _fold_at_launch_census(_group_consecutive_ble_seen([ev]))
-    # A single device is not folded (total < 2) — passes straight through.
+    assert not any(isinstance(item, _CensusFold) for item in folded)
     assert folded[0][0] is ev
