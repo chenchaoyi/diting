@@ -11,6 +11,18 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-05-29
+
+Minor release. **One change to the BLE events surface, in two parts.**
+Transition events now carry the same `device_type` / `device_class` the
+BLE list already decodes — so a device the list shows as `iPhone` no
+longer reads `(anonymous)` in the events — and `(anonymous)` is unified
+to mean exactly one thing everywhere: a truly-silent broadcast. The
+events modal folds the at-launch device census into one expandable
+summary row so genuine mid-session transitions are no longer buried.
+Additive JSONL only (new optional keys, None/False-omitted); no
+permission or helper-schema change.
+
 ### Added
 
 - **`device_type` / `device_class` on BLE transition events.**

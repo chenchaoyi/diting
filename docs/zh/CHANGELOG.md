@@ -10,6 +10,16 @@
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-05-29
+
+Minor release。**一处改动，落在 BLE 事件面上，分两部分。**
+转移事件现在携带 BLE 列表早已解码的 `device_type` / `device_class` ——
+列表里标成 `iPhone` 的设备在事件里不再读作 `(anonymous)`；同时
+`(anonymous)` 在全局统一为一个含义：真正静默的广播。事件 modal 把启动
+时的设备点名折叠成一行可展开的汇总，这样真正有意思的会话中转移事件不再
+被淹没。仅新增可选 JSONL 键（None/False 省略）；不改权限面，也不改 helper
+schema。
+
 ### Added
 
 - **BLE 转移事件新增 `device_type` / `device_class`。**
