@@ -91,6 +91,57 @@ def test_ble_device_left_round_trip():
     assert payload["seen_for_seconds"] == 3600.0
 
 
+def test_ble_device_seen_carries_device_type_class_and_at_launch():
+    # An anonymous-named iPhone seen at launch: the event carries the
+    # decoded class so downstream rendering need not reduce it to
+    # (anonymous), plus the at-launch census flag.
+    ev = BLEDeviceSeenEvent(
+        timestamp=_T, identifier="abc",
+        name=None, vendor="Apple, Inc.",
+        rssi_dbm=-55, service_categories=(),
+        device_type="Find My target", device_class="iPhone",
+        at_launch=True,
+    )
+    assert ev.device_type == "Find My target"
+    assert ev.device_class == "iPhone"
+    assert ev.at_launch is True
+    payload = json.loads(event_to_jsonl(ev))
+    # Continuity type lands under `device_type`, NEVER colliding with
+    # the envelope's `type` (the event kind).
+    assert payload["type"] == "ble_device_seen"
+    assert payload["device_type"] == "Find My target"
+    assert payload["device_class"] == "iPhone"
+    assert payload["at_launch"] is True
+
+    # Defaults omit all three keys → legacy log lines stay diff-stable.
+    plain = BLEDeviceSeenEvent(
+        timestamp=_T, identifier="abc",
+        name="Magic Keyboard", vendor="Apple, Inc.",
+        rssi_dbm=-55, service_categories=("HID",),
+    )
+    plain_payload = json.loads(event_to_jsonl(plain))
+    assert "device_type" not in plain_payload
+    assert "device_class" not in plain_payload
+    assert "at_launch" not in plain_payload
+
+
+def test_ble_device_left_carries_device_type_class():
+    ev = BLEDeviceLeftEvent(
+        timestamp=_T, identifier="abc",
+        name=None, vendor="Apple, Inc.",
+        last_rssi_dbm=-80, service_categories=(),
+        seen_for_seconds=12.0,
+        device_type="Find My target", device_class="iPhone",
+    )
+    assert ev.device_type == "Find My target"
+    assert ev.device_class == "iPhone"
+    payload = json.loads(event_to_jsonl(ev))
+    assert payload["device_type"] == "Find My target"
+    assert payload["device_class"] == "iPhone"
+    # A left is never part of the at-launch census.
+    assert "at_launch" not in payload
+
+
 # ---------- Bonjour ----------
 
 def test_bonjour_service_seen_carries_addresses():
@@ -298,6 +349,57 @@ def test_emit_ble_device_left_includes_seen_for_seconds(tmp_path):
     assert row["service_categories"] == []
     assert "name" not in row
     assert "vendor" not in row
+
+
+def test_emit_ble_device_seen_writes_device_type_class_at_launch(tmp_path):
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_ble_device_seen(BLEDeviceSeenEvent(
+        timestamp=_T, identifier="abc",
+        name=None, vendor="Apple, Inc.",
+        rssi_dbm=-55, service_categories=(),
+        device_type="Find My target", device_class="iPhone",
+        at_launch=True,
+    ))
+    logger.close()
+    row = _read_jsonl(path)[0]
+    # `type` stays the event kind; the Continuity type is `device_type`.
+    assert row["type"] == "ble_device_seen"
+    assert row["device_type"] == "Find My target"
+    assert row["device_class"] == "iPhone"
+    assert row["at_launch"] is True
+
+
+def test_emit_ble_device_seen_omits_device_type_when_none_and_at_launch_when_false(tmp_path):
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_ble_device_seen(BLEDeviceSeenEvent(
+        timestamp=_T, identifier="abc",
+        name="Magic Keyboard", vendor="Apple, Inc.",
+        rssi_dbm=-55, service_categories=("HID",),
+    ))
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert "device_type" not in row
+    assert "device_class" not in row
+    assert "at_launch" not in row
+
+
+def test_emit_ble_device_left_writes_device_type_under_device_type_key(tmp_path):
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_ble_device_left(BLEDeviceLeftEvent(
+        timestamp=_T, identifier="abc",
+        name=None, vendor="Apple, Inc.", last_rssi_dbm=-80,
+        service_categories=(), seen_for_seconds=12.0,
+        device_type="Find My target", device_class=None,
+    ))
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert row["type"] == "ble_device_left"
+    assert row["device_type"] == "Find My target"
+    assert "device_class" not in row  # None-omitted
+    assert "at_launch" not in row     # left never carries it
 
 
 def test_emit_bonjour_service_seen_writes_locale_stable_type(tmp_path):

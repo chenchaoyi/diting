@@ -424,6 +424,11 @@ _ZH: dict[str, str] = {
     "  ×{n}": "  ×{n}",
     "(+{n} folded)": "(已折叠 {n})",
     "{n} other": "{n} 其他",
+    # events-cascade-census-fold: at-launch census summary row
+    "session start": "会话开始",
+    "{n} devices already present": "已在场 {n} 个设备",
+    "enter to expand": "回车展开",
+    "enter to collapse": "回车收起",
     # Service-category labels for ble.py.service_category() return values
     # are already translated below in the BLE table area; nothing extra
     # needed here.

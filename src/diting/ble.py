@@ -1303,6 +1303,14 @@ def expire_devices(
 _RSSI_WINDOW_DB: int = 10
 _JACCARD_THRESHOLD: float = 0.5
 
+# Advertising-device seens fired within this many seconds of the
+# poller's first tick are tagged `at_launch=True`, so the events modal
+# can fold the startup census (every device already in the room when
+# diting launches) into one expandable summary row. Connected
+# peripherals are exempt — a bonded peripheral present at start is
+# high-signal, never census, and always carries at_launch=False.
+_LAUNCH_WARMUP_S: float = 12.0
+
 
 def _fingerprint_matches(
     state: BLEDevice,
@@ -1588,6 +1596,10 @@ class BLEPoller:
         # `events()` mono-typed (snapshots only) so existing tests /
         # consumers don't have to filter the iterator.
         self._pending_transitions: list[Any] = []
+        # Wall-clock of the poller's first transition tick, anchored
+        # lazily from the first snapshot's `now`. Seens within
+        # `_LAUNCH_WARMUP_S` of it carry `at_launch=True`.
+        self._started_at: datetime | None = None
         self._queue: asyncio.Queue[BLEScanUpdate] = asyncio.Queue()
         self._proc: Any = None
         self._permission_state: str = "unknown"
@@ -1777,6 +1789,13 @@ class BLEPoller:
         Identifiers already in `_seen_identifiers` or
         `_departed_identifiers` are not re-evaluated.
         """
+        # Anchor the launch window on the first tick's clock so
+        # synthetic-clock tests are deterministic. Advertising-device
+        # seens fired within `_LAUNCH_WARMUP_S` of it are the startup
+        # census; tag them so the events modal can fold them.
+        if self._started_at is None:
+            self._started_at = now
+        at_launch = (now - self._started_at).total_seconds() < _LAUNCH_WARMUP_S
         # Advertising-path graduation. Walk BEFORE the expire pass so
         # an identifier that graduates on this tick can still fire its
         # left event if TTL evicts it in the same tick (sub-snapshot
@@ -1837,6 +1856,9 @@ class BLEPoller:
                 vendor=dev.vendor,
                 rssi_dbm=dev.rssi_dbm,
                 service_categories=_ble_service_categories(dev),
+                device_type=dev.type,
+                device_class=dev.device_class,
+                at_launch=at_launch,
             ))
             self._seen_identifiers.add(ident)
             self._pending_seen.pop(ident, None)
@@ -1855,6 +1877,9 @@ class BLEPoller:
                     vendor=dev.vendor,
                     rssi_dbm=dev.rssi_dbm,
                     service_categories=_ble_service_categories(dev),
+                    device_type=dev.type,
+                    device_class=dev.device_class,
+                    at_launch=False,
                 ))
                 self._seen_identifiers.add(ident)
         # Expire TTL'd advertising entries. Emit left ONLY for
@@ -1913,6 +1938,8 @@ class BLEPoller:
                     last_rssi_dbm=dev.rssi_dbm,
                     service_categories=_ble_service_categories(dev),
                     seen_for_seconds=seen_for,
+                    device_type=dev.type,
+                    device_class=dev.device_class,
                 ))
                 # Tear down the cluster so a future re-arrival
                 # under a fresh identifier creates a NEW cluster
@@ -1936,6 +1963,8 @@ class BLEPoller:
                     if dev.last_seen and dev.first_seen
                     else 0.0
                 ),
+                device_type=dev.type,
+                device_class=dev.device_class,
             ))
             self._departed_identifiers.add(ident)
 

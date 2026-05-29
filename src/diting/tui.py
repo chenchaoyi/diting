@@ -809,6 +809,7 @@ class EventsScreen(ModalScreen):
         Binding("5", "set_filter('ble')", show=False),
         Binding("6", "set_filter('bonjour')", show=False),
         Binding("7", "set_filter('lan')", show=False),
+        Binding("enter,right", "toggle_census", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -845,6 +846,8 @@ class EventsScreen(ModalScreen):
         self._baselines = baselines
         self._sigma_history = sigma_history
         self._filter: str = "all"
+        # At-launch census fold starts collapsed; Enter/→ toggles it.
+        self._census_expanded: bool = False
         # WeakRef-style references — live Static widgets we re-render
         # when the filter changes.
         self._body: Static | None = None
@@ -877,6 +880,14 @@ class EventsScreen(ModalScreen):
         if self._footer_static is not None:
             self._footer_static.update(self._render_footer())
 
+    def action_toggle_census(self) -> None:
+        """Expand / collapse the at-launch census summary row. No-op
+        when no census fold is present (the re-render simply produces
+        the same body)."""
+        self._census_expanded = not self._census_expanded
+        if self._body is not None:
+            self._body.update(self._render_body())
+
     def _render_body(self) -> Group:
         inv = getattr(self.app, "_inv", NetworkInventory())
         events = [
@@ -891,7 +902,24 @@ class EventsScreen(ModalScreen):
             body_lines: list[Text] = [Text(t("(no events yet)"), style="dim italic")]
         else:
             body_lines = []
-            for ev, count, latest in _group_consecutive_ble_seen(events):
+            grouped = _group_consecutive_ble_seen(events)
+            for item in _fold_at_launch_census(grouped):
+                if isinstance(item, _CensusFold):
+                    body_lines.append(
+                        _format_census_summary(
+                            item, expanded=self._census_expanded,
+                        )
+                    )
+                    if self._census_expanded:
+                        for ev, count, latest in item.groups:
+                            row = _format_ble_device_seen_event(
+                                ev, count=count, latest=latest,
+                            )
+                            indented = Text("    ")
+                            indented.append_text(row)
+                            body_lines.append(indented)
+                    continue
+                ev, count, latest = item
                 if isinstance(ev, BLEDeviceSeenEvent):
                     line = _format_ble_device_seen_event(
                         ev, count=count, latest=latest,
@@ -2126,19 +2154,174 @@ def _group_consecutive_ble_seen(
     return out
 
 
-def _ble_seen_name_label(event: BLEDeviceSeenEvent) -> str:
-    """Locale-stable label used for both display and grouping.
+class _CensusFold:
+    """Render-only marker for a contiguous run of at-launch BLE-seen
+    groups folded into one expandable summary in `EventsScreen`.
 
-    Anonymous → `(anonymous)`. High-entropy rotating identifiers →
-    `(rotating ID)`. Anything else → the raw name verbatim. Different
-    rotating-ID strings collapse under the same label so a single
-    physical device cycling identifiers folds into one `×N` row.
+    The startup census — every device already in range when diting
+    launches — fires a burst of `BLEDeviceSeenEvent`s tagged
+    `at_launch=True`. Folding them into one row keeps the genuine
+    mid-session transitions from being buried, without hiding
+    anything: the run expands on Enter and the JSONL log keeps every
+    event.
     """
-    if not event.name:
+
+    __slots__ = ("groups", "total")
+
+    def __init__(
+        self,
+        groups: list[tuple[object, int, "BLEDeviceSeenEvent | None"]],
+        total: int,
+    ) -> None:
+        self.groups = groups   # the inner (rep, count, latest) triples
+        self.total = total     # device count = sum of the triples' counts
+
+
+def _fold_at_launch_census(
+    grouped: list[tuple[object, int, "BLEDeviceSeenEvent | None"]],
+) -> list[object]:
+    """Fold each contiguous run of at-launch `BLEDeviceSeenEvent` groups
+    in ``grouped`` into a single `_CensusFold`. Non-census triples pass
+    through unchanged. A lone at-launch device (total < 2) is NOT folded
+    — a one-device summary reads worse than the row itself. Render-only:
+    the input groups and the underlying ring / JSONL log are untouched.
+    """
+    out: list[object] = []
+    run: list[tuple[object, int, BLEDeviceSeenEvent | None]] = []
+
+    def flush() -> None:
+        if not run:
+            return
+        total = sum(c for _, c, _ in run)
+        if total >= 2:
+            out.append(_CensusFold(list(run), total))
+        else:
+            out.extend(run)
+        run.clear()
+
+    for rep, count, latest in grouped:
+        if isinstance(rep, BLEDeviceSeenEvent) and rep.at_launch:
+            run.append((rep, count, latest))
+            continue
+        flush()
+        out.append((rep, count, latest))
+    flush()
+    return out
+
+
+def _format_census_summary(fold: _CensusFold, *, expanded: bool) -> Text:
+    """Render the at-launch census summary row: a count + a top-3
+    vendor breakdown + an inline expand/collapse hint. Vendors are
+    bucketed by the same label as the per-row vendor slot, so silent
+    devices aggregate under `(anonymous)`.
+    """
+    counts: dict[str, int] = {}
+    order: list[str] = []
+    for rep, count, _ in fold.groups:
+        label = _ble_event_vendor_label(
+            rep.vendor, rep.name, rep.device_type,
+            rep.device_class, rep.service_categories,
+        )
+        if label not in counts:
+            counts[label] = 0
+            order.append(label)
+        counts[label] += count
+    ranked = sorted(order, key=lambda lbl: (-counts[lbl], lbl))
+    breakdown = "  ·  ".join(f"{lbl} ×{counts[lbl]}" for lbl in ranked[:3])
+    if len(ranked) > 3:
+        breakdown += "  ·  …"
+
+    line = Text()
+    line.append(t("session start"), style="bold cyan")
+    line.append("  ·  ", style="dim")
+    line.append(t("{n} devices already present", n=fold.total), style="white")
+    if breakdown:
+        line.append(f"  ({breakdown})", style="dim")
+    hint = t("enter to collapse") if expanded else t("enter to expand")
+    line.append(f"   [{hint}]", style="dim italic")
+    return line
+
+
+def _ble_display_label(
+    name: str | None,
+    device_type: str | None,
+    device_class: str | None,
+) -> tuple[str, str]:
+    """Resolve the Name-column / event label for a BLE device via the
+    shared cascade: helper name → `(rotating ID)` for high-entropy
+    names → Continuity `type` → Nearby-Info `device_class` →
+    `(unknown)`.
+
+    Returns ``(text, style)``. The terminal fallback is always
+    `(unknown)`, matching the BLE list's Name column — the
+    `(anonymous)` vs `(unknown)` decision lives in the VENDOR slot
+    (see `_ble_event_vendor_label`). Used by BOTH `_ble_row_line` and
+    the event formatters so the two surfaces cannot drift.
+    """
+    if name and _looks_like_rotating_id(name):
+        return t("(rotating ID)"), "dim italic"
+    if name:
+        return name, "white"
+    if device_type:
+        return t(device_type), "dim"
+    if device_class:
+        return t(device_class), "dim"
+    return t("(unknown)"), "dim italic"
+
+
+def _ble_event_is_silent(
+    vendor: str | None,
+    name: str | None,
+    device_type: str | None,
+    device_class: str | None,
+    service_categories: tuple[str, ...],
+) -> bool:
+    """Approximate `is_silent_device` from a BLE transition event's own
+    fields — the broadcast carried zero identifying info. The event
+    lacks raw `vendor_id` / service UUIDs, but `vendor` already folds
+    `vendor_id` and `service_categories` is the resolved form, so the
+    only divergence is a company-id present-but-unresolved, which
+    renders `(unknown)` (the conservative, non-anonymous side).
+    """
+    return (
+        not vendor
+        and not name
+        and not device_type
+        and not device_class
+        and not service_categories
+    )
+
+
+def _ble_event_vendor_label(
+    vendor: str | None,
+    name: str | None,
+    device_type: str | None,
+    device_class: str | None,
+    service_categories: tuple[str, ...],
+) -> str:
+    """Vendor-slot text for a BLE event line, mirroring the BLE list
+    vendor cell: the resolved vendor, else `(anonymous)` when the
+    device is truly silent, else `(unknown)`.
+    """
+    if vendor:
+        return vendor
+    if _ble_event_is_silent(vendor, name, device_type, device_class,
+                            service_categories):
         return t("(anonymous)")
-    if _looks_like_rotating_id(event.name):
-        return t("(rotating ID)")
-    return event.name
+    return t("(unknown)")
+
+
+def _ble_seen_name_label(event: BLEDeviceSeenEvent) -> str:
+    """Locale-stable name-slot label used for both display and the
+    EventsScreen consecutive-duplicate grouping. Runs the shared
+    cascade so different rotating-ID strings collapse under one
+    `(rotating ID)` group and a decoded `iPhone` groups apart from a
+    truly-silent `(unknown)`.
+    """
+    text, _ = _ble_display_label(
+        event.name, event.device_type, event.device_class,
+    )
+    return text
 
 
 def _format_ble_device_seen_event(
@@ -2161,8 +2344,13 @@ def _format_ble_device_seen_event(
     line.append(f"{_ev_ts(event)}  ", style="dim")
     line.append(t("[BLE]") + "  ", style="bold blue")
     line.append(t("device seen: "), style="white")
-    vendor = event.vendor or t("(unknown)")
-    name = _ble_seen_name_label(event)
+    vendor = _ble_event_vendor_label(
+        event.vendor, event.name, event.device_type,
+        event.device_class, event.service_categories,
+    )
+    name, _ = _ble_display_label(
+        event.name, event.device_type, event.device_class,
+    )
     line.append(f"{vendor}  ·  {name}", style="white")
     if count >= 2:
         line.append(t("  ×{n}", n=count), style="cyan")
@@ -2176,8 +2364,13 @@ def _format_ble_device_left_event(event: BLEDeviceLeftEvent) -> Text:
     line.append(f"{_ev_ts(event)}  ", style="dim")
     line.append(t("[BLE]") + "  ", style="blue")
     line.append(t("device left: "), style="white")
-    vendor = event.vendor or t("(unknown)")
-    name = event.name or t("(anonymous)")
+    vendor = _ble_event_vendor_label(
+        event.vendor, event.name, event.device_type,
+        event.device_class, event.service_categories,
+    )
+    name, _ = _ble_display_label(
+        event.name, event.device_type, event.device_class,
+    )
     duration = _format_duration_short(event.seen_for_seconds)
     line.append(f"{vendor}  ·  {name}  ·  {duration}", style="dim")
     return line
@@ -3569,26 +3762,11 @@ def _ble_row_line(d: BLEDevice, now: datetime) -> Text:
     # tagged it `Find My target` no longer reads as "(unknown) /
     # Find My target · Find My" — it reads "Find My target /
     # Find My", with the Name column doing real work.
-    if d.name and _looks_like_rotating_id(d.name):
-        # Helper handed us a rotating-identifier string (Apple
-        # Continuity, Huami serial, etc.) — render the placeholder
-        # so the panel doesn't read base64-shaped strings as real
-        # device names. BLEDetailScreen still surfaces the raw value
-        # under `Raw name:`.
-        name_text = t("(rotating ID)")
-        name_style = "dim italic"
-    elif d.name:
-        name_text = d.name
-        name_style = "white"
-    elif d.type:
-        name_text = t(d.type)
-        name_style = "dim"
-    elif d.device_class:
-        name_text = t(d.device_class)
-        name_style = "dim"
-    else:
-        name_text = t("(unknown)")
-        name_style = "dim italic"
+    # Shared cascade (also drives the event formatters): helper name →
+    # (rotating ID) for high-entropy strings → type → device_class →
+    # (unknown). BLEDetailScreen still surfaces the raw value under
+    # `Raw name:` when the helper handed us a rotating-identifier string.
+    name_text, name_style = _ble_display_label(d.name, d.type, d.device_class)
     label_text = _ble_label_summary(d)
     age_text = _ble_age_text(d, now)
     id_short = d.identifier[:8]

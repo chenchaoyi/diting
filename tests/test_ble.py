@@ -1494,6 +1494,109 @@ def test_poller_emits_seen_event_on_first_observation():
     assert seen[0].vendor == "Apple, Inc."
 
 
+def test_poller_seen_carries_device_type_and_class_from_representative():
+    from dataclasses import replace
+    from diting.events import BLEDeviceSeenEvent
+
+    # presence_gate_s=0 so the anonymous (name=None) advert graduates
+    # immediately instead of holding in PENDING.
+    poller = BLEPoller("/fake", presence_gate_s=0.0)
+    poller._devices["MAC_A"] = replace(
+        _build_ble_device("MAC_A", name=None),
+        type="Find My target", device_class="iPhone",
+    )
+    now = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+    poller._detect_transitions(now)
+    seen = [t for t in poller.drain_transitions()
+            if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seen) == 1
+    assert seen[0].device_type == "Find My target"
+    assert seen[0].device_class == "iPhone"
+
+
+def test_poller_left_carries_device_type_and_class():
+    from dataclasses import replace
+    from datetime import timedelta
+    from diting.events import BLEDeviceLeftEvent
+
+    poller = BLEPoller("/fake", ttl_s=30.0)
+    t0 = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+    poller._devices["MAC_A"] = replace(
+        _build_ble_device(
+            "MAC_A", first_seen=t0, last_seen=t0 + timedelta(seconds=5),
+        ),
+        type="Find My target", device_class="iPhone",
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=10))  # seen
+    poller.drain_transitions()
+    poller._detect_transitions(t0 + timedelta(seconds=40))  # TTL evict → left
+    left = [t for t in poller.drain_transitions()
+            if isinstance(t, BLEDeviceLeftEvent)]
+    assert len(left) == 1
+    assert left[0].device_type == "Find My target"
+    assert left[0].device_class == "iPhone"
+
+
+def test_poller_seen_at_launch_true_inside_warmup_window():
+    from datetime import timedelta
+    from diting.events import BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake")
+    t0 = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+    # First tick anchors the launch window; nothing present yet.
+    poller._detect_transitions(t0)
+    poller.drain_transitions()
+    # A named device appears at t0+4 (inside the 12 s window).
+    poller._devices["MAC_A"] = _build_ble_device(
+        "MAC_A", first_seen=t0 + timedelta(seconds=4),
+        last_seen=t0 + timedelta(seconds=4),
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=4))
+    seen = [t for t in poller.drain_transitions()
+            if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seen) == 1
+    assert seen[0].at_launch is True
+
+
+def test_poller_seen_at_launch_false_after_warmup_window():
+    from datetime import timedelta
+    from diting.events import BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake")
+    t0 = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+    poller._detect_transitions(t0)  # anchor launch window at t0
+    poller.drain_transitions()
+    # A device appears at t0+30 — well past the 12 s warmup.
+    poller._devices["MAC_LATE"] = _build_ble_device(
+        "MAC_LATE", first_seen=t0 + timedelta(seconds=30),
+        last_seen=t0 + timedelta(seconds=30),
+    )
+    poller._detect_transitions(t0 + timedelta(seconds=30))
+    seen = [t for t in poller.drain_transitions()
+            if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seen) == 1
+    assert seen[0].at_launch is False
+
+
+def test_poller_connected_peripheral_seen_never_at_launch():
+    from dataclasses import replace
+    from diting.events import BLEDeviceSeenEvent
+
+    poller = BLEPoller("/fake")
+    t0 = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+    # A bonded peripheral present at t0 (inside the warmup window) must
+    # NOT be folded into the census — it is high-signal.
+    poller._connected["CONN"] = replace(
+        _build_ble_device("CONN", name="ccy's AirPods"), is_connected=True,
+    )
+    poller._detect_transitions(t0)
+    seen = [t for t in poller.drain_transitions()
+            if isinstance(t, BLEDeviceSeenEvent)]
+    assert len(seen) == 1
+    assert seen[0].identifier == "CONN"
+    assert seen[0].at_launch is False
+
+
 def test_poller_does_not_re_emit_seen_for_known_identifier():
     """`_seen_identifiers` guards against re-emit on subsequent ticks."""
     from diting.events import BLEDeviceSeenEvent

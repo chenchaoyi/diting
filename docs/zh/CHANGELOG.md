@@ -10,6 +10,31 @@
 
 ## [Unreleased]
 
+### Added
+
+- **BLE 转移事件新增 `device_type` / `device_class`。**
+  `BLEDeviceSeenEvent` 和 `BLEDeviceLeftEvent` 现在携带 BLE 列表早已解码
+  的 Apple Continuity 广告类型与 Nearby-Info 设备类别，所以列表里标成
+  `iPhone` 的设备在事件里也读作 `iPhone`，而不再是 `(anonymous)`。JSONL
+  新增可选键 `device_type` / `device_class`（Continuity 类型落在
+  `device_type` 下，绝不用 `type` —— 信封本身占用了 `type`）；两者为空时
+  省略，旧日志行保持 diff 稳定。
+- **事件 modal 的启动点名折叠。** diting 启动时屋里原本就在的每个设备都会
+  在头 ~12 秒发一条 `seen` —— 这一波点名把真正有意思的会话中事件淹没了。
+  `m` modal 现在把这波启动点名折成一行汇总（`session start · 已在场 N
+  个设备 (Apple ×8 · …)`），按 Enter / `→` 展开。什么都不隐藏：这一行可
+  展开成每一个设备，JSONL 日志也全部保留。`BLEDeviceSeenEvent` 新增
+  `at_launch` 标记（仅在 true 时写入 JSONL 键）。
+
+### Changed
+
+- **`(anonymous)` 现在全局只有一个含义。** BLE 事件标签通过共享 resolver
+  走与 BLE 列表完全一致的 name 级联（helper name → `(rotating ID)` →
+  type → device class → 占位符），`(anonymous)` 只保留给真正静默的情况
+  （没有 vendor、name、type、class、service category）—— 与诊断条的计数和
+  BLE 列表的 vendor 列一致。有已知 vendor 但没有名字的设备现在读作
+  `(unknown)`，而不是 `(anonymous)`。
+
 ## [1.8.0] — 2026-05-26
 
 Minor release。**四个体验向特性一起落地**：三个改的是第一次见 diting
