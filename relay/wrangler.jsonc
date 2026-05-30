@@ -17,6 +17,6 @@
     "TTL_SECONDS": 604800,
     "MAX_PULL": 500,
     "APNS_HOST": "https://api.push.apple.com",
-    "APNS_BUNDLE_ID": "dev.diting.mobile"
+    "APNS_BUNDLE_ID": "dev.ccy.diting.ditingMobile"
   }
 }
