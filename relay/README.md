@@ -24,6 +24,14 @@ Auth bearer = `urlsafe_b64(HMAC-SHA256(channel_key, "diting-companion/v1 relay-a
 derived identically by the desktop (`diting.companion.protocol.auth`) and
 the mobile consumer. The relay stores only `sha256(bearer)`.
 
+## Deployed instance
+
+- URL: `https://diting-companion-relay.ccy-chenchaoyi.workers.dev`
+- D1: `diting-companion` (binding `DB`, id in `wrangler.jsonc`)
+- Verified live: store / ordered cursor pull / 401 / 403 / 404 / idempotent
+  re-store / unpair / envelope validation. APNs push is wired but inert
+  until the secrets below are set (needs a paid Apple Developer account).
+
 ## Deploy
 
 ```bash

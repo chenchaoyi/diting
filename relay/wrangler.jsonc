@@ -4,12 +4,12 @@
   // secrets (see README) — never put them here.
   "name": "diting-companion-relay",
   "main": "src/index.js",
-  "compatibility_date": "2026-01-01",
+  "compatibility_date": "2025-01-01",
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "diting-companion",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "fccf6991-23bd-4a4b-a477-8bbf337b04c1",
       "migrations_dir": "migrations"
     }
   ],
