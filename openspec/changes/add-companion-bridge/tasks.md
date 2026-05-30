@@ -31,9 +31,9 @@
 
 ## 4. i18n, docs, validation
 
-- [ ] 4.1 Add all user-facing strings via `t()` with EN+ZH parity (pairing prompts, companion status, queue/overflow notices)
-- [ ] 4.2 Add a pairing/companion section to `README.md` + `docs/zh/README.md`, including the Apple Developer account prerequisite and the Mac-asleep limitation
-- [ ] 4.3 Run all four CI gates: `uv run pytest`; `uv run python scripts/tui_snapshot.py --mode regression`; `openspec validate --specs --strict`; `openspec validate add-companion-bridge --strict`
+- [x] 4.1 Add all user-facing strings via `t()` with EN+ZH parity — companion CLI strings + the TUI status-chip strings all carry `_ZH` entries; usage block updated EN+ZH
+- [x] 4.2 Add a pairing/companion section to `README.md` + `docs/zh/README.md`, including the APNs prerequisite (relay/README) and the Mac-asleep limitation — done in both, plus `DITING_COMPANION` / `DITING_COMPANION_STATE` env rows
+- [x] 4.3 Run all four CI gates — green after the wiring commit (1205 pytest, snapshot regression unchanged, `--specs --strict` 22/22, change `--strict` valid); the README-only edits don't touch code
 
 ## 5. Cross-repo handoff (diting-mobile, tracked, executed in mobile session)
 
