@@ -146,78 +146,121 @@ note() {
   echo "diting install: $*"
 }
 
-# download_with_fallback downloads `<url>` to `<dest>` via the
-# resolved MIRROR ladder. The third arg names a caller-provided
-# global that receives `github` or `ghproxy` indicating which path
-# served the bytes — used by the completion-notice flow so the
-# user sees which mirror fired.
-#
-# curl's `--max-time 20` is the wall-clock budget per attempt. The
-# slowest healthy international GitHub-asset download is ~5 s; the
-# CN failure mode usually completes the TCP handshake then stalls,
-# so 20 s gives generous headroom while still failing fast on
-# broken routes.
-#
-# `eval` is the standard pre-bash-4.3 indirection pattern; macOS
-# ships bash 3.2 by default and lacks `declare -n` nameref support.
-# Returns 0 on success, 1 on full failure of every path in the
-# resolved ladder.
-download_with_fallback() {
-  local url="$1" dest="$2" used_var="$3"
-  local proxy_url="https://ghproxy.com/${url}"
-  case "$MIRROR" in
-    github)
-      if curl --max-time 20 -fsSL --output "$dest" "$url"; then
-        eval "${used_var}=github"
-        return 0
-      fi
-      return 1
+# validate_download — return 0 iff `<file>` is a plausible `<kind>`,
+# guarding against a proxy that answers HTTP 200 with an HTML error /
+# landing page (the failure mode that killed the dead ghproxy.com).
+#   shasums — must yield a 64-hex hash for $TARBALL_NAME (rejects HTML)
+#   tarball — must be a valid gzip stream
+validate_download() {
+  local file="$1" kind="$2"
+  [ -s "$file" ] || return 1
+  case "$kind" in
+    shasums)
+      awk -v name="$TARBALL_NAME" \
+        '$2 == name && $1 ~ /^[0-9a-fA-F]{64}$/ { ok=1 } END { exit ok?0:1 }' \
+        "$file"
       ;;
-    ghproxy)
-      if curl --max-time 20 -fsSL --output "$dest" "$proxy_url"; then
-        eval "${used_var}=ghproxy"
-        return 0
-      fi
-      return 1
+    tarball)
+      gzip -t "$file" 2>/dev/null
       ;;
-    auto)
-      if curl --max-time 20 -fsSL --output "$dest" "$url" 2>/dev/null; then
-        eval "${used_var}=github"
-        return 0
-      fi
-      note "$(mirror_fallback_notice)"
-      if curl --max-time 20 -fsSL --output "$dest" "$proxy_url"; then
-        eval "${used_var}=ghproxy"
-        return 0
-      fi
-      return 1
-      ;;
+    *) return 0 ;;
   esac
+}
+
+# build_candidates — emit "src url" lines (one per attempt) for `<url>`
+# in priority order, per the resolved MIRROR mode. `src` is `github`
+# or a proxy prefix (sans trailing slash). When `force_github_first`
+# is 1, GitHub-direct is prepended even in modes that otherwise skip
+# it (used for SHASUMS so its trust stays anchored on GitHub).
+build_candidates() {
+  local url="$1" force_gh="$2" p
+  if [ "$MIRROR" = github ] || [ "$MIRROR" = auto ] || \
+     [ "$MIRROR" = custom ] || [ "$force_gh" = 1 ]; then
+    printf 'github %s\n' "$url"
+  fi
+  if [ "$MIRROR" != github ]; then
+    printf '%s\n' "$MIRROR_PROXIES" | while IFS= read -r p; do
+      [ -z "$p" ] && continue
+      printf '%s %s%s\n' "${p%/}" "$p" "$url"
+    done
+  fi
+}
+
+# download_with_fallback downloads `<url>` to `<dest>`, walking the
+# candidate chain and accepting the first attempt that BOTH transfers
+# AND passes the `<kind>` content check. The third arg names a global
+# that receives the winning `src` (`github` or a proxy prefix), read
+# by the completion-notice flow. Optional 5th arg forces GitHub-first.
+#
+# curl's `--max-time 20` is the per-attempt wall-clock budget: the
+# slowest healthy international GitHub-asset download is ~5 s; the CN
+# failure mode completes the handshake then stalls, so 20 s fails fast
+# on broken routes. `eval` is the pre-bash-4.3 indirection pattern
+# (macOS ships bash 3.2, no `declare -n`). Returns 0 on the first
+# valid source, 1 when the whole chain is exhausted.
+download_with_fallback() {
+  local url="$1" dest="$2" used_var="$3" kind="${4:-plain}" force_gh="${5:-0}"
+  local src curl_url
+  while IFS=' ' read -r src curl_url; do
+    [ -z "$curl_url" ] && continue
+    if [ "$src" != github ]; then
+      note "$(mirror_fallback_notice "$src")"
+    fi
+    if curl --max-time 20 -fsSL --output "$dest" "$curl_url" 2>/dev/null \
+       && validate_download "$dest" "$kind"; then
+      eval "${used_var}=\"\$src\""
+      return 0
+    fi
+    rm -f "$dest"
+  done <<EOF
+$(build_candidates "$url" "$force_gh")
+EOF
+  return 1
+}
+
+# _mirror_host — strip scheme + path from a proxy prefix to its bare
+# host, for human-readable notices (`https://ghfast.top/` → `ghfast.top`).
+_mirror_host() {
+  local h="${1#http://}"; h="${h#https://}"; echo "${h%%/*}"
 }
 
 # mirror_fallback_notice / mirror_completion_notice — locale-aware
-# copy used by the auto-ladder dispatcher. `detect_locale` is the
-# existing helper that derives EN vs ZH from `defaults read -g
-# AppleLanguages`; we cache the result in MIRROR_NOTICE_LOCALE on
-# first call so locale-detection runs at most once.
+# copy. `detect_locale` derives EN vs ZH from `defaults read -g
+# AppleLanguages`; cached in MIRROR_NOTICE_LOCALE so it runs once.
+# mirror_fallback_notice <proxy-prefix> fires per proxy attempt and
+# names the host being tried.
 mirror_fallback_notice() {
+  local host; host="$(_mirror_host "$1")"
   if [ -z "${MIRROR_NOTICE_LOCALE:-}" ]; then
     MIRROR_NOTICE_LOCALE="$(detect_locale)"
   fi
   case "$MIRROR_NOTICE_LOCALE" in
-    zh) echo "GitHub 下载失败（网络可能受限）；切换到 ghproxy.com 镜像重试..." ;;
-    *)  echo "GitHub download failed (likely CN network); retrying via ghproxy.com mirror..." ;;
+    zh) echo "GitHub 下载失败（网络可能受限）；切换到 ${host} 镜像重试..." ;;
+    *)  echo "GitHub download failed (likely CN network); retrying via ${host} mirror..." ;;
   esac
 }
 
+# mirror_completion_notice <tarball_src> <shasums_src> — honest about
+# the trust anchor: when SHASUMS came from GitHub-direct the anchor is
+# GitHub even if the tarball was mirrored; when SHASUMS itself was
+# proxied, that proxy is the anchor (SHA256 still verified against it).
 mirror_completion_notice() {
+  local tsrc="$1" ssrc="$2" thost shost
+  thost="$(_mirror_host "$tsrc")"; shost="$(_mirror_host "$ssrc")"
   if [ -z "${MIRROR_NOTICE_LOCALE:-}" ]; then
     MIRROR_NOTICE_LOCALE="$(detect_locale)"
   fi
-  case "$MIRROR_NOTICE_LOCALE" in
-    zh) echo "tarball 或 SHASUMS 通过 ghproxy.com 镜像下载；信任仍锚定于 SHA256" ;;
-    *)  echo "tarball or SHASUMS fetched via ghproxy.com mirror; trust anchored on SHA256" ;;
-  esac
+  if [ "$ssrc" = github ]; then
+    case "$MIRROR_NOTICE_LOCALE" in
+      zh) echo "tarball 通过 ${thost} 镜像下载；SHASUMS 从 GitHub 直连，信任锚定于 GitHub" ;;
+      *)  echo "tarball fetched via ${thost} mirror; SHASUMS direct from GitHub — trust anchored on GitHub" ;;
+    esac
+  else
+    case "$MIRROR_NOTICE_LOCALE" in
+      zh) echo "SHASUMS 通过 ${shost} 镜像下载；信任锚定于该镜像（SHA256 仍校验）" ;;
+      *)  echo "SHASUMS fetched via ${shost} mirror; trust anchored on that mirror (SHA256 still verified)" ;;
+    esac
+  fi
 }
 
 # step emits a numbered progress row in TIER FULL / TIER PLAIN, or
@@ -347,27 +390,42 @@ bundle_locale_tag() {
 # ---- mirror resolution ----
 #
 # DITING_INSTALL_MIRROR controls the download ladder for the tarball
-# and SHASUMS256.txt. GitHub Releases stays canonical (trust anchor);
-# the fallback is for CN networks where direct GitHub asset downloads
+# and SHASUMS256.txt. GitHub Releases stays the trust anchor; the
+# fallback is for CN networks where direct GitHub asset downloads
 # stall on `objects.githubusercontent.com`.
 #
-#   auto    — try GitHub first; on curl failure / 20 s timeout,
-#             retry via https://ghproxy.com/<github-url>. Default.
-#   github  — GitHub only; pre-change behaviour, no fallback.
-#   ghproxy — ghproxy.com only; skip the GitHub-first attempt for
-#             CN users who know GitHub is unreachable. Saves 20 s
-#             per install vs the auto ladder.
+#   auto    — GitHub first; on failure walk the live proxy chain.
+#             SHASUMS is always tried GitHub-direct first. Default.
+#   github  — GitHub only; no proxies.
+#   ghproxy — back-compat keyword: skip the GitHub-first attempt for
+#             the tarball and go straight to the proxy chain (CN users
+#             who know GitHub is unreachable). SHASUMS still tries
+#             GitHub-direct first.
+#   <url>   — an http(s):// custom/self-hosted proxy prefix, used as
+#             the sole proxy in the `<prefix><github-url>` convention
+#             (GitHub-first, then this proxy).
 #
-# Invalid values abort before any download work happens — the
-# install must not silently fall back to a default when the user
-# typed a mirror name that isn't supported.
+# `ghproxy.com` was removed — it was discontinued and now answers with
+# an HTML landing page, which the content validator would reject anyway.
+# The chain is kept in one place so it can be tuned without touching the
+# download logic.
+#
+# Invalid values abort before any download work — the install must not
+# silently fall back when the user typed an unsupported mirror.
+_MIRROR_PROXY_CHAIN='https://ghfast.top/
+https://gh-proxy.com/
+https://ghproxy.net/'
 
 case "${DITING_INSTALL_MIRROR:-auto}" in
-  auto|github|ghproxy)
-    MIRROR="${DITING_INSTALL_MIRROR:-auto}"
+  auto)    MIRROR=auto;   MIRROR_PROXIES="$_MIRROR_PROXY_CHAIN" ;;
+  github)  MIRROR=github; MIRROR_PROXIES="" ;;
+  ghproxy) MIRROR=ghproxy; MIRROR_PROXIES="$_MIRROR_PROXY_CHAIN" ;;
+  http://*|https://*)
+    MIRROR=custom
+    MIRROR_PROXIES="${DITING_INSTALL_MIRROR%/}/"
     ;;
   *)
-    die "unknown DITING_INSTALL_MIRROR value: ${DITING_INSTALL_MIRROR} (expected auto|github|ghproxy)"
+    die "unknown DITING_INSTALL_MIRROR value: ${DITING_INSTALL_MIRROR} (expected auto|github|ghproxy|<http(s)://proxy/>)"
     ;;
 esac
 
@@ -440,17 +498,19 @@ else
   step 3 "Download" "$TARBALL_NAME" "downloading $TARBALL_NAME"
   TARBALL_MIRROR=""
   SHASUMS_MIRROR=""
-  download_with_fallback "$TARBALL_URL" "${TMP_DIR}/${TARBALL_NAME}" TARBALL_MIRROR \
-    || die_with_marker 3 "tarball download failed via github AND ghproxy.com: $TARBALL_URL"
-  download_with_fallback "$SHASUMS_URL" "${TMP_DIR}/SHASUMS256.txt" SHASUMS_MIRROR \
-    || die_with_marker 4 "SHASUMS256.txt download failed via github AND ghproxy.com: $SHASUMS_URL"
+  # tarball walks the mode's chain (validated as gzip); SHASUMS is
+  # forced GitHub-first (5th arg=1) so its trust stays anchored on
+  # GitHub even when the tarball came from a proxy, and is validated
+  # as a real checksums file (rejects an HTML 200 from a dead proxy).
+  download_with_fallback "$TARBALL_URL" "${TMP_DIR}/${TARBALL_NAME}" TARBALL_MIRROR tarball 0 \
+    || die_with_marker 3 "tarball download failed — GitHub and every mirror exhausted or returned invalid content: $TARBALL_URL"
+  download_with_fallback "$SHASUMS_URL" "${TMP_DIR}/SHASUMS256.txt" SHASUMS_MIRROR shasums 1 \
+    || die_with_marker 4 "SHASUMS256.txt download failed — GitHub and every mirror exhausted or returned invalid content: $SHASUMS_URL"
+  # The shasums validator already guaranteed a 64-hex entry exists.
   EXPECTED_SHA="$(
     awk -v name="$TARBALL_NAME" '$2 == name { print $1 }' \
       "${TMP_DIR}/SHASUMS256.txt"
   )"
-  if [ -z "$EXPECTED_SHA" ]; then
-    die_with_marker 4 "SHASUMS256.txt missing entry for $TARBALL_NAME"
-  fi
   ACTUAL_SHA="$(shasum -a 256 "${TMP_DIR}/${TARBALL_NAME}" | awk '{print $1}')"
   if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
     die_with_marker 4 "sha256 mismatch on $TARBALL_NAME (expected $EXPECTED_SHA, got $ACTUAL_SHA)"
@@ -459,11 +519,11 @@ else
   # row stays scannable; the full hash is still in $ACTUAL_SHA for
   # any debug needs. LOG tier keeps the full hash for grep parity.
   step 4 "Verify" "sha256 ${ACTUAL_SHA:0:8}…" "sha256 verified: $ACTUAL_SHA"
-  # When either path served via ghproxy, surface the notice once
-  # AFTER SHA verification succeeded — confirms the bytes matched
-  # canonical regardless of which URL produced them.
-  if [ "$TARBALL_MIRROR" = "ghproxy" ] || [ "$SHASUMS_MIRROR" = "ghproxy" ]; then
-    note "$(mirror_completion_notice)"
+  # When a proxy served either asset, surface the honest trust notice
+  # AFTER SHA verification — it names the real anchor (GitHub when
+  # SHASUMS was direct, otherwise the serving mirror).
+  if [ "$TARBALL_MIRROR" != "github" ] || [ "$SHASUMS_MIRROR" != "github" ]; then
+    note "$(mirror_completion_notice "$TARBALL_MIRROR" "$SHASUMS_MIRROR")"
   fi
 fi
 

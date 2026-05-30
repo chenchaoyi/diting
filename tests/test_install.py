@@ -361,24 +361,28 @@ def _make_curl_shim(
     fake_bin: Path,
     *,
     fail_urls: list[str] | None = None,
-    served_tarball_bytes: bytes = b"fake-tarball-content\n",
+    html_urls: list[str] | None = None,
+    served_tarball_bytes: bytes | None = None,
     served_shasums_text: str | None = None,
 ) -> Path:
     """Build a fake curl in `fake_bin` that records every call to
     `<fake_bin>/curl.log` and writes deterministic payloads for the
     happy-path URLs. URLs whose prefix matches any string in
     `fail_urls` cause curl to exit non-zero (simulating a stalled
-    GitHub asset host).
+    GitHub asset host); URLs matching `html_urls` return an HTML 200.
 
-    SHASUMS payload contains the SHA256 of `served_tarball_bytes`
-    so the real install.sh SHA-verification step passes against
-    shim-produced bytes.
+    The tarball payload is a real (deterministic) gzip so install.sh's
+    `gzip -t` content check passes; the SHASUMS payload carries that
+    gzip's SHA256 so the verification step passes against shim bytes.
     """
-    import hashlib
+    import hashlib, gzip
     fake_bin.mkdir(parents=True, exist_ok=True)
-    # Compute the SHA of the bytes the shim will write so SHASUMS
-    # matches. The real install.sh asserts the second column of a
-    # space-separated row equals the tarball filename.
+    # Default tarball = a deterministic gzip stream (valid for `gzip -t`).
+    # The bytes are pre-written to a file the shim `cat`s, so the SHA is
+    # exactly what install.sh will compute on the downloaded file.
+    if served_tarball_bytes is None:
+        served_tarball_bytes = gzip.compress(b"fake-tarball-content\n", mtime=0)
+    (fake_bin / "tarball.bin").write_bytes(served_tarball_bytes)
     sha = hashlib.sha256(served_tarball_bytes).hexdigest()
     # Match install.sh's expected tarball filename for a v0.10.0
     # arm64 (or x86_64 depending on host) build.
@@ -389,6 +393,10 @@ def _make_curl_shim(
     shasums_payload = served_shasums_text or default_shasums
 
     fail_list = " ".join(f'"{u}"' for u in (fail_urls or []))
+    # html_urls return HTTP 200 with an HTML landing page (the dead
+    # ghproxy.com failure mode) so content-validation fall-through can
+    # be exercised.
+    html_list = " ".join(f'"{u}"' for u in (html_urls or []))
     curl = fake_bin / "curl"
     # The shim emulates `curl [options] --output <dest> <url>`. It
     # parses argv left-to-right: any --output / -o gives the dest,
@@ -421,6 +429,16 @@ for FAIL_PREFIX in {fail_list}; do
   esac
 done
 
+# Serve an HTML 200 landing page for html_list prefixes — the dead
+# ghproxy.com failure mode that install.sh must detect and skip.
+for HTML_PREFIX in {html_list}; do
+  case "$URL" in
+    "$HTML_PREFIX"*)
+      printf '<!DOCTYPE html>\\n<html><head><title>GitHub Proxy</title></head><body>x</body></html>\\n' > "$DEST"
+      exit 0 ;;
+  esac
+done
+
 # Write deterministic payloads. The tarball gets the canonical
 # bytes; SHASUMS gets a single-row file that names that arch's
 # tarball filename. The api.github.com latest-release call would
@@ -431,7 +449,7 @@ case "$URL" in
     printf '%s' '{shasums_payload}' > "$DEST"
     ;;
   *.tar.gz)
-    printf 'fake-tarball-content\\n' > "$DEST"
+    cat "{fake_bin}/tarball.bin" > "$DEST"
     ;;
   *)
     # Anything else (release-API probe etc.) succeeds silently
@@ -451,6 +469,7 @@ def _run_with_curl_shim(
     env_extra: dict[str, str] | None = None,
     *,
     fail_urls: list[str] | None = None,
+    html_urls: list[str] | None = None,
 ) -> tuple[subprocess.CompletedProcess, str]:
     """Run install.sh with a per-test fake curl on PATH; return the
     completed process plus the shim's call log content.
@@ -462,7 +481,7 @@ def _run_with_curl_shim(
     if fake_bin.exists():
         import shutil
         shutil.rmtree(fake_bin)
-    _make_curl_shim(fake_bin, fail_urls=fail_urls)
+    _make_curl_shim(fake_bin, fail_urls=fail_urls, html_urls=html_urls)
     env = {
         "HOME": "/tmp/diting-install-test-home-cdn",
         "PATH": f"{fake_bin}:/usr/bin:/bin",
@@ -495,7 +514,8 @@ def test_mirror_env_invalid_value_aborts():
     proc = _run({"DITING_VERSION": "v0.10.0", "DITING_INSTALL_MIRROR": "fastgit"})
     assert proc.returncode == 1
     assert "unknown DITING_INSTALL_MIRROR value: fastgit" in proc.stderr
-    assert "expected auto|github|ghproxy" in proc.stderr
+    # The accepted-forms list now includes the custom-URL form.
+    assert "expected auto|github|ghproxy|<http(s)://proxy/>" in proc.stderr
 
 
 def test_mirror_env_github_only_skips_ghproxy_path():
@@ -513,27 +533,28 @@ def test_mirror_env_github_only_skips_ghproxy_path():
     assert "https://ghproxy.com/" not in log
 
 
-def test_mirror_env_ghproxy_only_skips_github_path():
-    """MIRROR=ghproxy + curl shim succeeds on ghproxy -> install
-    proceeds, github URL is NOT attempted."""
+def test_mirror_env_ghproxy_keyword_uses_chain():
+    """MIRROR=ghproxy (back-compat keyword) -> the TARBALL skips the
+    GitHub-first attempt and goes straight to the proxy chain (first
+    live proxy serves it). SHASUMS is still forced GitHub-first, so a
+    direct github.com SHASUMS attempt is allowed — but the tarball
+    must NOT hit github.com directly."""
     proc, log = _run_with_curl_shim(
-        "ghproxy-only",
+        "ghproxy-keyword",
         env_extra={"DITING_INSTALL_MIRROR": "ghproxy"},
     )
-    # The shim writes fake tarball + matching shasums, so install
-    # SHOULD proceed through the download phase. It then tries to
-    # extract the fake tarball, which will fail because the fake
-    # content isn't a real .tar.gz. That's expected — we only
-    # care that the download dispatcher hit the right URLs.
-    # Assert at least one ghproxy URL attempt happened.
-    assert "https://ghproxy.com/https://github.com/" in log
-    # Direct github.com URL NOT attempted.
-    direct_github_attempts = [
+    # Tarball went straight to the first chain proxy.
+    assert "https://ghfast.top/https://github.com/" in log
+    # The dead ghproxy.com host is never used.
+    assert "https://ghproxy.com/" not in log
+    # The tarball URL was NOT fetched direct from github.com (only the
+    # SHASUMS github-first attempt may touch github.com).
+    direct_tarball = [
         line for line in log.splitlines()
-        if line.startswith("https://github.com/")
+        if line.startswith("https://github.com/") and ".tar.gz" in line
     ]
-    assert direct_github_attempts == [], (
-        f"github URL attempted under MIRROR=ghproxy: {direct_github_attempts}"
+    assert direct_tarball == [], (
+        f"tarball fetched direct from github under MIRROR=ghproxy: {direct_tarball}"
     )
 
 
@@ -548,13 +569,14 @@ def test_auto_ladder_falls_back_when_github_fails():
         env_extra={"DITING_INSTALL_MIRROR": "auto"},
         fail_urls=["https://github.com/chenchaoyi/diting"],
     )
-    # Both github (failure) and ghproxy (success) attempted.
+    # GitHub (failure) then the first live chain proxy (success).
     assert "https://github.com/chenchaoyi/diting" in log
-    assert "https://ghproxy.com/https://github.com/chenchaoyi/diting" in log
-    # Fallback notice fired.
-    assert "GitHub download failed (likely CN network); retrying via ghproxy.com mirror" in proc.stdout
-    # Completion notice fired (SHA verified, ghproxy served bytes).
-    assert "fetched via ghproxy.com mirror; trust anchored on SHA256" in proc.stdout
+    assert "https://ghfast.top/https://github.com/chenchaoyi/diting" in log
+    # Fallback notice names the proxy host actually tried.
+    assert "retrying via ghfast.top mirror" in proc.stdout
+    # Completion notice fired; SHASUMS also fell to the mirror (github
+    # failed for it too), so trust is anchored on that mirror.
+    assert "trust anchored on that mirror" in proc.stdout
 
 
 def test_auto_ladder_emits_no_notice_when_github_succeeds():
@@ -567,11 +589,12 @@ def test_auto_ladder_emits_no_notice_when_github_succeeds():
     )
     # Direct github URL was the one that served bytes.
     assert "https://github.com/chenchaoyi/diting" in log
-    # No ghproxy attempt at all.
-    assert "https://ghproxy.com/" not in log
+    # No proxy attempt at all.
+    assert "https://ghfast.top/" not in log
+    assert "https://gh-proxy.com/" not in log
     # No fallback notice, no completion notice.
     assert "GitHub download failed" not in proc.stdout
-    assert "fetched via ghproxy.com mirror" not in proc.stdout
+    assert "trust anchored" not in proc.stdout
 
 
 def test_sha_verification_runs_against_ghproxy_served_bytes():
@@ -584,15 +607,14 @@ def test_sha_verification_runs_against_ghproxy_served_bytes():
     if fake_bin.exists():
         import shutil
         shutil.rmtree(fake_bin)
-    # SHASUMS will declare a hash for "fake-tarball-content\n",
-    # but the shim is overridden to actually write different bytes.
+    # The shim serves a valid gzip tarball (default), but the SHASUMS
+    # row carries a deliberately-wrong (yet valid-format, 64-hex) hash.
+    # The content validator accepts it as a real checksums file; the
+    # SHA compare then fails — proving verification is unchanged.
     import platform
     arch = "arm64" if platform.machine() in ("arm64", "aarch64") else "x86_64"
     _make_curl_shim(
         fake_bin,
-        served_tarball_bytes=b"fake-tarball-content\n",
-        # Force a SHASUMS entry that DOESN'T match what the shim
-        # actually writes. We supply a deliberately-wrong hash.
         served_shasums_text=(
             "0000000000000000000000000000000000000000000000000000000000000000  "
             f"diting-0.10.0-darwin-{arch}.tar.gz\n"
@@ -643,7 +665,107 @@ def test_completion_notice_uses_zh_locale_when_helper_lang_is_zh():
         ["bash", str(INSTALL_SCRIPT)],
         capture_output=True, text=True, env=env, check=False, timeout=30,
     )
-    # ZH fallback-firing notice
+    # ZH fallback-firing notice (names the proxy host).
     assert "GitHub 下载失败" in proc.stdout
-    # ZH completion notice
-    assert "通过 ghproxy.com 镜像下载" in proc.stdout
+    assert "切换到 ghfast.top 镜像重试" in proc.stdout
+    # ZH completion notice — SHASUMS also fell to the mirror, so trust
+    # is anchored on that mirror.
+    assert "信任锚定于该镜像" in proc.stdout
+
+
+# ---------------------------------------------------------------------
+# install-mirror-resilience: chain + content validation + custom mirror
+# ---------------------------------------------------------------------
+
+def _gh_tarball_prefix() -> str:
+    """The GitHub-direct tarball URL prefix for this host's arch — used
+    to fail ONLY the direct-from-github tarball attempt (not SHASUMS,
+    not the proxied variants, which carry a proxy prefix)."""
+    import platform
+    arch = "arm64" if platform.machine() in ("arm64", "aarch64") else "x86_64"
+    return (
+        "https://github.com/chenchaoyi/diting/releases/download/"
+        f"v0.10.0/diting-0.10.0-darwin-{arch}.tar.gz"
+    )
+
+
+def test_mirror_chain_falls_through_to_second_proxy():
+    """GitHub + the first chain proxy fail; the second proxy serves the
+    tarball. Proves the walker steps past a dead mirror instead of
+    giving up after one fallback."""
+    proc, log = _run_with_curl_shim(
+        "chain-fallthrough",
+        env_extra={"DITING_INSTALL_MIRROR": "auto"},
+        fail_urls=["https://github.com/chenchaoyi/diting",
+                   "https://ghfast.top/"],
+    )
+    assert "https://ghfast.top/https://github.com/" in log       # attempted
+    assert "https://gh-proxy.com/https://github.com/" in log     # served
+    assert "missing entry" not in proc.stderr
+
+
+def test_mirror_rejects_html_200_and_tries_next():
+    """A proxy answers HTTP 200 with an HTML landing page (the dead
+    ghproxy.com mode); the content validator rejects it and the next
+    proxy serves a real file — NOT a 'missing entry' dead-end."""
+    proc, log = _run_with_curl_shim(
+        "html-reject",
+        env_extra={"DITING_INSTALL_MIRROR": "auto"},
+        fail_urls=["https://github.com/chenchaoyi/diting"],  # github down
+        html_urls=["https://ghfast.top/"],                   # garbage 200
+    )
+    assert "https://ghfast.top/https://github.com/" in log     # garbage, skipped
+    assert "https://gh-proxy.com/https://github.com/" in log   # real, accepted
+    assert "missing entry" not in proc.stderr
+    # Reached SHA verification — download phase succeeded despite the HTML.
+    assert "sha256 verified" in proc.stdout
+
+
+def test_mirror_chain_exhausted_aborts():
+    """GitHub and every chain proxy fail for the tarball -> abort with a
+    real 'exhausted' error (not 'missing entry'); nothing extracted."""
+    proc, log = _run_with_curl_shim(
+        "chain-exhausted",
+        env_extra={"DITING_INSTALL_MIRROR": "auto"},
+        fail_urls=["https://github.com/chenchaoyi/diting",
+                   "https://ghfast.top/",
+                   "https://gh-proxy.com/",
+                   "https://ghproxy.net/"],
+    )
+    assert proc.returncode == 1
+    assert "exhausted" in proc.stderr
+    assert "missing entry" not in proc.stderr
+
+
+def test_shasums_prefers_github_direct_when_tarball_mirrored():
+    """Only the GitHub tarball fails; the tiny SHASUMS still succeeds
+    GitHub-direct, so trust stays anchored on GitHub even though the
+    tarball came from a proxy."""
+    proc, log = _run_with_curl_shim(
+        "shasums-direct",
+        env_extra={"DITING_INSTALL_MIRROR": "auto"},
+        fail_urls=[_gh_tarball_prefix()],
+    )
+    # Tarball served by the first proxy.
+    assert "https://ghfast.top/https://github.com/" in log
+    # SHASUMS came direct from github — no proxy prefix on its URL.
+    shasums_lines = [ln for ln in log.splitlines() if "SHASUMS256.txt" in ln]
+    assert any(ln.startswith("https://github.com/") for ln in shasums_lines), shasums_lines
+    assert not any(("ghfast.top" in ln or "gh-proxy.com" in ln or "ghproxy.net" in ln)
+                   for ln in shasums_lines), shasums_lines
+    # Honest completion notice: anchored on GitHub.
+    assert "trust anchored on GitHub" in proc.stdout
+
+
+def test_mirror_custom_url_override():
+    """A custom http(s) proxy prefix is the sole proxy; the default
+    chain proxies are never touched."""
+    proc, log = _run_with_curl_shim(
+        "custom-url",
+        env_extra={"DITING_INSTALL_MIRROR": "https://gh.example.test/"},
+        fail_urls=[_gh_tarball_prefix()],
+    )
+    assert "https://gh.example.test/https://github.com/" in log
+    assert "https://ghfast.top/" not in log
+    assert "https://gh-proxy.com/" not in log
+    assert "https://ghproxy.net/" not in log

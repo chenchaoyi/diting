@@ -10,6 +10,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **CN 网络安装因 `ghproxy.com` 停服而失败。** 这个唯一硬编码的回退镜像
+  现在用 `200` 返回一个 HTML 落地页而不是代理文件，`install.sh` 把它写进
+  `SHASUMS256.txt` 后报 `missing entry for …` 而中止。现在 installer 会
+  依次走一串活镜像（`ghfast.top` → `gh-proxy.com` → `ghproxy.net`）并**对
+  每次下载做内容校验**——`SHASUMS256.txt` 只有能解析出目标 tarball 的 64 位
+  hex 条目才接受（HTML/空的 `200` 拒绝），tarball 必须是合法 gzip；坏响应
+  跳过并试下一个，整条链都失败时报真实错误。`SHASUMS256.txt` 始终优先
+  GitHub 直连（与 tarball 来源无关），信任仍锚定 GitHub。`DITING_INSTALL_MIRROR`
+  现在还接受自定义 `http(s)://` 代理前缀（可用工作中的或自建镜像）；
+  `ghproxy` 表示走活镜像链（跳过 GitHub 优先）。SHA256 校验仍强制。
+
 ## [1.9.0] — 2026-05-29
 
 Minor release。**一处改动，落在 BLE 事件面上，分两部分。**

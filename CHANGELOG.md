@@ -11,6 +11,24 @@ behaviours between releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **CN-network installs broke because `ghproxy.com` was discontinued.**
+  The single hardcoded fallback mirror now answers `200` with an HTML
+  landing page instead of proxying the file, which `install.sh` wrote
+  into `SHASUMS256.txt` and then died `missing entry for …`. The
+  installer now walks an ordered chain of live mirrors
+  (`ghfast.top` → `gh-proxy.com` → `ghproxy.net`) and **validates every
+  download** — a `SHASUMS256.txt` is accepted only if it yields a
+  64-hex entry for the target tarball (HTML/empty `200` rejected), a
+  tarball only if it is valid gzip; a bad response is skipped and the
+  next mirror tried, and an exhausted chain aborts with a real error.
+  `SHASUMS256.txt` is fetched GitHub-direct-first regardless of where
+  the tarball came from, so trust stays anchored on GitHub.
+  `DITING_INSTALL_MIRROR` now also accepts a custom `http(s)://` proxy
+  prefix (a working or self-hosted mirror); `ghproxy` means the live
+  chain (skip GitHub-first). SHA256 verification stays mandatory.
+
 ## [1.9.0] — 2026-05-29
 
 Minor release. **One change to the BLE events surface, in two parts.**
