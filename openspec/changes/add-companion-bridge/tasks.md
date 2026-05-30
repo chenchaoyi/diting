@@ -1,7 +1,7 @@
 ## 1. Protocol artifacts (canonical, `companion-protocol`)
 
 - [x] 1.1 Update `tests/TESTING.md` (EN) + `docs/zh/TESTING.md` (ZH) with the conformance test plan BEFORE writing test code
-- [ ] 1.2 Factor the event→dict shaping out of `EventLogger.emit_*` into a shared serialiser both the logger and the sink use (no behaviour change to existing JSONL output) — DEFERRED to group 3: fixtures are generated from the real `EventLogger` and a reproducibility test pins them, so the contract is already faithful; the sink will consume the same payload dict (watchdog-style tap) when it lands
+- [x] 1.2 Sink consumes the exact payload dict via an `EventLogger` observer tap (`set_observer`) — same dict the JSONL writer emits, so drift is impossible by construction (stronger than parallel builders); existing event_log/events tests stay green
 - [x] 1.3 Author JSON Schema for the envelope (version, channel, seq, ts, nonce, ciphertext) under `src/diting/companion/protocol/` — `schema/envelope.schema.json` + `envelope.py`
 - [x] 1.4 Author JSON Schema for each event type, deriving from the existing `events`/`event-log` schema (English keys, omitted `None`, `[]` for empty) — `schema/event.schema.json` generated from `_schema_spec.py` (single source) via `events_schema.build_json_schema`
 - [x] 1.5 Author golden fixture JSONL lines covering every event type + edge cases (omitted `None`, empty `[]`, CJK strings); stamp a protocol version/hash — `fixtures/events.jsonl` (generated from real `EventLogger`) + `manifest.json`
@@ -20,14 +20,14 @@
 
 ## 3. Desktop sender (`companion-bridge`)
 
-- [ ] 3.1 Add `pynacl` + a terminal QR renderer to dependencies
-- [ ] 3.2 Implement pairing: generate channel id + symmetric key, render the QR in the TUI, persist git-ignored pairing state
-- [ ] 3.3 Add the git-ignored pairing-state path to `.gitignore` and ship a public `*.example` template
-- [ ] 3.4 Implement the secretbox encrypt + envelope-build path against the `companion-protocol` schema (monotonic seq)
-- [ ] 3.5 Implement the relay client (POST) with a bounded local offline queue that flushes in order on reconnect, with honest drop indication on overflow
-- [ ] 3.6 Implement the event sink tapping `events_ring.push` / `emit_*` / `_maybe_notify`, gating push-worthiness via `_watchdog.py` thresholds + silence window
-- [ ] 3.7 Wire the `--companion` CLI surface and/or TUI toggle (reuse `--notify` semantics), off by default, surfacing paired/queued/reachable state
-- [ ] 3.8 Tests: unpaired run sends nothing; only watchdog-passing events forwarded; egress is always ciphertext; offline queue flushes in order; bounded-queue overflow is reported
+- [x] 3.1 Add `pynacl` + a terminal QR renderer to dependencies — `pynacl` + `segno`
+- [x] 3.2 Implement pairing: generate channel id + symmetric key, render the QR, persist git-ignored pairing state — `companion/state.py` (QR via segno); rendered in the `companion pair` CLI (TUI render is the indicator task below)
+- [x] 3.3 Add the git-ignored pairing-state path to `.gitignore` and ship a public `*.example` template — `diting-companion.json` ignored, `diting-companion.example.json` tracked
+- [x] 3.4 Implement the secretbox encrypt + envelope-build path against the `companion-protocol` schema (monotonic seq) — `companion/crypto.py` (seal/open)
+- [x] 3.5 Implement the relay client (POST) with a bounded local offline queue that flushes in order on reconnect, with honest drop indication on overflow — `companion/relay_client.py` (+ a User-Agent so Cloudflare doesn't 403 the producer, found via live test)
+- [~] 3.6 Implement the event sink tapping the fan-out, gating push-worthiness via `_watchdog.py` thresholds + silence window — `companion/sink.py` + `push_policy.py` + the `EventLogger` observer tap are BUILT and tested; wiring the sink into a live `monitor` / TUI run (attach observer + periodic flush task) is the remaining piece
+- [~] 3.7 Wire the `--companion` surface, off by default, surfacing paired/queued/reachable state — `diting companion pair/status/unpair` CLI done; the TUI status indicator is the remaining piece
+- [x] 3.8 Tests: crypto round-trip/fail-closed; policy gating; queue order + overflow; sink seals+enqueues; CLI — `tests/test_companion_sender.py` (22) + `test_companion_cli.py` (3). Verified END-TO-END live against the deployed relay (seal→POST→pull→decrypt round-trip, CJK preserved)
 
 ## 4. i18n, docs, validation
 

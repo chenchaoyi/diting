@@ -37,7 +37,7 @@ import sys
 import weakref
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
-from typing import IO, Any
+from typing import IO, Any, Callable
 
 from .events import (
     BLEDeviceLeftEvent,
@@ -118,6 +118,12 @@ class EventLogger:
         # idempotency flag lets callers ask for it unconditionally
         # without double-writing if the codepath fires twice.
         self._session_meta_written: bool = False
+        # Optional tap: receives each emitted payload dict (a copy) just
+        # before it is written. The companion sink registers here so it
+        # forwards the exact bytes the JSONL writer produces — no second
+        # serialiser to drift. None by default; an observer makes the
+        # logger build + tap payloads even when there is no file sink.
+        self._observer: "Callable[[dict[str, Any]], None] | None" = None
 
     # ---------- factories ----------
 
@@ -185,7 +191,7 @@ class EventLogger:
         intentionally narrow: hostname is in (anonymizable downstream);
         BSSID is NOT (could doxx physical location).
         """
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         if self._session_meta_written:
             return
@@ -208,7 +214,7 @@ class EventLogger:
             "gateway_ip": gateway_ip,
             "hostname": socket.gethostname(),
         }
-        self._write(payload)
+        self._emit(payload)
         self._session_meta_written = True
 
     def emit_connection_update(
@@ -231,7 +237,7 @@ class EventLogger:
         logger free of inventory/network dependencies). Included
         verbatim in the associated-state payload when supplied.
         """
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         if now is None:
             now = datetime.now(timezone.utc)
@@ -252,7 +258,7 @@ class EventLogger:
                 }
                 if vendor:
                     payload["vendor"] = vendor
-                self._write(payload)
+                self._emit(payload)
             self._last_assoc_bssid = new_bssid
             return
         if (prev is None) == (new_bssid is None):
@@ -262,7 +268,7 @@ class EventLogger:
             self._last_assoc_bssid = new_bssid
             return
         if new_bssid is None:
-            self._write({
+            self._emit({
                 "ts": _iso(now),
                 "type": "link_state",
                 "state": "disassociated",
@@ -280,7 +286,7 @@ class EventLogger:
             }
             if vendor:
                 payload["vendor"] = vendor
-            self._write(payload)
+            self._emit(payload)
         self._last_assoc_bssid = new_bssid
 
     def emit_link_state(self, event: LinkStateEvent) -> None:
@@ -288,9 +294,9 @@ class EventLogger:
         that already produce the event dataclass and want their
         own state-machine; the connection-update path above is
         what wifi consumers should normally use."""
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
-        self._write({
+        self._emit({
             "ts": _iso(event.timestamp),
             "type": "link_state",
             "state": event.state,
@@ -325,7 +331,7 @@ class EventLogger:
         clearest single signal that the user has crossed between
         physically separate networks.
         """
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
             "ts": _iso(event.timestamp),
@@ -356,10 +362,10 @@ class EventLogger:
             payload["previous_vendor"] = previous_vendor
         if new_vendor:
             payload["new_vendor"] = new_vendor
-        self._write(payload)
+        self._emit(payload)
 
     def emit_rf_stir(self, event: RFStirEvent) -> None:
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
             "ts": _iso(event.timestamp),
@@ -376,12 +382,12 @@ class EventLogger:
         # diff-stable against pre-enrichment runs.
         if event.ssid is not None:
             payload["ssid"] = event.ssid
-        self._write(payload)
+        self._emit(payload)
 
     def emit_latency_spike(self, event: LatencySpikeEvent) -> None:
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
-        self._write({
+        self._emit({
             "ts": _iso(event.timestamp),
             "type": "latency_spike",
             "target": event.target,
@@ -391,9 +397,9 @@ class EventLogger:
         })
 
     def emit_loss_burst(self, event: LossBurstEvent) -> None:
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
-        self._write({
+        self._emit({
             "ts": _iso(event.timestamp),
             "type": "loss_burst",
             "target": event.target,
@@ -408,7 +414,7 @@ class EventLogger:
         so downstream readers can split per-network statistics
         cleanly.
         """
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
             "ts": _iso(event.timestamp),
@@ -424,7 +430,7 @@ class EventLogger:
             payload["previous_bssid"] = event.previous_bssid.lower()
         if event.new_bssid is not None:
             payload["new_bssid"] = event.new_bssid.lower()
-        self._write(payload)
+        self._emit(payload)
 
     # ---------- BLE / Bonjour / LAN transition events ----------
     #
@@ -435,7 +441,7 @@ class EventLogger:
     # seven, matching the existing methods' contract.
 
     def emit_ble_device_seen(self, event: BLEDeviceSeenEvent) -> None:
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
             "ts": _iso(event.timestamp),
@@ -457,10 +463,10 @@ class EventLogger:
             payload["device_class"] = event.device_class
         if event.at_launch:
             payload["at_launch"] = True
-        self._write(payload)
+        self._emit(payload)
 
     def emit_ble_device_left(self, event: BLEDeviceLeftEvent) -> None:
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
             "ts": _iso(event.timestamp),
@@ -479,10 +485,10 @@ class EventLogger:
             payload["device_type"] = event.device_type
         if event.device_class is not None:
             payload["device_class"] = event.device_class
-        self._write(payload)
+        self._emit(payload)
 
     def emit_bonjour_service_seen(self, event: BonjourServiceSeenEvent) -> None:
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
             "ts": _iso(event.timestamp),
@@ -497,10 +503,10 @@ class EventLogger:
             payload["category"] = event.category
         if event.vendor is not None:
             payload["vendor"] = event.vendor
-        self._write(payload)
+        self._emit(payload)
 
     def emit_bonjour_service_left(self, event: BonjourServiceLeftEvent) -> None:
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
             "ts": _iso(event.timestamp),
@@ -515,10 +521,10 @@ class EventLogger:
             payload["category"] = event.category
         if event.vendor is not None:
             payload["vendor"] = event.vendor
-        self._write(payload)
+        self._emit(payload)
 
     def emit_lan_host_seen(self, event: LANHostSeenEvent) -> None:
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
             "ts": _iso(event.timestamp),
@@ -533,10 +539,10 @@ class EventLogger:
             payload["hostname"] = event.hostname
         if event.bonjour_name is not None:
             payload["bonjour_name"] = event.bonjour_name
-        self._write(payload)
+        self._emit(payload)
 
     def emit_lan_host_left(self, event: LANHostLeftEvent) -> None:
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
             "ts": _iso(event.timestamp),
@@ -556,12 +562,12 @@ class EventLogger:
             payload["last_reachable_ago_seconds"] = round(
                 event.last_reachable_ago_seconds, 1,
             )
-        self._write(payload)
+        self._emit(payload)
 
     def emit_lan_host_dhcp_rotation(
         self, event: LANHostDHCPRotationEvent,
     ) -> None:
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
             "ts": _iso(event.timestamp),
@@ -576,7 +582,7 @@ class EventLogger:
             payload["hostname"] = event.hostname
         if event.bonjour_name is not None:
             payload["bonjour_name"] = event.bonjour_name
-        self._write(payload)
+        self._emit(payload)
 
     def emit_lan_active_probe_consented(
         self, event: LANActiveProbeConsentedEvent,
@@ -585,7 +591,7 @@ class EventLogger:
         LAN active-probe in public scene. See proposal D3 / D12 in
         `openspec/changes/expand-lan-identification/design.md`.
         """
-        if self._sink is None:
+        if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
             "ts": _iso(event.timestamp),
@@ -597,7 +603,16 @@ class EventLogger:
         }
         if event.ssid is not None:
             payload["ssid"] = event.ssid
-        self._write(payload)
+        self._emit(payload)
+
+    def set_observer(self, observer: "Callable[[dict[str, Any]], None] | None") -> None:
+        """Register (or clear) a tap that receives every emitted payload.
+
+        The companion sink uses this so it forwards the exact dict the
+        JSONL writer emits. The observer is best-effort and must never
+        raise into the logger; exceptions from it are swallowed.
+        """
+        self._observer = observer
 
     # ---------- lifecycle ----------
 
@@ -615,6 +630,17 @@ class EventLogger:
         self._sink = None
 
     # ---------- internals ----------
+
+    def _emit(self, payload: dict[str, Any]) -> None:
+        """Tap the observer (best-effort) then write to the sink if any.
+        Every emitted payload flows through here."""
+        if self._observer is not None:
+            try:
+                self._observer(dict(payload))
+            except Exception:  # an observer must never break logging
+                pass
+        if self._sink is not None:
+            self._write(payload)
 
     def _write(self, payload: dict[str, Any]) -> None:
         sink = self._sink

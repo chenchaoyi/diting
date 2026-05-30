@@ -174,6 +174,22 @@
 | 信封 build + validate；缺字段 / 非法 seq / 不支持版本 / 空 channel 时 fail-closed | `test_companion_protocol.py::test_envelope_build_and_validate`、`::test_envelope_validate_fails_closed` |
 | APNs 触发为无内容（仅 `ch`/`n`/`c`）；每种可推送类型映射到粗粒度类别；`session_meta` 映射为 none；非法输入抛错 | `test_companion_protocol.py::test_trigger_is_content_free`、`::test_coarse_category_covers_pushable_types`、`::test_trigger_rejects_bad_input`、`::test_committed_trigger_fixture_shape` |
 
+### `companion-bridge`
+
+桌面发送端：配对 + 二维码、secretbox 封装、复用 watchdog 的推送策略、
+有界中继队列，以及 `companion` CLI。sink 消费的是 JSONL 写入器产出的同一个
+payload dict（经 `EventLogger` observer tap），因此转发的事件不会与日志分叉。
+
+| Requirement | 测试 |
+|---|---|
+| sink 消费 JSONL 写入器产出的同一 dict（observer tap），无文件 sink 时也会触发 | `test_companion_sender.py::test_event_logger_observer_sees_exact_written_payload`、`::test_event_logger_observer_fires_without_a_sink` |
+| 事件用 secretbox 封装并可往返；篡改 / 错误密钥 / 错误密钥长度 全部 fail-closed | `test_companion_sender.py::test_seal_open_round_trip`、`::test_open_rejects_tampered_ciphertext`、`::test_open_rejects_wrong_key`、`::test_seal_rejects_bad_key_length` |
+| 配对状态可扫码、git 忽略持久化、跨重启单调推进 seq、解除配对时清除；路径遵循 `DITING_COMPANION_STATE` | `test_companion_sender.py::test_generate_state_is_well_formed`、`::test_state_save_load_round_trip`、`::test_next_seq_persists_monotonically`、`::test_load_absent_is_none_and_clear`、`::test_render_qr_produces_block_art`、`::test_default_state_path_env_override` |
+| 推送策略复用 watchdog：跳过非推送类型、在静默窗口内按目标合并、对 `rf_stir` 按置信度门控 | `test_companion_sender.py::test_policy_skips_non_pushable_types`、`::test_policy_silence_window_coalesces_same_target`、`::test_policy_distinct_targets_independent`、`::test_policy_rf_stir_confidence_gate` |
+| 中继客户端按序冲刷、失败时停止并保序随后重试、溢出丢最旧并计数、转发粗粒度类别头 | `test_companion_sender.py::test_flush_sends_all_in_order_on_success`、`::test_flush_stops_and_preserves_order_on_failure`、`::test_queue_overflow_drops_oldest_and_counts`、`::test_category_header_forwarded` |
+| sink 封装并入队可推送事件（可解密回原文）并推进 seq；非推送事件被拒且不推进 | `test_companion_sender.py::test_sink_seals_pushable_event_and_advances_seq`、`::test_sink_declines_non_pushable` |
+| `companion` CLI 配对 / 状态 / 解除；未知动作退出码 2；relay URL 优先级（flag > env > default） | `test_companion_cli.py::test_pair_status_unpair_round_trip`、`::test_unknown_action_exits_2`、`::test_relay_url_precedence` |
+
 ### `cli`
 
 | Requirement | 测试 |

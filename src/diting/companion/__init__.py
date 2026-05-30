@@ -13,3 +13,8 @@ client, offline queue) lands in later task groups.
 """
 
 from __future__ import annotations
+
+# The deployed relay this build pairs against by default. Override per
+# pairing with `diting companion pair --relay URL` or the
+# DITING_COMPANION_RELAY env var.
+DEFAULT_RELAY_URL = "https://diting-companion-relay.ccy-chenchaoyi.workers.dev"
