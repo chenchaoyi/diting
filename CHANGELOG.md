@@ -11,6 +11,18 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.9.1] — 2026-05-30
+
+Patch release. **Repairs the CN-network install path.** `ghproxy.com`,
+the single hardcoded fallback mirror, was discontinued and now answers
+`200` with an HTML landing page — which `install.sh` wrote into
+`SHASUMS256.txt` and died on. The installer now walks an ordered chain
+of live mirrors and validates every download (a `SHASUMS256.txt` only
+if it yields a real 64-hex entry, a tarball only if it is valid gzip),
+with `SHASUMS256.txt` fetched GitHub-direct-first so trust stays
+anchored on GitHub. SHA256 verification stays mandatory. No change to
+the TUI itself.
+
 ### Fixed
 
 - **CN-network installs broke because `ghproxy.com` was discontinued.**

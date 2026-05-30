@@ -10,6 +10,15 @@
 
 ## [Unreleased]
 
+## [1.9.1] — 2026-05-30
+
+Patch release。**修复 CN 网络下的安装路径。** 唯一硬编码的回退镜像
+`ghproxy.com` 已停服，现在用 `200` 返回一个 HTML 落地页 —— `install.sh`
+把它写进 `SHASUMS256.txt` 后中止。现在 installer 会依次走一串活镜像，并
+对每次下载做内容校验（`SHASUMS256.txt` 必须能解析出真实的 64 位 hex 条目，
+tarball 必须是合法 gzip），且 `SHASUMS256.txt` 始终优先 GitHub 直连，信任
+仍锚定 GitHub。SHA256 校验仍强制。不改 TUI 本身。
+
 ### Fixed
 
 - **CN 网络安装因 `ghproxy.com` 停服而失败。** 这个唯一硬编码的回退镜像
