@@ -349,21 +349,27 @@ Pin a specific release:
 DITING_VERSION=v0.10.0 curl -fsSL https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh | bash
 ```
 
-From inside China? The installer automatically falls back to a public
-GitHub mirror ([`ghproxy.com`](https://ghproxy.com)) if the direct
-GitHub download stalls or times out (`curl --max-time 20`). The
-SHA256 verification still anchors on the canonical `SHASUMS256.txt`,
-so a hostile mirror would be caught by the hash mismatch. To skip the
-20-second GitHub-first wait once you know GitHub is unreachable from
-your network:
+From inside China? If the direct GitHub download stalls or times out
+(`curl --max-time 20`), the installer walks a chain of public GitHub
+mirrors (`ghfast.top` → `gh-proxy.com` → `ghproxy.net`), and validates
+every download before trusting it — a mirror that answers with an HTML
+error/landing page (a `200` that isn't the real file) is skipped and
+the next one tried. `SHASUMS256.txt` is fetched GitHub-direct first
+regardless of where the tarball comes from, and SHA256 verification
+always anchors on it, so a hostile mirror can't slip in a forged
+tarball. To skip the 20-second GitHub-first wait once you know GitHub
+is unreachable from your network:
 
 ```bash
 DITING_INSTALL_MIRROR=ghproxy curl -fsSL https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh | bash
 ```
 
-`DITING_INSTALL_MIRROR=github` forces canonical-only (no fallback,
-pre-v1.8.0 behaviour) for users who need to keep the install in a
-single trust path.
+Other `DITING_INSTALL_MIRROR` values:
+
+- `github` — canonical-only, no mirrors (single trust path).
+- `https://your-proxy.example/` — a custom or self-hosted GitHub proxy
+  used as the sole mirror (prefix form: `<proxy><github-url>`). Best
+  if you run your own proxy and want full control of the trust path.
 
 ### From source (for contributors)
 
