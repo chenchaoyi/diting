@@ -282,6 +282,17 @@ async def _run_monitor(
         EventLogger.to_path(out_path) if out_path
         else EventLogger.to_stdout()
     )
+    # Companion forwarding (opt-in via `diting companion pair`). When
+    # paired, every emitted payload is also offered to the sink via the
+    # logger's observer tap — the exact dict the JSONL line carries.
+    companion_sink = None
+    try:
+        from .companion import runtime as _companion_runtime
+        companion_sink = _companion_runtime.build_sink()
+    except Exception:
+        companion_sink = None
+    if companion_sink is not None:
+        logger.set_observer(companion_sink.offer)
     # Session header — must be the first line emitted, byte-identical
     # to the TUI's --log path so downstream readers don't branch on
     # source. Scene was resolved by main() before dispatching; we
@@ -465,9 +476,23 @@ async def _run_monitor(
                         target=sample.target,
                     )
 
+    flush_task = (
+        asyncio.create_task(
+            _companion_runtime.flush_loop(companion_sink),
+            name="companion-flush",
+        )
+        if companion_sink is not None
+        else None
+    )
     try:
         await wifi_consumer()
     finally:
+        if flush_task is not None:
+            flush_task.cancel()
+            try:
+                await flush_task
+            except asyncio.CancelledError:
+                pass
         logger.close()
 
 

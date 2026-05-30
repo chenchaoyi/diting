@@ -1420,6 +1420,10 @@ _ZH: dict[str, str] = {
         "`diting` 或 `diting monitor` 运行时即开始转发。",
     "Unpaired.": "已解除配对。",
     "Not paired; nothing to remove.": "未配对；无需移除。",
+    "companion: on": "companion：开",
+    "companion: {n} queued": "companion：{n} 待发",
+    "companion: {d} dropped": "companion：丢弃 {d}",
+    "companion: {n} queued, {d} dropped": "companion：{n} 待发，丢弃 {d}",
     "companion: unknown action {action!r} (use pair / status / unpair)":
         "companion：未知动作 {action!r}（可用 pair / status / unpair）",
 

@@ -25,8 +25,8 @@
 - [x] 3.3 Add the git-ignored pairing-state path to `.gitignore` and ship a public `*.example` template — `diting-companion.json` ignored, `diting-companion.example.json` tracked
 - [x] 3.4 Implement the secretbox encrypt + envelope-build path against the `companion-protocol` schema (monotonic seq) — `companion/crypto.py` (seal/open)
 - [x] 3.5 Implement the relay client (POST) with a bounded local offline queue that flushes in order on reconnect, with honest drop indication on overflow — `companion/relay_client.py` (+ a User-Agent so Cloudflare doesn't 403 the producer, found via live test)
-- [~] 3.6 Implement the event sink tapping the fan-out, gating push-worthiness via `_watchdog.py` thresholds + silence window — `companion/sink.py` + `push_policy.py` + the `EventLogger` observer tap are BUILT and tested; wiring the sink into a live `monitor` / TUI run (attach observer + periodic flush task) is the remaining piece
-- [~] 3.7 Wire the `--companion` surface, off by default, surfacing paired/queued/reachable state — `diting companion pair/status/unpair` CLI done; the TUI status indicator is the remaining piece
+- [x] 3.6 Implement the event sink tapping the fan-out, gating push-worthiness via `_watchdog.py` thresholds + silence window — `companion/sink.py` + `push_policy.py` + the `EventLogger` observer tap; wired into both `monitor` and the TUI via `companion/runtime.py` (attach observer in init + periodic async flush; final drain on exit). Opt-in by pairing (`DITING_COMPANION=0` disables); the hot/unpaired path never imports pynacl
+- [x] 3.7 Wire the `--companion` surface, off by default, surfacing paired/queued/reachable state — `diting companion pair/status/unpair` CLI + a TUI header subtitle chip (`companion: on` / `{n} queued` / `{d} dropped`) shown only when paired, so unpaired snapshots are unchanged
 - [x] 3.8 Tests: crypto round-trip/fail-closed; policy gating; queue order + overflow; sink seals+enqueues; CLI — `tests/test_companion_sender.py` (22) + `test_companion_cli.py` (3). Verified END-TO-END live against the deployed relay (seal→POST→pull→decrypt round-trip, CJK preserved)
 
 ## 4. i18n, docs, validation

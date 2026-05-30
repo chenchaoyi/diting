@@ -6526,6 +6526,18 @@ class DitingApp(App):
             EventLogger.to_path(event_log_path) if event_log_path
             else EventLogger.disabled()
         )
+        # Companion forwarding (opt-in via `diting companion pair`). When
+        # paired, the sink taps the logger's observer so it forwards the
+        # exact dict each JSONL line carries; unpaired, this is None and
+        # nothing (including pynacl) loads on the hot path.
+        self._companion_sink = None
+        try:
+            from .companion import runtime as _companion_runtime
+            self._companion_sink = _companion_runtime.build_sink()
+        except Exception:
+            self._companion_sink = None
+        if self._companion_sink is not None:
+            self._event_logger.set_observer(self._companion_sink.offer)
         # Session header — written immediately so any subsequent
         # emit_* lands AFTER the session_meta line. Synchronously
         # fetch the current connection ONCE here (before the
@@ -6758,8 +6770,26 @@ class DitingApp(App):
         # call from `action_toggle_view` (kept for safety) is a
         # no-op after this.
         self._ensure_mdns_poller()
+        # Drain the companion relay queue periodically (off the UI thread)
+        # and refresh the header chip with the queue state.
+        if self._companion_sink is not None:
+            self.set_interval(3.0, self._companion_flush)
+
+    async def _companion_flush(self) -> None:
+        sink = self._companion_sink
+        if sink is None:
+            return
+        if sink.client.pending:
+            await asyncio.to_thread(sink.flush)
+        self.sub_title = self._build_subtitle()
 
     def on_unmount(self) -> None:
+        # Best-effort final drain so a clean quit isn't lossy.
+        if self._companion_sink is not None:
+            try:
+                self._companion_sink.flush()
+            except Exception:
+                pass
         # Flush + close the JSONL log on TUI exit so the file is
         # complete and other processes can read it cleanly. Safe
         # when logging is disabled (close() on a no-op logger is
@@ -8312,6 +8342,11 @@ class DitingApp(App):
         # with the subtitle to stay visible after a refresh.
         scene_name = getattr(self, "_scene", "home")
         bits.append(t("[{scene}]", scene=t(scene_name)))
+        # Companion status — only when paired, so the default (unpaired)
+        # subtitle is unchanged.
+        if getattr(self, "_companion_sink", None) is not None:
+            from .companion import runtime as _companion_runtime
+            bits.append(_companion_runtime.subtitle_chip(self._companion_sink))
         if self._paused:
             bits.append(t("PAUSED"))
         return " · ".join(bits)
