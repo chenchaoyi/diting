@@ -37,6 +37,6 @@
 
 ## 5. Cross-repo handoff (diting-mobile, tracked, executed in mobile session)
 
-- [ ] 5.1 Confirm the canonical protocol artifacts + version/hash are final here before mobile vendors them
-- [ ] 5.2 Open the paired `companion-protocol` change in diting-mobile that vendors the JSON Schema + fixtures and adds the conformance + drift test
-- [ ] 5.3 Cross-link: add a "companion protocol" note to both `CLAUDE.md` files pointing at the canonical spec + the vendor/sync rule
+- [x] 5.1 Confirm the canonical protocol artifacts + version/hash are final here before mobile vendors them — v1 frozen; fixtures generated from the real EventLogger + reproducibility-pinned
+- [x] 5.2 Open the paired change in diting-mobile that vendors the JSON Schema + fixtures and adds the conformance + drift test — `add-companion-sync` (commit aef4616): `protocol/` vendored + `test/protocol/conformance_test.dart` (drift + coverage + cross-language relay-auth HMAC match), 5/5 pass
+- [x] 5.3 Cross-link: add a "companion protocol" note to both `CLAUDE.md` files pointing at the canonical spec + the vendor/sync rule — done in diting `CLAUDE.md` and diting-mobile `CLAUDE.md`

@@ -78,6 +78,19 @@ user reports a real-environment UX issue.
   is the public-shareable template.
 - `diting-*.jsonl` event-log files in the repo root are git-ignored
   per session.
+- `diting-companion.json` (companion pairing — holds the secretbox key)
+  is git-ignored; `diting-companion.example.json` is the public template.
+
+## Companion protocol (cross-repo, canonical here)
+
+The desktop↔mobile pairing wire contract — `companion-protocol` — is
+**owned by this repo** under `src/diting/companion/protocol/` (versioned;
+JSON Schema + golden fixtures + `manifest.json` hashes). diting-mobile
+*vendors* these artifacts under its own `protocol/` and conforms to them;
+it must not redefine the format. Any protocol-affecting change is a paired
+OpenSpec change in both repos at the same version, fixtures regenerated
+here first (`python -m diting.companion.protocol._generate`), then
+re-vendored. The relay (Cloudflare Worker) lives in `relay/`.
 
 ## Project-specific conventions
 
