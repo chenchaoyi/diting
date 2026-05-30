@@ -11,12 +11,12 @@
 
 ## 2. Relay (Cloudflare Worker + D1, `relay/`)
 
-- [ ] 2.1 Scaffold `relay/` with `wrangler` config and a D1 schema (channel, seq, ts, ciphertext, expiry)
-- [ ] 2.2 Implement `POST /v1/channel/{id}` storing a ciphertext envelope and assigning/honouring monotonic seq
-- [ ] 2.3 Implement `GET /v1/channel/{id}?since={cursor}` returning ordered envelopes after the cursor, with TTL expiry
-- [ ] 2.4 Implement per-channel auth (token derived from the channel key) and reject unauthorized access without leaking bytes
-- [ ] 2.5 Implement the APNs trigger: ES256 JWT signed via WebCrypto from the stored `.p8` Worker secret; send content-free alert push
-- [ ] 2.6 Worker unit/integration tests (store→forward, cursor, TTL drop, auth refusal); document deploy + secret setup (no secrets committed)
+- [x] 2.1 Scaffold `relay/` with `wrangler` config and a D1 schema (channel, seq, ts, ciphertext, expiry) — `relay/wrangler.jsonc` + `migrations/0001_init.sql`
+- [x] 2.2 Implement `POST /v1/channel/{id}` storing a ciphertext envelope and assigning/honouring monotonic seq — producer-assigned seq, idempotent `ON CONFLICT DO NOTHING`
+- [x] 2.3 Implement `GET /v1/channel/{id}?since={cursor}` returning ordered envelopes after the cursor, with TTL expiry — lazy purge + `expiry>now` filter
+- [x] 2.4 Implement per-channel auth (token derived from the channel key) and reject unauthorized access without leaking bytes — HMAC bearer (`protocol/auth.py` + Worker `auth.js`), trust-on-first-use, relay stores only `sha256(token)`; 401/403/404
+- [x] 2.5 Implement the APNs trigger: ES256 JWT signed via WebCrypto from the stored `.p8` Worker secret; send content-free alert push — `relay/src/apns.js` (cached JWT, content-free payload)
+- [x] 2.6 Worker unit/integration tests (store→forward, cursor, TTL drop, auth refusal); document deploy + secret setup (no secrets committed) — `relay/test/relay.test.js` + README. NOTE: npm registry unreachable in authoring env, so the JS suite is unrun in-repo; the cross-language auth derivation it relies on is verified Python-side
 
 ## 3. Desktop sender (`companion-bridge`)
 

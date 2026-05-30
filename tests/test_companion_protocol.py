@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from diting.companion import protocol
-from diting.companion.protocol import apns, envelope, pairing
+from diting.companion.protocol import apns, auth, envelope, pairing
 from diting.companion.protocol._generate import generate
 from diting.companion.protocol._schema_spec import EVENT_SPEC
 from diting.companion.protocol.errors import ProtocolError
@@ -24,15 +24,10 @@ from diting.companion.protocol.version import PROTOCOL_VERSION, is_supported_ver
 
 _BASE = Path(protocol.__file__).resolve().parent
 _FIXTURES = _BASE / "fixtures"
-_ARTIFACTS = [
-    "schema/event.schema.json",
-    "schema/envelope.schema.json",
-    "schema/pairing.schema.json",
-    "schema/apns-trigger.schema.json",
-    "fixtures/events.jsonl",
-    "fixtures/pairing.txt",
-    "fixtures/apns-trigger.json",
-]
+
+
+def _manifest() -> dict:
+    return json.loads((_BASE / "manifest.json").read_text("utf-8"))
 
 
 def _event_lines() -> list[dict]:
@@ -46,7 +41,8 @@ def test_committed_artifacts_match_generator(tmp_path):
     """Regenerating must reproduce the committed bytes exactly — nobody
     can hand-edit the vendored artifacts out of sync with the writer."""
     generate(tmp_path)
-    for rel in [*_ARTIFACTS, "manifest.json"]:
+    rels = [*_manifest()["artifacts"], "manifest.json"]
+    for rel in rels:
         regenerated = (tmp_path / rel).read_bytes()
         committed = (_BASE / rel).read_bytes()
         assert regenerated == committed, f"{rel} drifted from generator output"
@@ -55,7 +51,7 @@ def test_committed_artifacts_match_generator(tmp_path):
 def test_manifest_hashes_match_files():
     """The drift check the consumer runs: each artifact's sha256 equals
     the manifest entry."""
-    manifest = json.loads((_BASE / "manifest.json").read_text("utf-8"))
+    manifest = _manifest()
     assert manifest["protocol_version"] == PROTOCOL_VERSION
     for rel, digest in manifest["artifacts"].items():
         actual = hashlib.sha256((_BASE / rel).read_bytes()).hexdigest()
@@ -231,3 +227,30 @@ def test_committed_trigger_fixture_shape():
     trig = json.loads((_FIXTURES / "apns-trigger.json").read_text("utf-8"))
     assert set(trig) == {"ch", "n", "c"}
     assert trig["c"] in apns.CATEGORIES
+
+
+# ---------- relay auth token ----------
+
+def test_relay_token_is_deterministic_and_key_bound():
+    k = bytes(range(32))
+    assert auth.derive_relay_token(k) == auth.derive_relay_token(k)
+    other = bytes([255]) + bytes(range(1, 32))
+    assert auth.derive_relay_token(k) != auth.derive_relay_token(other)
+
+
+def test_relay_token_is_not_the_key():
+    k = bytes(range(32))
+    token = auth.derive_relay_token(k)
+    # One-way: the relay seeing the token cannot recover the key bytes.
+    assert k.hex() not in token
+    assert pairing.encode_key(k) != token
+
+
+def test_committed_relay_auth_fixture_matches_derivation():
+    fx = json.loads((_FIXTURES / "relay-auth.json").read_text("utf-8"))
+    key = pairing.decode_pairing(
+        f"diting-pair://v{PROTOCOL_VERSION}/{fx['channel']}"
+        f"?k={fx['key_b64']}&relay=https://r.example"
+    ).key_bytes()
+    assert auth.derive_relay_token(key) == fx["token"]
+    assert auth.token_hash(fx["token"]) == fx["token_hash"]

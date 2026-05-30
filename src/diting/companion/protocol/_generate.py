@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from ..protocol import apns, pairing
+from ..protocol import apns, auth, pairing
 from ..protocol.events_schema import build_json_schema
 from ..protocol.version import PROTOCOL_VERSION
 from ...event_log import EventLogger
@@ -260,6 +260,15 @@ def generate(base_dir: Path) -> dict[str, str]:
     files["fixtures/apns-trigger.json"] = _dumps(
         apns.build_trigger(channel="demo-channel", count=3, category="ble")
     )
+    # Cross-repo conformance: the consumer must derive the same relay
+    # bearer from the same key. token_hash is what the relay stores.
+    demo_token = auth.derive_relay_token(bytes(range(32)))
+    files["fixtures/relay-auth.json"] = _dumps({
+        "channel": "demo-channel",
+        "key_b64": demo_key,
+        "token": demo_token,
+        "token_hash": auth.token_hash(demo_token),
+    })
 
     manifest_hashes: dict[str, str] = {}
     for rel, content in files.items():
