@@ -166,6 +166,24 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | `--ble-presence-gate D` CLI flag + `DITING_BLE_PRESENCE_GATE` env var control `presence_gate_s`; CLI wins over env, blank env falls to default 5s, invalid env warns and defaults; `0` is a shortcut for `0s` | `test_cli.py::test_extract_ble_presence_gate_arg_parses_seconds_form`, `::test_extract_ble_presence_gate_arg_parses_equals_form`, `::test_extract_ble_presence_gate_arg_accepts_zero_shortcut`, `::test_extract_ble_presence_gate_arg_absent_returns_none`, `::test_extract_ble_presence_gate_arg_invalid_unit_exits`, `::test_resolve_ble_presence_gate_cli_wins`, `::test_resolve_ble_presence_gate_env_fallback`, `::test_resolve_ble_presence_gate_default_5s`, `::test_resolve_ble_presence_gate_blank_env_is_default`, `::test_resolve_ble_presence_gate_invalid_env_warns_and_defaults` |
 | **v1.7.2** — Rotating-identifier name guard: BLE row renderer substitutes `(rotating ID)` (EN) / `(临时标识)` (ZH) for any `BLEDevice.name` matching `^[A-Za-z0-9+/=_-]{16,}$` (no whitespace, no Apple-product prefix like `iPhone` / `iPad` / `Mac` / `AirPods` / `HomePod` / `Apple TV` / `Apple Watch` / `Beats`); raw value preserved in BLE detail modal under a `Raw name:` / `原始名称:` row when non-empty | `test_tui_helpers.py::test_ble_looks_like_rotating_id_predicate_true_on_apple_continuity_shape`, `::test_ble_looks_like_rotating_id_predicate_true_on_huami_serial`, `::test_ble_looks_like_rotating_id_predicate_false_on_iphone_prefix`, `::test_ble_looks_like_rotating_id_predicate_false_on_whitespace_name`, `::test_ble_looks_like_rotating_id_predicate_false_on_short_name`, `::test_ble_looks_like_rotating_id_predicate_false_on_none`, `::test_ble_row_name_substitutes_rotating_id_placeholder`, `::test_ble_row_name_preserves_real_apple_device_name`, `::test_ble_detail_renders_raw_name_row_when_rotating_id`, `::test_ble_detail_omits_raw_name_row_when_name_none` |
 
+### `companion-protocol`
+
+The canonical wire contract for desktop→mobile pairing. Golden fixtures
+are generated from the real `EventLogger`, so the protocol payload can
+never silently diverge from the JSONL the desktop already writes.
+
+| Requirement | Test |
+|---|---|
+| Golden fixtures + JSON Schema are reproducible — regenerating yields byte-identical committed artifacts (no hand-editing out of sync with the writer) | `test_companion_protocol.py::test_committed_artifacts_match_generator`, `::test_event_schema_on_disk_matches_builder` |
+| Drift check: every vendored artifact's sha256 matches `manifest.json` | `test_companion_protocol.py::test_manifest_hashes_match_files` |
+| Fixtures cover every wire event type; one JSON Schema branch per type | `test_companion_protocol.py::test_fixtures_cover_every_event_type`, `::test_json_schema_has_one_branch_per_type` |
+| Event payload reuses the pinned JSONL shape — every fixture line validates | `test_companion_protocol.py::test_every_fixture_line_validates` |
+| `validate_event` fails closed on unknown type / missing required / unknown field / bad enum / bad timestamp / non-object | `test_companion_protocol.py::test_validate_rejects_unknown_type`, `::test_validate_rejects_missing_required`, `::test_validate_rejects_unknown_field`, `::test_validate_rejects_bad_enum`, `::test_validate_rejects_bad_timestamp`, `::test_validate_rejects_non_object` |
+| Version is tolerated only when supported; bool / str / unknown-major refused | `test_companion_protocol.py::test_supported_version` |
+| Pairing payload round-trips (URI ↔ object, 32-byte key); committed fixture decodes; malformed payloads raise | `test_companion_protocol.py::test_pairing_round_trip`, `::test_committed_pairing_fixture_decodes`, `::test_pairing_rejects_malformed`, `::test_encode_key_rejects_wrong_length` |
+| Envelope build + validate; fails closed on missing field / bad seq / unsupported version / empty channel | `test_companion_protocol.py::test_envelope_build_and_validate`, `::test_envelope_validate_fails_closed` |
+| APNs trigger is content-free (only `ch`/`n`/`c`); every pushable type maps to a coarse category; `session_meta` maps to none; bad input raises | `test_companion_protocol.py::test_trigger_is_content_free`, `::test_coarse_category_covers_pushable_types`, `::test_trigger_rejects_bad_input`, `::test_committed_trigger_fixture_shape` |
+
 ### `cli`
 
 | Requirement | Test |

@@ -157,6 +157,23 @@
 | `--ble-presence-gate D` CLI flag + `DITING_BLE_PRESENCE_GATE` 环境变量控制 `presence_gate_s`；CLI 优先于 env；空 env 回退到默认 5s；非法 env 警告后回退；`0` 是 `0s` 的快捷写法 | `test_cli.py::test_extract_ble_presence_gate_arg_parses_seconds_form`、`::test_extract_ble_presence_gate_arg_parses_equals_form`、`::test_extract_ble_presence_gate_arg_accepts_zero_shortcut`、`::test_extract_ble_presence_gate_arg_absent_returns_none`、`::test_extract_ble_presence_gate_arg_invalid_unit_exits`、`::test_resolve_ble_presence_gate_cli_wins`、`::test_resolve_ble_presence_gate_env_fallback`、`::test_resolve_ble_presence_gate_default_5s`、`::test_resolve_ble_presence_gate_blank_env_is_default`、`::test_resolve_ble_presence_gate_invalid_env_warns_and_defaults` |
 | **v1.7.2** —— 轮换标识 name 守卫：BLE 行渲染器对所有匹配 `^[A-Za-z0-9+/=_-]{16,}$`（无空白字符、不以 `iPhone` / `iPad` / `Mac` / `AirPods` / `HomePod` / `Apple TV` / `Apple Watch` / `Beats` 开头）的 `BLEDevice.name` 替换为 `(rotating ID)`（英）/ `(临时标识)`（中）；BLE 详情弹窗在 name 非空时新增 `Raw name:` / `原始名称:` 一行保留原始字符串 | `test_tui_helpers.py::test_ble_looks_like_rotating_id_predicate_true_on_apple_continuity_shape`、`::test_ble_looks_like_rotating_id_predicate_true_on_huami_serial`、`::test_ble_looks_like_rotating_id_predicate_false_on_iphone_prefix`、`::test_ble_looks_like_rotating_id_predicate_false_on_whitespace_name`、`::test_ble_looks_like_rotating_id_predicate_false_on_short_name`、`::test_ble_looks_like_rotating_id_predicate_false_on_none`、`::test_ble_row_name_substitutes_rotating_id_placeholder`、`::test_ble_row_name_preserves_real_apple_device_name`、`::test_ble_detail_renders_raw_name_row_when_rotating_id`、`::test_ble_detail_omits_raw_name_row_when_name_none` |
 
+### `companion-protocol`
+
+桌面→移动端配对的权威线上契约。golden fixture 由真实的 `EventLogger`
+生成，因此协议 payload 不会与桌面已写出的 JSONL 悄悄分叉。
+
+| Requirement | 测试 |
+|---|---|
+| golden fixture + JSON Schema 可复现 —— 重新生成得到逐字节一致的已提交产物（不允许手改导致与写入器脱节） | `test_companion_protocol.py::test_committed_artifacts_match_generator`、`::test_event_schema_on_disk_matches_builder` |
+| 漂移检查：每个 vendored 产物的 sha256 与 `manifest.json` 一致 | `test_companion_protocol.py::test_manifest_hashes_match_files` |
+| fixture 覆盖每种线上事件类型；JSON Schema 每类型一个分支 | `test_companion_protocol.py::test_fixtures_cover_every_event_type`、`::test_json_schema_has_one_branch_per_type` |
+| 事件 payload 复用已钉死的 JSONL 形状 —— 每行 fixture 都校验通过 | `test_companion_protocol.py::test_every_fixture_line_validates` |
+| `validate_event` 对未知 type / 缺必填 / 多余字段 / 非法枚举 / 非法时间戳 / 非对象 全部 fail-closed | `test_companion_protocol.py::test_validate_rejects_unknown_type`、`::test_validate_rejects_missing_required`、`::test_validate_rejects_unknown_field`、`::test_validate_rejects_bad_enum`、`::test_validate_rejects_bad_timestamp`、`::test_validate_rejects_non_object` |
+| 仅容忍受支持的版本；bool / str / 未知大版本一律拒绝 | `test_companion_protocol.py::test_supported_version` |
+| 配对 payload 往返（URI ↔ 对象，32 字节密钥）；已提交 fixture 可解码；畸形 payload 抛错 | `test_companion_protocol.py::test_pairing_round_trip`、`::test_committed_pairing_fixture_decodes`、`::test_pairing_rejects_malformed`、`::test_encode_key_rejects_wrong_length` |
+| 信封 build + validate；缺字段 / 非法 seq / 不支持版本 / 空 channel 时 fail-closed | `test_companion_protocol.py::test_envelope_build_and_validate`、`::test_envelope_validate_fails_closed` |
+| APNs 触发为无内容（仅 `ch`/`n`/`c`）；每种可推送类型映射到粗粒度类别；`session_meta` 映射为 none；非法输入抛错 | `test_companion_protocol.py::test_trigger_is_content_free`、`::test_coarse_category_covers_pushable_types`、`::test_trigger_rejects_bad_input`、`::test_committed_trigger_fixture_shape` |
+
 ### `cli`
 
 | Requirement | 测试 |

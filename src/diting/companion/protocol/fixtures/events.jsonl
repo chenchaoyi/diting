@@ -1,0 +1,15 @@
+{"ts":"2026-05-20T12:00:00+08:00","type":"session_meta","scene":"home","scene_source":"env_var","diting_version":"0.0.0-fixture","ssid":"咖啡馆","gateway_ip":"192.168.1.1","hostname":"mac-fixture"}
+{"ts":"2026-05-20T12:00:01+08:00","type":"link_state","state":"associated","ssid":"咖啡馆","bssid":"aa:bb:cc:dd:ee:01"}
+{"ts":"2026-05-20T12:00:02+08:00","type":"roam","previous_bssid":"aa:bb:cc:dd:ee:01","new_bssid":"aa:bb:cc:dd:ee:02","previous_channel":36,"new_channel":149,"kind":"inter_ap","ssid":"咖啡馆","previous_ssid":"咖啡馆","new_ssid":"咖啡馆","previous_vendor":"Xiaomi, Inc.","new_vendor":"Apple, Inc."}
+{"ts":"2026-05-20T12:00:03+08:00","type":"rf_stir","magnitude_db":4.2,"location":"2F-书房","bssid":"aa:bb:cc:dd:ee:01","duration_s":5.0,"confidence":"high","mode":"co_located","ssid":"咖啡馆"}
+{"ts":"2026-05-20T12:00:04+08:00","type":"latency_spike","target":"router","target_ip":"192.168.1.1","rtt_ms":250.5,"loss_pct":0.0}
+{"ts":"2026-05-20T12:00:05+08:00","type":"loss_burst","target":"wan","target_ip":"8.8.8.8","loss_pct":20.0,"lost_in_window":3}
+{"ts":"2026-05-20T12:00:06+08:00","type":"network_change","previous_router_ip":"192.168.1.1","new_router_ip":"10.0.0.1","previous_ssid":"咖啡馆","new_ssid":"Home","previous_bssid":"aa:bb:cc:dd:ee:01","new_bssid":"aa:bb:cc:dd:ee:09"}
+{"ts":"2026-05-20T12:00:07+08:00","type":"ble_device_seen","identifier":"abc123","service_categories":["HID"],"name":"Magic Keyboard","vendor":"Apple, Inc.","rssi_dbm":-55,"device_type":"Find My target","device_class":"iPhone","at_launch":true}
+{"ts":"2026-05-20T12:00:08+08:00","type":"ble_device_left","identifier":"abc123","service_categories":[],"seen_for_seconds":300.5,"vendor":"Apple, Inc.","last_rssi_dbm":-60}
+{"ts":"2026-05-20T12:00:09+08:00","type":"bonjour_service_seen","service_type":"_airplay._tcp.local.","name":"客厅电视._airplay._tcp.local.","addresses":["192.168.1.42"],"host":"Living-TV","category":"AirPlay","vendor":"Apple, Inc."}
+{"ts":"2026-05-20T12:00:10+08:00","type":"bonjour_service_left","service_type":"_airplay._tcp.local.","name":"客厅电视._airplay._tcp.local.","seen_for_seconds":7200.0}
+{"ts":"2026-05-20T12:00:11+08:00","type":"lan_host_seen","mac":"de:ad:be:ef:00:01","ip":"192.168.1.42","is_randomised_mac":false,"vendor":"Apple, Inc.","hostname":"my-mbp.local","bonjour_name":"ccy-MBP"}
+{"ts":"2026-05-20T12:00:12+08:00","type":"lan_host_left","mac":"de:ad:be:ef:00:01","ip":"192.168.1.42","is_randomised_mac":false,"seen_for_seconds":3600.0,"vendor":"Apple, Inc.","last_reachable_ago_seconds":120.5}
+{"ts":"2026-05-20T12:00:13+08:00","type":"lan_host_dhcp_rotation","mac":"de:ad:be:ef:00:01","previous_ip":"192.168.1.42","new_ip":"192.168.1.77","vendor":"Apple, Inc.","hostname":"my-mbp.local"}
+{"ts":"2026-05-20T12:00:14+08:00","type":"lan_active_probe_consented","scene":"public","nbns_packets":8,"ssdp_packets":1,"mdns_packets":1,"ssid":"HotelGuest"}
