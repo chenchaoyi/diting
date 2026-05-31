@@ -501,6 +501,8 @@ uv run diting monitor                    # headless JSONL events to stdout
 uv run diting monitor --out events.jsonl # append JSONL to a file
 uv run diting monitor --notify           # macOS Notification Centre alerts on high-confidence events
 uv run diting calibrate                  # 5 min "empty room" RSSI baseline → ./diting-baseline.json
+uv run diting companion pair             # pair a phone — renders a QR for diting-mobile
+uv run diting companion status           # show pairing + relay queue state
 ```
 
 The `monitor` subcommand is the long-run / Home Assistant
@@ -508,6 +510,29 @@ integration target — every roam, RF stir, latency spike, loss
 burst, and link-state change emits one well-formed JSON line. The
 schema lives in
 [`docs/specs/v0.7.0-network-ground-truth-and-environment-monitor.md`](docs/specs/v0.7.0-network-ground-truth-and-environment-monitor.md#single-eventsjsonl-schema-for-all-three-layers).
+
+### Pair with diting-mobile (`diting companion`)
+
+Forward events to the companion **diting-mobile** app so your phone learns
+what the Mac sees — anywhere, not just on the same Wi-Fi.
+`diting companion pair` generates a channel + key and prints a QR; scan it in
+the app. After that, a running `diting` (TUI or `monitor`) forwards
+push-worthy events, and the phone pulls and decrypts them.
+
+- **Private by construction.** Events are sealed with libsodium secretbox
+  under a key that only ever travels in the QR. The relay (a Cloudflare
+  Worker) stores and forwards ciphertext only — it never sees a BSSID, SSID,
+  device name, or IP. The push carries a count plus a coarse category,
+  nothing more.
+- **Opt-in.** Nothing leaves the Mac until you pair. `diting companion unpair`
+  stops it; `DITING_COMPANION=0` disables forwarding without unpairing. When
+  paired, the TUI header shows a `companion:` chip with the relay queue state.
+- **Honest limit.** The event source is this Mac — a sleeping laptop emits
+  nothing. 24/7 home monitoring is a separate always-on device, not this.
+
+Pairing state lives in `./diting-companion.json` (git-ignored — it holds the
+secret key). Closed-app push needs APNs configured on the relay; see
+[`relay/README.md`](relay/README.md).
 
 ## Configuration
 
@@ -568,6 +593,8 @@ somewhere other than the current working directory.
 | `DITING_SCAN_INTERVAL` | `7` | Seconds between scans. CoreWLAN throttles around 5 s, so values below ~6 yield empty scans every other call. Floor 3. |
 | `DITING_LATENCY_WAN_TARGET` | autodetected from `scutil --dns` | IP for the WAN latency anchor. Default picks the first non-gateway nameserver from `SCDynamicStoreCopyValue("State:/Network/Global/DNS")`; if the only configured DNS *is* the gateway, the WAN probe is skipped and the diagnostic line reads `WAN n/a (DNS == gateway)`. Override to pin an explicit IP (e.g. `1.1.1.1` for networks that allow it). |
 | `DITING_LAN_INVENTORY_WIDE` | unset | When set to `1`, the LAN view sweeps a /22 (1022 hosts) around your interface IP instead of the default /24 (254 hosts). Useful on home subnets wider than /24; on corporate /16+ VLANs the sweep is still capped at /22 around your IP. |
+| `DITING_COMPANION` | unset | Set to `0` to disable companion forwarding without unpairing. Any other value (or unset) leaves it active when paired. |
+| `DITING_COMPANION_STATE` | `./diting-companion.json` (CWD-relative) | Path to the companion pairing-state file (holds the secret key; git-ignored). |
 
 ## macOS caveats
 

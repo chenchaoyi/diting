@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://diting.dev/companion-protocol/v1/pairing.schema.json",
+  "title": "diting companion-protocol pairing payload (decoded form)",
+  "description": "The decoded form of the diting-pair:// QR URI. The key_b64 decodes to a 32-byte secretbox key and never reaches the relay.",
+  "type": "object",
+  "required": [
+    "version",
+    "channel",
+    "key_b64",
+    "relay_url"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "channel": {
+      "type": "string",
+      "minLength": 1
+    },
+    "key_b64": {
+      "type": "string",
+      "minLength": 1
+    },
+    "relay_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "fingerprint": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

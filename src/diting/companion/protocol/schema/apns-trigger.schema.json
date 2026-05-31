@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://diting.dev/companion-protocol/v1/apns-trigger.schema.json",
+  "title": "diting companion-protocol APNs trigger (content-free)",
+  "type": "object",
+  "required": [
+    "ch",
+    "n",
+    "c"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "ch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "n": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "c": {
+      "type": "string",
+      "enum": [
+        "ble",
+        "bonjour",
+        "env",
+        "lan",
+        "link"
+      ]
+    }
+  }
+}

@@ -1,0 +1,669 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://diting.dev/companion-protocol/v1/event.schema.json",
+  "title": "diting companion-protocol event",
+  "description": "One diting event object as emitted by EventLogger. English keys; ISO-8601 local-TZ-with-offset timestamps; omitted None fields; empty tuples as [].",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "scene",
+        "scene_source",
+        "diting_version",
+        "ssid",
+        "gateway_ip",
+        "hostname"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "session_meta"
+        },
+        "scene": {
+          "type": "string"
+        },
+        "scene_source": {
+          "type": "string"
+        },
+        "diting_version": {
+          "type": "string"
+        },
+        "ssid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gateway_ip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hostname": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "state",
+        "ssid",
+        "bssid"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "link_state"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "associated",
+            "disassociated"
+          ]
+        },
+        "ssid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bssid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "vendor": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "previous_bssid",
+        "new_bssid",
+        "previous_channel",
+        "new_channel"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "roam"
+        },
+        "previous_bssid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "new_bssid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "previous_channel": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "new_channel": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "inter_ap",
+            "band_switch"
+          ]
+        },
+        "ssid": {
+          "type": "string"
+        },
+        "previous_ssid": {
+          "type": "string"
+        },
+        "new_ssid": {
+          "type": "string"
+        },
+        "previous_vendor": {
+          "type": "string"
+        },
+        "new_vendor": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "magnitude_db",
+        "location",
+        "bssid",
+        "duration_s",
+        "confidence",
+        "mode"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "rf_stir"
+        },
+        "magnitude_db": {
+          "type": "number"
+        },
+        "location": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bssid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_s": {
+          "type": "number"
+        },
+        "confidence": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "co_located",
+            "spatial_channel"
+          ]
+        },
+        "ssid": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "target",
+        "target_ip",
+        "rtt_ms",
+        "loss_pct"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "latency_spike"
+        },
+        "target": {
+          "type": "string",
+          "enum": [
+            "router",
+            "wan"
+          ]
+        },
+        "target_ip": {
+          "type": "string"
+        },
+        "rtt_ms": {
+          "type": "number"
+        },
+        "loss_pct": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "target",
+        "target_ip",
+        "loss_pct",
+        "lost_in_window"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "loss_burst"
+        },
+        "target": {
+          "type": "string",
+          "enum": [
+            "router",
+            "wan"
+          ]
+        },
+        "target_ip": {
+          "type": "string"
+        },
+        "loss_pct": {
+          "type": "number"
+        },
+        "lost_in_window": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "previous_router_ip",
+        "new_router_ip"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "network_change"
+        },
+        "previous_router_ip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "new_router_ip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "previous_ssid": {
+          "type": "string"
+        },
+        "new_ssid": {
+          "type": "string"
+        },
+        "previous_bssid": {
+          "type": "string"
+        },
+        "new_bssid": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "identifier",
+        "service_categories"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "ble_device_seen"
+        },
+        "identifier": {
+          "type": "string"
+        },
+        "service_categories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "vendor": {
+          "type": "string"
+        },
+        "rssi_dbm": {
+          "type": "integer"
+        },
+        "device_type": {
+          "type": "string"
+        },
+        "device_class": {
+          "type": "string"
+        },
+        "at_launch": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "identifier",
+        "service_categories",
+        "seen_for_seconds"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "ble_device_left"
+        },
+        "identifier": {
+          "type": "string"
+        },
+        "service_categories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "seen_for_seconds": {
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "vendor": {
+          "type": "string"
+        },
+        "last_rssi_dbm": {
+          "type": "integer"
+        },
+        "device_type": {
+          "type": "string"
+        },
+        "device_class": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "service_type",
+        "name",
+        "addresses"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "bonjour_service_seen"
+        },
+        "service_type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "addresses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "host": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "vendor": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "service_type",
+        "name",
+        "seen_for_seconds"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "bonjour_service_left"
+        },
+        "service_type": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "seen_for_seconds": {
+          "type": "number"
+        },
+        "host": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "vendor": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "mac",
+        "ip",
+        "is_randomised_mac"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "lan_host_seen"
+        },
+        "mac": {
+          "type": "string"
+        },
+        "ip": {
+          "type": "string"
+        },
+        "is_randomised_mac": {
+          "type": "boolean"
+        },
+        "vendor": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "bonjour_name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "mac",
+        "ip",
+        "is_randomised_mac",
+        "seen_for_seconds"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "lan_host_left"
+        },
+        "mac": {
+          "type": "string"
+        },
+        "ip": {
+          "type": "string"
+        },
+        "is_randomised_mac": {
+          "type": "boolean"
+        },
+        "seen_for_seconds": {
+          "type": "number"
+        },
+        "vendor": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "bonjour_name": {
+          "type": "string"
+        },
+        "last_reachable_ago_seconds": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "mac",
+        "previous_ip",
+        "new_ip"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "lan_host_dhcp_rotation"
+        },
+        "mac": {
+          "type": "string"
+        },
+        "previous_ip": {
+          "type": "string"
+        },
+        "new_ip": {
+          "type": "string"
+        },
+        "vendor": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "bonjour_name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "ts",
+        "type",
+        "scene",
+        "nbns_packets",
+        "ssdp_packets",
+        "mdns_packets"
+      ],
+      "properties": {
+        "ts": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+        },
+        "type": {
+          "const": "lan_active_probe_consented"
+        },
+        "scene": {
+          "type": "string"
+        },
+        "nbns_packets": {
+          "type": "integer"
+        },
+        "ssdp_packets": {
+          "type": "integer"
+        },
+        "mdns_packets": {
+          "type": "integer"
+        },
+        "ssid": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

@@ -166,6 +166,41 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | `--ble-presence-gate D` CLI flag + `DITING_BLE_PRESENCE_GATE` env var control `presence_gate_s`; CLI wins over env, blank env falls to default 5s, invalid env warns and defaults; `0` is a shortcut for `0s` | `test_cli.py::test_extract_ble_presence_gate_arg_parses_seconds_form`, `::test_extract_ble_presence_gate_arg_parses_equals_form`, `::test_extract_ble_presence_gate_arg_accepts_zero_shortcut`, `::test_extract_ble_presence_gate_arg_absent_returns_none`, `::test_extract_ble_presence_gate_arg_invalid_unit_exits`, `::test_resolve_ble_presence_gate_cli_wins`, `::test_resolve_ble_presence_gate_env_fallback`, `::test_resolve_ble_presence_gate_default_5s`, `::test_resolve_ble_presence_gate_blank_env_is_default`, `::test_resolve_ble_presence_gate_invalid_env_warns_and_defaults` |
 | **v1.7.2** — Rotating-identifier name guard: BLE row renderer substitutes `(rotating ID)` (EN) / `(临时标识)` (ZH) for any `BLEDevice.name` matching `^[A-Za-z0-9+/=_-]{16,}$` (no whitespace, no Apple-product prefix like `iPhone` / `iPad` / `Mac` / `AirPods` / `HomePod` / `Apple TV` / `Apple Watch` / `Beats`); raw value preserved in BLE detail modal under a `Raw name:` / `原始名称:` row when non-empty | `test_tui_helpers.py::test_ble_looks_like_rotating_id_predicate_true_on_apple_continuity_shape`, `::test_ble_looks_like_rotating_id_predicate_true_on_huami_serial`, `::test_ble_looks_like_rotating_id_predicate_false_on_iphone_prefix`, `::test_ble_looks_like_rotating_id_predicate_false_on_whitespace_name`, `::test_ble_looks_like_rotating_id_predicate_false_on_short_name`, `::test_ble_looks_like_rotating_id_predicate_false_on_none`, `::test_ble_row_name_substitutes_rotating_id_placeholder`, `::test_ble_row_name_preserves_real_apple_device_name`, `::test_ble_detail_renders_raw_name_row_when_rotating_id`, `::test_ble_detail_omits_raw_name_row_when_name_none` |
 
+### `companion-protocol`
+
+The canonical wire contract for desktop→mobile pairing. Golden fixtures
+are generated from the real `EventLogger`, so the protocol payload can
+never silently diverge from the JSONL the desktop already writes.
+
+| Requirement | Test |
+|---|---|
+| Golden fixtures + JSON Schema are reproducible — regenerating yields byte-identical committed artifacts (no hand-editing out of sync with the writer) | `test_companion_protocol.py::test_committed_artifacts_match_generator`, `::test_event_schema_on_disk_matches_builder` |
+| Drift check: every vendored artifact's sha256 matches `manifest.json` | `test_companion_protocol.py::test_manifest_hashes_match_files` |
+| Fixtures cover every wire event type; one JSON Schema branch per type | `test_companion_protocol.py::test_fixtures_cover_every_event_type`, `::test_json_schema_has_one_branch_per_type` |
+| Event payload reuses the pinned JSONL shape — every fixture line validates | `test_companion_protocol.py::test_every_fixture_line_validates` |
+| `validate_event` fails closed on unknown type / missing required / unknown field / bad enum / bad timestamp / non-object | `test_companion_protocol.py::test_validate_rejects_unknown_type`, `::test_validate_rejects_missing_required`, `::test_validate_rejects_unknown_field`, `::test_validate_rejects_bad_enum`, `::test_validate_rejects_bad_timestamp`, `::test_validate_rejects_non_object` |
+| Version is tolerated only when supported; bool / str / unknown-major refused | `test_companion_protocol.py::test_supported_version` |
+| Pairing payload round-trips (URI ↔ object, 32-byte key); committed fixture decodes; malformed payloads raise | `test_companion_protocol.py::test_pairing_round_trip`, `::test_committed_pairing_fixture_decodes`, `::test_pairing_rejects_malformed`, `::test_encode_key_rejects_wrong_length` |
+| Envelope build + validate; fails closed on missing field / bad seq / unsupported version / empty channel | `test_companion_protocol.py::test_envelope_build_and_validate`, `::test_envelope_validate_fails_closed` |
+| APNs trigger is content-free (only `ch`/`n`/`c`); every pushable type maps to a coarse category; `session_meta` maps to none; bad input raises | `test_companion_protocol.py::test_trigger_is_content_free`, `::test_coarse_category_covers_pushable_types`, `::test_trigger_rejects_bad_input`, `::test_committed_trigger_fixture_shape` |
+
+### `companion-bridge`
+
+Desktop sender: pairing + QR, secretbox sealing, the watchdog-gated push
+policy, the bounded relay queue, and the `companion` CLI. The sink
+consumes the exact payload dict the JSONL writer emits (via an
+`EventLogger` observer tap), so forwarded events cannot drift from the log.
+
+| Requirement | Test |
+|---|---|
+| Sink consumes the exact dict the JSONL writer emits (observer tap), firing even without a file sink | `test_companion_sender.py::test_event_logger_observer_sees_exact_written_payload`, `::test_event_logger_observer_fires_without_a_sink` |
+| Events seal with secretbox and round-trip; tamper / wrong key / bad key length fail closed | `test_companion_sender.py::test_seal_open_round_trip`, `::test_open_rejects_tampered_ciphertext`, `::test_open_rejects_wrong_key`, `::test_seal_rejects_bad_key_length` |
+| Pairing state is scannable, persists git-ignored, advances a monotonic seq across restarts, clears on unpair; path honours `DITING_COMPANION_STATE` | `test_companion_sender.py::test_generate_state_is_well_formed`, `::test_state_save_load_round_trip`, `::test_next_seq_persists_monotonically`, `::test_load_absent_is_none_and_clear`, `::test_render_qr_produces_block_art`, `::test_default_state_path_env_override` |
+| Push policy reuses the watchdog: skips non-pushable types, coalesces per-target in the silence window, gates `rf_stir` on confidence | `test_companion_sender.py::test_policy_skips_non_pushable_types`, `::test_policy_silence_window_coalesces_same_target`, `::test_policy_distinct_targets_independent`, `::test_policy_rf_stir_confidence_gate` |
+| Relay client flushes in order, stops + preserves order on failure then retries, drops oldest on overflow with a count, forwards the coarse-category header | `test_companion_sender.py::test_flush_sends_all_in_order_on_success`, `::test_flush_stops_and_preserves_order_on_failure`, `::test_queue_overflow_drops_oldest_and_counts`, `::test_category_header_forwarded` |
+| Sink seals + enqueues a push-worthy event (decryptable back) and advances seq; declines non-pushable without advancing | `test_companion_sender.py::test_sink_seals_pushable_event_and_advances_seq`, `::test_sink_declines_non_pushable` |
+| `companion` CLI pairs / shows status / unpairs; unknown action exits 2; relay URL precedence (flag > env > default) | `test_companion_cli.py::test_pair_status_unpair_round_trip`, `::test_unknown_action_exits_2`, `::test_relay_url_precedence` |
+
 ### `cli`
 
 | Requirement | Test |

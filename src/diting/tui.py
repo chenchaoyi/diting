@@ -5892,7 +5892,12 @@ class GroupedFooter(Static):
                 ("n", t("→ {view}", view=next_view)),
                 ("c", t("Re-roam")),
             ],
-            [("m", t("Events")), ("?", t("Help")), ("b", t("Basics"))],
+            [
+                ("m", t("Events")),
+                ("k", t("Companion")),
+                ("?", t("Help")),
+                ("b", t("Basics")),
+            ],
         ]
 
         out = Text()
@@ -6439,6 +6444,103 @@ class BrandHeader(Horizontal):
 
 # ---------- App ----------
 
+class CompanionScreen(ModalScreen):
+    """Pair a phone from inside the TUI: render the diting-mobile pairing
+    QR (generating a pairing on first open) + show channel / relay, with
+    re-pair / unpair. Companion modules are imported lazily so the crypto
+    stack never loads on the TUI hot path."""
+
+    BINDINGS = [
+        Binding("escape,k,q", "app.pop_screen", t("Close")),
+        Binding("r", "repair", t("Re-pair")),
+        Binding("u", "unpair", t("Unpair")),
+    ]
+
+    DEFAULT_CSS = """
+    CompanionScreen {
+        align: center middle;
+    }
+    CompanionScreen > #companion-box {
+        width: auto;
+        max-width: 90%;
+        height: auto;
+        max-height: 90%;
+        border: heavy $accent;
+        padding: 1 2;
+        background: $surface;
+    }
+    CompanionScreen #companion-scroll {
+        height: auto;
+        max-height: 1fr;
+    }
+    CompanionScreen #companion-content,
+    CompanionScreen #companion-footer {
+        height: auto;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        body, footer = self._content()
+        yield Vertical(
+            VerticalScroll(
+                Static(body, id="companion-content"),
+                id="companion-scroll",
+            ),
+            Static(footer, id="companion-footer"),
+            id="companion-box",
+        )
+
+    def _content(self) -> tuple[Text, Text]:
+        import os
+
+        from .companion import DEFAULT_RELAY_URL
+        from .companion import state as cstate
+
+        st = cstate.load_state()
+        if st is None:
+            relay = os.environ.get("DITING_COMPANION_RELAY") or DEFAULT_RELAY_URL
+            st = cstate.PairingState.generate(relay)
+            st.save()
+            # Begin forwarding on the running app immediately.
+            self.app._reload_companion()  # type: ignore[attr-defined]
+
+        body = Text(no_wrap=True)
+        body.append(t("Companion — scan in diting-mobile") + "\n", style="bold cyan")
+        body.append(
+            t("Forward this Mac's events to your phone — read them anywhere.")
+            + "\n\n",
+            style="dim",
+        )
+        body.append(cstate.render_qr(st.qr_uri()))
+
+        footer = Text()
+        footer.append(t("r re-pair · u unpair · esc close"), style="dim")
+        return body, footer
+
+    def action_repair(self) -> None:
+        import os
+
+        from .companion import DEFAULT_RELAY_URL
+        from .companion import state as cstate
+
+        relay = os.environ.get("DITING_COMPANION_RELAY") or DEFAULT_RELAY_URL
+        cstate.PairingState.generate(relay).save()
+        self.app._reload_companion()  # type: ignore[attr-defined]
+        self._refresh()
+
+    def action_unpair(self) -> None:
+        from .companion import state as cstate
+
+        cstate.clear_state()
+        self.app._reload_companion()  # type: ignore[attr-defined]
+        self.app.pop_screen()
+
+    def _refresh(self) -> None:
+        body, footer = self._content()
+        self.query_one("#companion-content", Static).update(body)
+        self.query_one("#companion-footer", Static).update(footer)
+
+
 class DitingApp(App):
     """Top-level Textual app.
 
@@ -6468,6 +6570,7 @@ class DitingApp(App):
         Binding("m", "show_events", t("Events")),
         Binding("question_mark", "show_help", t("Help")),
         Binding("b", "show_basics", t("Basics")),
+        Binding("k", "show_companion", t("Companion")),
         # Row-select / inspect bindings — shared by all three list views.
         # Hidden from the footer (show=False) so the grouped footer stays
         # single-line; the keys are listed in the help modal. ``priority=
@@ -6526,6 +6629,19 @@ class DitingApp(App):
             EventLogger.to_path(event_log_path) if event_log_path
             else EventLogger.disabled()
         )
+        # Companion forwarding (opt-in via `diting companion pair`). When
+        # paired, the sink taps the logger's observer so it forwards the
+        # exact dict each JSONL line carries; unpaired, this is None and
+        # nothing (including pynacl) loads on the hot path.
+        self._companion_sink = None
+        self._companion_flush_timer = None
+        try:
+            from .companion import runtime as _companion_runtime
+            self._companion_sink = _companion_runtime.build_sink()
+        except Exception:
+            self._companion_sink = None
+        if self._companion_sink is not None:
+            self._event_logger.set_observer(self._companion_sink.offer)
         # Session header — written immediately so any subsequent
         # emit_* lands AFTER the session_meta line. Synchronously
         # fetch the current connection ONCE here (before the
@@ -6758,8 +6874,49 @@ class DitingApp(App):
         # call from `action_toggle_view` (kept for safety) is a
         # no-op after this.
         self._ensure_mdns_poller()
+        # Drain the companion relay queue periodically (off the UI thread)
+        # and refresh the header chip with the queue state.
+        if self._companion_sink is not None:
+            self._companion_flush_timer = self.set_interval(
+                3.0, self._companion_flush,
+            )
+
+    def action_show_companion(self) -> None:
+        self.push_screen(CompanionScreen())
+
+    def _reload_companion(self) -> None:
+        """Rebuild the companion sink from the current pairing state and
+        (re)attach the logger observer — so pairing / unpairing from the
+        in-TUI modal takes effect live, without a restart."""
+        sink = None
+        try:
+            from .companion import runtime as _companion_runtime
+            sink = _companion_runtime.build_sink()
+        except Exception:
+            sink = None
+        self._companion_sink = sink
+        self._event_logger.set_observer(sink.offer if sink is not None else None)
+        if sink is not None and self._companion_flush_timer is None:
+            self._companion_flush_timer = self.set_interval(
+                3.0, self._companion_flush,
+            )
+        self.sub_title = self._build_subtitle()
+
+    async def _companion_flush(self) -> None:
+        sink = self._companion_sink
+        if sink is None:
+            return
+        if sink.client.pending:
+            await asyncio.to_thread(sink.flush)
+        self.sub_title = self._build_subtitle()
 
     def on_unmount(self) -> None:
+        # Best-effort final drain so a clean quit isn't lossy.
+        if self._companion_sink is not None:
+            try:
+                self._companion_sink.flush()
+            except Exception:
+                pass
         # Flush + close the JSONL log on TUI exit so the file is
         # complete and other processes can read it cleanly. Safe
         # when logging is disabled (close() on a no-op logger is
@@ -8312,6 +8469,11 @@ class DitingApp(App):
         # with the subtitle to stay visible after a refresh.
         scene_name = getattr(self, "_scene", "home")
         bits.append(t("[{scene}]", scene=t(scene_name)))
+        # Companion status — only when paired, so the default (unpaired)
+        # subtitle is unchanged.
+        if getattr(self, "_companion_sink", None) is not None:
+            from .companion import runtime as _companion_runtime
+            bits.append(_companion_runtime.subtitle_chip(self._companion_sink))
         if self._paused:
             bits.append(t("PAUSED"))
         return " · ".join(bits)

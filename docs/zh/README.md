@@ -446,12 +446,35 @@ uv run diting monitor                    # 无 TUI，逐行 JSONL 事件
 uv run diting monitor --out events.jsonl # 追加 JSONL 到文件
 uv run diting monitor --notify           # 高置信度事件触发 macOS 通知
 uv run diting calibrate                  # 5 分钟「房间没人」基线 → ./diting-baseline.json
+uv run diting companion pair             # 配对手机 —— 渲染给 diting-mobile 扫的二维码
+uv run diting companion status           # 查看配对 + 中继队列状态
 ```
 
 `monitor` 是长时运行 / Home Assistant 集成场景：每一次漫游、RF
 扰动、延迟尖峰、丢包风暴、链路状态变化都会输出一行符合 schema 的
 JSON。schema 定义见
 [`docs/specs/v0.7.0-network-ground-truth-and-environment-monitor.md`](../specs/v0.7.0-network-ground-truth-and-environment-monitor.md#single-eventsjsonl-schema-for-all-three-layers)。
+
+### 与 diting-mobile 配对（`diting companion`）
+
+把事件转发到配套的 **diting-mobile** app，让手机也能知道 Mac 看到了
+什么 —— 不限同一个 Wi-Fi，随时随地。`diting companion pair` 生成
+channel + 密钥并打印二维码；在 app 里扫一下即可。之后只要 `diting`
+（TUI 或 `monitor`）在跑，就会把值得推送的事件转发出去，手机拉取并
+解密。
+
+- **结构性隐私。** 事件用 libsodium secretbox 封装，密钥只在二维码里
+  传递。中继（一个 Cloudflare Worker）只存转密文 —— 永远看不到 BSSID、
+  SSID、设备名或 IP。推送只带计数 + 粗粒度类别，仅此而已。
+- **默认关闭。** 配对前不会有任何数据离开 Mac。`diting companion
+  unpair` 停止转发；`DITING_COMPANION=0` 可在不解除配对的情况下禁用。
+  配对后 TUI 标题栏会显示 `companion:` 状态片，标出中继队列。
+- **诚实的边界。** 事件源是这台 Mac —— 笔记本睡了就没有事件。7×24 的
+  家庭监听是另一台常开设备的事，不是这个功能。
+
+配对状态存在 `./diting-companion.json`（git 忽略 —— 内含密钥）。app
+关闭时的推送需要中继配置好 APNs，见
+[`relay/README.md`](../../relay/README.md)。
 
 ## 配置
 
@@ -507,6 +530,8 @@ BSSID，漫游事件会显示成 `[同 AP 切频段 2F-客厅: 5G → 2.4G]` 或
 | `DITING_SCAN_INTERVAL` | `7` | 扫描间隔秒数。CoreWLAN 大约 5 秒限流一次，低于 ~6 秒时每隔一次返回空。最小 3。 |
 | `DITING_LATENCY_WAN_TARGET` | 由 `scutil --dns` 自动检测 | WAN 延迟探针的 IP。默认从 `SCDynamicStoreCopyValue("State:/Network/Global/DNS")` 取第一条非网关 DNS；如果配置的 DNS 就是网关，WAN 探测被跳过，诊断行写 `WAN n/a (DNS = 网关)`。可以指定固定 IP（如 `1.1.1.1`，仅在网络允许时使用）。 |
 | `DITING_LAN_INVENTORY_WIDE` | 未设置 | 设为 `1` 时，LAN 视图把扫描范围从默认的 /24（254 台）放宽到 /22（1022 台）；在企业 /16 及以上子网仍然会截断到本机 IP 周围的 /22。家庭子网比 /24 大时有用。 |
+| `DITING_COMPANION` | 未设置 | 设为 `0` 可在不解除配对的情况下禁用 companion 转发；其它值（或未设置）在已配对时保持启用。 |
+| `DITING_COMPANION_STATE` | `./diting-companion.json`（相对当前目录） | companion 配对状态文件路径（内含密钥；git 忽略）。 |
 
 ## macOS 注意事项
 

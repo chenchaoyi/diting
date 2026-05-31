@@ -282,6 +282,17 @@ async def _run_monitor(
         EventLogger.to_path(out_path) if out_path
         else EventLogger.to_stdout()
     )
+    # Companion forwarding (opt-in via `diting companion pair`). When
+    # paired, every emitted payload is also offered to the sink via the
+    # logger's observer tap — the exact dict the JSONL line carries.
+    companion_sink = None
+    try:
+        from .companion import runtime as _companion_runtime
+        companion_sink = _companion_runtime.build_sink()
+    except Exception:
+        companion_sink = None
+    if companion_sink is not None:
+        logger.set_observer(companion_sink.offer)
     # Session header — must be the first line emitted, byte-identical
     # to the TUI's --log path so downstream readers don't branch on
     # source. Scene was resolved by main() before dispatching; we
@@ -465,9 +476,23 @@ async def _run_monitor(
                         target=sample.target,
                     )
 
+    flush_task = (
+        asyncio.create_task(
+            _companion_runtime.flush_loop(companion_sink),
+            name="companion-flush",
+        )
+        if companion_sink is not None
+        else None
+    )
     try:
         await wifi_consumer()
     finally:
+        if flush_task is not None:
+            flush_task.cancel()
+            try:
+                await flush_task
+            except asyncio.CancelledError:
+                pass
         logger.close()
 
 
@@ -810,8 +835,81 @@ def _validate_lang(value: str) -> str:
 _LOG_DEFAULT = object()
 
 _KNOWN_SUBCOMMANDS = {
-    "once", "watch", "monitor", "calibrate", "analyze", "analyse",
+    "once", "watch", "monitor", "calibrate", "analyze", "analyse", "companion",
 }
+
+
+def _run_companion(argv: list[str]) -> None:
+    """`diting companion {pair|status|unpair}` — manage mobile pairing.
+
+    Companion modules are imported lazily so the crypto/QR dependencies
+    do not load on the hot TUI / monitor path."""
+    action = argv[0] if argv else "status"
+    if action == "pair":
+        _companion_pair(argv[1:])
+    elif action == "status":
+        _companion_status()
+    elif action == "unpair":
+        _companion_unpair()
+    else:
+        print(
+            t("companion: unknown action {action!r} (use pair / status / unpair)",
+              action=action) + "\n",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
+def _companion_relay_url(argv: list[str]) -> str:
+    for i, a in enumerate(argv):
+        if a == "--relay" and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith("--relay="):
+            return a.split("=", 1)[1]
+    env = os.environ.get("DITING_COMPANION_RELAY")
+    if env:
+        return env
+    from . import companion
+    return companion.DEFAULT_RELAY_URL
+
+
+def _companion_pair(argv: list[str]) -> None:
+    from .companion import state as cstate
+
+    relay = _companion_relay_url(argv)
+    existing = cstate.load_state()
+    st = cstate.PairingState.generate(relay)
+    path = st.save()
+    if existing is not None:
+        print(t("Replaced the existing pairing."))
+    print(t("Companion pairing — scan this in diting-mobile:"))
+    print()
+    print(cstate.render_qr(st.qr_uri()))
+    print(t("relay:   {url}", url=relay))
+    print(t("channel: {channel}", channel=st.channel))
+    print(t("Saved to {path} (git-ignored — keep it secret).", path=path))
+
+
+def _companion_status() -> None:
+    from .companion import state as cstate
+
+    st = cstate.load_state()
+    if st is None:
+        print(t("Not paired. Run `diting companion pair` to begin."))
+        return
+    print(t("Paired — channel {channel}", channel=st.channel))
+    print(t("relay:   {url}", url=st.relay_url))
+    print(t("last sequence: {n}", n=st.last_seq))
+    print(t("Forwarding runs while `diting` or `diting monitor` is active."))
+
+
+def _companion_unpair() -> None:
+    from .companion import state as cstate
+
+    if cstate.clear_state():
+        print(t("Unpaired."))
+    else:
+        print(t("Not paired; nothing to remove."))
 
 
 def _extract_log_arg(argv: list[str]) -> str | object | None:
@@ -1537,6 +1635,9 @@ def main() -> None:
         return
     if cmd == "analyze" or cmd == "analyse":
         _run_analyze(args[1:])
+        return
+    if cmd == "companion":
+        _run_companion(args[1:])
         return
     if cmd in ("-h", "--help"):
         print(_usage(), end="")

@@ -1,6 +1,6 @@
 [project]
 name = "diting"
-version = "1.9.1"
+version = "1.10.0"
 description = "macOS terminal listening post for Wi-Fi, BLE, link health, and the RF environment — your Mac hears more than it tells you"
 readme = "README.md"
 license = "MIT"
@@ -10,9 +10,11 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "pynacl>=1.6.2",
     "pyobjc-framework-corewlan>=12.1",
     "pyobjc-framework-systemconfiguration>=12.1",
     "pyyaml>=6.0.3",
+    "segno>=1.6.6",
     "textual>=8.2.5",
     "zeroconf>=0.130",
 ]

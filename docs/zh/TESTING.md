@@ -157,6 +157,39 @@
 | `--ble-presence-gate D` CLI flag + `DITING_BLE_PRESENCE_GATE` 环境变量控制 `presence_gate_s`；CLI 优先于 env；空 env 回退到默认 5s；非法 env 警告后回退；`0` 是 `0s` 的快捷写法 | `test_cli.py::test_extract_ble_presence_gate_arg_parses_seconds_form`、`::test_extract_ble_presence_gate_arg_parses_equals_form`、`::test_extract_ble_presence_gate_arg_accepts_zero_shortcut`、`::test_extract_ble_presence_gate_arg_absent_returns_none`、`::test_extract_ble_presence_gate_arg_invalid_unit_exits`、`::test_resolve_ble_presence_gate_cli_wins`、`::test_resolve_ble_presence_gate_env_fallback`、`::test_resolve_ble_presence_gate_default_5s`、`::test_resolve_ble_presence_gate_blank_env_is_default`、`::test_resolve_ble_presence_gate_invalid_env_warns_and_defaults` |
 | **v1.7.2** —— 轮换标识 name 守卫：BLE 行渲染器对所有匹配 `^[A-Za-z0-9+/=_-]{16,}$`（无空白字符、不以 `iPhone` / `iPad` / `Mac` / `AirPods` / `HomePod` / `Apple TV` / `Apple Watch` / `Beats` 开头）的 `BLEDevice.name` 替换为 `(rotating ID)`（英）/ `(临时标识)`（中）；BLE 详情弹窗在 name 非空时新增 `Raw name:` / `原始名称:` 一行保留原始字符串 | `test_tui_helpers.py::test_ble_looks_like_rotating_id_predicate_true_on_apple_continuity_shape`、`::test_ble_looks_like_rotating_id_predicate_true_on_huami_serial`、`::test_ble_looks_like_rotating_id_predicate_false_on_iphone_prefix`、`::test_ble_looks_like_rotating_id_predicate_false_on_whitespace_name`、`::test_ble_looks_like_rotating_id_predicate_false_on_short_name`、`::test_ble_looks_like_rotating_id_predicate_false_on_none`、`::test_ble_row_name_substitutes_rotating_id_placeholder`、`::test_ble_row_name_preserves_real_apple_device_name`、`::test_ble_detail_renders_raw_name_row_when_rotating_id`、`::test_ble_detail_omits_raw_name_row_when_name_none` |
 
+### `companion-protocol`
+
+桌面→移动端配对的权威线上契约。golden fixture 由真实的 `EventLogger`
+生成，因此协议 payload 不会与桌面已写出的 JSONL 悄悄分叉。
+
+| Requirement | 测试 |
+|---|---|
+| golden fixture + JSON Schema 可复现 —— 重新生成得到逐字节一致的已提交产物（不允许手改导致与写入器脱节） | `test_companion_protocol.py::test_committed_artifacts_match_generator`、`::test_event_schema_on_disk_matches_builder` |
+| 漂移检查：每个 vendored 产物的 sha256 与 `manifest.json` 一致 | `test_companion_protocol.py::test_manifest_hashes_match_files` |
+| fixture 覆盖每种线上事件类型；JSON Schema 每类型一个分支 | `test_companion_protocol.py::test_fixtures_cover_every_event_type`、`::test_json_schema_has_one_branch_per_type` |
+| 事件 payload 复用已钉死的 JSONL 形状 —— 每行 fixture 都校验通过 | `test_companion_protocol.py::test_every_fixture_line_validates` |
+| `validate_event` 对未知 type / 缺必填 / 多余字段 / 非法枚举 / 非法时间戳 / 非对象 全部 fail-closed | `test_companion_protocol.py::test_validate_rejects_unknown_type`、`::test_validate_rejects_missing_required`、`::test_validate_rejects_unknown_field`、`::test_validate_rejects_bad_enum`、`::test_validate_rejects_bad_timestamp`、`::test_validate_rejects_non_object` |
+| 仅容忍受支持的版本；bool / str / 未知大版本一律拒绝 | `test_companion_protocol.py::test_supported_version` |
+| 配对 payload 往返（URI ↔ 对象，32 字节密钥）；已提交 fixture 可解码；畸形 payload 抛错 | `test_companion_protocol.py::test_pairing_round_trip`、`::test_committed_pairing_fixture_decodes`、`::test_pairing_rejects_malformed`、`::test_encode_key_rejects_wrong_length` |
+| 信封 build + validate；缺字段 / 非法 seq / 不支持版本 / 空 channel 时 fail-closed | `test_companion_protocol.py::test_envelope_build_and_validate`、`::test_envelope_validate_fails_closed` |
+| APNs 触发为无内容（仅 `ch`/`n`/`c`）；每种可推送类型映射到粗粒度类别；`session_meta` 映射为 none；非法输入抛错 | `test_companion_protocol.py::test_trigger_is_content_free`、`::test_coarse_category_covers_pushable_types`、`::test_trigger_rejects_bad_input`、`::test_committed_trigger_fixture_shape` |
+
+### `companion-bridge`
+
+桌面发送端：配对 + 二维码、secretbox 封装、复用 watchdog 的推送策略、
+有界中继队列，以及 `companion` CLI。sink 消费的是 JSONL 写入器产出的同一个
+payload dict（经 `EventLogger` observer tap），因此转发的事件不会与日志分叉。
+
+| Requirement | 测试 |
+|---|---|
+| sink 消费 JSONL 写入器产出的同一 dict（observer tap），无文件 sink 时也会触发 | `test_companion_sender.py::test_event_logger_observer_sees_exact_written_payload`、`::test_event_logger_observer_fires_without_a_sink` |
+| 事件用 secretbox 封装并可往返；篡改 / 错误密钥 / 错误密钥长度 全部 fail-closed | `test_companion_sender.py::test_seal_open_round_trip`、`::test_open_rejects_tampered_ciphertext`、`::test_open_rejects_wrong_key`、`::test_seal_rejects_bad_key_length` |
+| 配对状态可扫码、git 忽略持久化、跨重启单调推进 seq、解除配对时清除；路径遵循 `DITING_COMPANION_STATE` | `test_companion_sender.py::test_generate_state_is_well_formed`、`::test_state_save_load_round_trip`、`::test_next_seq_persists_monotonically`、`::test_load_absent_is_none_and_clear`、`::test_render_qr_produces_block_art`、`::test_default_state_path_env_override` |
+| 推送策略复用 watchdog：跳过非推送类型、在静默窗口内按目标合并、对 `rf_stir` 按置信度门控 | `test_companion_sender.py::test_policy_skips_non_pushable_types`、`::test_policy_silence_window_coalesces_same_target`、`::test_policy_distinct_targets_independent`、`::test_policy_rf_stir_confidence_gate` |
+| 中继客户端按序冲刷、失败时停止并保序随后重试、溢出丢最旧并计数、转发粗粒度类别头 | `test_companion_sender.py::test_flush_sends_all_in_order_on_success`、`::test_flush_stops_and_preserves_order_on_failure`、`::test_queue_overflow_drops_oldest_and_counts`、`::test_category_header_forwarded` |
+| sink 封装并入队可推送事件（可解密回原文）并推进 seq；非推送事件被拒且不推进 | `test_companion_sender.py::test_sink_seals_pushable_event_and_advances_seq`、`::test_sink_declines_non_pushable` |
+| `companion` CLI 配对 / 状态 / 解除；未知动作退出码 2；relay URL 优先级（flag > env > default） | `test_companion_cli.py::test_pair_status_unpair_round_trip`、`::test_unknown_action_exits_2`、`::test_relay_url_precedence` |
+
 ### `cli`
 
 | Requirement | 测试 |

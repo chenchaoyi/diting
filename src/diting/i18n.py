@@ -597,6 +597,8 @@ _ZH: dict[str, str] = {
     "  analyze      read a JSONL log, print rule-based insights\n"
     "                 (newest diting-*.jsonl in cwd when no PATH given)\n"
     "                 flags: --since DUR  --for-llm [DIR]  --anonymize\n"
+    "  companion    pair with diting-mobile, forward events off-device\n"
+    "                 actions: pair [--relay URL] | status | unpair\n"
     "\n"
     "Global options:\n"
     "  --lang L                interface language: en or zh\n"
@@ -635,6 +637,8 @@ _ZH: dict[str, str] = {
         "  analyze      读取 JSONL 日志，输出基于规则的洞察\n"
         "                 （不带 PATH 时使用 cwd 里最新的 diting-*.jsonl）\n"
         "                 选项：--since DUR  --for-llm [DIR]  --anonymize\n"
+        "  companion    与 diting-mobile 配对，把事件转发到手机\n"
+        "                 动作：pair [--relay URL] | status | unpair\n"
         "\n"
         "全局选项：\n"
         "  --lang L                界面语言：en 或 zh\n"
@@ -1400,6 +1404,38 @@ _ZH: dict[str, str] = {
     "Calibration cancelled.": "已取消采集。",
     "No samples captured — leave the radio on a single network and retry.":
         "未采集到样本 —— 保持连在同一个网络后重试。",
+    # ---- companion subcommand ----
+    "Companion pairing — scan this in diting-mobile:":
+        "Companion 配对 —— 在 diting-mobile 里扫描：",
+    "Replaced the existing pairing.": "已替换原有配对。",
+    "relay:   {url}": "relay：   {url}",
+    "channel: {channel}": "channel：{channel}",
+    "Saved to {path} (git-ignored — keep it secret).":
+        "已保存到 {path}（git 忽略 —— 请妥善保密）。",
+    "Not paired. Run `diting companion pair` to begin.":
+        "尚未配对。运行 `diting companion pair` 开始。",
+    "Paired — channel {channel}": "已配对 —— channel {channel}",
+    "last sequence: {n}": "最新序号：{n}",
+    "Forwarding runs while `diting` or `diting monitor` is active.":
+        "`diting` 或 `diting monitor` 运行时即开始转发。",
+    "Unpaired.": "已解除配对。",
+    "Not paired; nothing to remove.": "未配对；无需移除。",
+    "companion: on": "companion：开",
+    "companion: {n} queued": "companion：{n} 待发",
+    "companion: {d} dropped": "companion：丢弃 {d}",
+    "companion: {n} queued, {d} dropped": "companion：{n} 待发，丢弃 {d}",
+    # ---- companion: in-TUI pairing modal ----
+    "Companion": "桌面联动",
+    "Re-pair": "重新配对",
+    "Unpair": "解除配对",
+    "Companion — scan in diting-mobile": "桌面联动 —— 用 diting-mobile 扫码",
+    "Forward this Mac's events to your phone — read them anywhere.":
+        "把这台 Mac 的事件转发到手机，随时随地查看。",
+    "channel: ": "通道：",
+    "relay: ": "中继：",
+    "r re-pair · u unpair · esc close": "r 重新配对 · u 解除配对 · esc 关闭",
+    "companion: unknown action {action!r} (use pair / status / unpair)":
+        "companion：未知动作 {action!r}（可用 pair / status / unpair）",
 
     # ---- analyze CLI ----
     "diting analyse {path}": "diting 分析 {path}",
