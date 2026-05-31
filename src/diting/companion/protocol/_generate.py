@@ -256,6 +256,32 @@ def generate(base_dir: Path) -> dict[str, str]:
         version=PROTOCOL_VERSION, channel="demo-channel",
         key_b64=demo_key, relay_url="https://relay.diting.dev",
     ))
+    # Sealed-envelope fixture: a known event sealed with a fixed key +
+    # fixed nonce so a consumer (diting-mobile, Dart) can prove its
+    # secretbox open() interops with this producer's seal(). Deterministic
+    # by construction — NOT how production sealing works (random nonce).
+    from ..crypto import seal_event
+    sealed_event = {
+        "ts": "2026-05-20T12:00:01+08:00",
+        "type": "link_state",
+        "state": "associated",
+        "ssid": "咖啡馆",
+        "bssid": "aa:bb:cc:dd:ee:01",
+    }
+    sealed_key = bytes(range(32))
+    sealed_envelope = seal_event(
+        sealed_key,
+        channel="demo-channel",
+        seq=1,
+        ts="2026-05-20T12:00:01+08:00",
+        payload=sealed_event,
+        nonce=bytes(24),  # fixed nonce — fixture determinism only
+    )
+    files["fixtures/sealed-envelope.json"] = _dumps({
+        "key_b64": pairing.encode_key(sealed_key),
+        "event": sealed_event,
+        "envelope": sealed_envelope,
+    })
     files["fixtures/pairing.txt"] = pair_uri + "\n"
     files["fixtures/apns-trigger.json"] = _dumps(
         apns.build_trigger(channel="demo-channel", count=3, category="ble")

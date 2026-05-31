@@ -38,18 +38,31 @@ def _unb64(s: str) -> bytes:
         raise ProtocolError(f"envelope field is not valid base64: {exc}") from exc
 
 
-def seal_event(key: bytes, *, channel: str, seq: int, ts: str, payload: dict[str, Any]) -> dict[str, Any]:
+def seal_event(
+    key: bytes,
+    *,
+    channel: str,
+    seq: int,
+    ts: str,
+    payload: dict[str, Any],
+    nonce: bytes | None = None,
+) -> dict[str, Any]:
     """Seal one event ``payload`` dict into a wire envelope.
 
     ``ts`` is the producer wall-clock for the envelope (distinct from the
     event's own ``ts`` inside the sealed payload). The plaintext is the
     compact JSON of ``payload`` with ``ensure_ascii=False`` — byte-for-byte
     what the JSONL writer emits.
+
+    ``nonce`` defaults to a fresh random one and should stay that way in
+    production; it is a seam only so fixtures can be deterministic.
     """
     if len(key) != KEY_BYTES:
         raise ProtocolError(f"channel key must be {KEY_BYTES} bytes, got {len(key)}")
+    if nonce is None:
+        nonce = nacl_random(SecretBox.NONCE_SIZE)
     plaintext = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    enc = SecretBox(key).encrypt(plaintext, nacl_random(SecretBox.NONCE_SIZE))
+    enc = SecretBox(key).encrypt(plaintext, nonce)
     return build_envelope(
         version=PROTOCOL_VERSION,
         channel=channel,

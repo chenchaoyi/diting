@@ -7,6 +7,7 @@
     "schema/pairing.schema.json": "6fdcaf63796bbc92eb067497dc1fdd361f172af138af223c6848d12164b3849f",
     "schema/apns-trigger.schema.json": "e7e9ef6644f12bfbdc01361f1a1869917a02bc33f38fb8b81d98f0a7675cfd7d",
     "fixtures/events.jsonl": "0921eae4e96032254b52c01ac0bb8a14d3a77fca00df8f83ba323f54b2f1df40",
+    "fixtures/sealed-envelope.json": "424293068c6bb0e5bea54fad08fb2ca8a4c7da964471d86677e0f6627738a694",
     "fixtures/pairing.txt": "5480a0a5604037e0bcf1bd0ecacaf3de4a0cb9acef6dd24e5340210def0434e8",
     "fixtures/apns-trigger.json": "31d9e05d1f3733226a66c0c5238f9fc9905f6b8525e860476071eb69c120b0d0",
     "fixtures/relay-auth.json": "66cc5ea726270d34b40d6cce706d65221f99a107024b9b6ff3cd1c4a6beecf3c"
