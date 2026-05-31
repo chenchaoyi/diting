@@ -83,6 +83,15 @@ export async function sendPush(env, deviceToken, sandbox, payload) {
       },
       body: JSON.stringify(payload),
     });
+    if (res.status !== 200) {
+      let reason = "";
+      try {
+        reason = (await res.json()).reason ?? "";
+      } catch (_) {}
+      console.log(`apns push -> ${res.status} ${reason}`);
+    } else {
+      console.log("apns push -> 200");
+    }
     return res.status;
   } catch (_e) {
     return 0;
