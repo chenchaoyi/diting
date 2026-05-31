@@ -52,13 +52,17 @@ async function providerJwt(env) {
   return jwt;
 }
 
-/** Content-free payload. `category` (optional) is a coarse hint only. */
+/** Content-free payload. `category` (optional) is a coarse hint only —
+ * the relay holds ciphertext, so the push names at most which subsystem
+ * stirred, never the event itself. The consumer pulls + decrypts for
+ * detail. */
 export function buildPushPayload(channel, category) {
   const data = { ch: channel };
   if (category) data.c = category;
+  const body = category ? `New ${category} activity` : "New activity";
   return {
     aps: {
-      alert: { "loc-key": "DITING_NEW_EVENTS" },
+      alert: { title: "diting", body },
       sound: "default",
       "interruption-level": "active",
     },
