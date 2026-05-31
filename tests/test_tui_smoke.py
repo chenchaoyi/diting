@@ -205,6 +205,17 @@ def test_force_rescan_does_not_crash():
     asyncio.run(_run_pilot("r"))
 
 
+def test_companion_modal_opens_and_generates_pairing(tmp_path, monkeypatch):
+    """Pressing `k` opens the in-TUI pairing modal, which generates +
+    persists a pairing and renders its QR without crashing. DITING_COMPANION=0
+    keeps the sink (and any relay flush) out of the smoke."""
+    import asyncio
+    monkeypatch.setenv("DITING_COMPANION_STATE", str(tmp_path / "companion.json"))
+    monkeypatch.setenv("DITING_COMPANION", "0")
+    asyncio.run(_run_pilot("k", "escape"))
+    assert (tmp_path / "companion.json").exists()
+
+
 def test_cycle_sort_modes():
     """Two presses cycle ap -> signal -> ap."""
     import asyncio

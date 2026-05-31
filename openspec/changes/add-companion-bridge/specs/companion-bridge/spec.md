@@ -104,3 +104,7 @@ queued).
 #### Scenario: Status is observable
 - **WHEN** the user inspects the companion surface
 - **THEN** it reports whether a device is paired and whether the relay is currently reachable or events are queued
+
+#### Scenario: Pairing from inside the TUI
+- **WHEN** the user presses the companion key in the running TUI
+- **THEN** a modal renders the pairing QR (generating a pairing if none exists yet), and forwarding begins on the running app without a restart

@@ -1424,6 +1424,14 @@ _ZH: dict[str, str] = {
     "companion: {n} queued": "companion：{n} 待发",
     "companion: {d} dropped": "companion：丢弃 {d}",
     "companion: {n} queued, {d} dropped": "companion：{n} 待发，丢弃 {d}",
+    # ---- companion: in-TUI pairing modal ----
+    "Companion": "桌面联动",
+    "Re-pair": "重新配对",
+    "Unpair": "解除配对",
+    "Companion — scan in diting-mobile": "桌面联动 —— 用 diting-mobile 扫码",
+    "channel: ": "通道：",
+    "relay: ": "中继：",
+    "r re-pair · u unpair · esc close": "r 重新配对 · u 解除配对 · esc 关闭",
     "companion: unknown action {action!r} (use pair / status / unpair)":
         "companion：未知动作 {action!r}（可用 pair / status / unpair）",
 
