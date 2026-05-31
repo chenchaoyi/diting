@@ -1429,6 +1429,8 @@ _ZH: dict[str, str] = {
     "Re-pair": "重新配对",
     "Unpair": "解除配对",
     "Companion — scan in diting-mobile": "桌面联动 —— 用 diting-mobile 扫码",
+    "Forward this Mac's events to your phone — read them anywhere.":
+        "把这台 Mac 的事件转发到手机，随时随地查看。",
     "channel: ": "通道：",
     "relay: ": "中继：",
     "r re-pair · u unpair · esc close": "r 重新配对 · u 解除配对 · esc 关闭",

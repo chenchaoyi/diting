@@ -5892,7 +5892,12 @@ class GroupedFooter(Static):
                 ("n", t("→ {view}", view=next_view)),
                 ("c", t("Re-roam")),
             ],
-            [("m", t("Events")), ("?", t("Help")), ("b", t("Basics"))],
+            [
+                ("m", t("Events")),
+                ("k", t("Companion")),
+                ("?", t("Help")),
+                ("b", t("Basics")),
+            ],
         ]
 
         out = Text()
@@ -6500,13 +6505,13 @@ class CompanionScreen(ModalScreen):
             self.app._reload_companion()  # type: ignore[attr-defined]
 
         body = Text(no_wrap=True)
-        body.append(t("Companion — scan in diting-mobile") + "\n\n", style="bold cyan")
+        body.append(t("Companion — scan in diting-mobile") + "\n", style="bold cyan")
+        body.append(
+            t("Forward this Mac's events to your phone — read them anywhere.")
+            + "\n\n",
+            style="dim",
+        )
         body.append(cstate.render_qr(st.qr_uri()))
-        body.append("\n")
-        body.append(t("channel: "), style="dim")
-        body.append(st.channel + "\n")
-        body.append(t("relay: "), style="dim")
-        body.append(st.relay_url + "\n")
 
         footer = Text()
         footer.append(t("r re-pair · u unpair · esc close"), style="dim")
