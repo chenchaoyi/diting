@@ -774,6 +774,9 @@ def _usage() -> str:
         "                          (env: DITING_LOG=PATH or =auto)\n"
         "  --notify                raise OS banners on anomaly events while\n"
         "                          TUI runs (also accepted by `monitor`)\n"
+        "  --no-companion          don't forward events to a paired phone this\n"
+        "                          run — self-test without push spam (same as\n"
+        "                          env DITING_COMPANION=0). Pairing is untouched\n"
         "  --scene SCENE           home / office / public / audit (default home)\n"
         "                          sets sensitivity defaults for the environment;\n"
         "                          tags JSONL session_meta + LLM bundle context\n"
@@ -1276,6 +1279,24 @@ def _extract_notify_arg(argv: list[str]) -> bool:
     return False
 
 
+def _extract_no_companion_arg(argv: list[str]) -> bool:
+    """Pop ``--no-companion`` from ``argv`` in place; return True if present.
+
+    When present, disable companion forwarding for this process by setting
+    ``DITING_COMPANION=0`` so :func:`companion.runtime.build_sink` returns
+    None — the TUI / monitor runs normally but never offers events to the
+    relay. For self-testing against a paired phone without push spam;
+    pairing state on disk is untouched. Applies to both the default TUI
+    subcommand and ``monitor`` (the env is read at sink-build time).
+    """
+    for i, arg in enumerate(argv):
+        if arg == "--no-companion":
+            del argv[i]
+            os.environ["DITING_COMPANION"] = "0"
+            return True
+    return False
+
+
 def _run_tui(
     *,
     log_path: str | None = None,
@@ -1581,6 +1602,10 @@ def main() -> None:
     # subcommand parsers see it, and so the resolved scene is set in
     # the scene module before any poller / logger touches it.
     scene_cli = _extract_scene_arg(args)
+    # `--no-companion` is global (applies to the default TUI subcommand AND
+    # `monitor`): strip it and set DITING_COMPANION=0 before any sink build,
+    # so a self-test run never forwards to a paired phone.
+    _extract_no_companion_arg(args)
     from . import scene as _scene_mod
     scene_name, scene_source, scene_banner = _resolve_scene_at_startup(
         scene_cli,

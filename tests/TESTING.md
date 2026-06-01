@@ -203,6 +203,7 @@ consumes the exact payload dict the JSONL writer emits (via an
 | Push summary is specific per type and falls back to a placeholder then the type, never raising | `test_companion_sender.py::test_push_summary_is_specific_per_type`, `::test_push_summary_falls_back_to_a_label_then_type` |
 | Cleartext summary rides as a `push` sibling without mutating the envelope; no sibling when there is nothing to say | `test_companion_sender.py::test_summary_rides_as_push_sibling_without_touching_envelope`, `::test_no_push_sibling_when_no_summary_or_category` |
 | `companion` CLI pairs / shows status / unpairs; unknown action exits 2; relay URL precedence (flag > env > default) | `test_companion_cli.py::test_pair_status_unpair_round_trip`, `::test_unknown_action_exits_2`, `::test_relay_url_precedence` |
+| `--no-companion` strips from argv + pins `DITING_COMPANION=0` (per-run self-test mute); absent leaves env unset; gate makes `build_sink` inert even when paired | `test_cli.py::test_no_companion_flag_sets_env_and_strips`, `::test_no_companion_flag_absent_leaves_env_unset`, `::test_no_companion_env_makes_build_sink_inert` |
 
 ### `cli`
 

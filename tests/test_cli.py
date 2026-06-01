@@ -444,3 +444,32 @@ def test_ensure_helper_ready_consumes_splash_results_into_grant_flow(
     captured = capsys.readouterr()
     assert "Permissions required:" in captured.out
     assert "Bluetooth (BLE devices view)" in captured.out
+
+
+def test_no_companion_flag_sets_env_and_strips(monkeypatch) -> None:
+    """`--no-companion` is popped from argv and pins DITING_COMPANION=0 so
+    the sink is never built — a per-run self-test mute, pairing untouched."""
+    monkeypatch.delenv("DITING_COMPANION", raising=False)
+    args = ["--no-companion", "--notify"]
+    assert cli._extract_no_companion_arg(args) is True
+    assert args == ["--notify"]  # flag stripped, others preserved
+    assert __import__("os").environ["DITING_COMPANION"] == "0"
+
+
+def test_no_companion_flag_absent_leaves_env_unset(monkeypatch) -> None:
+    monkeypatch.delenv("DITING_COMPANION", raising=False)
+    args = ["--notify"]
+    assert cli._extract_no_companion_arg(args) is False
+    assert args == ["--notify"]
+    assert "DITING_COMPANION" not in __import__("os").environ
+
+
+def test_no_companion_env_makes_build_sink_inert(monkeypatch, tmp_path) -> None:
+    """With the gate set, build_sink returns None even when paired on disk."""
+    from diting.companion import runtime
+    from diting.companion.state import PairingState
+
+    path = tmp_path / "companion.json"
+    PairingState.generate("https://r.example").save(path)
+    monkeypatch.setenv("DITING_COMPANION", "0")
+    assert runtime.build_sink(path) is None
