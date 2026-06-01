@@ -17,6 +17,7 @@ from typing import Any, Callable
 from .crypto import seal_event
 from .protocol.apns import coarse_category
 from .push_policy import PushPolicy
+from .push_summary import push_summary
 from .relay_client import RelayClient
 from .state import PairingState
 
@@ -55,7 +56,11 @@ class CompanionSink:
             ts=datetime.now().astimezone().isoformat(),
             payload=payload,
         )
-        self._client.enqueue(envelope, category=coarse_category(payload.get("type", "")))
+        self._client.enqueue(
+            envelope,
+            category=coarse_category(payload.get("type", "")),
+            summary=push_summary(payload),
+        )
         return True
 
     def flush(self):

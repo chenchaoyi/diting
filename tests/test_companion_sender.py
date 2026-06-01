@@ -13,6 +13,7 @@ from diting.companion.crypto import open_envelope, seal_event
 from diting.companion.protocol import pairing
 from diting.companion.protocol.errors import ProtocolError
 from diting.companion.push_policy import PushPolicy
+from diting.companion.push_summary import push_summary
 from diting.companion.relay_client import RelayClient
 from diting.companion.sink import CompanionSink
 from diting.companion.state import PairingState, clear_state, load_state, render_qr
@@ -232,6 +233,42 @@ def test_category_header_forwarded():
     assert tx.calls[0]["headers"]["X-Diting-Category"] == "lan"
 
 
+def test_summary_rides_as_push_sibling_without_touching_envelope():
+    tx = _FakeTransport(200)
+    c = _client(tx)
+    env = {"v": 1, "ch": "chan-1", "seq": 1, "ts": "t", "n": "n", "ct": "c"}
+    c.enqueue(dict(env), category="ble", summary="BLE nearby: 客厅电视")
+    c.flush()
+    body = tx.calls[0]["body"]
+    # Envelope fields stay top-level; the summary is a separate `push`.
+    assert {k: body[k] for k in env} == env
+    assert body["push"] == {"body": "BLE nearby: 客厅电视", "category": "ble"}
+
+
+def test_no_push_sibling_when_no_summary_or_category():
+    tx = _FakeTransport(200)
+    c = _client(tx)
+    c.enqueue({"v": 1, "ch": "c", "seq": 1, "ts": "t", "n": "n", "ct": "c"})
+    c.flush()
+    assert "push" not in tx.calls[0]["body"]
+
+
+# ---------- push summary ----------
+
+def test_push_summary_is_specific_per_type():
+    assert push_summary(_lan_seen()) == "New on Wi-Fi: 客厅设备.local"
+    assert push_summary({"type": "roam", "new_bssid": "aa:bb:cc:dd:ee:ff"}) == "Roamed to aa:bb:cc:dd:ee:ff"
+    assert push_summary({"type": "ble_device_seen", "name": "Magic Keyboard"}) == "BLE nearby: Magic Keyboard"
+    spike = {"type": "latency_spike", "target_ip": "192.168.1.1", "rtt_ms": 250}
+    assert push_summary(spike) == "Latency spike on 192.168.1.1: 250 ms"
+
+
+def test_push_summary_falls_back_to_a_label_then_type():
+    # No name/vendor/identifier -> placeholder, never a crash.
+    assert push_summary({"type": "ble_device_seen"}) == "BLE nearby: ?"
+    assert push_summary({"type": "session_meta"}) == "session_meta"
+
+
 # ---------- sink ----------
 
 def test_sink_seals_pushable_event_and_advances_seq(tmp_path):
@@ -246,7 +283,7 @@ def test_sink_seals_pushable_event_and_advances_seq(tmp_path):
     assert sink.offer(payload) is True
     assert client.pending == 1
     # The enqueued envelope decrypts back to the original payload.
-    env, _cat = client._queue[0]
+    env, _cat, _summary = client._queue[0]
     assert open_envelope(st.key_bytes(), env) == payload
     assert env["seq"] == 1
     assert load_state(path).last_seq == 1

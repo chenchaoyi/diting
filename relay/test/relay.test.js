@@ -63,6 +63,18 @@ describe("store and forward", () => {
     expect(cursor).toBe(3);
   });
 
+  it("strips the cleartext push sibling before storing the envelope", async () => {
+    const res = await call("POST", `/v1/channel/${CH}`, {
+      body: { ...envelope(1), push: { body: "BLE nearby: 客厅电视", category: "ble" } },
+      headers: AUTH,
+    });
+    expect(res.status).toBe(200);
+    const { envelopes } = await (await pull(0)).json();
+    expect(envelopes).toHaveLength(1);
+    expect(envelopes[0]).toEqual(envelope(1)); // push not persisted
+    expect(envelopes[0].push).toBeUndefined();
+  });
+
   it("is idempotent for a retried seq", async () => {
     await store(1);
     await store(1);

@@ -88,12 +88,18 @@ async function authorizeExisting(env, channelId, request) {
 }
 
 async function handleStore(env, ctx, channelId, request) {
-  let envelope;
+  let body;
   try {
-    envelope = await request.json();
+    body = await request.json();
   } catch {
     throw new HttpError(400, "body is not JSON");
   }
+  // A cleartext push summary may ride alongside the sealed envelope as a
+  // `push` sibling. Strip it before validation/storage — only the
+  // encrypted envelope is ever persisted or returned to the consumer.
+  const push = body && typeof body === "object" ? body.push : undefined;
+  if (push !== undefined && body && typeof body === "object") delete body.push;
+  const envelope = body;
   validateEnvelope(envelope, channelId);
   const row = await authorizeOrBind(env, channelId, request);
 
@@ -107,9 +113,10 @@ async function handleStore(env, ctx, channelId, request) {
 
   // Ring the doorbell, best-effort, off the response path.
   if (row.apns_token) {
-    const hint = request.headers.get("x-diting-category");
+    const hint = (push && push.category) || request.headers.get("x-diting-category");
     const category = CATEGORIES.has(hint) ? hint : undefined;
-    const payload = buildPushPayload(channelId, category);
+    const detail = push && typeof push.body === "string" ? push.body : undefined;
+    const payload = buildPushPayload(channelId, category, detail);
     ctx.waitUntil(sendPush(env, row.apns_token, !!row.apns_sandbox, payload));
   }
   return json({ ok: true, seq: envelope.seq });

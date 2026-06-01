@@ -463,9 +463,11 @@ channel + 密钥并打印二维码；在 app 里扫一下即可。之后只要 `
 （TUI 或 `monitor`）在跑，就会把值得推送的事件转发出去，手机拉取并
 解密。
 
-- **结构性隐私。** 事件用 libsodium secretbox 封装，密钥只在二维码里
-  传递。中继（一个 Cloudflare Worker）只存转密文 —— 永远看不到 BSSID、
-  SSID、设备名或 IP。推送只带计数 + 粗粒度类别，仅此而已。
+- **默认加密。** 完整事件用 libsodium secretbox 封装，密钥只在二维码里
+  传递；中继（一个 Cloudflare Worker）只存转这份密文。为了让通知一眼可用，
+  推送还会附带一行明文摘要（如「蓝牙在附近：Magic Keyboard」）—— 在 Mac
+  上生成、手机展示，传输途中中继与 Apple 可见。它只点出 app 本就会显示的同
+  类低敏信息；结构化事件仍封在加密信封里。
 - **默认关闭。** 配对前不会有任何数据离开 Mac。`diting companion
   unpair` 停止转发；`DITING_COMPANION=0` 可在不解除配对的情况下禁用。
   配对后 TUI 标题栏会显示 `companion:` 状态片，标出中继队列。

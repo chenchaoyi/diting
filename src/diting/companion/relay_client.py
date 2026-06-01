@@ -65,7 +65,7 @@ class RelayClient:
         self._token = token
         self._transport = transport
         self._max = max_queue
-        self._queue: deque[tuple[dict[str, Any], str | None]] = deque()
+        self._queue: deque[tuple[dict[str, Any], str | None, str | None]] = deque()
         self._dropped = 0
 
     @property
@@ -76,16 +76,22 @@ class RelayClient:
     def dropped(self) -> int:
         return self._dropped
 
-    def enqueue(self, envelope: dict[str, Any], *, category: str | None = None) -> None:
+    def enqueue(
+        self,
+        envelope: dict[str, Any],
+        *,
+        category: str | None = None,
+        summary: str | None = None,
+    ) -> None:
         if len(self._queue) >= self._max:
             self._queue.popleft()  # drop oldest — bounded, never silent
             self._dropped += 1
-        self._queue.append((envelope, category))
+        self._queue.append((envelope, category, summary))
 
     def _url(self) -> str:
         return f"{self._base}/v1/channel/{quote(self._channel, safe='')}"
 
-    def _post(self, envelope: dict[str, Any], category: str | None) -> int:
+    def _post(self, envelope: dict[str, Any], category: str | None, summary: str | None) -> int:
         headers = {
             "authorization": f"Bearer {self._token}",
             "content-type": "application/json",
@@ -93,15 +99,25 @@ class RelayClient:
         }
         if category:
             headers[CATEGORY_HEADER] = category
-        body = json.dumps(envelope, separators=(",", ":")).encode("utf-8")
+        # The cleartext summary rides as a `push` sibling of the envelope;
+        # the relay strips it before storing and shows it on the doorbell.
+        payload: dict[str, Any] = envelope
+        if summary or category:
+            push: dict[str, str] = {}
+            if summary:
+                push["body"] = summary
+            if category:
+                push["category"] = category
+            payload = {**envelope, "push": push}
+        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         return self._transport(self._url(), headers, body)
 
     def flush(self) -> FlushReport:
         """Drain the queue in order until empty or a POST fails."""
         sent = 0
         while self._queue:
-            envelope, category = self._queue[0]
-            status = self._post(envelope, category)
+            envelope, category, summary = self._queue[0]
+            status = self._post(envelope, category, summary)
             if 200 <= status < 300:
                 self._queue.popleft()
                 sent += 1
