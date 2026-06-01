@@ -519,11 +519,14 @@ what the Mac sees — anywhere, not just on the same Wi-Fi.
 the app. After that, a running `diting` (TUI or `monitor`) forwards
 push-worthy events, and the phone pulls and decrypts them.
 
-- **Private by construction.** Events are sealed with libsodium secretbox
-  under a key that only ever travels in the QR. The relay (a Cloudflare
-  Worker) stores and forwards ciphertext only — it never sees a BSSID, SSID,
-  device name, or IP. The push carries a count plus a coarse category,
-  nothing more.
+- **Encrypted by default.** The full event is sealed with libsodium secretbox
+  under a key that only ever travels in the QR; the relay (a Cloudflare Worker)
+  stores and forwards that ciphertext only. To make the notification useful at
+  a glance, the push also carries a short one-line summary in cleartext (e.g.
+  "BLE nearby: Magic Keyboard") — composed on the Mac, shown by the phone, and
+  visible to the relay and Apple in transit. It names only the same
+  low-sensitivity detail the app already shows; the structured event stays
+  encrypted in the envelope.
 - **Opt-in.** Nothing leaves the Mac until you pair. `diting companion unpair`
   stops it; `DITING_COMPANION=0` disables forwarding without unpairing. When
   paired, the TUI header shows a `companion:` chip with the relay queue state.

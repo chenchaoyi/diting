@@ -1424,6 +1424,18 @@ _ZH: dict[str, str] = {
     "companion: {n} queued": "companion：{n} 待发",
     "companion: {d} dropped": "companion：丢弃 {d}",
     "companion: {n} queued, {d} dropped": "companion：{n} 待发，丢弃 {d}",
+    # ---- companion: push notification summaries (shown on the phone) ----
+    "BLE nearby: {name}": "蓝牙在附近：{name}",
+    "New service: {name}": "新服务：{name}",
+    "New on Wi-Fi: {name}": "Wi-Fi 新设备：{name}",
+    "{name} moved to {ip}": "{name} 换到 {ip}",
+    "Roamed to {bssid}": "已漫游到 {bssid}",
+    "Connected: {ssid}": "已连接：{ssid}",
+    "Disconnected": "已断开",
+    "Latency spike on {target}: {ms} ms": "{target} 延迟突增：{ms} ms",
+    "Packet loss on {target}: {pct}%": "{target} 丢包：{pct}%",
+    "RF stir at {loc}": "{loc} 射频扰动",
+    "Network changed → {ip}": "网络已切换 → {ip}",
     # ---- companion: in-TUI pairing modal ----
     "Companion": "桌面联动",
     "Re-pair": "重新配对",

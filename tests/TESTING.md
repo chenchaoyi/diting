@@ -183,6 +183,7 @@ never silently diverge from the JSONL the desktop already writes.
 | Pairing payload round-trips (URI ↔ object, 32-byte key); committed fixture decodes; malformed payloads raise | `test_companion_protocol.py::test_pairing_round_trip`, `::test_committed_pairing_fixture_decodes`, `::test_pairing_rejects_malformed`, `::test_encode_key_rejects_wrong_length` |
 | Envelope build + validate; fails closed on missing field / bad seq / unsupported version / empty channel | `test_companion_protocol.py::test_envelope_build_and_validate`, `::test_envelope_validate_fails_closed` |
 | APNs trigger is content-free (only `ch`/`n`/`c`); every pushable type maps to a coarse category; `session_meta` maps to none; bad input raises | `test_companion_protocol.py::test_trigger_is_content_free`, `::test_coarse_category_covers_pushable_types`, `::test_trigger_rejects_bad_input`, `::test_committed_trigger_fixture_shape` |
+| Relay strips the cleartext `push` summary sibling before storing — only the encrypted envelope is persisted / returned to the consumer | `relay/test/relay.test.js` "strips the cleartext push sibling before storing the envelope" |
 
 ### `companion-bridge`
 
@@ -199,6 +200,8 @@ consumes the exact payload dict the JSONL writer emits (via an
 | Push policy reuses the watchdog: skips non-pushable types, coalesces per-target in the silence window, gates `rf_stir` on confidence | `test_companion_sender.py::test_policy_skips_non_pushable_types`, `::test_policy_silence_window_coalesces_same_target`, `::test_policy_distinct_targets_independent`, `::test_policy_rf_stir_confidence_gate` |
 | Relay client flushes in order, stops + preserves order on failure then retries, drops oldest on overflow with a count, forwards the coarse-category header | `test_companion_sender.py::test_flush_sends_all_in_order_on_success`, `::test_flush_stops_and_preserves_order_on_failure`, `::test_queue_overflow_drops_oldest_and_counts`, `::test_category_header_forwarded` |
 | Sink seals + enqueues a push-worthy event (decryptable back) and advances seq; declines non-pushable without advancing | `test_companion_sender.py::test_sink_seals_pushable_event_and_advances_seq`, `::test_sink_declines_non_pushable` |
+| Push summary is specific per type and falls back to a placeholder then the type, never raising | `test_companion_sender.py::test_push_summary_is_specific_per_type`, `::test_push_summary_falls_back_to_a_label_then_type` |
+| Cleartext summary rides as a `push` sibling without mutating the envelope; no sibling when there is nothing to say | `test_companion_sender.py::test_summary_rides_as_push_sibling_without_touching_envelope`, `::test_no_push_sibling_when_no_summary_or_category` |
 | `companion` CLI pairs / shows status / unpairs; unknown action exits 2; relay URL precedence (flag > env > default) | `test_companion_cli.py::test_pair_status_unpair_round_trip`, `::test_unknown_action_exits_2`, `::test_relay_url_precedence` |
 
 ### `cli`

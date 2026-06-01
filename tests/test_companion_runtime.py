@@ -36,7 +36,7 @@ def test_subtitle_chip_states():
 
     sink = _Sink(client)
     assert runtime.subtitle_chip(sink) == "companion: on"
-    client._queue.append(({"seq": 1}, None))
+    client._queue.append(({"seq": 1}, None, None))
     assert "1 queued" in runtime.subtitle_chip(sink)
     client._dropped = 2
     chip = runtime.subtitle_chip(sink)

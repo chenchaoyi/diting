@@ -52,14 +52,15 @@ async function providerJwt(env) {
   return jwt;
 }
 
-/** Content-free payload. `category` (optional) is a coarse hint only —
- * the relay holds ciphertext, so the push names at most which subsystem
- * stirred, never the event itself. The consumer pulls + decrypts for
- * detail. */
-export function buildPushPayload(channel, category) {
+/** Doorbell payload. `detail` (optional, cleartext) is a short
+ * human-readable summary of the event composed by the producer — shown
+ * directly so the notification is useful at a glance. When absent the
+ * push falls back to a coarse "New {category} activity". The full event
+ * still rides the E2E-encrypted envelope the relay never reads. */
+export function buildPushPayload(channel, category, detail) {
   const data = { ch: channel };
   if (category) data.c = category;
-  const body = category ? `New ${category} activity` : "New activity";
+  const body = detail || (category ? `New ${category} activity` : "New activity");
   return {
     aps: {
       alert: { title: "diting", body },
