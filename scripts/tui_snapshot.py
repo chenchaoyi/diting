@@ -1244,6 +1244,12 @@ def _explore_scenarios() -> list[Scenario]:
     from diting.network import load_inventory
     from diting.tui import DitingApp
 
+    # A self-test capture must never forward events to a paired phone —
+    # an audit run would otherwise spam the relay / APNs doorbell. The
+    # explore DitingApp doesn't wire the companion sink today, but pin the
+    # gate so it stays push-free if that ever changes.
+    os.environ["DITING_COMPANION"] = "0"
+
     _prefer_installed_helper_for_audit()
     helper_path = _helper.find_helper() or ""
 

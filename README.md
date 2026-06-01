@@ -528,8 +528,10 @@ push-worthy events, and the phone pulls and decrypts them.
   low-sensitivity detail the app already shows; the structured event stays
   encrypted in the envelope.
 - **Opt-in.** Nothing leaves the Mac until you pair. `diting companion unpair`
-  stops it; `DITING_COMPANION=0` disables forwarding without unpairing. When
-  paired, the TUI header shows a `companion:` chip with the relay queue state.
+  stops it; `DITING_COMPANION=0` (or the `--no-companion` flag, e.g. for a
+  self-test run that shouldn't spam your phone) disables forwarding without
+  unpairing. When paired, the TUI header shows a `companion:` chip with the
+  relay queue state.
 - **Honest limit.** The event source is this Mac — a sleeping laptop emits
   nothing. 24/7 home monitoring is a separate always-on device, not this.
 

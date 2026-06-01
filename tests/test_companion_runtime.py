@@ -18,7 +18,10 @@ def test_build_sink_none_when_disabled_env(tmp_path, monkeypatch):
     assert runtime.build_sink(path) is None
 
 
-def test_build_sink_when_paired(tmp_path):
+def test_build_sink_when_paired(tmp_path, monkeypatch):
+    # Hermetic against an ambient DITING_COMPANION=0 (e.g. a self-test
+    # shell that exported the mute) — this case asserts the paired path.
+    monkeypatch.delenv("DITING_COMPANION", raising=False)
     path = tmp_path / "companion.json"
     st = PairingState.generate("https://r.example")
     st.save(path)
