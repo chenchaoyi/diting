@@ -1,5 +1,9 @@
 # companion-protocol — delta
 
+## RENAMED Requirements
+- FROM: `### Requirement: APNs trigger is a minimal doorbell, never a delivery`
+- TO: `### Requirement: APNs trigger carries the channel id plus an optional cleartext event summary`
+
 ## MODIFIED Requirements
 
 ### Requirement: APNs trigger carries the channel id plus an optional cleartext event summary
