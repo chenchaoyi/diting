@@ -1204,3 +1204,35 @@ def test_app_session_meta_absorbs_get_connection_failure(tmp_path):
     assert meta["type"] == "session_meta"
     assert meta["ssid"] is None
     assert meta["gateway_ip"] is None
+
+
+def test_insight_engine_wired_and_drains_into_ring():
+    """add-insight-events: the App constructs an insight engine fed by the
+    logger observer; collecting fired insights pushes them onto the Events
+    ring (and emits + would notify them)."""
+    import asyncio
+    from datetime import datetime, timezone
+
+    from diting.events import InsightEvent
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.3)
+            # Feed the engine three first-time arrivals through the logger so it
+            # sees the exact enriched payload shape the observer tap delivers.
+            now = datetime.now(timezone.utc)
+            for i in range(3):
+                app._insight_engine.observe({
+                    "type": "ble_device_seen",
+                    "ts": now.isoformat(),
+                    "familiarity": "first_time",
+                    "identifier": f"dev-{i}",
+                })
+            await app._collect_insights()
+            ring = app._events_ring.snapshot()
+            insights = [e for e in ring if isinstance(e, InsightEvent)]
+            assert any(e.code == "new_device_cluster" for e in insights)
+            await pilot.press("q")
+
+    asyncio.run(go())

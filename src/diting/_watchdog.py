@@ -137,6 +137,10 @@ def notify_message(payload: dict) -> str:
             f"Loss burst on {payload.get('target', '?')}: "
             f"{payload.get('loss_pct', '?')}%"
         )
+    if kind == "insight":
+        # The caller passes the already-localised one-liner; fall back to the
+        # stable code if it didn't.
+        return str(payload.get("summary") or payload.get("code", "insight"))
     return f"event {kind}"
 
 
@@ -164,6 +168,10 @@ async def maybe_notify(
     kind = payload.get("type")
     if kind == "rf_stir":
         if not should_notify_stir(payload, config.stir_confidence):
+            return
+    elif kind == "insight":
+        # Only note/warn insights raise a banner; info stays log + TUI only.
+        if payload.get("severity") not in ("note", "warn"):
             return
     elif kind not in ("latency_spike", "loss_burst"):
         return

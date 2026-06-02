@@ -213,6 +213,26 @@ class LANActiveProbeConsentedEvent:
     mdns_packets: int
 
 
+@dataclass(frozen=True, slots=True)
+class InsightEvent:
+    """A synthesized valuable-change observation from the live insight engine.
+
+    Unlike the raw transition events, an insight is *derived* — it fires when a
+    pattern across the recent stream crosses a threshold (a cluster of
+    unfamiliar arrivals, repeated disassociations, …). ``code`` is the
+    locale-stable analysis key; ``detail`` carries structured supporting data.
+    The human one-liner is generated from ``code`` + ``detail`` at render /
+    notify time (see ``insights.format_insight_summary``), so no localised text
+    lands in the JSONL. ``severity`` (``info`` / ``note`` / ``warn``) drives
+    salience + whether it raises a notification.
+    """
+
+    timestamp: datetime
+    code: str
+    severity: str
+    detail: dict[str, Any] | None = None
+
+
 # Union of every event the ring buffer accepts. ``RoamEvent`` is
 # imported from poller so we don't redefine it.
 Event = (
@@ -229,6 +249,7 @@ Event = (
     | LANHostSeenEvent
     | LANHostLeftEvent
     | LANHostDHCPRotationEvent
+    | InsightEvent
 )
 
 

@@ -96,6 +96,15 @@ def salience(payload: dict[str, Any]) -> str | None:
         return None
     etype = payload.get("type")
 
+    # Insights carry their own severity — map it straight to a tier.
+    if etype == "insight":
+        sev = payload.get("severity")
+        if sev == "warn":
+            return HIGH
+        if sev == "note":
+            return NOTABLE
+        return LOW
+
     # Intrinsic anomalies — salient regardless of familiarity.
     if etype == "loss_burst":
         return HIGH

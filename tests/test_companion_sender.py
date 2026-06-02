@@ -154,6 +154,16 @@ def test_policy_skips_non_pushable_types():
     assert not p.should_push({"type": "ble_device_left", "identifier": "x"}, now=1.0)
 
 
+def test_policy_does_not_push_insight_events():
+    # Insights are desktop-local this phase (Phase 2b/2c): not in the push set,
+    # so the sink never forwards them across the companion wire.
+    p = PushPolicy()
+    assert not p.should_push(
+        {"type": "insight", "code": "loss_observed", "severity": "warn"},
+        now=1.0,
+    )
+
+
 def test_policy_silence_window_coalesces_same_target():
     p = PushPolicy(config=WatchdogConfig(silence_window_s=60))
     ev = _lan_seen()

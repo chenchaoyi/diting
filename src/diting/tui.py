@@ -51,6 +51,7 @@ from .environment import (
 )
 from .event_log import EventLogger
 from .familiarity import FamiliarityStore
+from .insights import InsightEngine, format_insight_summary
 from .events import (
     BLEDeviceLeftEvent,
     BLEDeviceSeenEvent,
@@ -58,6 +59,7 @@ from .events import (
     BonjourServiceSeenEvent,
     Event as MonitorEvent,
     EventRing,
+    InsightEvent,
     LANHostDHCPRotationEvent,
     LANHostLeftEvent,
     LANHostSeenEvent,
@@ -2092,6 +2094,8 @@ def _event_format_line(event: object, inv: NetworkInventory) -> Text | None:
         return _format_lan_host_left_event(event)
     if isinstance(event, LANHostDHCPRotationEvent):
         return _format_lan_host_dhcp_rotation_event(event)
+    if isinstance(event, InsightEvent):
+        return _format_insight_event(event)
     return None
 
 
@@ -2557,6 +2561,19 @@ def _format_link_state_event(event: LinkStateEvent) -> Text:
         line.append(t("associated to {ssid}", ssid=event.ssid or "?"), style="white")
     else:
         line.append(t("disassociated"), style="white")
+    return line
+
+
+def _format_insight_event(event: InsightEvent) -> Text:
+    # Severity drives the colour: warn = red, note = yellow, info = dim cyan.
+    label_style = {
+        "warn": "bold red", "note": "bold yellow",
+    }.get(event.severity, "bold cyan")
+    body_style = {"warn": "red", "note": "yellow"}.get(event.severity, "white")
+    line = Text()
+    line.append(f"{_ev_ts(event)}  ", style="dim")
+    line.append(t("[INSIGHT]") + "  ", style=label_style)
+    line.append(format_insight_summary(event.code, event.detail), style=body_style)
     return line
 
 
@@ -6645,6 +6662,13 @@ class DitingApp(App):
             except Exception:
                 self._familiarity_store = None
         self._familiarity_flush_timer = None
+        # Live insight engine (Phase 2b/2c). It taps the logger as an observer
+        # so it sees the enriched payloads (familiarity + salience already
+        # stamped); a periodic timer drains fired insights through the normal
+        # ring + log + notify path. Always on — it is hermetic + bounded.
+        self._insight_engine = InsightEngine()
+        self._event_logger.add_observer(self._insight_engine.observe)
+        self._insight_timer = None
         # Companion forwarding (opt-in via `diting companion pair`). When
         # paired, the sink taps the logger's observer so it forwards the
         # exact dict each JSONL line carries; unpaired, this is None and
@@ -6901,6 +6925,34 @@ class DitingApp(App):
         if self._familiarity_store is not None:
             self._familiarity_flush_timer = self.set_interval(
                 60.0, self._familiarity_flush,
+            )
+        # Drain the insight engine periodically. An insight is a summary, not a
+        # keystroke — a ~20 s cadence is plenty and keeps the engine off the
+        # hot emit path.
+        self._insight_timer = self.set_interval(20.0, self._collect_insights)
+
+    async def _collect_insights(self) -> None:
+        """Pull fired insights from the engine and route each through the
+        normal surface: the Events ring + panel, the JSONL log, and (for
+        note/warn) a macOS notification."""
+        from datetime import datetime, timezone
+        insights = self._insight_engine.collect(datetime.now(timezone.utc))
+        for ev in insights:
+            self._events_ring.push(ev)
+            try:
+                self.query_one("#roam", EventsPanel).append_event(ev, self._inv)
+            except Exception:
+                pass
+            self._event_logger.emit_insight(ev)
+            summary = format_insight_summary(ev.code, ev.detail)
+            await self._maybe_notify(
+                {
+                    "type": "insight",
+                    "code": ev.code,
+                    "severity": ev.severity,
+                    "summary": summary,
+                },
+                target=ev.code,
             )
 
     async def _familiarity_flush(self) -> None:

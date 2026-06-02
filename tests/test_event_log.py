@@ -876,3 +876,85 @@ def test_first_time_ble_seen_salience_reflects_familiarity(tmp_path):
     row = _read_jsonl(path)[0]
     assert row["familiarity"] == "first_time"
     assert row["salience"] == "high"
+
+
+# ------------------------------------------------------------------
+# Insight events + multi-observer (add-insight-events)
+# ------------------------------------------------------------------
+
+from diting.events import InsightEvent  # noqa: E402
+
+
+def test_emit_insight_writes_code_severity_and_detail(tmp_path):
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_insight(InsightEvent(
+        timestamp=datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc),
+        code="new_device_cluster", severity="note", detail={"count": 4},
+    ))
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert row["type"] == "insight"
+    assert row["code"] == "new_device_cluster"
+    assert row["severity"] == "note"
+    assert row["count"] == 4
+    # Salience is stamped from severity (note -> notable).
+    assert row["salience"] == "notable"
+
+
+def test_emit_insight_omits_detail_when_absent(tmp_path):
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_insight(InsightEvent(
+        timestamp=datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc),
+        code="latency_without_loss", severity="note",
+    ))
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert set(row) == {"ts", "type", "code", "severity", "salience"}
+
+
+def test_warn_insight_salience_is_high(tmp_path):
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_insight(InsightEvent(
+        timestamp=datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc),
+        code="loss_observed", severity="warn", detail={"peak_loss_pct": 30.0},
+    ))
+    logger.close()
+    assert _read_jsonl(path)[0]["salience"] == "high"
+
+
+def test_multiple_observers_all_receive_payload():
+    a, b = [], []
+    logger = EventLogger.disabled()
+    logger.add_observer(a.append)
+    logger.add_observer(b.append)
+    logger.emit_insight(InsightEvent(
+        timestamp=datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc),
+        code="band_steering", severity="info",
+    ))
+    assert len(a) == 1 and len(b) == 1
+    assert a[0]["code"] == "band_steering"
+
+
+def test_set_observer_leaves_added_observers_intact():
+    primary, extra = [], []
+    logger = EventLogger.disabled()
+    logger.add_observer(extra.append)        # e.g. the insight engine
+    logger.set_observer(primary.append)      # e.g. the companion sink
+    logger.emit_loss_burst(LossBurstEvent(
+        timestamp=datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc),
+        target="g", target_ip="10.0.0.1", loss_pct=5.0, lost_in_window=3,
+    ))
+    assert len(primary) == 1 and len(extra) == 1
+    # Re-pair: swapping the primary must not drop the extra observer.
+    primary2 = []
+    logger.set_observer(primary2.append)
+    logger.emit_loss_burst(LossBurstEvent(
+        timestamp=datetime(2026, 6, 2, 12, 0, 1, tzinfo=timezone.utc),
+        target="g", target_ip="10.0.0.1", loss_pct=5.0, lost_in_window=3,
+    ))
+    assert len(primary) == 1      # old primary no longer receives
+    assert len(primary2) == 1
+    assert len(extra) == 2        # extra still receiving
