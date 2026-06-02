@@ -1929,6 +1929,8 @@ class BLEPoller:
                 device_type=dev.type,
                 device_class=dev.device_class,
                 at_launch=at_launch,
+                vendor_id=dev.vendor_id,
+                manufacturer_hex=dev.manufacturer_hex,
             ))
             self._seen_identifiers.add(ident)
             self._pending_seen.pop(ident, None)
@@ -1950,6 +1952,8 @@ class BLEPoller:
                     device_type=dev.type,
                     device_class=dev.device_class,
                     at_launch=False,
+                    vendor_id=dev.vendor_id,
+                    manufacturer_hex=dev.manufacturer_hex,
                 ))
                 self._seen_identifiers.add(ident)
         # Expire TTL'd advertising entries. Emit left ONLY for
@@ -2010,6 +2014,10 @@ class BLEPoller:
                     seen_for_seconds=seen_for,
                     device_type=dev.type,
                     device_class=dev.device_class,
+                    # Cluster anchor (not the evicting member) so the
+                    # familiarity dwell folds under the seen event's key.
+                    vendor_id=cluster.vendor_id,
+                    manufacturer_hex=cluster.anchor_mfg_hex,
                 ))
                 # Tear down the cluster so a future re-arrival
                 # under a fresh identifier creates a NEW cluster
@@ -2035,6 +2043,8 @@ class BLEPoller:
                 ),
                 device_type=dev.type,
                 device_class=dev.device_class,
+                vendor_id=dev.vendor_id,
+                manufacturer_hex=dev.manufacturer_hex,
             ))
             self._departed_identifiers.add(ident)
 

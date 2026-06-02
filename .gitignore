@@ -58,6 +58,12 @@ scenes.yaml
 # stays tracked.
 diting-companion.json
 
+# Familiarity / baseline store — accrued by every run. Keyed by real
+# BSSIDs / MACs / BLE manufacturer payloads, same "private, never commit"
+# reasoning as aps.yaml. The public template diting-familiarity.example.json
+# stays tracked. Override the path via DITING_FAMILIARITY_STORE.
+diting-familiarity.json
+
 # Event log files produced by `diting --log` and `diting monitor`.
 # Contain MAC addresses / SSIDs / timestamps from the user's network and
 # have no place in source control. The default-named pattern catches

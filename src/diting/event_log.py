@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import IO, Any, Callable
 
+from .familiarity import FamiliarityStore, familiarity_key
 from .events import (
     BLEDeviceLeftEvent,
     BLEDeviceSeenEvent,
@@ -124,6 +125,12 @@ class EventLogger:
         # serialiser to drift. None by default; an observer makes the
         # logger build + tap payloads even when there is no file sink.
         self._observer: "Callable[[dict[str, Any]], None] | None" = None
+        # Optional familiarity/baseline store. When wired (by the CLI), seen
+        # events get classified (first_time / occasional / habitual /
+        # returning) against the entity's persisted history and left events
+        # fold their dwell into the store. None in tests / disabled paths,
+        # where the seen events simply carry no `familiarity` field.
+        self._familiarity: "FamiliarityStore | None" = None
 
     # ---------- factories ----------
 
@@ -331,6 +338,14 @@ class EventLogger:
         clearest single signal that the user has crossed between
         physically separate networks.
         """
+        new_bssid_l = event.new_bssid.lower() if event.new_bssid else None
+        fam = event.familiarity
+        if fam is None:
+            fam = self._classify_seen(
+                familiarity_key("ap", bssid=new_bssid_l),
+                "ap",
+                event.timestamp,
+            )
         if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
@@ -362,6 +377,8 @@ class EventLogger:
             payload["previous_vendor"] = previous_vendor
         if new_vendor:
             payload["new_vendor"] = new_vendor
+        if fam is not None:
+            payload["familiarity"] = fam
         self._emit(payload)
 
     def emit_rf_stir(self, event: RFStirEvent) -> None:
@@ -441,6 +458,21 @@ class EventLogger:
     # seven, matching the existing methods' contract.
 
     def emit_ble_device_seen(self, event: BLEDeviceSeenEvent) -> None:
+        # Classify against the payload-fusion key (manufacturer payload, not
+        # the rotating UUID) before the sink guard so the baseline keeps
+        # building even when logging is disabled.
+        fam = event.familiarity
+        if fam is None:
+            fam = self._classify_seen(
+                familiarity_key(
+                    "ble",
+                    manufacturer_hex=event.manufacturer_hex,
+                    vendor_id=event.vendor_id,
+                    name=event.name,
+                ),
+                "ble",
+                event.timestamp,
+            )
         if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
@@ -463,9 +495,20 @@ class EventLogger:
             payload["device_class"] = event.device_class
         if event.at_launch:
             payload["at_launch"] = True
+        if fam is not None:
+            payload["familiarity"] = fam
         self._emit(payload)
 
     def emit_ble_device_left(self, event: BLEDeviceLeftEvent) -> None:
+        self._observe_left(
+            familiarity_key(
+                "ble",
+                manufacturer_hex=event.manufacturer_hex,
+                vendor_id=event.vendor_id,
+                name=event.name,
+            ),
+            event.seen_for_seconds,
+        )
         if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
@@ -488,6 +531,19 @@ class EventLogger:
         self._emit(payload)
 
     def emit_bonjour_service_seen(self, event: BonjourServiceSeenEvent) -> None:
+        # Key on the (service_type, instance name) pair: a Bonjour instance
+        # name is part of the protocol identity here, not a free-text display
+        # label — same instance re-advertising is the same logical service.
+        fam = event.familiarity
+        if fam is None:
+            fam = self._classify_seen(
+                familiarity_key(
+                    "bonjour",
+                    service=f"{event.service_type}/{event.name}",
+                ),
+                "bonjour",
+                event.timestamp,
+            )
         if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
@@ -503,9 +559,17 @@ class EventLogger:
             payload["category"] = event.category
         if event.vendor is not None:
             payload["vendor"] = event.vendor
+        if fam is not None:
+            payload["familiarity"] = fam
         self._emit(payload)
 
     def emit_bonjour_service_left(self, event: BonjourServiceLeftEvent) -> None:
+        self._observe_left(
+            familiarity_key(
+                "bonjour", service=f"{event.service_type}/{event.name}",
+            ),
+            event.seen_for_seconds,
+        )
         if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
@@ -524,6 +588,13 @@ class EventLogger:
         self._emit(payload)
 
     def emit_lan_host_seen(self, event: LANHostSeenEvent) -> None:
+        fam = event.familiarity
+        if fam is None:
+            fam = self._classify_seen(
+                familiarity_key("lan", mac=event.mac),
+                "lan",
+                event.timestamp,
+            )
         if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
@@ -539,9 +610,14 @@ class EventLogger:
             payload["hostname"] = event.hostname
         if event.bonjour_name is not None:
             payload["bonjour_name"] = event.bonjour_name
+        if fam is not None:
+            payload["familiarity"] = fam
         self._emit(payload)
 
     def emit_lan_host_left(self, event: LANHostLeftEvent) -> None:
+        self._observe_left(
+            familiarity_key("lan", mac=event.mac), event.seen_for_seconds,
+        )
         if self._sink is None and self._observer is None:
             return
         payload: dict[str, Any] = {
@@ -613,6 +689,37 @@ class EventLogger:
         raise into the logger; exceptions from it are swallowed.
         """
         self._observer = observer
+
+    def set_familiarity_store(
+        self, store: "FamiliarityStore | None",
+    ) -> None:
+        """Wire (or clear) the familiarity/baseline store. When set, seen
+        events are classified against it and left events fold their dwell.
+        The CLI owns the store's lifecycle (construct + periodic/shutdown
+        flush); the logger only observes."""
+        self._familiarity = store
+
+    def _classify_seen(self, key: str | None, kind: str, now: datetime) -> str | None:
+        """Classify a seen sighting against the store (None when no store).
+        Runs even when the logger has no sink so the baseline keeps building
+        across logging-disabled sessions; the returned class is only stamped
+        onto the payload when something is actually consuming events."""
+        store = self._familiarity
+        if store is None:
+            return None
+        try:
+            return store.observe_seen(key, kind, now)
+        except Exception:  # the store must never break logging
+            return None
+
+    def _observe_left(self, key: str | None, dwell_s: float) -> None:
+        store = self._familiarity
+        if store is None or key is None:
+            return
+        try:
+            store.observe_left(key, dwell_s)
+        except Exception:
+            pass
 
     # ---------- lifecycle ----------
 

@@ -289,6 +289,29 @@ def test_sink_seals_pushable_event_and_advances_seq(tmp_path):
     assert load_state(path).last_seq == 1
 
 
+def test_sink_strips_familiarity_before_sealing(tmp_path):
+    # `familiarity` is a desktop-local field; the sealed copy the phone
+    # decrypts must not carry it (mobile runs strict validate_event, which
+    # rejects unknown keys). The original dict is left untouched.
+    path = tmp_path / "companion.json"
+    st = PairingState.generate("https://r.example")
+    st.save(path)
+    tx = _FakeTransport(200)
+    client = RelayClient(st.relay_url, st.channel, st.relay_token(), transport=tx)
+    sink = CompanionSink(st, client, PushPolicy(), state_path=path)
+
+    payload = _lan_seen()
+    payload["familiarity"] = "first_time"
+    assert sink.offer(payload) is True
+    env, _cat, _summary = client._queue[0]
+    sealed = open_envelope(st.key_bytes(), env)
+    assert "familiarity" not in sealed
+    # Everything else survives.
+    assert sealed["mac"] == payload["mac"]
+    # Caller's dict is not mutated.
+    assert payload["familiarity"] == "first_time"
+
+
 def test_sink_declines_non_pushable(tmp_path):
     path = tmp_path / "companion.json"
     st = PairingState.generate("https://r.example")

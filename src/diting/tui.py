@@ -50,6 +50,7 @@ from .environment import (
     RFStirEvent,
 )
 from .event_log import EventLogger
+from .familiarity import FamiliarityStore
 from .events import (
     BLEDeviceLeftEvent,
     BLEDeviceSeenEvent,
@@ -6606,6 +6607,7 @@ class DitingApp(App):
         notify: bool = False,
         lan_active_probe: bool = True,
         lan_upnp_fetch: bool = True,
+        familiarity_store_path: str | None = None,
     ) -> None:
         super().__init__()
         self._backend = backend
@@ -6629,6 +6631,20 @@ class DitingApp(App):
             EventLogger.to_path(event_log_path) if event_log_path
             else EventLogger.disabled()
         )
+        # Familiarity / baseline store. Built only when a path is wired
+        # (the CLI passes the default; tests + the snapshot harness leave
+        # it None so they touch no on-disk state). When present, seen
+        # events get classified against the persisted history and left
+        # events fold their dwell. Always-on in real runs — the baseline
+        # has to keep accruing for later phases regardless of --log.
+        self._familiarity_store: FamiliarityStore | None = None
+        if familiarity_store_path:
+            try:
+                self._familiarity_store = FamiliarityStore(familiarity_store_path)
+                self._event_logger.set_familiarity_store(self._familiarity_store)
+            except Exception:
+                self._familiarity_store = None
+        self._familiarity_flush_timer = None
         # Companion forwarding (opt-in via `diting companion pair`). When
         # paired, the sink taps the logger's observer so it forwards the
         # exact dict each JSONL line carries; unpaired, this is None and
@@ -6880,6 +6896,18 @@ class DitingApp(App):
             self._companion_flush_timer = self.set_interval(
                 3.0, self._companion_flush,
             )
+        # Persist the familiarity baseline periodically so a hard kill
+        # (no on_unmount) loses at most one window of accrual.
+        if self._familiarity_store is not None:
+            self._familiarity_flush_timer = self.set_interval(
+                60.0, self._familiarity_flush,
+            )
+
+    async def _familiarity_flush(self) -> None:
+        store = self._familiarity_store
+        if store is None:
+            return
+        await asyncio.to_thread(store.flush)
 
     def action_show_companion(self) -> None:
         self.push_screen(CompanionScreen())
@@ -6922,6 +6950,12 @@ class DitingApp(App):
         # when logging is disabled (close() on a no-op logger is
         # idempotent).
         self._event_logger.close()
+        # Final familiarity flush so a clean quit isn't lossy.
+        if self._familiarity_store is not None:
+            try:
+                self._familiarity_store.flush()
+            except Exception:
+                pass
         # Close the Bonjour browser if it was started. Joins the
         # zeroconf background threads so the process exits cleanly.
         if self._mdns_poller is not None:

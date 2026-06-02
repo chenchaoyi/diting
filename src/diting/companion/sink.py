@@ -21,6 +21,12 @@ from .push_summary import push_summary
 from .relay_client import RelayClient
 from .state import PairingState
 
+# Desktop-local fields that must NOT cross the companion wire. The mobile
+# side runs strict `validate_event`, which rejects unknown keys; until a
+# coordinated companion-protocol version carries them, strip here. The
+# JSONL log keeps them — only the sealed copy is pruned.
+_LOCAL_ONLY_FIELDS = frozenset({"familiarity"})
+
 
 class CompanionSink:
     def __init__(
@@ -48,6 +54,10 @@ class CompanionSink:
         sealed and enqueued, False if the policy declined it."""
         if not self._policy.should_push(payload, self._monotonic()):
             return False
+        if any(k in payload for k in _LOCAL_ONLY_FIELDS):
+            payload = {
+                k: v for k, v in payload.items() if k not in _LOCAL_ONLY_FIELDS
+            }
         seq = self._state.next_seq(self._state_path)
         envelope = seal_event(
             self._key,
