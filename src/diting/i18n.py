@@ -429,6 +429,13 @@ _ZH: dict[str, str] = {
     "{n} devices already present": "已在场 {n} 个设备",
     "enter to expand": "回车展开",
     "enter to collapse": "回车收起",
+    # add-insight-events: live insight one-liners (insights.format_insight_summary)
+    "{n} unfamiliar devices appeared together": "{n} 个陌生设备同时出现",
+    "Wi-Fi dropped {n} times recently": "Wi-Fi 最近断开 {n} 次",
+    "Packet loss observed (peak {pct}%)": "观察到丢包（峰值 {pct}%）",
+    "Latency spikes without loss — likely jitter": "延迟抖动但无丢包 —— 可能是抖动",
+    "AP band-steering: {n} roams, mostly band switches": "AP 频段引导：{n} 次漫游，多为频段切换",
+    "INSIGHT": "洞察",
     # Service-category labels for ble.py.service_category() return values
     # are already translated below in the BLE table area; nothing extra
     # needed here.

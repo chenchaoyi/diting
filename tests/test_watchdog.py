@@ -329,3 +329,54 @@ def test_macos_notify_invokes_helper_notify_subcommand(monkeypatch) -> None:
     assert "Latency spike on gw: 240.5 ms" in argv
     # And no osascript fallback path is hit.
     assert "/usr/bin/osascript" not in argv
+
+
+# ---------- insight notifications (add-insight-events) ----------
+
+def test_maybe_notify_fires_for_warn_insight() -> None:
+    cfg = WatchdogConfig()
+    clock = SilenceClock(window_s=60)
+    notifier = _RecordingNotifier()
+    asyncio.run(maybe_notify(
+        {"type": "insight", "code": "repeated_disassociates",
+         "severity": "warn", "summary": "Wi-Fi dropped 3 times recently"},
+        target="repeated_disassociates",
+        clock=clock, config=cfg, notifier=notifier,
+    ))
+    assert len(notifier.calls) == 1
+    _, message = notifier.calls[0]
+    assert message == "Wi-Fi dropped 3 times recently"
+
+
+def test_maybe_notify_skips_info_insight() -> None:
+    cfg = WatchdogConfig()
+    clock = SilenceClock(window_s=60)
+    notifier = _RecordingNotifier()
+    asyncio.run(maybe_notify(
+        {"type": "insight", "code": "band_steering", "severity": "info",
+         "summary": "AP band-steering"},
+        target="band_steering",
+        clock=clock, config=cfg, notifier=notifier,
+    ))
+    assert notifier.calls == []
+
+
+def test_insight_silence_window_keyed_per_code() -> None:
+    cfg = WatchdogConfig()
+    clock = SilenceClock(window_s=60)
+    notifier = _RecordingNotifier()
+
+    async def fire(code: str) -> None:
+        await maybe_notify(
+            {"type": "insight", "code": code, "severity": "warn",
+             "summary": code},
+            target=code, clock=clock, config=cfg, notifier=notifier,
+        )
+
+    async def run() -> None:
+        await fire("loss_observed")
+        await fire("loss_observed")          # same code → debounced
+        await fire("repeated_disassociates")  # distinct code → fires
+
+    asyncio.run(run())
+    assert [m for _, m in notifier.calls] == ["loss_observed", "repeated_disassociates"]

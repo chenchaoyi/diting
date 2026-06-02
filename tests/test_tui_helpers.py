@@ -3778,3 +3778,31 @@ def test_events_screen_census_single_device_not_folded():
     folded = _fold_at_launch_census(_group_consecutive_ble_seen([ev]))
     assert not any(isinstance(item, _CensusFold) for item in folded)
     assert folded[0][0] is ev
+
+
+def test_event_format_line_insight_renders_summary():
+    from datetime import datetime, timezone
+
+    from diting.events import InsightEvent
+
+    ev = InsightEvent(
+        timestamp=datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc),
+        code="new_device_cluster", severity="note", detail={"count": 3},
+    )
+    text = _event_format_line(ev, NetworkInventory()).plain
+    assert "[INSIGHT]" in text
+    assert "3" in text  # the cluster count surfaces in the summary
+
+
+def test_event_format_line_insight_warn_uses_summary_for_loss():
+    from datetime import datetime, timezone
+
+    from diting.events import InsightEvent
+
+    ev = InsightEvent(
+        timestamp=datetime(2026, 6, 2, 12, 0, tzinfo=timezone.utc),
+        code="loss_observed", severity="warn", detail={"peak_loss_pct": 30.0},
+    )
+    text = _event_format_line(ev, NetworkInventory()).plain
+    assert "[INSIGHT]" in text
+    assert "30" in text
