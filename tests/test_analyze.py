@@ -909,3 +909,56 @@ def test_build_llm_prompt_pre_scene_aware_falls_back_to_general_priors():
     assert prompt.startswith("[Scene context]")
     assert "pre-scene-aware capture" in prompt
     assert "general priors" in prompt
+
+
+# ---------- --for-llm bundle writer (tmp_path-safe) ----------
+#
+# These exercise the CLI bundle writer. The default outdir is
+# `./diting-llm-<ts>/` in the CURRENT directory, so every test here either
+# passes an explicit tmp_path outdir or `monkeypatch.chdir(tmp_path)` first
+# — a bundle must NEVER be written into the repo working tree (a stray
+# manual run once did, and nearly got committed; .gitignore now blocks it,
+# and these tests pin the hygiene).
+
+from diting import cli  # noqa: E402
+
+
+def _write_min_log(tmp_path):
+    log = tmp_path / "diting-test.jsonl"
+    events = [
+        _ev("session_meta", _t(0), scene="home", scene_source="default"),
+        _ev("roam", _t(1), previous_bssid="aa:bb:cc:dd:ee:01",
+            new_bssid="aa:bb:cc:dd:ee:02", ssid="net"),
+        _ev("latency_spike", _t(2), target="router",
+            target_ip="192.168.1.1", rtt_ms=180.0, loss_pct=0.0),
+    ]
+    log.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    return log
+
+
+def test_for_llm_writes_report_markdown(tmp_path, capsys):
+    out = tmp_path / "bundle"
+    cli._run_analyze([str(_write_min_log(tmp_path)), "--for-llm", str(out)])
+    body = (out / "report.md").read_text()
+    assert body.startswith("# diting analysis report")
+
+
+def test_for_llm_writes_prompt_txt(tmp_path, capsys):
+    out = tmp_path / "bundle"
+    cli._run_analyze([str(_write_min_log(tmp_path)), "--for-llm", str(out)])
+    assert (out / "prompt.txt").read_text().strip()
+
+
+def test_for_llm_default_outdir_is_cwd_relative_not_repo(
+    tmp_path, monkeypatch, capsys,
+):
+    """No explicit outdir → a `diting-llm-<ts>/` dir under the CURRENT
+    working dir. Chdir to tmp_path so it lands there (proving the
+    cwd-relative default) and the repo tree stays clean."""
+    log = _write_min_log(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    cli._run_analyze([str(log), "--for-llm"])
+    bundles = list(tmp_path.glob("diting-llm-*"))
+    assert len(bundles) == 1
+    assert (bundles[0] / "report.md").exists()
+    assert (bundles[0] / "prompt.txt").exists()
