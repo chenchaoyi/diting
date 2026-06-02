@@ -17,6 +17,13 @@ from .errors import ProtocolError
 
 _TS_RE = re.compile(TS_PATTERN)
 
+# Desktop-local fields the JSONL log carries but that are NOT part of the
+# companion-protocol wire vocabulary. The sink strips these before sealing,
+# and the fixture generator excludes them, so a strict consumer (mobile
+# `validate_event`) never sees a key it would reject. Carrying any of these
+# across the wire is a deferred, version-coordinated change.
+LOCAL_ONLY_FIELDS: frozenset[str] = frozenset({"familiarity", "salience"})
+
 
 def _tag_ok(value: Any, tag: str) -> bool:
     if tag == "str":

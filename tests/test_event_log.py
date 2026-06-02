@@ -830,3 +830,49 @@ def test_roam_carries_ap_familiarity_on_new_bssid(tmp_path):
     assert row["familiarity"] == FIRST_TIME
     # Keyed on the lower-cased AP roamed TO.
     assert store.record("ap:1c:28:af:5e:a7:14") is not None
+
+
+# ------------------------------------------------------------------
+# Salience stamping (add-event-salience)
+# ------------------------------------------------------------------
+
+def test_emit_stamps_salience_on_scored_event(tmp_path):
+    """A loss_burst is intrinsically high-salience; the JSONL carries it."""
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_loss_burst(LossBurstEvent(
+        timestamp=datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc),
+        target="gateway", target_ip="192.168.1.1", loss_pct=20.0,
+        lost_in_window=4,
+    ))
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert row["salience"] == "high"
+
+
+def test_emit_omits_salience_on_unscored_event(tmp_path):
+    """session_meta is not scored → no salience key."""
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_session_meta(scene="home", scene_source="default")
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert "salience" not in row
+
+
+def test_first_time_ble_seen_salience_reflects_familiarity(tmp_path):
+    """The salience stamp reads the familiarity stamped just upstream in the
+    same emit — a first-time close device is high."""
+    path = tmp_path / "events.jsonl"
+    store = FamiliarityStore(tmp_path / "fam.json")
+    logger = EventLogger.to_path(str(path))
+    logger.set_familiarity_store(store)
+    logger.emit_ble_device_seen(BLEDeviceSeenEvent(
+        timestamp=datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc),
+        identifier="ROT-1", name="band", vendor="Huami", rssi_dbm=-50,
+        service_categories=(), vendor_id=0x0157, manufacturer_hex="0157a1b2c3d4",
+    ))
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert row["familiarity"] == "first_time"
+    assert row["salience"] == "high"

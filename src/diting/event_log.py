@@ -40,6 +40,7 @@ from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import IO, Any, Callable
 
 from .familiarity import FamiliarityStore, familiarity_key
+from .salience import salience as _salience
 from .events import (
     BLEDeviceLeftEvent,
     BLEDeviceSeenEvent,
@@ -741,6 +742,14 @@ class EventLogger:
     def _emit(self, payload: dict[str, Any]) -> None:
         """Tap the observer (best-effort) then write to the sink if any.
         Every emitted payload flows through here."""
+        # Stamp the salience tier centrally, downstream of the per-event
+        # `familiarity` stamp — so both the observer tap and the JSONL writer
+        # see the same ranked dict, computed once. Omitted (None) for types the
+        # scorer abstains on, keeping the key set stable.
+        if "salience" not in payload:
+            tier = _salience(payload)
+            if tier is not None:
+                payload["salience"] = tier
         if self._observer is not None:
             try:
                 self._observer(dict(payload))

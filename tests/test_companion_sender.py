@@ -176,6 +176,40 @@ def test_policy_rf_stir_confidence_gate():
     assert p.should_push(high, now=2.0) is True
 
 
+def test_policy_salience_gate_suppresses_noise():
+    # A habitual arrival stamped `noise` is dropped even though its type is
+    # push-worthy — this is the flood fix.
+    p = PushPolicy(min_salience="low")
+    ev = _lan_seen()
+    ev["salience"] = "noise"
+    assert p.should_push(ev, now=1.0) is False
+
+
+def test_policy_salience_gate_passes_when_field_absent():
+    # No salience field (no familiarity store, or pre-Phase-2 log) → no-op
+    # pass-through, preserving prior behaviour.
+    p = PushPolicy(min_salience="notable")
+    assert p.should_push(_lan_seen(), now=1.0) is True
+
+
+def test_policy_salience_threshold_override():
+    p = PushPolicy(min_salience="notable")
+    low = _lan_seen("aa:aa:aa:aa:aa:aa")
+    low["salience"] = "low"
+    notable = _lan_seen("bb:bb:bb:bb:bb:bb")
+    notable["salience"] = "notable"
+    assert p.should_push(low, now=1.0) is False     # below the raised bar
+    assert p.should_push(notable, now=1.0) is True  # meets it
+
+
+def test_policy_min_salience_reads_env(monkeypatch):
+    monkeypatch.setenv("DITING_PUSH_MIN_SALIENCE", "notable")
+    p = PushPolicy()
+    ev = _lan_seen()
+    ev["salience"] = "low"
+    assert p.should_push(ev, now=1.0) is False
+
+
 # ---------- relay client ----------
 
 class _FakeTransport:
@@ -302,14 +336,17 @@ def test_sink_strips_familiarity_before_sealing(tmp_path):
 
     payload = _lan_seen()
     payload["familiarity"] = "first_time"
+    payload["salience"] = "notable"
     assert sink.offer(payload) is True
     env, _cat, _summary = client._queue[0]
     sealed = open_envelope(st.key_bytes(), env)
     assert "familiarity" not in sealed
+    assert "salience" not in sealed
     # Everything else survives.
     assert sealed["mac"] == payload["mac"]
     # Caller's dict is not mutated.
     assert payload["familiarity"] == "first_time"
+    assert payload["salience"] == "notable"
 
 
 def test_sink_declines_non_pushable(tmp_path):
