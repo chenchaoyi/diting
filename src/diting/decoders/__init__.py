@@ -81,3 +81,6 @@ from . import apple_continuity as _apple_continuity  # noqa: E402, F401
 from . import microsoft_cdp as _microsoft_cdp  # noqa: E402, F401
 from . import ruuvi as _ruuvi  # noqa: E402, F401
 from . import xiaomi as _xiaomi  # noqa: E402, F401
+# Registered last: a generic recogniser that fills `mfg.*` for any vendor
+# WITHOUT a dedicated decoder above (it skips their company-ids).
+from . import manufacturer as _manufacturer  # noqa: E402, F401
