@@ -55,6 +55,9 @@ class RoamEvent:
     new_channel: int | None
     previous_ssid: str | None = None
     new_ssid: str | None = None
+    # Familiarity of the AP roamed TO (ap:<new_bssid>), stamped by the
+    # EventLogger when a store is wired; serialised None-omitted.
+    familiarity: str | None = None
 
 
 Event = ConnectionUpdate | ScanUpdate | RoamEvent

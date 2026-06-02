@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import i18n
+from . import familiarity as _familiarity
 from ._watchdog import SilenceClock, WatchdogConfig, maybe_notify
 from .event_log import EventLogger
 from .environment import (
@@ -293,6 +294,16 @@ async def _run_monitor(
         companion_sink = None
     if companion_sink is not None:
         logger.set_observer(companion_sink.offer)
+    # Familiarity / baseline store — classifies seen events against the
+    # persisted history. Always-on so the baseline accrues across sessions.
+    familiarity_store = None
+    try:
+        familiarity_store = _familiarity.FamiliarityStore(
+            _familiarity.default_store_path(),
+        )
+        logger.set_familiarity_store(familiarity_store)
+    except Exception:
+        familiarity_store = None
     # Session header — must be the first line emitted, byte-identical
     # to the TUI's --log path so downstream readers don't branch on
     # source. Scene was resolved by main() before dispatching; we
@@ -493,6 +504,8 @@ async def _run_monitor(
                 await flush_task
             except asyncio.CancelledError:
                 pass
+        if familiarity_store is not None:
+            familiarity_store.flush()
         logger.close()
 
 
@@ -1338,6 +1351,7 @@ def _run_tui(
         notify=notify,
         lan_active_probe=lan_active_probe,
         lan_upnp_fetch=lan_upnp_fetch,
+        familiarity_store_path=str(_familiarity.default_store_path()),
     ).run()
     # Post-exit hint pointing at the analyze command. Prints AFTER
     # the alt-screen tears down so the user sees it on the same

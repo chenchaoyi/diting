@@ -1,0 +1,11 @@
+{
+  "_comment": "Public template documenting the familiarity / baseline store shape. The real file (diting-familiarity.json) is accrued automatically as diting runs and is git-ignored — it holds real BSSIDs / MACs / BLE manufacturer payloads and must never be committed. Do not fill this in by hand; it is machine-maintained. Top-level keys are stable per-entity identities: ble:<manufacturer_hex> (or ble:vn:<vendor_id>/<name> when no usable payload), ap:<bssid>, lan:<mac>, bonjour:<service_type/name>. Override the location via DITING_FAMILIARITY_STORE.",
+  "ble:<manufacturer_hex>": {
+    "kind": "ble",
+    "first_seen_ever": "<iso-8601 local time with offset>",
+    "last_seen": "<iso-8601 local time with offset>",
+    "total_sightings": 0,
+    "days": ["<YYYY-MM-DD>"],
+    "dwell_ewma_s": null
+  }
+}

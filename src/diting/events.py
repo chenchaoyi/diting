@@ -104,6 +104,13 @@ class BLEDeviceSeenEvent:
     device_type: str | None = None     # Continuity advert type (Find My target, …)
     device_class: str | None = None    # Nearby-Info device class (iPhone, Mac, …)
     at_launch: bool = False            # fired inside the poller's startup warmup
+    # In-memory only (NOT serialised): the raw fields the familiarity store
+    # needs to derive a stable per-device key (payload, not the rotating id).
+    vendor_id: int | None = None
+    manufacturer_hex: str | None = None
+    # Familiarity class stamped by the EventLogger when a store is wired;
+    # serialised (None-omitted), stripped from the companion wire.
+    familiarity: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +124,10 @@ class BLEDeviceLeftEvent:
     seen_for_seconds: float
     device_type: str | None = None
     device_class: str | None = None
+    # In-memory only: lets the familiarity store fold this dwell under the
+    # same payload key the seen event used.
+    vendor_id: int | None = None
+    manufacturer_hex: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +139,7 @@ class BonjourServiceSeenEvent:
     category: str | None
     vendor: str | None
     addresses: tuple[str, ...]
+    familiarity: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +162,7 @@ class LANHostSeenEvent:
     hostname: str | None
     bonjour_name: str | None
     is_randomised_mac: bool
+    familiarity: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

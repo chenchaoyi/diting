@@ -682,3 +682,151 @@ def test_session_meta_accepts_null_ssid_and_gateway(tmp_path):
     rows = _read_jsonl(path)
     assert rows[0]["ssid"] is None
     assert rows[0]["gateway_ip"] is None
+
+
+# ------------------------------------------------------------------
+# Familiarity / baseline integration (add-familiarity-baseline)
+# ------------------------------------------------------------------
+
+from diting.events import (  # noqa: E402
+    BLEDeviceLeftEvent,
+    BLEDeviceSeenEvent,
+    BonjourServiceSeenEvent,
+    LANHostSeenEvent,
+)
+from diting.familiarity import (  # noqa: E402
+    FIRST_TIME,
+    HABITUAL,
+    FamiliarityStore,
+)
+
+
+def _ble_seen(ts, *, ident="ROT-1", vendor_id=0x0157, mfg="0157a1b2c3d4"):
+    return BLEDeviceSeenEvent(
+        timestamp=ts, identifier=ident, name="band", vendor="Huami",
+        rssi_dbm=-60, service_categories=(),
+        vendor_id=vendor_id, manufacturer_hex=mfg,
+    )
+
+
+def test_ble_seen_omits_familiarity_without_a_store(tmp_path):
+    """No store wired → the field never appears, JSONL stays byte-stable
+    against pre-familiarity consumers."""
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_ble_device_seen(
+        _ble_seen(datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc)),
+    )
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert "familiarity" not in row
+
+
+def test_ble_seen_first_sighting_is_first_time(tmp_path):
+    path = tmp_path / "events.jsonl"
+    store = FamiliarityStore(tmp_path / "fam.json")
+    logger = EventLogger.to_path(str(path))
+    logger.set_familiarity_store(store)
+    logger.emit_ble_device_seen(
+        _ble_seen(datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc)),
+    )
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert row["familiarity"] == FIRST_TIME
+
+
+def test_ble_familiarity_keys_on_payload_not_rotating_id(tmp_path):
+    """The same physical device under a fresh rotating identifier each day
+    must be recognised — keyed on the manufacturer payload, classified
+    habitual once seen on enough distinct days."""
+    path = tmp_path / "events.jsonl"
+    store = FamiliarityStore(tmp_path / "fam.json")
+    logger = EventLogger.to_path(str(path))
+    logger.set_familiarity_store(store)
+    for day, ident in enumerate(("ROT-A", "ROT-B", "ROT-C", "ROT-D"), start=1):
+        logger.emit_ble_device_seen(_ble_seen(
+            datetime(2026, 6, day, 9, 0, tzinfo=timezone.utc),
+            ident=ident,  # different rotating UUID every day
+        ))
+    logger.close()
+    classes = [r["familiarity"] for r in _read_jsonl(path)]
+    assert classes[0] == FIRST_TIME
+    # By the 4th distinct day (>= _HABITUAL_DAYS) the device is habitual.
+    assert classes[-1] == HABITUAL
+
+
+def test_ble_left_folds_dwell_under_payload_key(tmp_path):
+    store = FamiliarityStore(tmp_path / "fam.json")
+    logger = EventLogger.disabled()
+    logger.set_familiarity_store(store)
+    ts = datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc)
+    logger.emit_ble_device_seen(_ble_seen(ts))
+    logger.emit_ble_device_left(BLEDeviceLeftEvent(
+        timestamp=ts, identifier="ROT-1", name="band", vendor="Huami",
+        last_rssi_dbm=-60, service_categories=(), seen_for_seconds=42.0,
+        vendor_id=0x0157, manufacturer_hex="0157a1b2c3d4",
+    ))
+    rec = store.record("ble:0157a1b2c3d4")
+    assert rec is not None
+    assert rec.dwell_ewma_s == 42.0
+
+
+def test_baseline_accrues_even_when_logging_disabled(tmp_path):
+    """A disabled logger still feeds the store so the baseline keeps
+    building across --log-off sessions."""
+    store = FamiliarityStore(tmp_path / "fam.json")
+    logger = EventLogger.disabled()
+    logger.set_familiarity_store(store)
+    logger.emit_ble_device_seen(
+        _ble_seen(datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc)),
+    )
+    assert store.record("ble:0157a1b2c3d4") is not None
+
+
+def test_lan_seen_carries_familiarity_keyed_on_mac(tmp_path):
+    path = tmp_path / "events.jsonl"
+    store = FamiliarityStore(tmp_path / "fam.json")
+    logger = EventLogger.to_path(str(path))
+    logger.set_familiarity_store(store)
+    logger.emit_lan_host_seen(LANHostSeenEvent(
+        timestamp=datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc),
+        mac="DE:AD:BE:EF:00:01", ip="192.168.1.5", vendor="Apple, Inc.",
+        hostname=None, bonjour_name=None, is_randomised_mac=False,
+    ))
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert row["familiarity"] == FIRST_TIME
+    assert store.record("lan:de:ad:be:ef:00:01") is not None
+
+
+def test_bonjour_seen_carries_familiarity(tmp_path):
+    path = tmp_path / "events.jsonl"
+    store = FamiliarityStore(tmp_path / "fam.json")
+    logger = EventLogger.to_path(str(path))
+    logger.set_familiarity_store(store)
+    logger.emit_bonjour_service_seen(BonjourServiceSeenEvent(
+        timestamp=datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc),
+        service_type="_airplay._tcp", name="Living Room", host=None,
+        category="media", vendor=None, addresses=("192.168.1.9",),
+    ))
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert row["familiarity"] == FIRST_TIME
+
+
+def test_roam_carries_ap_familiarity_on_new_bssid(tmp_path):
+    path = tmp_path / "events.jsonl"
+    store = FamiliarityStore(tmp_path / "fam.json")
+    logger = EventLogger.to_path(str(path))
+    logger.set_familiarity_store(store)
+    ev = RoamEvent(
+        timestamp=datetime(2026, 6, 1, 9, 0, tzinfo=timezone.utc),
+        previous_bssid="40:fe:95:8a:3c:58", previous_channel=1,
+        new_bssid="1C:28:AF:5E:A7:14", new_channel=161,
+    )
+    logger.emit_roam(ev)
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert row["familiarity"] == FIRST_TIME
+    # Keyed on the lower-cased AP roamed TO.
+    assert store.record("ap:1c:28:af:5e:a7:14") is not None
