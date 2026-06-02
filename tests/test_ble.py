@@ -2172,3 +2172,88 @@ def test_cluster_representative_id_survives_when_first_member_evicts():
         "cluster left event carries the cluster's representative ID, "
         "not the most-recently-evicted member"
     )
+
+
+# ------------------------------------------------------------------
+# 5b. Payload-equality rotation fusion (v1.11.x)
+# ------------------------------------------------------------------
+
+def _mfg_dev(ident, *, vendor_id, mfg_hex, rssi, name=None):
+    now = datetime(2026, 6, 2, 12, 0, 0, tzinfo=timezone.utc)
+    return BLEDevice(
+        identifier=ident, name=name,
+        vendor=lookup_vendor(vendor_id, VENDORS), vendor_id=vendor_id,
+        services=(), rssi_dbm=rssi, is_connectable=False,
+        first_seen=now, last_seen=now, ad_count=1, manufacturer_hex=mfg_hex,
+    )
+
+
+_HUAMI = 0x038F
+_HUAMI_PAY_A = "8f03241134633466103041a201152629787157010302"
+_HUAMI_PAY_B = "8f03271134644359103041a201152629bbb857010302"
+
+
+def test_payload_fuses_identical_payload_ignores_rssi():
+    """A rotation keeps its manufacturer payload; even a 40 dB RSSI gap
+    (past the ±10 window) fuses, where the RSSI heuristic would not."""
+    d = _mfg_dev("rot", vendor_id=_HUAMI, mfg_hex=_HUAMI_PAY_A, rssi=-90)
+    assert ble._payload_fuses(
+        d, anchor_vendor_id=_HUAMI, anchor_name=None,
+        anchor_mfg_hex=_HUAMI_PAY_A, active_members=1,
+    ) is True
+
+
+def test_payload_fuses_different_payload_does_not_fuse():
+    """Different non-Apple devices carry different payloads — never merge."""
+    d = _mfg_dev("other", vendor_id=_HUAMI, mfg_hex=_HUAMI_PAY_B, rssi=-50)
+    assert ble._payload_fuses(
+        d, anchor_vendor_id=_HUAMI, anchor_name=None,
+        anchor_mfg_hex=_HUAMI_PAY_A, active_members=1,
+    ) is False
+
+
+def test_payload_fuses_excludes_apple():
+    """Apple Continuity status payloads are shared across many devices —
+    payload fusion must NOT apply to Apple or it over-merges."""
+    pay = "4c00120200010000"
+    d = _mfg_dev("ap", vendor_id=0x004C, mfg_hex=pay, rssi=-90)
+    assert ble._payload_fuses(
+        d, anchor_vendor_id=0x004C, anchor_name=None,
+        anchor_mfg_hex=pay, active_members=1,
+    ) is False
+
+
+def test_payload_fuses_respects_active_member_cap():
+    """A payload shared by more than the cap of concurrently-active members
+    is treated as generic and not fused (over-merge backstop)."""
+    d = _mfg_dev("rot", vendor_id=_HUAMI, mfg_hex=_HUAMI_PAY_A, rssi=-60)
+    assert ble._payload_fuses(
+        d, anchor_vendor_id=_HUAMI, anchor_name=None,
+        anchor_mfg_hex=_HUAMI_PAY_A, active_members=6,
+    ) is False
+
+
+def test_payload_fuses_skips_trivial_payload():
+    """Header-only / near-empty payloads (≤ cid prefix) don't fuse."""
+    d = _mfg_dev("hdr", vendor_id=_HUAMI, mfg_hex="8f03", rssi=-60)
+    assert ble._payload_fuses(
+        d, anchor_vendor_id=_HUAMI, anchor_name=None,
+        anchor_mfg_hex="8f03", active_members=1,
+    ) is False
+
+
+def test_assign_to_cluster_fuses_rotation_by_payload_across_rssi_gap():
+    """End-to-end: a rotated identifier with the same payload but a signal
+    well outside the RSSI window joins the existing cluster (no spurious
+    seen/left), while a different payload starts a fresh cluster."""
+    poller = BLEPoller("/fake")
+    d1 = _mfg_dev("uuid-1", vendor_id=_HUAMI, mfg_hex=_HUAMI_PAY_A, rssi=-50)
+    cid = poller._create_cluster("uuid-1", d1)
+    # Rotation: new UUID, same payload, RSSI drifted 40 dB.
+    d2 = _mfg_dev("uuid-2", vendor_id=_HUAMI, mfg_hex=_HUAMI_PAY_A, rssi=-90)
+    assert poller._assign_to_cluster(d2) == cid
+    # A genuinely different Huami device: different payload AND a signal
+    # outside the RSSI window, so neither the payload path nor the RSSI
+    # heuristic matches → a fresh cluster.
+    d3 = _mfg_dev("uuid-3", vendor_id=_HUAMI, mfg_hex=_HUAMI_PAY_B, rssi=-90)
+    assert poller._assign_to_cluster(d3) is None

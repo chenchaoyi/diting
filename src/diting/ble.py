@@ -1303,6 +1303,23 @@ def expire_devices(
 _RSSI_WINDOW_DB: int = 10
 _JACCARD_THRESHOLD: float = 0.5
 
+# Payload-equality rotation fusion (v1.11.x). A privacy-rotating device
+# keeps its manufacturer-data payload across MAC/UUID rotations, while the
+# rotation changes the RSSI enough to slip the window above — so two
+# adverts that share an identical, non-trivial manufacturer payload are the
+# SAME physical device regardless of signal. Verified empirically: for
+# Huami/Xiaomi (and every non-Apple vendor in real captures) a given payload
+# maps to ONE device. Apple is the sole exception — its Continuity status
+# frames are GENERIC (one payload broadcast by dozens of distinct devices),
+# so fusing on Apple payloads would merge real devices; Apple is excluded.
+# `_PAYLOAD_FUSE_MIN_HEXLEN` skips header-only / near-empty frames (the
+# 2-byte company-id prefix is 4 hex chars; require at least a 2-byte body).
+# `_PAYLOAD_FUSE_MAX_ACTIVE` is the over-merge backstop: a single rotating
+# device has ~1–2 concurrently-active rotations, so a payload shared by more
+# than this many ACTIVE members is treated as generic and not fused.
+_PAYLOAD_FUSE_MIN_HEXLEN: int = 8
+_PAYLOAD_FUSE_MAX_ACTIVE: int = 6
+
 # Advertising-device seens fired within this many seconds of the
 # poller's first tick are tagged `at_launch=True`, so the events modal
 # can fold the startup census (every device already in the room when
@@ -1354,6 +1371,42 @@ def _fingerprint_matches(
     if not union:
         return True
     return (len(inter) / len(union)) >= jaccard_threshold
+
+
+def _payload_fuses(
+    state: BLEDevice,
+    *,
+    anchor_vendor_id: int | None,
+    anchor_name: str | None,
+    anchor_mfg_hex: str | None,
+    active_members: int,
+    max_active: int = _PAYLOAD_FUSE_MAX_ACTIVE,
+) -> bool:
+    """Strong same-physical-device test for rotation fusion: an identical,
+    non-trivial manufacturer payload under the same (vendor, name).
+
+    Unlike `_fingerprint_matches`, this IGNORES RSSI — a rotation that
+    drifts the signal past the window still fuses, because the payload is
+    a stable per-device token. Excludes Apple (whose Continuity status
+    payloads are shared across many devices) and caps the active-member
+    count so a generic non-Apple payload can't snowball into one cluster.
+    """
+    if state.vendor_id is None and state.name is None:
+        return False
+    if state.vendor_id != anchor_vendor_id:
+        return False
+    if state.name != anchor_name:
+        return False
+    if state.vendor_id == _COMPANY_APPLE:
+        return False
+    h = state.manufacturer_hex
+    if not h or len(h) < _PAYLOAD_FUSE_MIN_HEXLEN:
+        return False
+    if anchor_mfg_hex is None or h != anchor_mfg_hex:
+        return False
+    if active_members >= max_active:
+        return False
+    return True
 
 
 def merge_for_display(
@@ -1472,6 +1525,9 @@ class _BLECluster:
     members: set[str]
     active_members: set[str]
     first_seen: datetime
+    # The anchor's manufacturer payload (schema-4+), used by the
+    # payload-equality rotation-fusion path. None for older schemas.
+    anchor_mfg_hex: str | None = None
 
 
 # ---------- poller ----------
@@ -1738,6 +1794,19 @@ class BLEPoller:
         if state.vendor_id is None and state.name is None:
             return None
         for cid, cluster in self._clusters.items():
+            # Strong path first: identical manufacturer payload = the same
+            # device rotated (RSSI-independent), so a rotation that drifted
+            # the signal past the window still fuses instead of firing a
+            # spurious seen/left pair. Falls back to the RSSI/services
+            # heuristic for vendors with no stable payload (or Apple).
+            if _payload_fuses(
+                state,
+                anchor_vendor_id=cluster.vendor_id,
+                anchor_name=cluster.name,
+                anchor_mfg_hex=cluster.anchor_mfg_hex,
+                active_members=len(cluster.active_members),
+            ):
+                return cid
             if _fingerprint_matches(
                 state,
                 anchor_vendor_id=cluster.vendor_id,
@@ -1766,6 +1835,7 @@ class BLEPoller:
             members={ident},
             active_members={ident},
             first_seen=dev.first_seen,
+            anchor_mfg_hex=dev.manufacturer_hex,
         )
         self._identifier_to_cluster[ident] = cid
         return cid
