@@ -602,3 +602,52 @@ def test_xiaomi_skips_malformed_hex():
     d = _dev(vendor_id=0x038F, manufacturer_hex="not-hex-bytes")
     out = decode_all(d)
     assert "xiaomi.cid" not in out
+
+
+# ----------------------------------------------------------------------
+# Generic manufacturer-data recogniser (long-tail vendors)
+# ----------------------------------------------------------------------
+
+def test_manufacturer_generic_surfaces_cid_and_body():
+    """A vendored advert with no dedicated decoder (e.g. Polar, cid
+    0x006B) yields mfg.cid + raw body, no invented semantics."""
+    # cid 0x006b little-endian = "6b00", then a 5-byte body.
+    d = _dev(vendor_id=0x006B, manufacturer_hex="6b00" "0102030405")
+    out = decode_all(d)
+    assert out["mfg.cid"] == "0x006b"
+    assert out["mfg.body_hex"] == "0102030405"
+    assert out["mfg.body_len"] == 5
+    # No device classification is fabricated from the company-id.
+    assert "device_type" not in out and "device_class" not in out
+
+
+def test_manufacturer_generic_surfaces_vendor_name_when_known():
+    from datetime import datetime, timezone
+    now = datetime(2026, 5, 9, 13, 0, 0, tzinfo=timezone.utc)
+    d = BLEDevice(
+        identifier="x", name=None, vendor="Telink Semiconductor (Taipei) Co. Ltd.",
+        vendor_id=0x0211, services=(), rssi_dbm=-70, is_connectable=True,
+        first_seen=now, last_seen=now, ad_count=1,
+        manufacturer_hex="1102" "aabbcc", service_data=(),
+    )
+    out = decode_all(d)
+    assert out["mfg.cid"] == "0x0211"
+    assert out["mfg.vendor"] == "Telink Semiconductor (Taipei) Co. Ltd."
+    assert out["mfg.body_hex"] == "aabbcc"
+
+
+def test_manufacturer_generic_skips_dedicated_cids():
+    """Vendors with a dedicated decoder don't also get a redundant mfg.* row."""
+    for cid, hexpfx in ((0x004C, "4c00"), (0x0006, "0600"), (0x038F, "8f03"), (0x0499, "9904")):
+        d = _dev(vendor_id=cid, manufacturer_hex=hexpfx + "0011")
+        out = decode_all(d)
+        assert "mfg.cid" not in out, f"cid 0x{cid:04x} should be skipped"
+
+
+def test_manufacturer_generic_abstains_without_or_on_short_mfg():
+    assert "mfg.cid" not in decode_all(_dev(vendor_id=0x006B, manufacturer_hex=None))
+    # Only the cid prefix survived (no body) → too short to be a frame.
+    assert "mfg.cid" not in decode_all(_dev(vendor_id=0x006B, manufacturer_hex="6b"))
+    # Header-only (cid prefix exactly) → recognised with empty body.
+    out = decode_all(_dev(vendor_id=0x006B, manufacturer_hex="6b00"))
+    assert out["mfg.cid"] == "0x006b" and out["mfg.body_len"] == 0

@@ -106,6 +106,7 @@
 | 内置 decoder 覆盖公开 spec 协议 | iBeacon: `test_ibeacon_canonical_decode`；Eddystone: `test_eddystone_url_canonical_decode`、`::test_eddystone_uid_decode`、`::test_eddystone_tlm_decode`、`::test_eddystone_eid_frame_recognised_but_not_decoded`；Apple Continuity: `test_nearby_info_canonical_short_form`、`::test_find_my_short_form_minimum_payload`、`::test_handoff_canonical_decode`、`::test_handoff_chained_with_nearby_info_decodes_both`；MS CDP: `test_ms_device_beacon_real_capture`、`::test_swift_pair_decodes_utf8_model_name`；Ruuvi: `test_ruuvi_format5_canonical_decode`；小米 / 华米: `test_xiaomi_canonical_decode_with_body`、`::test_xiaomi_short_frame_decodes_just_frame_byte`、`::test_xiaomi_skips_non_xiaomi_cid` |
 | 不为含义未稳定的 bit 编造语义 | (review-enforced — 内置 decoder 都只暴露 byte hex) |
 | Decoder 用识别字节做 gate | `test_decoders.py::test_ibeacon_skips_non_apple_cid`、`::test_nearby_info_skips_non_apple_cid`、`::test_eddystone_skips_non_feaa_service_data`、`::test_ms_device_beacon_skips_when_subtype_is_swift_pair`、`::test_ruuvi_skips_non_ruuvi_cid` |
+| 通用 `manufacturer` 识别器为长尾厂商呈现 cid/厂商/body；跳过已有专用 decoder 的 cid；缺失/过短时弃权；不编造 device_type | `test_decoders.py::test_manufacturer_generic_surfaces_cid_and_body`、`::test_manufacturer_generic_surfaces_vendor_name_when_known`、`::test_manufacturer_generic_skips_dedicated_cids`、`::test_manufacturer_generic_abstains_without_or_on_short_mfg` |
 
 ### `ble-detail-modal`
 
