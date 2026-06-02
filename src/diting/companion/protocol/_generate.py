@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from ..protocol import apns, auth, pairing
+from ..protocol.events_schema import LOCAL_ONLY_FIELDS as _LOCAL_ONLY_FIELDS
 from ..protocol.events_schema import build_json_schema
 from ..protocol.version import PROTOCOL_VERSION
 from ...event_log import EventLogger
@@ -167,6 +168,12 @@ def _emit_event_lines() -> list[str]:
     for i, line in enumerate(raw):
         obj = json.loads(line)
         obj["ts"] = _canon_ts(i)  # pin timestamp deterministically
+        # Drop desktop-local fields (familiarity / salience): the EventLogger
+        # stamps them onto the JSONL, but they are not part of the wire
+        # vocabulary the fixtures define — the sink strips them before sealing,
+        # so the golden fixtures must too.
+        for local_only in _LOCAL_ONLY_FIELDS:
+            obj.pop(local_only, None)
         if i == 0:  # session_meta: normalise environment-derived fields
             obj["diting_version"] = _FIXTURE_VERSION
             obj["hostname"] = _FIXTURE_HOSTNAME

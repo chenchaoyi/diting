@@ -19,13 +19,8 @@ from .protocol.apns import coarse_category
 from .push_policy import PushPolicy
 from .push_summary import push_summary
 from .relay_client import RelayClient
+from .protocol.events_schema import LOCAL_ONLY_FIELDS as _LOCAL_ONLY_FIELDS
 from .state import PairingState
-
-# Desktop-local fields that must NOT cross the companion wire. The mobile
-# side runs strict `validate_event`, which rejects unknown keys; until a
-# coordinated companion-protocol version carries them, strip here. The
-# JSONL log keeps them — only the sealed copy is pruned.
-_LOCAL_ONLY_FIELDS = frozenset({"familiarity"})
 
 
 class CompanionSink:
