@@ -10,6 +10,42 @@
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-06-03
+
+**事件设计智能层。** diting 不再把每条变化都当成等价的噪声，而是用四个叠加
+的层级回答「这值得你关注吗」——*熟悉吗？* →*有多显著？* →*值得呈现吗？*
+→*是否敌意？* 每一层都只用权威、难以伪造的信号（BLE 厂商 payload、BSSID、
+OUI/厂商、MAC、断连时序），绝不用用户可控的名字。全部桌面本地；本次发布没有
+新增任何跨 companion 线缆的内容。
+
+### Added
+
+- **熟悉度基线。** 一个持久、有界的存储（`diting-familiarity.json`，像抓包
+  一样 git-ignored）以稳定身份记录 diting 见过的每个实体——BLE 厂商 payload
+  （而非滚动 UUID）、AP BSSID、LAN MAC、Bonjour 服务——并把每个 `seen` 事件
+  分类为 `first_time` / `occasional` / `habitual` / `returning`。seen 事件与
+  `roam` 在 JSONL 日志中带可选 `familiarity` 字段。
+- **显著性评分 + 更安静的手机。** 每个事件被排为 `noise` / `low` /
+  `notable` / `high`，按熟悉度与事件类型、信号强度加权。companion 推送现在按
+  显著性把门：你自己的常见设备再次出现得 `noise`、不再刷屏，而真正的新来者和
+  异常仍能送达。用 `DITING_PUSH_MIN_SALIENCE`（默认 `low`）调节下限。
+- **实时洞察。** 一个实时引擎合成「有价值的变化」事件——`new_device_cluster`
+  （多个陌生设备同时到达）以及把离线分析器启发式实时化的版本
+  （`repeated_disassociates`、`loss_observed`、`latency_without_loss`、
+  `band_steering`）。它们以 `[INSIGHT]` 行出现在事件视图、JSONL 日志中，并对
+  note/warn 级别弹出 macOS 通知。
+- **威胁检测。** 一个防御性安全层把敌意环境标为 `[THREAT]` 行（并始终通知）：
+  `evil_twin`（你落到同一 SSID 但不同 OUI 厂商的 AP）、`deauth_storm`（紧凑的
+  断连突增——从关联状态推断，因为 CoreWLAN 不暴露 802.11 帧）、`follows_you`
+  （一个陌生 BLE 设备跨网络切换一直跟着你）。
+
+### Notes
+
+- 洞察与威胁目前是桌面本地的；转发到配对手机是未来的 companion-protocol 变更。
+  `security_downgrade` 检测出于同样原因推迟（它需要连接加密方式上线缆）。
+- 1.10.0–1.12.0 的 CHANGELOG 条目在发布时未记录；这些请见 Git 历史与 GitHub
+  Releases。
+
 ## [1.9.1] — 2026-05-30
 
 Patch release。**修复 CN 网络下的安装路径。** 唯一硬编码的回退镜像

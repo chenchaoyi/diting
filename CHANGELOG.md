@@ -11,6 +11,54 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-06-03
+
+The **event-design intelligence layer.** diting stops treating every
+transition as equal noise and starts answering, in four stacked layers,
+"is this worth your attention?" — *is it familiar?* → *how salient is
+it?* → *is it worth surfacing?* → *is it hostile?* Every layer keys on
+authoritative, hard-to-spoof signals (BLE manufacturer payload, BSSID,
+OUI/vendor, MAC, disassociation timing) — never a user-controllable name.
+All of it is desktop-local; nothing new crosses the companion wire this
+release.
+
+### Added
+
+- **Familiarity baseline.** A persistent, bounded store
+  (`diting-familiarity.json`, git-ignored like the captures) records every
+  entity diting sees under a stable identity — the BLE manufacturer
+  payload (not the rotating UUID), AP BSSID, LAN MAC, Bonjour service —
+  and classifies each `seen` event as `first_time` / `occasional` /
+  `habitual` / `returning`. Seen events + `roam` carry an optional
+  `familiarity` field in the JSONL log.
+- **Salience scoring + a quieter phone.** Each event is ranked
+  `noise` / `low` / `notable` / `high`, weighting familiarity against the
+  event's kind and signal strength. The companion push now gates on
+  salience: your own habitual devices re-appearing score `noise` and stop
+  flooding the phone, while genuine newcomers and anomalies still get
+  through. Tune the floor with `DITING_PUSH_MIN_SALIENCE` (default `low`).
+- **Live insights.** A live engine synthesizes "valuable change" events —
+  `new_device_cluster` (several unfamiliar devices arriving together) plus
+  live-ified versions of the offline analyzer's heuristics
+  (`repeated_disassociates`, `loss_observed`, `latency_without_loss`,
+  `band_steering`). They surface as `[INSIGHT]` rows in the Events view, in
+  the JSONL log, and — for note/warn severity — a macOS notification.
+- **Threat detections.** A defensive-security tier flags a hostile
+  environment as `[THREAT]` rows (and always-on notifications):
+  `evil_twin` (you land on a same-SSID AP of a different OUI-vendor),
+  `deauth_storm` (a tight burst of disconnects — inferred from association
+  state, since CoreWLAN does not expose 802.11 frames), and `follows_you`
+  (an unfamiliar BLE device that stays with you across a network change).
+
+### Notes
+
+- Insights and threats are desktop-local for now; forwarding them to a
+  paired phone is a future companion-protocol change. `security_downgrade`
+  detection is deferred for the same reason (it needs the connection
+  cipher on the wire).
+- CHANGELOG entries for 1.10.0–1.12.0 were not recorded at release time;
+  see the Git history and GitHub Releases for those.
+
 ## [1.9.1] — 2026-05-30
 
 Patch release. **Repairs the CN-network install path.** `ghproxy.com`,
