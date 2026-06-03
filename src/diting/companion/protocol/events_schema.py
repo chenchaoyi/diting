@@ -22,7 +22,7 @@ _TS_RE = re.compile(TS_PATTERN)
 # and the fixture generator excludes them, so a strict consumer (mobile
 # `validate_event`) never sees a key it would reject. Carrying any of these
 # across the wire is a deferred, version-coordinated change.
-LOCAL_ONLY_FIELDS: frozenset[str] = frozenset({"familiarity", "salience"})
+LOCAL_ONLY_FIELDS: frozenset[str] = frozenset({"familiarity", "salience", "security"})
 
 
 def _tag_ok(value: Any, tag: str) -> bool:

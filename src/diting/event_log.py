@@ -270,6 +270,13 @@ class EventLogger:
                 }
                 if vendor:
                     payload["vendor"] = vendor
+                # Desktop-local: the connection cipher, for the
+                # security_downgrade threat. Stripped before the wire
+                # (LOCAL_ONLY_FIELDS) — it is not part of the link_state wire
+                # vocabulary — but the threat engine reads it off the observed
+                # payload, and it stays in the JSONL log.
+                if conn.security:
+                    payload["security"] = conn.security
                 self._emit(payload)
             self._last_assoc_bssid = new_bssid
             return
@@ -298,6 +305,8 @@ class EventLogger:
             }
             if vendor:
                 payload["vendor"] = vendor
+            if conn.security:
+                payload["security"] = conn.security  # desktop-local (see above)
             self._emit(payload)
         self._last_assoc_bssid = new_bssid
 

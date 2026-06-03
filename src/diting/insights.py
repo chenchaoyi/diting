@@ -224,4 +224,9 @@ def format_insight_summary(code: str, detail: dict[str, Any] | None) -> str:
             "A device has stayed with you across {n} locations",
             n=d.get("locations", "?"),
         )
+    if code == "security_downgrade":
+        return t(
+            "Security downgrade on {ssid}: {was} → {now}",
+            ssid=d.get("ssid", "?"), was=d.get("was", "?"), now=d.get("now", "?"),
+        )
     return code

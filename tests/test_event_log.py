@@ -959,3 +959,17 @@ def test_set_observer_leaves_added_observers_intact():
     assert len(primary) == 1      # old primary no longer receives
     assert len(primary2) == 1
     assert len(extra) == 2        # extra still receiving
+
+
+# ------------------------------------------------------------------
+# security cipher on associated link_state (add-security-downgrade-threat)
+# ------------------------------------------------------------------
+
+def test_associated_link_state_carries_security(tmp_path):
+    path = tmp_path / "events.jsonl"
+    logger = EventLogger.to_path(str(path))
+    logger.emit_connection_update(_conn("aa:bb:cc:11:22:33"), vendor="Cisco")
+    logger.close()
+    row = _read_jsonl(path)[0]
+    assert row["type"] == "link_state" and row["state"] == "associated"
+    assert row["security"] == "WPA2 Personal"

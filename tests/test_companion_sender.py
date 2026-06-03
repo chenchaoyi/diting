@@ -357,16 +357,19 @@ def test_sink_strips_familiarity_before_sealing(tmp_path):
     payload = _lan_seen()
     payload["familiarity"] = "first_time"
     payload["salience"] = "notable"
+    payload["security"] = "WPA2 Personal"
     assert sink.offer(payload) is True
     env, _cat, _summary = client._queue[0]
     sealed = open_envelope(st.key_bytes(), env)
     assert "familiarity" not in sealed
     assert "salience" not in sealed
+    assert "security" not in sealed
     # Everything else survives.
     assert sealed["mac"] == payload["mac"]
     # Caller's dict is not mutated.
     assert payload["familiarity"] == "first_time"
     assert payload["salience"] == "notable"
+    assert payload["security"] == "WPA2 Personal"
 
 
 def test_sink_declines_non_pushable(tmp_path):
