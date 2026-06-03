@@ -3806,3 +3806,18 @@ def test_event_format_line_insight_warn_uses_summary_for_loss():
     text = _event_format_line(ev, NetworkInventory()).plain
     assert "[INSIGHT]" in text
     assert "30" in text
+
+
+def test_event_format_line_critical_insight_renders_threat_row():
+    from datetime import datetime, timezone
+
+    from diting.events import InsightEvent
+
+    ev = InsightEvent(
+        timestamp=datetime(2026, 6, 3, 12, 0, tzinfo=timezone.utc),
+        code="evil_twin", severity="critical",
+        detail={"ssid": "cafe", "new_vendor": "TP-Link"},
+    )
+    text = _event_format_line(ev, NetworkInventory()).plain
+    assert "[THREAT]" in text
+    assert "cafe" in text

@@ -436,6 +436,11 @@ _ZH: dict[str, str] = {
     "Latency spikes without loss — likely jitter": "延迟抖动但无丢包 —— 可能是抖动",
     "AP band-steering: {n} roams, mostly band switches": "AP 频段引导：{n} 次漫游，多为频段切换",
     "INSIGHT": "洞察",
+    # add-threat-detections: critical threat one-liners + label
+    "Possible evil twin: SSID {ssid} now on a {vendor} AP": "疑似 evil twin：SSID {ssid} 现在跑在 {vendor} 的 AP 上",
+    "Possible deauth storm: {n} rapid disconnects": "疑似 deauth 风暴：{n} 次快速断连",
+    "A device has stayed with you across {n} locations": "有设备跨 {n} 个地点一直跟着你",
+    "THREAT": "威胁",
     # Service-category labels for ble.py.service_category() return values
     # are already translated below in the BLE table area; nothing extra
     # needed here.

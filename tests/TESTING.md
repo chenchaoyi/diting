@@ -104,7 +104,7 @@ When a new Requirement lands in any spec, an entry MUST be added here
 | `rf_stir` notifications gate on `DITING_NOTIFY_STIR_CONFIDENCE` (`high` default, `medium`, `all`) | `test_watchdog.py::test_should_notify_stir_default_gate`, `::test_should_notify_stir_medium_gate`, `::test_should_notify_stir_all_gate`, `::test_watchdog_config_falls_back_on_invalid_stir_gate` |
 | Per-(event-type, target) silence window (default 60 s, `DITING_NOTIFY_SILENCE_S` override) | `test_watchdog.py::test_silence_clock_first_fire_returns_true`, `::test_silence_clock_second_fire_within_window_returns_false`, `::test_silence_clock_second_fire_after_window_returns_true`, `::test_silence_clock_independent_per_tuple`, `::test_watchdog_config_defaults_when_env_unset`, `::test_watchdog_config_parses_valid_env`, `::test_watchdog_config_falls_back_on_invalid_silence` |
 | Notifications dispatched via the helper bundle's `notify` subcommand (icon = diting logo); missing helper → silent skip (no osascript fallback) | `test_watchdog.py::test_macos_notify_invokes_helper_notify_subcommand`, `::test_macos_notify_silent_when_helper_absent` |
-| **add-insight-events** — `--notify` raises a banner for `note`/`warn` `insight` events (body = the synthesized one-liner); `info` insights do not notify; the silence window is keyed per insight `code` so distinct insights debounce independently | `test_watchdog.py::test_maybe_notify_fires_for_warn_insight`, `::test_maybe_notify_skips_info_insight`, `::test_insight_silence_window_keyed_per_code` |
+| **add-insight-events** / **add-threat-detections** — `--notify` raises a banner for `note`/`warn`/`critical` `insight` events (body = the synthesized one-liner; `critical` = the threat tier); `info` insights do not notify; the silence window is keyed per insight `code` so distinct insights debounce independently | `test_watchdog.py::test_maybe_notify_fires_for_warn_insight`, `::test_maybe_notify_fires_for_critical_threat`, `::test_maybe_notify_skips_info_insight`, `::test_insight_silence_window_keyed_per_code` |
 
 ### `ble-decoders`
 
@@ -319,6 +319,17 @@ consumes the exact payload dict the JSONL writer emits (via an
 | TUI: the engine is wired as a logger observer; the collect timer drains fired insights onto the Events ring (and emits + notifies); a `[INSIGHT]` row renders | `test_tui_smoke.py::test_insight_engine_wired_and_drains_into_ring`, `test_tui_helpers.py::test_event_format_line_insight_renders_summary` |
 | Insights are desktop-local: not in the companion push set, never forwarded | `test_companion_sender.py::test_policy_does_not_push_insight_events` |
 | Multi-observer logger: every registered observer receives each payload; `set_observer` manages its single slot without dropping `add_observer` taps (the engine survives companion re-pair) | `test_event_log.py::test_multiple_observers_all_receive_payload`, `::test_set_observer_leaves_added_observers_intact` |
+| **add-threat-detections** — a `critical` severity ranks above `warn`: salience `high`, renders as a `[THREAT]` row, always notifies | `test_salience.py::test_critical_insight_is_high`, `test_watchdog.py::test_maybe_notify_fires_for_critical_threat`, `test_tui_helpers.py::test_event_format_line_critical_insight_renders_threat_row` |
+
+### `threats`
+
+| Requirement | Test |
+|---|---|
+| The threat engine observes the enriched stream into bounded state; hermetic (inject payloads + `now`); ignores its own `insight` output; never raises on malformed; per-(code, target) cooldown | `test_threats.py::test_ignores_insight_payloads`, `::test_never_raises_on_malformed`, `::test_evil_twin_cooldown_suppresses_repeat` |
+| `evil_twin` — fires when the user lands on a same-SSID AP of a different OUI-vendor than already seen this session; first vendor / same vendor / unknown(None) vendor do not fire; keys on vendor + BSSID, never the SSID-as-trust; distinct SSIDs debounce independently | `test_threats.py::test_evil_twin_fires_on_same_ssid_different_vendor`, `::test_evil_twin_first_vendor_does_not_fire`, `::test_evil_twin_same_vendor_does_not_fire`, `::test_evil_twin_via_roam_new_vendor`, `::test_evil_twin_none_vendor_cannot_fire`, `::test_evil_twin_distinct_ssids_independent_cooldown` |
+| `deauth_storm` — a tight-window disassociation burst (≥ storm-min) fires `critical`; slow / below-threshold disconnects do not (the `repeated_disassociates` insight covers slow); inferred from `link_state`, not 802.11 frames | `test_threats.py::test_deauth_storm_fires_on_tight_burst`, `::test_deauth_storm_does_not_fire_when_spread_out`, `::test_deauth_storm_below_threshold_does_not_fire` |
+| `follows_you` — an unfamiliar (`first_time`/`occasional`) BLE identifier seen across ≥2 location epochs (a `network_change` advances the epoch) fires `critical`; single-epoch and habitual devices do not | `test_threats.py::test_follows_you_fires_across_network_change`, `::test_follows_you_single_epoch_does_not_fire`, `::test_follows_you_habitual_device_does_not_fire` |
+| TUI: the threat engine is wired as a logger observer and drained on the collect timer alongside the insight engine; a fired threat lands on the Events ring as a `[THREAT]` row | `test_tui_smoke.py::test_threat_engine_wired_and_drains_into_ring` |
 
 ### `i18n`
 

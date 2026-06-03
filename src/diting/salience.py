@@ -99,7 +99,7 @@ def salience(payload: dict[str, Any]) -> str | None:
     # Insights carry their own severity — map it straight to a tier.
     if etype == "insight":
         sev = payload.get("severity")
-        if sev == "warn":
+        if sev in ("warn", "critical"):  # critical = the threat tier
             return HIGH
         if sev == "note":
             return NOTABLE

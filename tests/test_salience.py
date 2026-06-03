@@ -148,3 +148,8 @@ def test_never_raises_on_malformed():
     assert salience({"type": "ble_device_seen"}) == LOW  # no familiarity, no rssi
     # Non-dict input abstains rather than raising.
     assert salience(None) is None  # type: ignore[arg-type]
+
+
+def test_critical_insight_is_high():
+    # Phase 3 threats use the `critical` severity.
+    assert salience({"type": "insight", "code": "evil_twin", "severity": "critical"}) == HIGH

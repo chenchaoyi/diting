@@ -52,6 +52,7 @@ from .environment import (
 from .event_log import EventLogger
 from .familiarity import FamiliarityStore
 from .insights import InsightEngine, format_insight_summary
+from .threats import ThreatEngine
 from .events import (
     BLEDeviceLeftEvent,
     BLEDeviceSeenEvent,
@@ -2565,13 +2566,20 @@ def _format_link_state_event(event: LinkStateEvent) -> Text:
 
 
 def _format_insight_event(event: InsightEvent) -> Text:
-    # Severity drives the colour: warn = red, note = yellow, info = dim cyan.
+    # Threats (critical) render as a distinct [THREAT] row; operational insights
+    # colour by severity: warn = red, note = yellow, info = dim cyan.
+    line = Text()
+    line.append(f"{_ev_ts(event)}  ", style="dim")
+    if event.severity == "critical":
+        line.append(t("[THREAT]") + "  ", style="bold red")
+        line.append(
+            format_insight_summary(event.code, event.detail), style="bold red",
+        )
+        return line
     label_style = {
         "warn": "bold red", "note": "bold yellow",
     }.get(event.severity, "bold cyan")
     body_style = {"warn": "red", "note": "yellow"}.get(event.severity, "white")
-    line = Text()
-    line.append(f"{_ev_ts(event)}  ", style="dim")
     line.append(t("[INSIGHT]") + "  ", style=label_style)
     line.append(format_insight_summary(event.code, event.detail), style=body_style)
     return line
@@ -6669,6 +6677,12 @@ class DitingApp(App):
         self._insight_engine = InsightEngine()
         self._event_logger.add_observer(self._insight_engine.observe)
         self._insight_timer = None
+        # Threat engine (Phase 3): the defensive-security tier, fed off the same
+        # observer tap and drained on the same collect timer. Emits
+        # critical-severity threat insights (evil_twin / deauth_storm /
+        # follows_you).
+        self._threat_engine = ThreatEngine()
+        self._event_logger.add_observer(self._threat_engine.observe)
         # Companion forwarding (opt-in via `diting companion pair`). When
         # paired, the sink taps the logger's observer so it forwards the
         # exact dict each JSONL line carries; unpaired, this is None and
@@ -6932,11 +6946,12 @@ class DitingApp(App):
         self._insight_timer = self.set_interval(20.0, self._collect_insights)
 
     async def _collect_insights(self) -> None:
-        """Pull fired insights from the engine and route each through the
-        normal surface: the Events ring + panel, the JSONL log, and (for
-        note/warn) a macOS notification."""
+        """Pull fired insights + threats from the two engines and route each
+        through the normal surface: the Events ring + panel, the JSONL log, and
+        (for note/warn/critical) a macOS notification."""
         from datetime import datetime, timezone
-        insights = self._insight_engine.collect(datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+        insights = self._insight_engine.collect(now) + self._threat_engine.collect(now)
         for ev in insights:
             self._events_ring.push(ev)
             try:
