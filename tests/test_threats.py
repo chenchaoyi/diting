@@ -168,3 +168,69 @@ def test_never_raises_on_malformed():
     eng.observe({"type": "roam"})
     eng.observe({"type": "ble_device_seen"})
     assert eng.collect(NOW) == []
+
+
+# ---------- security_downgrade ----------
+
+def _assoc_sec(ssid, security, bssid="aa:bb"):
+    return {"type": "link_state", "state": "associated", "ssid": ssid,
+            "bssid": bssid, "vendor": "Cisco Systems", "security": security,
+            "ts": _ts(1)}
+
+
+def test_security_downgrade_fires_on_weaker_cipher():
+    eng = ThreatEngine()
+    eng.observe(_assoc_sec("cafe", "WPA2 Personal"))
+    eng.observe(_assoc_sec("cafe", "None"))
+    fired = [e for e in eng.collect(NOW) if e.code == "security_downgrade"]
+    assert len(fired) == 1
+    assert fired[0].severity == "critical"
+    assert fired[0].detail == {"ssid": "cafe", "was": "WPA2 Personal", "now": "None"}
+
+
+def test_security_downgrade_first_association_does_not_fire():
+    eng = ThreatEngine()
+    eng.observe(_assoc_sec("cafe", "WPA2 Personal"))
+    assert "security_downgrade" not in _codes(eng.collect(NOW))
+
+
+def test_security_downgrade_same_or_stronger_does_not_fire():
+    eng = ThreatEngine()
+    eng.observe(_assoc_sec("cafe", "WPA2 Personal"))
+    eng.observe(_assoc_sec("cafe", "WPA2 Personal"))   # same
+    eng.observe(_assoc_sec("cafe", "WPA3 Personal"))   # stronger (upgrade)
+    assert "security_downgrade" not in _codes(eng.collect(NOW))
+
+
+def test_security_downgrade_baseline_is_strongest_seen():
+    # Order-independent: WPA3 seen, then a drop to WPA2 fires against the WPA3
+    # baseline even though a WPA2 was seen in between.
+    eng = ThreatEngine()
+    eng.observe(_assoc_sec("cafe", "WPA3 Personal"))
+    eng.observe(_assoc_sec("cafe", "WPA2 Personal"))
+    fired = [e for e in eng.collect(NOW) if e.code == "security_downgrade"]
+    assert fired and fired[0].detail["was"] == "WPA3 Personal"
+
+
+def test_security_downgrade_skips_unrankable_cipher():
+    eng = ThreatEngine()
+    eng.observe(_assoc_sec("cafe", "WPA2 Personal"))
+    eng.observe(_assoc_sec("cafe", "Some Future Cipher"))  # unrankable → skip
+    assert "security_downgrade" not in _codes(eng.collect(NOW))
+
+
+def test_security_downgrade_transitional_ranks_strongest():
+    # WPA2/WPA3 transitional ranks as WPA3 (strongest), so a later WPA2 fires.
+    eng = ThreatEngine()
+    eng.observe(_assoc_sec("cafe", "WPA2/WPA3 Personal"))
+    eng.observe(_assoc_sec("cafe", "WPA2 Personal"))
+    assert "security_downgrade" in _codes(eng.collect(NOW))
+
+
+def test_security_downgrade_cooldown_per_ssid():
+    eng = ThreatEngine(cooldown_s=300)
+    eng.observe(_assoc_sec("cafe", "WPA2 Personal"))
+    eng.observe(_assoc_sec("cafe", "None"))
+    assert "security_downgrade" in _codes(eng.collect(NOW))
+    eng.observe(_assoc_sec("cafe", "None"))
+    assert "security_downgrade" not in _codes(eng.collect(NOW + timedelta(seconds=30)))

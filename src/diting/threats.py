@@ -41,6 +41,30 @@ _MAX_TRACKED_DEVICES = 4096
 _UNFAMILIAR = frozenset({"first_time", "occasional"})
 
 
+def _security_rank(security: object) -> int | None:
+    """Coarse cipher strength: open(0) < WEP(1) < WPA(2) < WPA2(3) < WPA3(4).
+
+    Reads the CoreWLAN security string (e.g. "WPA2 Personal",
+    "WPA2/WPA3 Personal", "None"). Returns None for an unrecognised /
+    non-string value so the caller skips the comparison rather than guessing.
+    A transitional "WPA2/WPA3" ranks at its STRONGEST present mode.
+    """
+    if not isinstance(security, str):
+        return None
+    s = security.lower()
+    if "wpa3" in s:
+        return 4
+    if "wpa2" in s:
+        return 3
+    if "wpa" in s:
+        return 2
+    if "wep" in s:
+        return 1
+    if "none" in s or "open" in s or s.strip() == "":
+        return 0
+    return None
+
+
 class ThreatEngine:
     """Stateful defensive-security detector over the recent event stream."""
 
@@ -59,6 +83,10 @@ class ThreatEngine:
         # evil_twin: vendors seen per SSID this session + a point-in-time queue.
         self._ssid_vendors: dict[str, set[str]] = {}
         self._pending: list[tuple[str, str, dict[str, Any], str]] = []
+        # security_downgrade: the strongest cipher seen per SSID this session
+        # — ssid -> (rank, security string) — the baseline a later weaker
+        # association is judged against.
+        self._ssid_security: dict[str, tuple[int, str]] = {}
         # deauth_storm: disassociation timestamps.
         self._disassoc: deque[datetime] = deque()
         # follows_you: location epoch + the epochs each unfamiliar device spans.
@@ -81,6 +109,7 @@ class ThreatEngine:
                     payload.get("ssid"), payload.get("bssid"),
                     payload.get("vendor"),
                 )
+                self._note_security(payload.get("ssid"), payload.get("security"))
             elif state == "disassociated":
                 ts = _parse_ts(payload)
                 if ts is not None:
@@ -119,6 +148,28 @@ class ThreatEngine:
                 ssid,  # cooldown target
             ))
         seen.add(vendor)
+
+    def _note_security(self, ssid: Any, security: Any) -> None:
+        # security_downgrade: same SSID re-associated at a WEAKER cipher than
+        # the strongest seen this session (e.g. WPA2 → open) — the payoff of an
+        # evil-twin / forced-downgrade. Keys on the authoritative cipher, never
+        # trusting the SSID as identity. The first association sets the
+        # baseline (no fire); an unrankable cipher is skipped.
+        if not isinstance(ssid, str):
+            return
+        rank = _security_rank(security)
+        if rank is None:
+            return
+        baseline = self._ssid_security.get(ssid)
+        if baseline is not None and rank < baseline[0]:
+            self._pending.append((
+                "security_downgrade", "critical",
+                {"ssid": ssid, "was": baseline[1], "now": security},
+                ssid,  # cooldown target
+            ))
+        # Keep the STRONGEST cipher as the baseline to judge future drops.
+        if baseline is None or rank > baseline[0]:
+            self._ssid_security[ssid] = (rank, str(security))
 
     def _track_device(self, ident: str) -> None:
         epochs = self._device_epochs.get(ident)
