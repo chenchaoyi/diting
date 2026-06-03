@@ -897,7 +897,8 @@ def test_emit_insight_writes_code_severity_and_detail(tmp_path):
     assert row["type"] == "insight"
     assert row["code"] == "new_device_cluster"
     assert row["severity"] == "note"
-    assert row["count"] == 4
+    # detail rides as a nested object, mirroring the companion-protocol wire.
+    assert row["detail"] == {"count": 4}
     # Salience is stamped from severity (note -> notable).
     assert row["salience"] == "notable"
 

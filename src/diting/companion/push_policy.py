@@ -27,6 +27,7 @@ DEFAULT_PUSH_TYPES: frozenset[str] = frozenset({
     "bonjour_service_seen",
     "lan_host_seen",
     "lan_host_dhcp_rotation",
+    "insight",
 })
 
 
@@ -50,6 +51,10 @@ def _target(payload: dict[str, Any]) -> str:
         return str(payload.get("mac", "?"))
     if t == "network_change":
         return str(payload.get("new_router_ip", "?"))
+    if t == "insight":
+        # Debounce per insight code so distinct insights/threats fire
+        # independently within the silence window.
+        return str(payload.get("code", "?"))
     return str(t)
 
 

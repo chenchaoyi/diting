@@ -34,6 +34,9 @@ def _tag_ok(value: Any, tag: str) -> bool:
         return isinstance(value, (int, float)) and not isinstance(value, bool)
     if tag == "bool":
         return isinstance(value, bool)
+    if tag == "obj":
+        # A JSON object; inner keys are intentionally unconstrained.
+        return isinstance(value, dict)
     if tag == "strarray":
         return isinstance(value, list) and all(isinstance(x, str) for x in value)
     if tag == "str|null":
@@ -93,6 +96,9 @@ _TAG_SCHEMA: dict[str, dict] = {
     "strarray": {"type": "array", "items": {"type": "string"}},
     "str|null": {"type": ["string", "null"]},
     "int|null": {"type": ["integer", "null"]},
+    # An open object: the event level stays strict, but this field's inner
+    # keys are unconstrained (insight `detail` varies by `code`).
+    "obj": {"type": "object"},
 }
 
 

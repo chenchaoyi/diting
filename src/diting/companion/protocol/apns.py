@@ -16,7 +16,7 @@ from .errors import ProtocolError
 
 # The closed set of coarse categories. Each leaks nothing beyond "which
 # subsystem" — deliberately broad.
-CATEGORIES: frozenset[str] = frozenset({"link", "ble", "lan", "bonjour", "env"})
+CATEGORIES: frozenset[str] = frozenset({"link", "ble", "lan", "bonjour", "env", "insight"})
 
 # Wire event ``type`` -> coarse category. ``session_meta`` maps to None:
 # it is a log header, never a push. ``network_change`` is control-plane
@@ -36,6 +36,7 @@ _CATEGORY_BY_TYPE: dict[str, str] = {
     "lan_host_left": "lan",
     "lan_host_dhcp_rotation": "lan",
     "lan_active_probe_consented": "lan",
+    "insight": "insight",
 }
 
 

@@ -688,9 +688,11 @@ class EventLogger:
 
     def emit_insight(self, event: "InsightEvent") -> None:
         """Emit a synthesized insight. ``code`` + ``severity`` are locale-stable;
-        ``detail`` keys are flattened onto the payload (None / empty omitted), so
-        a reader gets ``{"type":"insight","code":…,"severity":…, …detail…}``.
-        Salience is stamped from severity by ``_emit`` like any event."""
+        ``detail`` rides as a single nested object so the JSONL line mirrors the
+        `companion-protocol` wire shape exactly:
+        ``{"type":"insight","code":…,"severity":…,"detail":{…}}``. The key is
+        omitted when ``detail`` is empty. Salience is stamped from severity by
+        ``_emit`` like any event."""
         if self._sink is None and not self._observers:
             return
         payload: dict[str, Any] = {
@@ -700,10 +702,7 @@ class EventLogger:
             "severity": event.severity,
         }
         if event.detail:
-            for k, v in event.detail.items():
-                # Never let a detail key shadow the envelope keys.
-                if k not in payload:
-                    payload[k] = v
+            payload["detail"] = dict(event.detail)
         self._emit(payload)
 
     def set_observer(self, observer: "Callable[[dict[str, Any]], None] | None") -> None:

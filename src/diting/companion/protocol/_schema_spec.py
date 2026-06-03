@@ -16,6 +16,9 @@ Field type tags::
     strarray   array of strings
     str|null   string or null (key always present, value may be null)
     int|null   integer or null
+    obj        JSON object; inner keys NOT strictly validated (used for the
+               insight `detail`, which varies by `code`). Top-level envelope
+               keys stay strict; only the value under this field is open.
 """
 
 from __future__ import annotations
@@ -185,6 +188,14 @@ EVENT_SPEC: dict[str, dict[str, dict]] = {
         },
         "optional": {"ssid": "str"},
         "enums": {},
+    },
+    # v2: synthesized insight / threat. `detail` is a nested object whose
+    # inner keys vary by `code`, so it is the open `obj` tag rather than a
+    # fixed field set. `critical` is the threat tier.
+    "insight": {
+        "required": {"code": "str", "severity": "str"},
+        "optional": {"detail": "obj"},
+        "enums": {"severity": ["info", "note", "warn", "critical"]},
     },
 }
 

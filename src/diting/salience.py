@@ -103,7 +103,10 @@ def salience(payload: dict[str, Any]) -> str | None:
             return HIGH
         if sev == "note":
             return NOTABLE
-        return LOW
+        # `info` is the lowest tier → `noise`, so the default push gate
+        # (min `low`) drops it: info insights stay log + TUI only, never
+        # forwarded to the phone.
+        return NOISE
 
     # Intrinsic anomalies — salient regardless of familiarity.
     if etype == "loss_burst":

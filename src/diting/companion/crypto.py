@@ -22,7 +22,7 @@ from nacl.utils import random as nacl_random
 from .protocol.envelope import build_envelope, validate_envelope
 from .protocol.errors import ProtocolError
 from .protocol.events_schema import validate_event
-from .protocol.version import PROTOCOL_VERSION
+from .protocol.version import envelope_version_for
 
 KEY_BYTES = SecretBox.KEY_SIZE  # 32
 
@@ -64,7 +64,10 @@ def seal_event(
     plaintext = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     enc = SecretBox(key).encrypt(plaintext, nonce)
     return build_envelope(
-        version=PROTOCOL_VERSION,
+        # Stamp the minimum version that can decode THIS event, not the
+        # build's latest major: existing types stay v1 so a v1-only consumer
+        # keeps receiving them; only `insight` rides a v2 envelope.
+        version=envelope_version_for(payload.get("type")),
         channel=channel,
         seq=seq,
         ts=ts,
