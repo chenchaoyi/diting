@@ -232,3 +232,60 @@ The event SHALL be ingested by the existing `EventLogger.append()` path and SHAL
 - **WHEN** active scene is `home`, active probing runs as scheduled
 - **THEN** no `LANActiveProbeConsentedEvent` is appended (the event is uniquely the user-override marker)
 
+### Requirement: Seen-side transition events SHALL support an optional familiarity class
+Seen-side transition events SHALL support an optional `familiarity` field — one
+of `first_time` / `occasional` / `habitual` / `returning` — on `ble_device_seen`,
+`bonjour_service_seen`, `lan_host_seen`, and `roam`, describing how familiar the
+entity is, derived from the `familiarity-store`. The field is OPTIONAL: when no
+familiarity store is wired the events SHALL omit it entirely
+(consistent with the None-fields-omitted rule), so the JSONL key set stays
+stable for consumers that ignore it. The class for a seen event SHALL reflect
+the entity's familiarity BEFORE the current sighting is recorded, so a
+never-before-seen entity reads `first_time`.
+
+#### Scenario: First-ever sighting is first_time
+- **WHEN** an entity with no prior familiarity record emits a `seen` event with a store wired
+- **THEN** the event's `familiarity` is `first_time`
+
+#### Scenario: Field omitted without a store
+- **WHEN** no familiarity store is configured
+- **THEN** seen events serialise with no `familiarity` key at all (not `null`)
+
+#### Scenario: Roam carries AP familiarity
+- **WHEN** a `roam` to a BSSID occurs with a store wired
+- **THEN** the event's `familiarity` reflects how familiar that AP (`ap:<bssid>`) is
+
+### Requirement: Events SHALL support an optional salience tier
+Emitted events SHALL support an optional `salience` field — one of `noise` /
+`low` / `notable` / `high` — describing how attention-worthy the event is,
+derived by the `salience` scorer from the event's type, its `familiarity` class,
+and signal strength. The field is OPTIONAL: when the scorer abstains for a type
+the event SHALL omit it entirely (not `null`), so the JSONL key set stays stable
+for consumers that ignore it. Salience is desktop-local in this phase and SHALL
+NOT cross the companion wire.
+
+#### Scenario: A scored event carries its tier
+- **WHEN** a `ble_device_seen` for a `first_time` device is emitted to a file sink
+- **THEN** the JSONL line carries a `salience` field
+
+#### Scenario: An unscored event omits the field
+- **WHEN** a `session_meta` line is emitted
+- **THEN** it carries no `salience` key
+
+### Requirement: An insight event type SHALL carry a code, severity, and detail
+The event vocabulary SHALL include an `insight` event — a synthesized
+valuable-change observation — carrying a stable English `code`, a `severity`
+(`info` / `note` / `warn`), and an optional structured `detail`. The `code` is
+locale-stable (the analysis key); the human one-liner is derived from
+`code` + `detail` at render / notify time via `t()`, so the JSONL carries no
+localised text. `InsightEvent` is a frozen dataclass with a `timestamp`, like
+every other event, and rides the same EventRing + JSONL writer.
+
+#### Scenario: Insight serialises with a stable code
+- **WHEN** an `insight` event is emitted to a file sink
+- **THEN** the JSONL line carries `"type":"insight"`, the English `code`, and the `severity`
+
+#### Scenario: Detail keys are present when supplied
+- **WHEN** an insight is emitted with a non-empty `detail`
+- **THEN** the JSONL line carries those detail fields; when `detail` is absent the line omits them
+
