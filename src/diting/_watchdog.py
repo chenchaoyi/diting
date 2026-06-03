@@ -170,8 +170,9 @@ async def maybe_notify(
         if not should_notify_stir(payload, config.stir_confidence):
             return
     elif kind == "insight":
-        # Only note/warn insights raise a banner; info stays log + TUI only.
-        if payload.get("severity") not in ("note", "warn"):
+        # note/warn/critical insights raise a banner; info stays log + TUI only.
+        # critical is the threat tier — always notifies.
+        if payload.get("severity") not in ("note", "warn", "critical"):
             return
     elif kind not in ("latency_spike", "loss_burst"):
         return

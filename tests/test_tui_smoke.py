@@ -1236,3 +1236,34 @@ def test_insight_engine_wired_and_drains_into_ring():
             await pilot.press("q")
 
     asyncio.run(go())
+
+
+def test_threat_engine_wired_and_drains_into_ring():
+    """add-threat-detections: the App constructs a threat engine fed by the
+    logger observer; collecting fires a critical threat onto the Events ring."""
+    import asyncio
+    from diting.events import InsightEvent
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.3)
+            # Same SSID via two different vendors → evil_twin.
+            app._threat_engine.observe({
+                "type": "link_state", "state": "associated", "ssid": "cafe",
+                "bssid": "aa:11", "vendor": "Cisco Systems",
+                "ts": "2026-06-03T12:00:00+00:00",
+            })
+            app._threat_engine.observe({
+                "type": "link_state", "state": "associated", "ssid": "cafe",
+                "bssid": "bb:22", "vendor": "TP-Link",
+                "ts": "2026-06-03T12:00:01+00:00",
+            })
+            await app._collect_insights()
+            ring = app._events_ring.snapshot()
+            threats = [e for e in ring
+                       if isinstance(e, InsightEvent) and e.severity == "critical"]
+            assert any(e.code == "evil_twin" for e in threats)
+            await pilot.press("q")
+
+    asyncio.run(go())

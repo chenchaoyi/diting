@@ -211,4 +211,17 @@ def format_insight_summary(code: str, detail: dict[str, Any] | None) -> str:
             "AP band-steering: {n} roams, mostly band switches",
             n=d.get("roams", "?"),
         )
+    # Phase 3 threats (critical severity).
+    if code == "evil_twin":
+        return t(
+            "Possible evil twin: SSID {ssid} now on a {vendor} AP",
+            ssid=d.get("ssid", "?"), vendor=d.get("new_vendor", "?"),
+        )
+    if code == "deauth_storm":
+        return t("Possible deauth storm: {n} rapid disconnects", n=d.get("count", "?"))
+    if code == "follows_you":
+        return t(
+            "A device has stayed with you across {n} locations",
+            n=d.get("locations", "?"),
+        )
     return code

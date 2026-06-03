@@ -380,3 +380,18 @@ def test_insight_silence_window_keyed_per_code() -> None:
 
     asyncio.run(run())
     assert [m for _, m in notifier.calls] == ["loss_observed", "repeated_disassociates"]
+
+
+def test_maybe_notify_fires_for_critical_threat() -> None:
+    cfg = WatchdogConfig()
+    clock = SilenceClock(window_s=60)
+    notifier = _RecordingNotifier()
+    asyncio.run(maybe_notify(
+        {"type": "insight", "code": "evil_twin", "severity": "critical",
+         "summary": "Possible evil twin: SSID cafe now on a TP-Link AP"},
+        target="evil_twin",
+        clock=clock, config=cfg, notifier=notifier,
+    ))
+    assert len(notifier.calls) == 1
+    _, message = notifier.calls[0]
+    assert "evil twin" in message
