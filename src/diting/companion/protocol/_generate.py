@@ -25,13 +25,14 @@ from typing import Any
 from ..protocol import apns, auth, pairing
 from ..protocol.events_schema import LOCAL_ONLY_FIELDS as _LOCAL_ONLY_FIELDS
 from ..protocol.events_schema import build_json_schema
-from ..protocol.version import PROTOCOL_VERSION
+from ..protocol.version import PROTOCOL_VERSION, SUPPORTED_VERSIONS
 from ...event_log import EventLogger
 from ...events import (
     BLEDeviceLeftEvent,
     BLEDeviceSeenEvent,
     BonjourServiceLeftEvent,
     BonjourServiceSeenEvent,
+    InsightEvent,
     LANActiveProbeConsentedEvent,
     LANHostDHCPRotationEvent,
     LANHostLeftEvent,
@@ -162,6 +163,12 @@ def _emit_event_lines() -> list[str]:
         timestamp=_ts(14), scene="public", ssid="HotelGuest",
         nbns_packets=8, ssdp_packets=1, mdns_packets=1,
     ))
+    # 15 insight (v2) — nested detail; the generator strips the local-only
+    # salience field below so the fixture is the clean wire shape.
+    log.emit_insight(InsightEvent(
+        timestamp=_ts(15), code="new_device_cluster", severity="note",
+        detail={"count": 3, "window_s": 120},
+    ))
 
     raw = buf.getvalue().splitlines()
     lines: list[str] = []
@@ -191,7 +198,7 @@ def _envelope_schema() -> dict[str, Any]:
         "required": ["v", "ch", "seq", "ts", "n", "ct"],
         "additionalProperties": False,
         "properties": {
-            "v": {"type": "integer", "enum": [PROTOCOL_VERSION]},
+            "v": {"type": "integer", "enum": sorted(SUPPORTED_VERSIONS)},
             "ch": {"type": "string", "minLength": 1},
             "seq": {"type": "integer", "minimum": 1},
             "ts": {"type": "string", "pattern": TS_PATTERN},

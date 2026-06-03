@@ -48,4 +48,9 @@ def push_summary(payload: dict[str, Any]) -> str:
         return t("RF stir at {loc}", loc=_label(p.get("location"), p.get("bssid")))
     if etype == "network_change":
         return t("Network changed → {ip}", ip=_label(p.get("new_router_ip")))
+    if etype == "insight":
+        # The localised one-liner for the insight/threat (from its code +
+        # nested detail), so the phone's doorbell shows the actual finding.
+        from ..insights import format_insight_summary
+        return format_insight_summary(str(p.get("code", "")), p.get("detail"))
     return str(etype)

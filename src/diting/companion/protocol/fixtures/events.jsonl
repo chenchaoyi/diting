@@ -13,3 +13,4 @@
 {"ts":"2026-05-20T12:00:12+08:00","type":"lan_host_left","mac":"de:ad:be:ef:00:01","ip":"192.168.1.42","is_randomised_mac":false,"seen_for_seconds":3600.0,"vendor":"Apple, Inc.","last_reachable_ago_seconds":120.5}
 {"ts":"2026-05-20T12:00:13+08:00","type":"lan_host_dhcp_rotation","mac":"de:ad:be:ef:00:01","previous_ip":"192.168.1.42","new_ip":"192.168.1.77","vendor":"Apple, Inc.","hostname":"my-mbp.local"}
 {"ts":"2026-05-20T12:00:14+08:00","type":"lan_active_probe_consented","scene":"public","nbns_packets":8,"ssdp_packets":1,"mdns_packets":1,"ssid":"HotelGuest"}
+{"ts":"2026-05-20T12:00:15+08:00","type":"insight","code":"new_device_cluster","severity":"note","detail":{"count":3,"window_s":120}}

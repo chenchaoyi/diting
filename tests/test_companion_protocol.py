@@ -125,7 +125,8 @@ def test_validate_rejects_non_object():
 
 def test_supported_version():
     assert is_supported_version(1)
-    assert not is_supported_version(2)
+    assert is_supported_version(2)          # v2 added the insight type
+    assert not is_supported_version(3)      # a genuinely-future major
     assert not is_supported_version(True)   # bool is not a version
     assert not is_supported_version("1")    # str is not a version
     assert not is_supported_version(None)
@@ -184,7 +185,7 @@ def test_envelope_build_and_validate():
     lambda e: e.pop("ct"),                 # missing field
     lambda e: e.update(seq=0),             # seq < 1
     lambda e: e.update(seq="1"),           # seq not int
-    lambda e: e.update(v=2),               # unsupported (future) version
+    lambda e: e.update(v=3),               # unsupported (future) version
     lambda e: e.update(ch=""),             # empty channel
 ])
 def test_envelope_validate_fails_closed(mutate):
@@ -254,3 +255,42 @@ def test_committed_relay_auth_fixture_matches_derivation():
     ).key_bytes()
     assert auth.derive_relay_token(key) == fx["token"]
     assert auth.token_hash(fx["token"]) == fx["token_hash"]
+
+
+# ---------- insight wire type (v2) ----------
+
+_TS = "2026-06-03T12:00:00+08:00"
+
+
+def test_insight_validates_with_arbitrary_detail():
+    obj = {"ts": _TS, "type": "insight", "code": "new_device_cluster",
+           "severity": "note", "detail": {"count": 3, "window_s": 120}}
+    assert validate_event(obj) is obj
+
+
+def test_insight_detail_inner_keys_unconstrained():
+    # The `obj` tag deliberately does not validate inner keys.
+    obj = {"ts": _TS, "type": "insight", "code": "evil_twin", "severity": "critical",
+           "detail": {"ssid": "cafe", "new_vendor": "TP-Link", "whatever": [1, 2]}}
+    assert validate_event(obj) is obj
+
+
+def test_insight_detail_is_optional():
+    obj = {"ts": _TS, "type": "insight", "code": "latency_without_loss", "severity": "note"}
+    assert validate_event(obj) is obj
+
+
+def test_insight_rejects_non_object_detail():
+    with pytest.raises(ProtocolError):
+        validate_event({"ts": _TS, "type": "insight", "code": "x",
+                        "severity": "note", "detail": "nope"})
+
+
+def test_insight_rejects_bad_severity():
+    with pytest.raises(ProtocolError):
+        validate_event({"ts": _TS, "type": "insight", "code": "x", "severity": "bogus"})
+
+
+def test_insight_critical_severity_accepted():
+    obj = {"ts": _TS, "type": "insight", "code": "deauth_storm", "severity": "critical"}
+    assert validate_event(obj) is obj

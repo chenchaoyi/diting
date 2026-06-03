@@ -1,14 +1,14 @@
 {
-  "protocol_version": 1,
+  "protocol_version": 2,
   "generated_by": "diting.companion.protocol._generate",
   "artifacts": {
-    "schema/event.schema.json": "75542e1c524690a8a00e9b761cff49897506c1f331b5ce4733dd556d769e9f67",
-    "schema/envelope.schema.json": "83a4dd80601dd73a02ad294b5b425fd8a2fb8e6206a64da55d3d7bc8e3b32b2d",
-    "schema/pairing.schema.json": "6fdcaf63796bbc92eb067497dc1fdd361f172af138af223c6848d12164b3849f",
-    "schema/apns-trigger.schema.json": "e7e9ef6644f12bfbdc01361f1a1869917a02bc33f38fb8b81d98f0a7675cfd7d",
-    "fixtures/events.jsonl": "0921eae4e96032254b52c01ac0bb8a14d3a77fca00df8f83ba323f54b2f1df40",
+    "schema/event.schema.json": "80e24912810274962e72026592309721227827225c38fe7042b8a4e1a6a24234",
+    "schema/envelope.schema.json": "9bb8f9f24a8e2416a2d04afeda19f66db470a4ff2f6a9904c4389a4661b1f8ff",
+    "schema/pairing.schema.json": "9dcbcd2aa3cbe0e18f69cef30f93b98f155a921d807713ae5a321fdec13d991e",
+    "schema/apns-trigger.schema.json": "33b064b2c4e9297c06b5e0c9976a81b4439a6c8f6ca1933da9beeb9cd0852160",
+    "fixtures/events.jsonl": "2f6369f3840de3bc426396cb32470402a19e3f50aa899ab18f4123770b59e51f",
     "fixtures/sealed-envelope.json": "424293068c6bb0e5bea54fad08fb2ca8a4c7da964471d86677e0f6627738a694",
-    "fixtures/pairing.txt": "5480a0a5604037e0bcf1bd0ecacaf3de4a0cb9acef6dd24e5340210def0434e8",
+    "fixtures/pairing.txt": "08ee609275f7b8e4df6b4bf3daf04e0df838694bce22fc4087ee8b6140a4fc42",
     "fixtures/apns-trigger.json": "31d9e05d1f3733226a66c0c5238f9fc9905f6b8525e860476071eb69c120b0d0",
     "fixtures/relay-auth.json": "66cc5ea726270d34b40d6cce706d65221f99a107024b9b6ff3cd1c4a6beecf3c"
   }

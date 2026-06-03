@@ -154,14 +154,24 @@ def test_policy_skips_non_pushable_types():
     assert not p.should_push({"type": "ble_device_left", "identifier": "x"}, now=1.0)
 
 
-def test_policy_does_not_push_insight_events():
-    # Insights are desktop-local this phase (Phase 2b/2c): not in the push set,
-    # so the sink never forwards them across the companion wire.
+def test_policy_forwards_insight_salience_gated():
+    # forward-insights-over-companion: insights are now push-worthy, gated by
+    # salience. A warn/critical/note insight (salience notable/high) forwards;
+    # an info insight (salience noise) is dropped by the default `low` floor.
     p = PushPolicy()
-    assert not p.should_push(
-        {"type": "insight", "code": "loss_observed", "severity": "warn"},
-        now=1.0,
-    )
+    warn = {"type": "insight", "code": "loss_observed", "severity": "warn", "salience": "high"}
+    info = {"type": "insight", "code": "band_steering", "severity": "info", "salience": "noise"}
+    assert p.should_push(warn, now=1.0) is True
+    assert p.should_push(info, now=2.0) is False
+
+
+def test_policy_insight_silence_window_keyed_per_code():
+    p = PushPolicy(config=WatchdogConfig(silence_window_s=60))
+    a = {"type": "insight", "code": "evil_twin", "severity": "critical", "salience": "high"}
+    b = {"type": "insight", "code": "deauth_storm", "severity": "critical", "salience": "high"}
+    assert p.should_push(a, now=10.0) is True
+    assert p.should_push(a, now=20.0) is False   # same code, within window
+    assert p.should_push(b, now=20.0) is True    # distinct code fires
 
 
 def test_policy_silence_window_coalesces_same_target():
@@ -372,3 +382,47 @@ def test_sink_declines_non_pushable(tmp_path):
     assert sink.offer({"type": "session_meta"}) is False
     assert sink.client.pending == 0
     assert load_state(path).last_seq == 0  # seq not advanced
+
+
+# ---------- per-envelope protocol version (forward-insights-over-companion) ----------
+
+def test_seal_stamps_per_event_envelope_version():
+    key = bytes(range(32))
+    # An existing event type stays v1 so a v1-only consumer still receives it.
+    lan = seal_event(key, channel="c", seq=1, ts="2026-06-03T12:00:00+08:00",
+                     payload=_lan_seen())
+    assert lan["v"] == 1
+    # An insight rides a v2 envelope (a v1 consumer abstains on just these).
+    insight_payload = {
+        "ts": "2026-06-03T12:00:00+08:00", "type": "insight",
+        "code": "evil_twin", "severity": "critical", "detail": {"ssid": "cafe"},
+    }
+    insight = seal_event(key, channel="c", seq=2, ts="2026-06-03T12:00:00+08:00",
+                         payload=insight_payload)
+    assert insight["v"] == 2
+    # Round-trips back to the original insight object.
+    assert open_envelope(key, insight) == insight_payload
+
+
+def test_sink_forwards_and_seals_insight_as_v2(tmp_path):
+    # End-to-end: a critical threat insight forwards, seals at v2, strips the
+    # local-only salience field, and the doorbell summary is its one-liner.
+    path = tmp_path / "companion.json"
+    st = PairingState.generate("https://r.example")
+    st.save(path)
+    client = RelayClient(st.relay_url, st.channel, st.relay_token(), transport=_FakeTransport(200))
+    sink = CompanionSink(st, client, PushPolicy(), state_path=path)
+    payload = {
+        "ts": "2026-06-03T12:00:00+08:00", "type": "insight", "code": "evil_twin",
+        "severity": "critical", "detail": {"ssid": "cafe", "new_vendor": "TP-Link"},
+        "salience": "high",
+    }
+    assert sink.offer(payload) is True
+    env, cat, summary = client._queue[0]
+    assert env["v"] == 2                      # insight rides a v2 envelope
+    assert cat == "insight"
+    assert "evil twin" in summary             # localised one-liner on the doorbell
+    sealed = open_envelope(st.key_bytes(), env)
+    assert sealed["type"] == "insight"
+    assert "salience" not in sealed           # local-only field stripped
+    assert sealed["detail"] == {"ssid": "cafe", "new_vendor": "TP-Link"}
