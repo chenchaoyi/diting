@@ -49,6 +49,8 @@
   `openspec validate forward-insights-over-companion --strict`.
 
 ## 8. Paired mobile change (separate repo `chenchaoyi/diting-mobile`)
+> Step-by-step handoff (artifact hashes, Dart decode, render/notify, insight
+> code catalog, sequencing): see `mobile-handoff.md` in this change dir.
 - [ ] 8.1 Vendor the regenerated `protocol/` artifacts; conformance test green.
 - [ ] 8.2 Decode + render `insight` (info/note/warn → `[INSIGHT]`, critical →
   `[THREAT]`) + notification; confirm it abstains on v2 envelopes pre-support.
