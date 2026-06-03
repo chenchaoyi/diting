@@ -11,6 +11,37 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.14.0] — 2026-06-03
+
+**Insights + threats reach your phone, and a fourth threat lands.** The
+event-design layer from 1.13.0 was desktop-local; this release forwards it
+over the companion bridge and adds `security_downgrade` to the threat tier.
+
+### Added
+
+- **Insights + threats over the companion wire.** `insight` is now a
+  first-class `companion-protocol` event (the protocol major is **v2**), so
+  the synthesized findings and threats from 1.13.0 forward to a paired phone —
+  salience-gated, so `info`-level insights stay desktop-local while
+  `note`/`warn`/`critical` (including every threat) push through. Forwarding
+  uses **per-envelope versioning**: existing events stay v1, only `insight`
+  rides a v2 envelope, so a phone that has not yet updated keeps receiving
+  every other event and simply ignores insights until it does.
+- **`security_downgrade` threat.** Re-associating to a familiar SSID at a
+  weaker cipher than the strongest seen this session (e.g. WPA2 → open) now
+  raises a `[THREAT]` — the payoff an evil twin is usually after. Like the
+  other threats it keys on authoritative signal (the cipher), never the
+  SSID itself.
+
+### Notes
+
+- **Update the phone app to its v2 build to see insights/threats there.** An
+  older app silently ignores them (no breakage) until updated; the desktop
+  shows everything regardless.
+- The connection cipher (`security`) is recorded in the JSONL log on
+  associated `link_state` lines but is desktop-local — it never crosses the
+  companion wire.
+
 ## [1.13.0] — 2026-06-03
 
 The **event-design intelligence layer.** diting stops treating every

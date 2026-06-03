@@ -275,17 +275,36 @@ NOT cross the companion wire.
 ### Requirement: An insight event type SHALL carry a code, severity, and detail
 The event vocabulary SHALL include an `insight` event — a synthesized
 valuable-change observation — carrying a stable English `code`, a `severity`
-(`info` / `note` / `warn`), and an optional structured `detail`. The `code` is
-locale-stable (the analysis key); the human one-liner is derived from
-`code` + `detail` at render / notify time via `t()`, so the JSONL carries no
-localised text. `InsightEvent` is a frozen dataclass with a `timestamp`, like
-every other event, and rides the same EventRing + JSONL writer.
+(`info` / `note` / `warn` / `critical`, where `critical` is the threat tier),
+and an optional structured `detail`. The `code` is locale-stable (the analysis
+key); the human one-liner is derived from `code` + `detail` at render / notify
+time via `t()`, so the JSONL carries no localised text. `detail` SHALL be
+serialised as a single nested object (e.g. `"detail":{"count":4}`), NOT
+flattened onto the event — so the JSONL line mirrors the `companion-protocol`
+wire shape exactly. `InsightEvent` is a frozen dataclass with a `timestamp`,
+like every other event, and rides the same EventRing + JSONL writer.
 
 #### Scenario: Insight serialises with a stable code
 - **WHEN** an `insight` event is emitted to a file sink
 - **THEN** the JSONL line carries `"type":"insight"`, the English `code`, and the `severity`
 
-#### Scenario: Detail keys are present when supplied
+#### Scenario: Detail is a nested object when supplied
 - **WHEN** an insight is emitted with a non-empty `detail`
-- **THEN** the JSONL line carries those detail fields; when `detail` is absent the line omits them
+- **THEN** the JSONL line carries `detail` as a nested object; when `detail` is absent the line omits the key
+
+### Requirement: Associated link_state SHALL carry a desktop-local security cipher
+An `associated` `link_state` event SHALL carry the connection cipher as an
+optional desktop-local `security` field (from `conn.security`), present in the
+JSONL log but NOT part of the `link_state` companion-protocol wire vocabulary —
+it is stripped before sealing (it is a local-only field). It feeds the
+`security_downgrade` threat detector. When the cipher is unknown the field is
+omitted.
+
+#### Scenario: Associated link_state logs the cipher
+- **WHEN** the connection updates to associated with a known security cipher
+- **THEN** the JSONL `link_state` line carries a `security` field
+
+#### Scenario: Security never crosses the wire
+- **WHEN** an associated `link_state` carrying `security` is forwarded to the companion
+- **THEN** the sealed envelope's plaintext omits `security` (it is a local-only field), leaving only the `link_state` wire vocabulary
 

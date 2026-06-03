@@ -127,3 +127,35 @@ queued).
 - **WHEN** the user presses the companion key in the running TUI
 - **THEN** a modal renders the pairing QR (generating a pairing if none exists yet), and forwarding begins on the running app without a restart
 
+### Requirement: Insight + threat events SHALL be forwarded, salience-gated
+The companion sink SHALL forward `insight` events (including the `critical`
+threat tier) rather than treating them as desktop-local. Forwarding SHALL ride
+the existing salience gate: with the default minimum (`low`), `info`-severity
+insights (salience `low`) are dropped while `note` / `warn` / `critical`
+(salience `notable` / `high`) forward. The per-(type, target) silence window
+SHALL key an insight on its `code`, so distinct insight codes debounce
+independently. The existing local-only field strip (`familiarity`, `salience`)
+SHALL still apply to insight payloads before sealing.
+
+#### Scenario: A threat is forwarded
+- **WHEN** a `critical` `insight` (e.g. `evil_twin`) is offered to the sink while paired
+- **THEN** it is sealed and enqueued (its salience `high` clears the gate)
+
+#### Scenario: An info insight is not forwarded
+- **WHEN** an `info` `insight` (salience `low`) is offered and the minimum salience is the default
+- **THEN** the sink does not forward it
+
+#### Scenario: Distinct insight codes are not coalesced together
+- **WHEN** two insights with different `code`s are offered within one silence window
+- **THEN** both forward (the window is keyed per code)
+
+### Requirement: The local-only strip SHALL include the security cipher
+The sink's local-only field strip SHALL include `security` (alongside
+`familiarity` and `salience`), so the connection cipher stamped on associated
+`link_state` events never crosses the companion wire while remaining available
+to the desktop threat engine and the JSONL log.
+
+#### Scenario: security is stripped before sealing
+- **WHEN** an associated `link_state` carrying a `security` field is forwarded
+- **THEN** the sealed envelope's plaintext omits `security`, leaving only `companion-protocol` `link_state` vocabulary fields
+
