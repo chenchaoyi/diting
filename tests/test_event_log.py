@@ -973,3 +973,49 @@ def test_associated_link_state_carries_security(tmp_path):
     row = _read_jsonl(path)[0]
     assert row["type"] == "link_state" and row["state"] == "associated"
     assert row["security"] == "WPA2 Personal"
+
+
+# ------------------------------------------------------------------
+# extended BLE familiarity identity (extend-ble-familiarity-identity)
+# ------------------------------------------------------------------
+
+def test_service_data_device_gets_sd_familiarity_and_dwell_folds(tmp_path):
+    """A MiBeacon-style device (no payload/name, service_data_id set) now gets a
+    familiarity class keyed on its service-data id, and its left-dwell folds
+    under the same key."""
+    store = FamiliarityStore(tmp_path / "fam.json")
+    logger = EventLogger.disabled()
+    logger.set_familiarity_store(store)
+    ts = datetime(2026, 6, 4, 9, 0, tzinfo=timezone.utc)
+    logger.emit_ble_device_seen(BLEDeviceSeenEvent(
+        timestamp=ts, identifier="ROT-A", name=None, vendor="Anhui Huami...",
+        rssi_dbm=-60, service_categories=(),
+        vendor_id=None, manufacturer_hex=None,
+        service_data_id="mibeacon:aa:bb:cc:dd:ee:ff",
+    ))
+    logger.emit_ble_device_left(BLEDeviceLeftEvent(
+        timestamp=ts, identifier="ROT-A", name=None, vendor="Anhui Huami...",
+        last_rssi_dbm=-60, service_categories=(), seen_for_seconds=30.0,
+        vendor_id=None, manufacturer_hex=None,
+        service_data_id="mibeacon:aa:bb:cc:dd:ee:ff",
+    ))
+    rec = store.record("ble:sd:mibeacon:aa:bb:cc:dd:ee:ff")
+    assert rec is not None
+    assert rec.dwell_ewma_s == 30.0
+
+
+def test_vendor_only_device_gets_vendor_group_familiarity(tmp_path):
+    path = tmp_path / "events.jsonl"
+    store = FamiliarityStore(tmp_path / "fam.json")
+    logger = EventLogger.to_path(str(path))
+    logger.set_familiarity_store(store)
+    logger.emit_ble_device_seen(BLEDeviceSeenEvent(
+        timestamp=datetime(2026, 6, 4, 9, 0, tzinfo=timezone.utc),
+        identifier="ROT-B", name=None, vendor="Huawei Technologies Co., Ltd.",
+        rssi_dbm=-70, service_categories=(),
+        vendor_id=None, manufacturer_hex=None, service_data_id=None,
+    ))
+    logger.close()
+    # First sighting of the vendor group → first_time, and a record exists.
+    assert _read_jsonl(path)[0]["familiarity"] == "first_time"
+    assert store.record("ble:vg:Huawei Technologies Co., Ltd.") is not None

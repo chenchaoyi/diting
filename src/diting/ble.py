@@ -190,6 +190,50 @@ class BLEHistory:
                 del self._samples[ident]
 
 
+# MiBeacon (Xiaomi / Anhui Huami) service-data UUID + the frame-control bit
+# that signals the device's real MAC is embedded in the frame. Mi Band /
+# Amazfit / Huami wearables advertise here (NOT via manufacturer-data), with a
+# rotating BLE address and usually no name — so the embedded MAC is the only
+# stable per-device identity they offer.
+_MIBEACON_UUID_FRAGMENT = "fe95"
+_MIBEACON_MAC_INCLUDED = 0x0010
+
+
+def service_data_identity(
+    service_data: "tuple[tuple[str, str], ...] | None",
+) -> str | None:
+    """A stable per-device id decoded from a known service-data schema, else
+    ``None``.
+
+    Currently parses MiBeacon (service UUID ``FE95``): when the frame-control
+    ``MAC included`` bit is set, the six little-endian bytes after the
+    product-id + frame-counter header are the device's real MAC — stable across
+    BLE-address rotation. Returns a namespaced token (``mibeacon:<mac>``) so
+    schemas can't collide. Never raises on malformed / short / wrong-schema
+    input — it abstains.
+    """
+    for entry in service_data or ():
+        if not (isinstance(entry, tuple) and len(entry) == 2):
+            continue
+        uuid, hex_body = entry
+        if not isinstance(uuid, str) or _MIBEACON_UUID_FRAGMENT not in uuid.lower():
+            continue
+        if not isinstance(hex_body, str):
+            continue
+        try:
+            b = bytes.fromhex(hex_body)
+        except ValueError:
+            continue
+        # frame-control (2, LE) + product-id (2) + frame-counter (1) + MAC (6)
+        if len(b) < 11:
+            continue
+        if not (int.from_bytes(b[0:2], "little") & _MIBEACON_MAC_INCLUDED):
+            continue
+        mac = b[5:11][::-1]  # little-endian on the wire
+        return "mibeacon:" + ":".join(f"{x:02x}" for x in mac)
+    return None
+
+
 def is_silent_device(d: BLEDevice) -> bool:
     """True iff the device's broadcast carries zero identifying info.
 
@@ -1931,6 +1975,7 @@ class BLEPoller:
                 at_launch=at_launch,
                 vendor_id=dev.vendor_id,
                 manufacturer_hex=dev.manufacturer_hex,
+                service_data_id=service_data_identity(dev.service_data),
             ))
             self._seen_identifiers.add(ident)
             self._pending_seen.pop(ident, None)
@@ -1954,6 +1999,7 @@ class BLEPoller:
                     at_launch=False,
                     vendor_id=dev.vendor_id,
                     manufacturer_hex=dev.manufacturer_hex,
+                    service_data_id=service_data_identity(dev.service_data),
                 ))
                 self._seen_identifiers.add(ident)
         # Expire TTL'd advertising entries. Emit left ONLY for
@@ -2018,6 +2064,7 @@ class BLEPoller:
                     # familiarity dwell folds under the seen event's key.
                     vendor_id=cluster.vendor_id,
                     manufacturer_hex=cluster.anchor_mfg_hex,
+                    service_data_id=service_data_identity(dev.service_data),
                 ))
                 # Tear down the cluster so a future re-arrival
                 # under a fresh identifier creates a NEW cluster
@@ -2045,6 +2092,7 @@ class BLEPoller:
                 device_class=dev.device_class,
                 vendor_id=dev.vendor_id,
                 manufacturer_hex=dev.manufacturer_hex,
+                service_data_id=service_data_identity(dev.service_data),
             ))
             self._departed_identifiers.add(ident)
 

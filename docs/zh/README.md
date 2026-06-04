@@ -566,7 +566,10 @@ Watch）会在不同时段以不同 CoreBluetooth UUID 出现。diting 的
 模糊合并器会把 `(vendor_id, name)` 一致且 RSSI 在 ±10 dB 以内的条目
 合并成一行，并在合并后的行上显示 `(合并 N)` 徽章 —— 但策略保守：完全
 匿名（厂商和名字都为空）的信标永远不合并，否则会静默吞掉真实信号。
-名字时有时无的设备多半会多出一两行，属于预期。
+名字时有时无的设备多半会多出一两行，属于预期。diting 如何跨轮换推导一个
+*稳定*的按设备身份（用于熟悉度 / 复现——厂商 payload → MiBeacon service-data
+MAC → 公司 id+名字 → 厂商分组，绝不用可伪造的名字），见
+[`docs/zh/explainers/ble-identity.md`](explainers/ble-identity.md)。
 
 **BLE 距离短**（约 10 m，Wi-Fi 约 30 m），所以 BLE 列表通常会比
 Wi-Fi 扫描"小一圈"，即便在密集楼层也是如此。

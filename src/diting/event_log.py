@@ -483,6 +483,8 @@ class EventLogger:
                     manufacturer_hex=event.manufacturer_hex,
                     vendor_id=event.vendor_id,
                     name=event.name,
+                    service_data_id=event.service_data_id,
+                    vendor=event.vendor,
                 ),
                 "ble",
                 event.timestamp,
@@ -520,6 +522,8 @@ class EventLogger:
                 manufacturer_hex=event.manufacturer_hex,
                 vendor_id=event.vendor_id,
                 name=event.name,
+                service_data_id=event.service_data_id,
+                vendor=event.vendor,
             ),
             event.seen_for_seconds,
         )

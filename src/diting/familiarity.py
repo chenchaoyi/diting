@@ -62,6 +62,8 @@ def familiarity_key(
     manufacturer_hex: str | None = None,
     vendor_id: int | None = None,
     name: str | None = None,
+    service_data_id: str | None = None,
+    vendor: str | None = None,
     bssid: str | None = None,
     mac: str | None = None,
     service: str | None = None,
@@ -69,10 +71,26 @@ def familiarity_key(
     """A stable, authoritative identity key for an entity, or ``None`` when
     no stable identity exists (caller should then skip familiarity).
 
-    NEVER uses a user-controllable display name as the key. BLE prefers the
-    manufacturer payload (the same per-device token the payload-fusion uses),
-    falling back to ``(vendor_id, name)`` only when no usable payload exists,
-    and never the rotating UUID.
+    NEVER uses a user-controllable display name as the key. The BLE ladder,
+    strongest identity first:
+
+      1. ``ble:<manufacturer_hex>`` — the manufacturer payload (the per-device
+         token the payload-fusion uses), non-Apple only.
+      2. ``ble:sd:<service_data_id>`` — a per-device id decoded out of a known
+         service-data schema (e.g. the MAC a MiBeacon FE95 frame embeds). This
+         covers the large class — Mi Band / Huami / Huawei wearables — that
+         advertise via service-data with NO manufacturer payload, NO name, and
+         a rotating UUID, which would otherwise have no stable identity at all.
+      3. ``ble:vn:<vendor_id>/<name>`` — the (company-id, name) fallback.
+      4. ``ble:vg:<vendor>`` — a coarse vendor GROUP, the last resort when a
+         device was confidently attributed to a manufacturer (via OUI / SIG
+         company-id / member-UUID / service-data UUID — all authoritative) but
+         carries none of the above per-device tokens. It folds that vendor's
+         payload-less, rotating devices into one ambient group rather than
+         leaving them unclassified; it is recurrence grouping, not a per-device
+         or trust claim.
+
+    Never the rotating UUID.
     """
     if kind == "ble":
         if (
@@ -81,8 +99,12 @@ def familiarity_key(
             and len(manufacturer_hex) >= _PAYLOAD_KEY_MIN_HEXLEN
         ):
             return f"ble:{manufacturer_hex}"
+        if service_data_id:
+            return f"ble:sd:{service_data_id}"
         if vendor_id is not None or name:
             return f"ble:vn:{vendor_id}/{name or ''}"
+        if vendor:
+            return f"ble:vg:{vendor}"
         return None
     if kind == "ap":
         return f"ap:{bssid}" if bssid else None
