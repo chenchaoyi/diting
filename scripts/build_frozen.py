@@ -72,7 +72,36 @@ def main() -> None:
     _check_pyinstaller_available()
     _clean_previous_build()
 
-    cmd = [
+    cmd = _pyinstaller_cmd()
+
+    # Invoke PyInstaller; let its output stream straight to our
+    # stdout/stderr so build progress shows up live in CI logs.
+    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
+
+    binary = DIST_DIR / "diting" / "diting"
+    if not binary.is_file():
+        sys.stderr.write(
+            f"Build finished but {binary} is missing.\n"
+            "Check PyInstaller output above for hidden errors.\n"
+        )
+        sys.exit(2)
+
+    print(f"\nbuilt: {binary}")
+    print(f"size: {binary.stat().st_size / (1024 * 1024):.1f} MB (entry binary only)")
+    print(
+        "Bundle this directory (dist/diting/) as `bin/` inside the "
+        "release tarball; see scripts/package_release.sh."
+    )
+
+
+def _pyinstaller_cmd() -> list[str]:
+    """The PyInstaller invocation as an argv list.
+
+    Extracted so a unit test can assert the lazy-imported native deps
+    (notably PyNaCl's `_cffi_backend`) stay collected without running a
+    full frozen build in CI.
+    """
+    return [
         sys.executable, "-m", "PyInstaller",
         "--noconfirm",
         "--clean",
@@ -100,6 +129,20 @@ def main() -> None:
         # them.
         "--collect-all", "zeroconf",
         "--collect-all", "ifaddr",
+        # PyNaCl (companion-bridge secretbox) is LAZY-imported — only
+        # `diting companion pair` / pressing `k` / a paired sink touches
+        # `nacl.secret`. PyInstaller's static analysis starts at the entry
+        # stub and never reaches it, so without this it ships no `nacl`,
+        # no bundled libsodium, and — fatally — no `_cffi_backend` (the C
+        # extension PyNaCl's cffi binding loads via a runtime
+        # `import _cffi_backend`). The frozen binary then crashed with
+        # `ModuleNotFoundError: No module named '_cffi_backend'` the moment
+        # the companion screen (`k`) opened. collect-all walks nacl's
+        # `_sodium` ext + libsodium dylib + the cffi package; the explicit
+        # hidden-import pulls the backend module cffi loads dynamically.
+        "--collect-all", "nacl",
+        "--collect-all", "cffi",
+        "--hidden-import", "_cffi_backend",
         # Ship the bundled OUI / service-type / Bonjour-category
         # data files. They live under src/diting/data/ and are read
         # via importlib.resources at runtime.
@@ -127,25 +170,6 @@ def main() -> None:
         # imports inside the package.
         str(REPO_ROOT / "scripts" / "frozen_entry.py"),
     ]
-
-    # Invoke PyInstaller; let its output stream straight to our
-    # stdout/stderr so build progress shows up live in CI logs.
-    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
-
-    binary = DIST_DIR / "diting" / "diting"
-    if not binary.is_file():
-        sys.stderr.write(
-            f"Build finished but {binary} is missing.\n"
-            "Check PyInstaller output above for hidden errors.\n"
-        )
-        sys.exit(2)
-
-    print(f"\nbuilt: {binary}")
-    print(f"size: {binary.stat().st_size / (1024 * 1024):.1f} MB (entry binary only)")
-    print(
-        "Bundle this directory (dist/diting/) as `bin/` inside the "
-        "release tarball; see scripts/package_release.sh."
-    )
 
 
 if __name__ == "__main__":
