@@ -11,6 +11,30 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.14.2] — 2026-06-04
+
+Quality release. **The familiarity / insight layer now covers the BLE devices
+that actually fill a room, and stops crying wolf about them.** A real office
+capture showed 76% of BLE sightings going unclassified and the
+"new devices appeared" insight firing all day on ambient churn; both are fixed.
+
+### Changed
+
+- **Familiarity now recognises service-data and grouped BLE devices.** Mi Band
+  / Amazfit / Huami / Huawei wearables advertise via service-data (no
+  manufacturer payload, no name, rotating address), so they were previously
+  unclassified — the bulk of a busy floor. diting now derives a stable identity
+  for them: a per-device id from a MiBeacon `FE95` frame's embedded MAC where
+  present, else a coarse per-vendor group so a vendor's rotating swarm folds
+  into one familiar record instead of a flood of unknowns. Keyed on
+  authoritative signal only, never a name. See the new
+  [`docs/explainers/ble-identity.md`](docs/explainers/ble-identity.md).
+- **"New device cluster" only fires for a nearby influx now.** The insight that
+  flags several unfamiliar devices appearing together now counts a BLE device
+  only when it's physically near (so it means "a group arrived close to you,"
+  not the far-field churn of a dense floor) — which had it firing dozens of
+  times a day on ambient noise. New LAN hosts / Bonjour services still count.
+
 ## [1.14.1] — 2026-06-04
 
 Patch release. **Fixes a crash on the companion screen in the installed
