@@ -11,6 +11,28 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.14.1] — 2026-06-04
+
+Patch release. **Fixes a crash on the companion screen in the installed
+binary.** Opening companion pairing (`k`) — or any companion path — on the
+release build crashed and exited with `ModuleNotFoundError: No module named
+'_cffi_backend'`. The companion secretbox path imports PyNaCl lazily, so the
+PyInstaller frozen build never bundled PyNaCl, its libsodium, or cffi's
+`_cffi_backend` C extension. The build now force-collects them. No change to
+the TUI itself; `uv run diting` was never affected.
+
+### Fixed
+
+- **Companion screen (`k`) crashed the installed binary with
+  `ModuleNotFoundError: _cffi_backend`.** PyInstaller follows imports from the
+  entry point and never reached the lazy `nacl.secret` import, so `nacl` +
+  libsodium + `_cffi_backend` were left out of the bundle and the companion
+  crypto path died on first use. `scripts/build_frozen.py` now
+  `--collect-all`s `nacl` and `cffi` and hidden-imports `_cffi_backend`,
+  matching how the other lazy packages (pyobjc, textual, zeroconf) are already
+  collected. Verified the frozen binary now runs `diting companion status` and
+  the pairing screen without crashing.
+
 ## [1.14.0] — 2026-06-03
 
 **Insights + threats reach your phone, and a fourth threat lands.** The

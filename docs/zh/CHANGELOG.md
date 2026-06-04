@@ -10,6 +10,25 @@
 
 ## [Unreleased]
 
+## [1.14.1] — 2026-06-04
+
+补丁发布。**修复安装版二进制在 companion 屏崩溃。** 在发布构建上打开 companion
+配对（`k`）——或任何 companion 路径——会崩溃退出，报
+`ModuleNotFoundError: No module named '_cffi_backend'`。companion secretbox
+路径懒加载 PyNaCl，所以 PyInstaller 冻结构建从未打包 PyNaCl、它的 libsodium、
+或 cffi 的 `_cffi_backend` C 扩展。构建现在强制收集它们。TUI 本身无改动；
+`uv run diting` 从不受影响。
+
+### Fixed
+
+- **companion 屏（`k`）让安装版二进制崩 `ModuleNotFoundError: _cffi_backend`。**
+  PyInstaller 从入口点跟踪导入，从未到达懒加载的 `nacl.secret` 导入，于是
+  `nacl` + libsodium + `_cffi_backend` 没进 bundle，companion 加密路径首次使用即
+  崩。`scripts/build_frozen.py` 现在 `--collect-all` `nacl` 与 `cffi` 并
+  hidden-import `_cffi_backend`，与其他懒加载包（pyobjc、textual、zeroconf）已有
+  的收集方式一致。已验证冻结二进制现在可跑 `diting companion status` 与配对屏而
+  不崩。
+
 ## [1.14.0] — 2026-06-03
 
 **洞察与威胁送达手机，并新增第四个威胁。** 1.13.0 的事件设计层原本只在桌面；
