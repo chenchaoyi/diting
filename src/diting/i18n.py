@@ -890,6 +890,8 @@ _ZH: dict[str, str] = {
         "打开 Wi-Fi 基础知识：SSID / BSSID / 信道 / 频段 / 加密",
     "open Wi-Fi / BLE basics glossary":
         "打开 Wi-Fi / BLE 术语表",
+    "open the companion pairing screen (forward events to a phone)":
+        "打开手机配对界面（把事件转发到手机）",
     "list cursor — move selection up / down (Wi-Fi / BLE / Bonjour)":
         "列表光标——上下移动选中行（Wi-Fi / BLE / Bonjour 三个视图）",
     "inspect the selected row (open detail modal)":
@@ -913,6 +915,7 @@ _ZH: dict[str, str] = {
     "Helper": "辅助进程",
     "Helper bundle": "辅助进程包",
     "Events modal (m)": "事件查看器（m）",
+    "Insights & threats": "洞察与威胁",
     "BLE view": "BLE 视图",
     "Subcommands": "子命令",
     "(none)": "（无参数）",
@@ -969,8 +972,9 @@ _ZH: dict[str, str] = {
     "                  of stdout. Survives session disconnects.\n"
     "    --notify      raise a macOS Notification Centre alert when an\n"
     "                  anomaly fires (rf_stir / latency_spike /\n"
-    "                  loss_burst). Per-(event-type, target) silence\n"
-    "                  window (default 60 s; DITING_NOTIFY_SILENCE_S).\n"
+    "                  loss_burst) — and, in the TUI, when a note / warn /\n"
+    "                  critical insight or threat fires. Per-(type, target)\n"
+    "                  silence window (default 60 s; DITING_NOTIFY_SILENCE_S).\n"
     "                  rf_stir gated by DITING_NOTIFY_STIR_CONFIDENCE\n"
     "                  (high|medium|all, default high). Also valid on\n"
     "                  the default TUI subcommand: `diting --notify`.\n"
@@ -1001,8 +1005,9 @@ _ZH: dict[str, str] = {
         "    --out FILE    将 JSONL 追加到 FILE（行缓冲），而非输出到\n"
         "                  stdout。会话断开后仍持续写入。\n"
         "    --notify      异常事件触发 macOS 通知中心横幅（覆盖 rf_stir /\n"
-        "                  latency_spike / loss_burst）。按 (event-type,\n"
-        "                  target) 维度做静默窗口（默认 60 s，\n"
+        "                  latency_spike / loss_burst）—— 在 TUI 里，note /\n"
+        "                  warn / critical 级的洞察或威胁触发时也会通知。按\n"
+        "                  (type, target) 维度做静默窗口（默认 60 s，\n"
         "                  DITING_NOTIFY_SILENCE_S 可覆盖）；rf_stir 按\n"
         "                  DITING_NOTIFY_STIR_CONFIDENCE 阈值过滤\n"
         "                  （high|medium|all，默认 high）。默认 TUI 子\n"
@@ -1023,16 +1028,47 @@ _ZH: dict[str, str] = {
     "  Filterable scroll of every event the dashboard has detected:\n"
     "  ROAM (AP switches), STIR (RF disturbance from σ baseline),\n"
     "  LATENCY / LOSS (link probe spikes), LINK (associate /\n"
-    "  disassociate), plus BLE / BJ / LAN seen-and-left transitions.\n"
+    "  disassociate), BLE / BJ / LAN seen-and-left transitions, plus\n"
+    "  the synthesized INSIGHT / THREAT rows (see below).\n"
     "  Use 1/2/3/4/5/6/7/0 to filter by category. Below the list: a\n"
     "  per-AP σ table summarising which APs are stable vs stirring,\n"
     "  plus a σ sparkline covering the trailing hour.\n":
         "  仪表盘检测到的所有事件可过滤滚动列表：\n"
         "  ROAM（AP 切换）、STIR（基于 σ 基线的 RF 扰动）、\n"
-        "  LATENCY / LOSS（链路探测尖峰）、LINK（关联 / 断开），\n"
-        "  以及 BLE / BJ / LAN 的出现与消失。按 1/2/3/4/5/6/7/0\n"
-        "  切换过滤。列表下方：各 AP σ 表，标出哪些 AP 稳定 / 哪些\n"
-        "  抖动，以及最近一小时 σ 走势图。\n",
+        "  LATENCY / LOSS（链路探测尖峰）、LINK（关联 / 断开）、\n"
+        "  BLE / BJ / LAN 的出现与消失，以及合成的 INSIGHT / THREAT\n"
+        "  行（见下）。按 1/2/3/4/5/6/7/0 切换过滤。列表下方：各 AP σ\n"
+        "  表，标出哪些 AP 稳定 / 哪些抖动，以及最近一小时 σ 走势图。\n",
+    "  On top of the raw events above, diting watches the stream and\n"
+    "  synthesizes what actually mattered, ranked so the ambient norm\n"
+    "  stays quiet:\n"
+    "    [INSIGHT]  operational findings — an unfamiliar device cluster\n"
+    "               appearing nearby, repeated disconnects, packet loss,\n"
+    "               latency without loss (jitter), AP band-steering.\n"
+    "    [THREAT]   defensive-security findings (red) — evil-twin (same\n"
+    "               SSID, different-vendor AP), deauth-storm (rapid\n"
+    "               disconnects), follows-you (an unfamiliar device that\n"
+    "               stayed with you across locations), security-downgrade\n"
+    "               (a familiar SSID re-joined on a weaker cipher).\n"
+    "  Each device/AP carries a familiarity class (first_time / occasional\n"
+    "  / habitual / returning) so your everyday environment is suppressed\n"
+    "  and only genuine change surfaces. With --notify, note / warn /\n"
+    "  threat-level findings also raise a macOS notification (and forward\n"
+    "  to a paired phone). Identity is keyed on authoritative signal\n"
+    "  (payload / OUI / MAC), never a spoofable name.\n":
+        "  在上面的原始事件之上，diting 还会盯着事件流，把真正重要的内容\n"
+        "  合成出来，并按重要性排序，让日常的环境噪声保持安静：\n"
+        "    [INSIGHT]  运行层面的发现 —— 附近出现一簇陌生设备、反复断连、\n"
+        "               丢包、有延迟但无丢包（抖动）、AP 频段引导。\n"
+        "    [THREAT]   防御性安全发现（红色）—— evil-twin（同 SSID、不同\n"
+        "               厂商的 AP）、deauth-storm（短时间内大量断连）、\n"
+        "               follows-you（一台陌生设备跨地点一直跟着你）、\n"
+        "               security-downgrade（熟悉的 SSID 以更弱的加密重新接入）。\n"
+        "  每台设备 / AP 都带一个熟悉度分类（first_time / occasional /\n"
+        "  habitual / returning），从而压制你的日常环境，只让真正的变化\n"
+        "  浮现。开启 --notify 后，note / warn / 威胁级别的发现还会弹出\n"
+        "  macOS 通知（并转发到已配对的手机）。身份识别只依据权威信号\n"
+        "  （payload / OUI / MAC），绝不使用可伪造的名称。\n",
     "  Toggle with n. Two sections: Connected (system-paired\n"
     "  peripherals you're actively using — keyboards, AirPods, Magic\n"
     "  Trackpad) and Advertising (everything broadcasting nearby).\n"
@@ -1310,6 +1346,34 @@ _ZH: dict[str, str] = {
         "没有服务 UUID、没有名称，本身就是按设计的隐私信标，没东西可查。"
         "(未知) 表示有一些数据但查找链路放弃了识别——这种行是可改进的："
         "缺一个 OUI、缺一个 member UUID、或者缺一条 name pattern。",
+    "Familiarity": "熟悉度",
+    "How often diting has seen this device / AP before, keyed on an "
+    "authoritative signal (payload / OUI / MAC), never a spoofable "
+    "name: first_time, occasional, habitual, returning. Your everyday "
+    "environment scores high and is suppressed so only genuine change "
+    "surfaces.":
+        "diting 此前见过这台设备 / AP 的频度，依据权威信号（payload / "
+        "OUI / MAC）判定，绝不使用可伪造的名称：first_time、occasional、"
+        "habitual、returning。你的日常环境得分高、会被压制，只让真正的"
+        "变化浮现。",
+    "INSIGHT": "INSIGHT（洞察）",
+    "A synthesized operational finding diting derives from the raw "
+    "event stream — an unfamiliar device cluster nearby, repeated "
+    "disconnects, packet loss, latency without loss (jitter), or AP "
+    "band-steering. Ranked by salience so the ambient norm stays quiet.":
+        "diting 从原始事件流中合成出的运行层面发现——附近一簇陌生设备、"
+        "反复断连、丢包、有延迟但无丢包（抖动）、或 AP 频段引导。按重要性"
+        "排序，让日常环境保持安静。",
+    "THREAT": "THREAT（威胁）",
+    "A defensive-security finding (shown red): evil-twin (same SSID on "
+    "a different-vendor AP), deauth-storm (rapid forced disconnects), "
+    "follows-you (an unfamiliar device that stayed with you across "
+    "locations), or security-downgrade (a familiar SSID re-joined on a "
+    "weaker cipher). A hint to investigate, not a verdict.":
+        "一项防御性安全发现（红色显示）：evil-twin（同 SSID、不同厂商的 "
+        "AP）、deauth-storm（短时间内大量强制断连）、follows-you（一台"
+        "陌生设备跨地点一直跟着你）、或 security-downgrade（熟悉的 SSID "
+        "以更弱的加密重新接入）。它是值得排查的线索，不是定论。",
 
     # ---- v0.7.0 Diagnostics rows: Link / Environment ----
     "Link  ": "链路  ",
