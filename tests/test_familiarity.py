@@ -128,3 +128,44 @@ def test_age_out_on_flush(tmp_path):
     s2.observe_seen("ble:fresh", "ble", _t(1))
     s2.flush(now=_t(2))
     assert FamiliarityStore(p).record("ble:fresh") is not None
+
+
+# ---------- extended BLE key ladder (extend-ble-familiarity-identity) ----------
+
+def test_ble_key_uses_service_data_id_when_no_payload():
+    # Payload-less / nameless device with a decoded service-data id → ble:sd.
+    assert familiarity_key(
+        "ble", service_data_id="mibeacon:aa:bb:cc:dd:ee:ff",
+        vendor="Anhui Huami...",
+    ) == "ble:sd:mibeacon:aa:bb:cc:dd:ee:ff"
+
+
+def test_ble_key_vendor_group_last_resort():
+    # No payload, no service-data id, no vendor_id, no name — but a confidently
+    # attributed vendor → coarse vendor-group key.
+    assert familiarity_key("ble", vendor="Huawei Technologies Co., Ltd.") \
+        == "ble:vg:Huawei Technologies Co., Ltd."
+
+
+def test_ble_key_precedence_payload_over_service_data():
+    # A real manufacturer payload still wins (existing behaviour preserved).
+    assert familiarity_key(
+        "ble", manufacturer_hex="0157a1b2", vendor_id=343,
+        service_data_id="mibeacon:aa:bb:cc:dd:ee:ff", vendor="X",
+    ) == "ble:0157a1b2"
+
+
+def test_ble_key_precedence_service_data_over_vendor_name_and_group():
+    assert familiarity_key(
+        "ble", service_data_id="mibeacon:1", vendor_id=999, name="Band",
+        vendor="V",
+    ) == "ble:sd:mibeacon:1"
+
+
+def test_ble_key_vendor_name_over_vendor_group():
+    assert familiarity_key("ble", vendor_id=999, vendor="V") == "ble:vn:999/"
+
+
+def test_ble_key_none_when_nothing_identifying():
+    # Truly anonymous (no payload, no sd id, no vendor_id, no name, no vendor).
+    assert familiarity_key("ble") is None

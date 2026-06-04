@@ -2257,3 +2257,42 @@ def test_assign_to_cluster_fuses_rotation_by_payload_across_rssi_gap():
     # heuristic matches → a fresh cluster.
     d3 = _mfg_dev("uuid-3", vendor_id=_HUAMI, mfg_hex=_HUAMI_PAY_B, rssi=-90)
     assert poller._assign_to_cluster(d3) is None
+
+
+# ---------- MiBeacon service-data identity (extend-ble-familiarity-identity) ----------
+
+from diting.ble import service_data_identity  # noqa: E402
+
+# fc=0x5030 (MAC-included bit 0x10 set) + product 0x0153 + seq 0x0a + MAC (LE).
+_MIBEACON_MAC_INCL = "305015010affeeddccbbaa"
+_MIBEACON_NO_MAC = "005015010affeeddccbbaa"   # fc=0x5000, MAC bit clear
+
+
+def test_service_data_identity_extracts_mibeacon_mac():
+    sid = service_data_identity((("fe95", _MIBEACON_MAC_INCL),))
+    assert sid == "mibeacon:aa:bb:cc:dd:ee:ff"   # little-endian on the wire → reversed
+
+
+def test_service_data_identity_handles_full_128bit_uuid():
+    sid = service_data_identity(
+        (("0000fe95-0000-1000-8000-00805f9b34fb", _MIBEACON_MAC_INCL),)
+    )
+    assert sid == "mibeacon:aa:bb:cc:dd:ee:ff"
+
+
+def test_service_data_identity_abstains_without_mac_bit():
+    assert service_data_identity((("fe95", _MIBEACON_NO_MAC),)) is None
+
+
+def test_service_data_identity_abstains_on_short_frame():
+    assert service_data_identity((("fe95", "305015010a"),)) is None
+
+
+def test_service_data_identity_abstains_on_other_schema():
+    assert service_data_identity((("180f", _MIBEACON_MAC_INCL),)) is None
+
+
+def test_service_data_identity_never_raises_on_malformed():
+    assert service_data_identity((("fe95", "zzzz"),)) is None
+    assert service_data_identity(()) is None
+    assert service_data_identity(None) is None

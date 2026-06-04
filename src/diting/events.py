@@ -108,6 +108,10 @@ class BLEDeviceSeenEvent:
     # needs to derive a stable per-device key (payload, not the rotating id).
     vendor_id: int | None = None
     manufacturer_hex: str | None = None
+    # A stable per-device id decoded from service-data (e.g. MiBeacon MAC) for
+    # devices with no manufacturer payload; in-memory only, feeds the
+    # familiarity key. See `ble.service_data_identity`.
+    service_data_id: str | None = None
     # Familiarity class stamped by the EventLogger when a store is wired;
     # serialised (None-omitted), stripped from the companion wire.
     familiarity: str | None = None
@@ -125,9 +129,10 @@ class BLEDeviceLeftEvent:
     device_type: str | None = None
     device_class: str | None = None
     # In-memory only: lets the familiarity store fold this dwell under the
-    # same payload key the seen event used.
+    # same key the seen event used.
     vendor_id: int | None = None
     manufacturer_hex: str | None = None
+    service_data_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

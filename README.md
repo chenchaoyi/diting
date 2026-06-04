@@ -642,7 +642,11 @@ name)` plus an RSSI window, and shows a `(merged N)` badge on the
 combined entry, but the heuristic is conservative — anonymous
 beacons (no vendor, no name) are never merged because conflating
 them would silently remove signal. Expect to see one or two extra
-rows per rotating device when names disagree.
+rows per rotating device when names disagree. For how diting derives a
+*stable* per-device identity across rotation (for familiarity / recurrence
+— manufacturer payload → MiBeacon service-data MAC → company-id+name →
+vendor group, never the spoofable name), see
+[`docs/explainers/ble-identity.md`](docs/explainers/ble-identity.md).
 
 **BLE range is short** (~10 m vs Wi-Fi's ~30 m), so the BLE list
 will feel "smaller" than the Wi-Fi scan even on a busy floor.
