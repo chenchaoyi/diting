@@ -1228,6 +1228,7 @@ def test_insight_engine_wired_and_drains_into_ring():
                     "ts": now.isoformat(),
                     "familiarity": "first_time",
                     "identifier": f"dev-{i}",
+                    "rssi_dbm": -55,  # near — clears the cluster proximity gate
                 })
             await app._collect_insights()
             ring = app._events_ring.snapshot()

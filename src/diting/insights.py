@@ -36,6 +36,14 @@ _DISASSOC_MIN = 3
 _ROAM_MIN = 5
 _BAND_STEER_RATIO = 0.7
 
+# A BLE arrival counts toward new_device_cluster only when it is physically
+# NEAR. A meaningful cluster is "several unfamiliar devices appeared close to
+# you" (you walked into a populated room, a group sat down) — not the ambient
+# far-field churn of a dense office, which trickles across the threshold all
+# day. Non-BLE arrivals (a new LAN host / Bonjour service) have no proximity
+# and always count.
+_CLUSTER_NEAR_RSSI_DBM = -70
+
 _ARRIVAL_TYPES = frozenset({
     "ble_device_seen", "bonjour_service_seen", "lan_host_seen",
 })
@@ -90,7 +98,10 @@ class InsightEngine:
         if ts is None:
             return
         if etype in _ARRIVAL_TYPES:
-            if payload.get("familiarity") == "first_time":
+            if (
+                payload.get("familiarity") == "first_time"
+                and self._arrival_is_near(etype, payload)
+            ):
                 self._arrivals.append(ts)
         elif etype == "link_state":
             if payload.get("state") == "disassociated":
@@ -155,6 +166,21 @@ class InsightEngine:
         return out
 
     # ---------- internals ----------
+
+    @staticmethod
+    def _arrival_is_near(etype: str, payload: dict[str, Any]) -> bool:
+        """Whether a first_time arrival counts toward new_device_cluster.
+
+        BLE arrivals must be physically near (RSSI ≥ the near threshold) — a
+        cluster is a close influx, not far-field churn; a BLE row with no RSSI
+        can't establish proximity and is excluded. LAN / Bonjour arrivals have
+        no proximity dimension and always count.
+        """
+        if etype != "ble_device_seen":
+            return True
+        rssi = payload.get("rssi_dbm")
+        return isinstance(rssi, (int, float)) and not isinstance(rssi, bool) \
+            and rssi >= _CLUSTER_NEAR_RSSI_DBM
 
     def _maybe(
         self,
