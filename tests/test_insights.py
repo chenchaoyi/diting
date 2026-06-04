@@ -18,8 +18,14 @@ def _ts(seconds_ago: float) -> str:
     return (NOW - timedelta(seconds=seconds_ago)).isoformat()
 
 
-def _arrival(seconds_ago=1.0, familiarity="first_time", etype="ble_device_seen"):
-    return {"type": etype, "ts": _ts(seconds_ago), "familiarity": familiarity}
+def _arrival(seconds_ago=1.0, familiarity="first_time", etype="ble_device_seen",
+             rssi=-55):
+    # Default a NEAR rssi so BLE arrivals clear the cluster proximity gate;
+    # tests that want a far / no-rssi device pass rssi explicitly / None.
+    p = {"type": etype, "ts": _ts(seconds_ago), "familiarity": familiarity}
+    if rssi is not None:
+        p["rssi_dbm"] = rssi
+    return p
 
 
 def _codes(events):
@@ -69,6 +75,38 @@ def test_arrivals_outside_cluster_window_excluded():
     assert "new_device_cluster" not in _codes(eng.collect(NOW))
 
 
+def test_far_ble_arrivals_do_not_cluster():
+    # Far-field office churn (weak RSSI) must NOT trip the cluster — this is
+    # the over-firing fix.
+    eng = InsightEngine()
+    for i in range(4):
+        eng.observe(_arrival(seconds_ago=i, rssi=-85))
+    assert "new_device_cluster" not in _codes(eng.collect(NOW))
+
+
+def test_ble_arrivals_without_rssi_do_not_cluster():
+    eng = InsightEngine()
+    for i in range(4):
+        eng.observe(_arrival(seconds_ago=i, rssi=None))  # no proximity info
+    assert "new_device_cluster" not in _codes(eng.collect(NOW))
+
+
+def test_near_ble_arrivals_cluster():
+    eng = InsightEngine()
+    for i in range(3):
+        eng.observe(_arrival(seconds_ago=i, rssi=-60))  # near
+    assert "new_device_cluster" in _codes(eng.collect(NOW))
+
+
+def test_lan_bonjour_arrivals_count_without_rssi():
+    # Non-BLE arrivals have no proximity dimension and always count.
+    eng = InsightEngine()
+    eng.observe(_arrival(etype="lan_host_seen", rssi=None))
+    eng.observe(_arrival(etype="bonjour_service_seen", rssi=None))
+    eng.observe(_arrival(etype="lan_host_seen", seconds_ago=2, rssi=None))
+    assert "new_device_cluster" in _codes(eng.collect(NOW))
+
+
 # ---------- cooldown ----------
 
 def test_cooldown_fires_once_per_window():
@@ -82,7 +120,7 @@ def test_cooldown_fires_once_per_window():
     for _ in range(3):
         eng.observe({"type": "ble_device_seen",
                      "ts": (NOW + timedelta(seconds=305)).isoformat(),
-                     "familiarity": "first_time"})
+                     "familiarity": "first_time", "rssi_dbm": -55})
     assert "new_device_cluster" in _codes(eng.collect(NOW + timedelta(seconds=310)))
 
 
