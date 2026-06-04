@@ -601,6 +601,7 @@ def _help_content() -> tuple[Text, Text]:
     body.append(" " * 8 + t("baseline, last-hour σ sparkline)\n"))
     line("?", t("toggle this help"))
     line("b", t("open Wi-Fi / BLE basics glossary"))
+    line("k", t("open the companion pairing screen (forward events to a phone)"))
     # Cross-view list-row navigation. The bindings fire in Wi-Fi, BLE,
     # and Bonjour views — each action no-ops outside its panel, so the
     # same physical keys are safe to surface here as a single hint.
@@ -620,10 +621,32 @@ def _help_content() -> tuple[Text, Text]:
         "  Filterable scroll of every event the dashboard has detected:\n"
         "  ROAM (AP switches), STIR (RF disturbance from σ baseline),\n"
         "  LATENCY / LOSS (link probe spikes), LINK (associate /\n"
-        "  disassociate), plus BLE / BJ / LAN seen-and-left transitions.\n"
+        "  disassociate), BLE / BJ / LAN seen-and-left transitions, plus\n"
+        "  the synthesized INSIGHT / THREAT rows (see below).\n"
         "  Use 1/2/3/4/5/6/7/0 to filter by category. Below the list: a\n"
         "  per-AP σ table summarising which APs are stable vs stirring,\n"
         "  plus a σ sparkline covering the trailing hour.\n"
+    ))
+
+    section(t("Insights & threats"))
+    body.append(t(
+        "  On top of the raw events above, diting watches the stream and\n"
+        "  synthesizes what actually mattered, ranked so the ambient norm\n"
+        "  stays quiet:\n"
+        "    [INSIGHT]  operational findings — an unfamiliar device cluster\n"
+        "               appearing nearby, repeated disconnects, packet loss,\n"
+        "               latency without loss (jitter), AP band-steering.\n"
+        "    [THREAT]   defensive-security findings (red) — evil-twin (same\n"
+        "               SSID, different-vendor AP), deauth-storm (rapid\n"
+        "               disconnects), follows-you (an unfamiliar device that\n"
+        "               stayed with you across locations), security-downgrade\n"
+        "               (a familiar SSID re-joined on a weaker cipher).\n"
+        "  Each device/AP carries a familiarity class (first_time / occasional\n"
+        "  / habitual / returning) so your everyday environment is suppressed\n"
+        "  and only genuine change surfaces. With --notify, note / warn /\n"
+        "  threat-level findings also raise a macOS notification (and forward\n"
+        "  to a paired phone). Identity is keyed on authoritative signal\n"
+        "  (payload / OUI / MAC), never a spoofable name.\n"
     ))
 
     section(t("BLE view"))
@@ -736,8 +759,9 @@ def _help_content() -> tuple[Text, Text]:
         "                  of stdout. Survives session disconnects.\n"
         "    --notify      raise a macOS Notification Centre alert when an\n"
         "                  anomaly fires (rf_stir / latency_spike /\n"
-        "                  loss_burst). Per-(event-type, target) silence\n"
-        "                  window (default 60 s; DITING_NOTIFY_SILENCE_S).\n"
+        "                  loss_burst) — and, in the TUI, when a note / warn /\n"
+        "                  critical insight or threat fires. Per-(type, target)\n"
+        "                  silence window (default 60 s; DITING_NOTIFY_SILENCE_S).\n"
         "                  rf_stir gated by DITING_NOTIFY_STIR_CONFIDENCE\n"
         "                  (high|medium|all, default high). Also valid on\n"
         "                  the default TUI subcommand: `diting --notify`.\n"
@@ -1475,6 +1499,37 @@ def _basics_content() -> tuple[Text, Text]:
             "to look up; the device is a privacy beacon by design. (unknown) "
             "means there IS some data but the lookup chain abstained — that "
             "row is actionable: a missing OUI / member UUID / name pattern."
+        ),
+    )
+
+    section(t("Insights & threats"))
+    term(
+        t("Familiarity"),
+        t(
+            "How often diting has seen this device / AP before, keyed on an "
+            "authoritative signal (payload / OUI / MAC), never a spoofable "
+            "name: first_time, occasional, habitual, returning. Your everyday "
+            "environment scores high and is suppressed so only genuine change "
+            "surfaces."
+        ),
+    )
+    term(
+        t("INSIGHT"),
+        t(
+            "A synthesized operational finding diting derives from the raw "
+            "event stream — an unfamiliar device cluster nearby, repeated "
+            "disconnects, packet loss, latency without loss (jitter), or AP "
+            "band-steering. Ranked by salience so the ambient norm stays quiet."
+        ),
+    )
+    term(
+        t("THREAT"),
+        t(
+            "A defensive-security finding (shown red): evil-twin (same SSID on "
+            "a different-vendor AP), deauth-storm (rapid forced disconnects), "
+            "follows-you (an unfamiliar device that stayed with you across "
+            "locations), or security-downgrade (a familiar SSID re-joined on a "
+            "weaker cipher). A hint to investigate, not a verdict."
         ),
     )
 
