@@ -300,7 +300,7 @@ screen-pushers.
 - **THEN** they see `quit  pause  │  rescan  sort  reroam  view  │  events  companion  help  basics` (or the ZH equivalent)
 
 ### Requirement: Hidden bindings SHALL exist for power-user navigation
-The footer SHALL only show the eight primary bindings. Additional
+The footer SHALL only show the ten primary bindings. Additional
 bindings — BLE row navigation (`up`, `down`, `enter`, `i`), modal
 filter-cycling (`0`/`1`/`2`/`3`/`4` in the events modal),
 scroll-within-modal — SHALL exist with `show=False` and SHALL be
