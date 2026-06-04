@@ -23,6 +23,6 @@
   help/basics document the insight/threat layer.
 
 ## 6. Gates
-- [ ] 6.1 `uv run pytest`, snapshot regression,
+- [x] 6.1 `uv run pytest`, snapshot regression,
   `openspec validate --specs --strict`,
   `openspec validate document-insights-in-help --strict`.
