@@ -51,10 +51,28 @@ The installer SHALL download the platform-matching tarball from the project's Gi
 - `SHASUMS256.txt` — a sibling asset listing SHA256 hashes for
   each tarball, one per line, in `sha256sum`-compatible format
 
-The installer SHALL fetch the latest release via the GitHub API
-(`api.github.com/repos/chenchaoyi/diting/releases/latest`),
-download the right tarball, compute its SHA256, and abort if the
-hash does not match the `SHASUMS256.txt` entry.
+The installer SHALL resolve the latest release via the GitHub API
+(`api.github.com/repos/chenchaoyi/diting/releases/latest`) with a bounded
+timeout; when the API attempt fails, it SHALL fall back to following the
+`https://github.com/<repo>/releases/latest` redirect through the same
+candidate chain used for asset downloads (GitHub-direct first, then the
+mirror proxies), reading the version tag from the redirect's final URL
+(`…/tag/<version>`). A tag parsed from the redirect SHALL be accepted only
+when it matches a version shape (optional `v` + leading digit). When every
+resolution path fails, the installer SHALL abort with guidance naming both
+escapes — `DITING_VERSION=vX.Y.Z` to skip resolution, and
+`DITING_INSTALL_MIRROR` for the asset mirrors. The installer SHALL then
+download the right tarball, compute its SHA256, and abort if the hash does
+not match the `SHASUMS256.txt` entry.
+
+Version resolution does not move the trust anchor: it only selects *which*
+tag to fetch; the tarball is still verified against a `SHASUMS256.txt`
+that is attempted GitHub-direct first.
+
+The README (EN + ZH) SHALL document the bootstrap mirror form for networks
+where `raw.githubusercontent.com` itself is blocked (the script cannot help
+before it runs): prefixing the raw script URL with a chain proxy, e.g.
+`curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh | bash`.
 
 #### Scenario: Tarball matches SHASUMS256.txt
 - **WHEN** the download completes and the computed SHA256 matches the entry in SHASUMS256.txt
@@ -67,6 +85,18 @@ hash does not match the `SHASUMS256.txt` entry.
 #### Scenario: Tag-locked install via DITING_VERSION env var
 - **WHEN** the user runs `DITING_VERSION=v0.10.0 curl … | bash`
 - **THEN** the installer fetches `v0.10.0` specifically rather than the latest tag
+
+#### Scenario: API blocked, redirect fallback resolves the version
+- **WHEN** `api.github.com` is unreachable but the `releases/latest` redirect succeeds (direct or via a chain proxy)
+- **THEN** the installer resolves the version from the redirect's final `/tag/<version>` URL and proceeds to the download step
+
+#### Scenario: Resolution fails everywhere with actionable guidance
+- **WHEN** the API and every redirect candidate fail
+- **THEN** the installer aborts non-zero with a message naming `DITING_VERSION` to pin a version and `DITING_INSTALL_MIRROR` for mirrors
+
+#### Scenario: A non-version redirect is rejected
+- **WHEN** a proxy answers the `releases/latest` redirect with a final URL that does not end in a version-shaped `/tag/<version>`
+- **THEN** that candidate is rejected and the next one tried
 
 ### Requirement: The installer SHALL download via a validated mirror chain with GitHub as the trust anchor
 When a GitHub Releases download fails (the chronic CN-network stall on `objects.githubusercontent.com`), the installer SHALL fall back through an ordered chain of mirror proxies rather than a single mirror, and SHALL validate the content of every downloaded asset before trusting it. GitHub Releases stays the canonical trust anchor; SHA256 verification of the tarball remains mandatory and unchanged.
