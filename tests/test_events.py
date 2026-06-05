@@ -550,3 +550,37 @@ def test_lan_active_probe_consented_logger_with_none_path_is_noop():
         ssdp_packets=1,
         mdns_packets=1,
     ))
+
+
+# ---- expand-event-ring: the ring's size bound ----
+
+def _seen(i: int) -> BLEDeviceSeenEvent:
+    return BLEDeviceSeenEvent(
+        timestamp=_T, identifier=f"id-{i}", name=None, vendor=None,
+        rssi_dbm=-60, service_categories=(),
+    )
+
+
+def test_ring_default_capacity_overflow_drops_oldest():
+    from diting.events import EventRing
+
+    ring = EventRing()
+    for i in range(1001):
+        ring.push(_seen(i))
+    snap = ring.snapshot()
+    assert len(snap) == 1000
+    # Newest-first: the 1001st event leads, the very first rolled off.
+    assert snap[0].identifier == "id-1000"
+    assert all(ev.identifier != "id-0" for ev in snap)
+
+
+def test_ring_custom_capacity_honored():
+    from diting.events import EventRing
+
+    ring = EventRing(capacity=5)
+    for i in range(6):
+        ring.push(_seen(i))
+    snap = ring.snapshot()
+    assert len(snap) == 5
+    assert snap[0].identifier == "id-5"
+    assert all(ev.identifier != "id-0" for ev in snap)

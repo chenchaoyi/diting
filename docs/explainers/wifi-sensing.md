@@ -94,7 +94,7 @@ surfaces:
   `rf_stir` event is appended to the unified events ring. Confidence
   is `high` when the spike shows up on >= 2 co-located APs at once
   (RSSI >= -65 dBm), `medium` otherwise. Open the events modal with
-  `m` to browse the last 100; consume them as JSONL via `diting
+  `m` to browse the last 1000; consume them as JSONL via `diting
   monitor`.
 - **Occupancy `quiet` vs `active`** — `diting calibrate`
   records 5 minutes of "the room is empty" baseline RSSI and

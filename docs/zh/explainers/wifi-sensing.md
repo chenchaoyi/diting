@@ -80,7 +80,7 @@ Vital-Radio），但把那转化成 `pip install` 是研究级项目，不是
 - **运动事件日志** —— 当前 5 秒 σ 超过滚动 5 分钟中位 σ 的 2.5
   倍且绝对 σ 超过 3 dB 时，触发 `rf_stir` 事件，加入统一事件环。
   当 spike 同时出现在 >= 2 个同位 AP（RSSI >= -65 dBm）时置信度
-  `high`，否则 `medium`。按 `m` 打开事件浏览器查看最近 100 条；
+  `high`，否则 `medium`。按 `m` 打开事件浏览器查看最近 1000 条；
   也可通过 `diting monitor` 以 JSONL 消费。
 - **占用 `安静` vs `活跃`** —— `diting calibrate` 采集 5 分钟
   「房间没人」的基线 RSSI，写入 `./diting-baseline.json`。文件

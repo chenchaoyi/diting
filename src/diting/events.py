@@ -1,6 +1,6 @@
 """Unified event ring buffer + JSONL serialisation.
 
-Twelve event types share one schema and one in-memory ring (last 100):
+Twelve event types share one schema and one in-memory ring (last 1000):
 
     rf_stir              — RSSI variance crossed threshold
     latency_spike        — rtt > 200 ms AND > 5× median
@@ -261,12 +261,14 @@ Event = (
 class EventRing:
     """Bounded FIFO of recent events.
 
-    Default capacity 100 (per spec's "ring buffer of last 100 events").
+    Default capacity 1000 (per spec's size-bound requirement — raised
+    from 100 because one office hour of BLE / LAN churn plus the
+    at-launch census rolled the interesting context off the old cap).
     Newest events live at the right; readers either iterate or copy
     via :meth:`snapshot`.
     """
 
-    def __init__(self, capacity: int = 100) -> None:
+    def __init__(self, capacity: int = 1000) -> None:
         self._buf: deque[Event] = deque(maxlen=capacity)
 
     def push(self, event: Event) -> None:
