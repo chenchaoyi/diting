@@ -116,24 +116,34 @@ def pad_cells(text: str, target: int) -> str:
     return text + " " * (target - width)
 
 
-def fit_cells(text: str, target: int) -> str:
+def fit_cells(text: str, target: int, *, ellipsis: bool = False) -> str:
     """Truncate ``text`` to fit within ``target`` terminal cells, then
     pad to exactly ``target``. Equivalent to ``text[:n].ljust(n)`` for
     ASCII, but cell-correct: a Chinese AP name like ``1F-书房`` keeps
     every glyph instead of having ``房`` chopped in half mid-byte. If
     truncation would land on the second cell of a wide glyph, the glyph
     is dropped entirely so the output is never visibly garbled.
+
+    ``ellipsis=True`` marks an overflow visibly: the text truncates one
+    cell short and gains a trailing ``…``, so a chopped value reads as
+    truncated instead of as a real (shorter) value (``Device
+    Information`` → ``Device Informat…``, never ``Device Informati``).
+    Fitting text renders identically in both forms.
     """
     if cell_len(text) <= target:
         return pad_cells(text, target)
+    budget = target - 1 if ellipsis and target >= 2 else target
     out = ""
     used = 0
     for ch in text:
         w = cell_len(ch)
-        if used + w > target:
+        if used + w > budget:
             break
         out += ch
         used += w
+    if ellipsis and target >= 2:
+        out = out.rstrip() + "…"
+        used = cell_len(out)
     return out + " " * (target - used)
 
 

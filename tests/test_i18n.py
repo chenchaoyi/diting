@@ -220,3 +220,27 @@ def test_zh_catalog_preserves_placeholder_in_devices_present():
     assert rendered.count("20") == 1
     i18n.set_lang(i18n.EN)
     assert i18n.t("{n} devices already present", n=20) == "20 devices already present"
+
+
+# --- polish-event-rendering: fit_cells ellipsis variant ---
+
+def test_fit_cells_ellipsis_marks_truncation():
+    from diting.i18n import cell_len, fit_cells
+    out = fit_cells("Device Information", 16, ellipsis=True)
+    assert out.endswith("…") or out.rstrip().endswith("…")
+    assert out.rstrip() == "Device Informat…"
+    assert cell_len(out) == 16
+
+
+def test_fit_cells_ellipsis_exact_width_with_cjk():
+    from diting.i18n import cell_len, fit_cells
+    # Wide glyphs: truncation never splits a CJK character; the output
+    # is exactly the target width including the ellipsis.
+    out = fit_cells("书房书房书房", 7, ellipsis=True)
+    assert "…" in out
+    assert cell_len(out) == 7
+
+
+def test_fit_cells_ellipsis_noop_when_fits():
+    from diting.i18n import fit_cells
+    assert fit_cells("HID", 16, ellipsis=True) == fit_cells("HID", 16)

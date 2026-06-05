@@ -3821,3 +3821,47 @@ def test_event_format_line_critical_insight_renders_threat_row():
     text = _event_format_line(ev, NetworkInventory()).plain
     assert "[THREAT]" in text
     assert "cafe" in text
+
+
+# --- polish-event-rendering: vendor alias + modal timestamp ordering ---
+
+def test_ble_event_vendor_label_applies_display_alias():
+    from diting.tui import _ble_event_vendor_label
+    label = _ble_event_vendor_label(
+        "Anhui Huami Information Technology Co., Ltd.",
+        None, None, None, (),
+    )
+    assert label == "Huami"
+
+
+def test_ble_event_vendor_label_passes_through_unaliased():
+    from diting.tui import _ble_event_vendor_label
+    label = _ble_event_vendor_label("Acme Widgets Ltd.", None, None, None, ())
+    assert label == "Acme Widgets Ltd."
+
+
+def test_events_newest_first_sorts_interleaved_timestamps():
+    # Emission order interleaves timestamps (gated first-seen vs instant
+    # named) — the modal must read monotonically newest-first.
+    from diting.tui import _events_newest_first
+    ring = [
+        _ble_seen(9, "A", None, "a"),
+        _ble_seen(15, "B", None, "b"),
+        _ble_seen(9, "C", None, "c"),
+        _ble_seen(18, "D", None, "d"),
+    ]
+    ordered = _events_newest_first(ring)
+    stamps = [ev.timestamp for ev in ordered]
+    assert stamps == sorted(stamps, reverse=True)
+    assert ordered[0].identifier == "d"
+
+
+def test_events_newest_first_stable_for_equal_timestamps():
+    from diting.tui import _events_newest_first
+    ring = [
+        _ble_seen(9, "A", None, "first-emitted"),
+        _ble_seen(9, "B", None, "second-emitted"),
+    ]
+    ordered = _events_newest_first(ring)
+    # Stable sort: equal timestamps keep emission order.
+    assert [ev.identifier for ev in ordered] == ["first-emitted", "second-emitted"]
