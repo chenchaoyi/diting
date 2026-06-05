@@ -1268,3 +1268,52 @@ def test_threat_engine_wired_and_drains_into_ring():
             await pilot.press("q")
 
     asyncio.run(go())
+
+
+# ---- fix-consumer-teardown-race: the consumer guard ----
+#
+# Textual's test-context shutdown unmounts the screen's children while
+# a consumer worker may still drain queued events; its next query_one
+# raises NoMatches and fails the run (CI: NoMatches('#conn')). The
+# guard absorbs exactly that — and nothing else.
+
+def test_consumer_guard_absorbs_nomatches():
+    import asyncio
+    from textual.css.query import NoMatches
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+
+        async def raises_nomatches():
+            raise NoMatches("No nodes match '#conn'")
+
+        # Returns quietly — the teardown race ends the worker, not the app.
+        await app._consumer_guard(raises_nomatches())
+
+    asyncio.run(go())
+
+
+def test_consumer_guard_propagates_other_exceptions():
+    import asyncio
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+
+        async def raises_valueerror():
+            raise ValueError("genuine bug")
+
+        with pytest.raises(ValueError):
+            await app._consumer_guard(raises_valueerror())
+
+    asyncio.run(go())
+
+
+def test_consumers_launch_wrapped_in_guard():
+    """Every event-consumer worker launch wraps its coroutine in the
+    guard — a new consumer added without the wrap reintroduces the
+    teardown race, so pin the count."""
+    import inspect
+    import diting.tui as tui_mod
+
+    source = inspect.getsource(tui_mod)
+    assert source.count("self._consumer_guard(self._consume") == 5

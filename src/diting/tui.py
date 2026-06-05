@@ -29,6 +29,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Footer, RichLog, Static
 
@@ -6951,14 +6952,18 @@ class DitingApp(App):
             self._environment_monitor = EnvironmentMonitor(
                 inventory=self._inv, calibration=cal,
             )
-        self.run_worker(self._consume_events(), exclusive=True, name="poller")
+        self.run_worker(
+            self._consumer_guard(self._consume_events()),
+            exclusive=True, name="poller",
+        )
         if self._ble_helper_path:
             self._ble_poller = BLEPoller(
                 self._ble_helper_path,
                 presence_gate_s=self._ble_presence_gate_s,
             )
             self.run_worker(
-                self._consume_ble_events(), exclusive=False, name="ble-poller",
+                self._consumer_guard(self._consume_ble_events()),
+                exclusive=False, name="ble-poller",
             )
         # LatencyPoller starts after we have a known gateway IP — the
         # first ConnectionUpdate primes _latest_connection.router_ip.
@@ -6966,7 +6971,7 @@ class DitingApp(App):
         # online as soon as the IP shows up.
         if self._enable_latency:
             self.run_worker(
-                self._consume_latency_events(),
+                self._consumer_guard(self._consume_latency_events()),
                 exclusive=False,
                 name="latency",
             )
@@ -7085,6 +7090,25 @@ class DitingApp(App):
         # Stop the LAN inventory poller if it was started.
         if self._lan_inventory_poller is not None:
             self._lan_inventory_poller.stop()
+
+    async def _consumer_guard(self, coro) -> None:
+        """Run an event-consumer coroutine, absorbing the teardown race.
+
+        Textual's test-context shutdown (``run_test().__aexit__``)
+        unmounts the screen's children while a consumer worker may
+        still be draining queued events; its next ``query_one`` then
+        raises ``NoMatches`` and fails the whole run (seen in CI as
+        ``NoMatches('#conn')``). The fixed panels never unmount in a
+        running app — view cycling only toggles ``display`` — so a
+        ``NoMatches`` inside a consumer can only mean teardown: end
+        the worker quietly. Every other exception still propagates so
+        genuine bugs (a typo'd selector included, while panels are
+        mounted) keep failing loudly.
+        """
+        try:
+            await coro
+        except NoMatches:
+            pass
 
     async def _consume_events(self) -> None:
         async for event in self._poller.events():
@@ -7535,7 +7559,7 @@ class DitingApp(App):
             return
         self._mdns_starting = True
         self.run_worker(
-            self._consume_mdns_events(),
+            self._consumer_guard(self._consume_mdns_events()),
             exclusive=False, name="mdns-poller",
         )
 
@@ -7619,7 +7643,7 @@ class DitingApp(App):
             return
         self._lan_inventory_starting = True
         self.run_worker(
-            self._consume_lan_inventory_events(),
+            self._consumer_guard(self._consume_lan_inventory_events()),
             exclusive=False,
             name="lan-inventory",
         )
