@@ -10,6 +10,39 @@
 
 ## [Unreleased]
 
+## [1.15.0] — 2026-06-05
+
+功能发布。**事件浏览器能装下十倍的历史，外加一轮由真实办公楼层审计驱动的
+渲染打磨。**
+
+### Added
+
+- **事件环容量 1000（原 100）。** 一个办公小时的 BLE / LAN 进出加上启动
+  census 以前就能把有价值的上下文挤出环外；`m` 浏览器现在可滚动最近
+  1000 条。
+
+### Changed
+
+- **事件行与 BLE 列表显示同样的厂商名。** 事件条以前渲染 IEEE 注册全名
+  （`Anhui Huami Information Technology Co., Ltd.`）而列表显示 `Huami`；
+  两个面现在共用同一张显示别名映射表。
+- **截断可见。** 列溢出渲染为尾部 `…`（`Device Informat…`），不再无声硬切
+  （`Device Informati`）—— 覆盖 BLE 与 Bonjour 的 name/services 列、厂商
+  单元格。
+- **事件浏览器按事件时间排序。** 过 presence gate 的设备带首次观测时间戳
+  但发射更晚，modal 以前会交错显示时间戳；现在按最新在前排序。JSONL 日志
+  保持发射顺序、首见语义不变。
+
+### Fixed
+
+- **TUI 测试 harness 的一个仅 CI 可见的关闭竞态。** 事件消费 worker 在测试
+  上下文 teardown 时 drain 最后的队列事件可能以 `NoMatches('#conn')` 崩溃；
+  现在安静退出。运行中的应用行为无变化。
+- **installer 在 GitHub API 被拦时也能装。** 版本解析失败后沿资产下载同一
+  条镜像链回退（`releases/latest` 重定向），README 补充了
+  `raw.githubusercontent.com` 被拦时通过镜像拉取 `install.sh` 本身的写法。
+  安装路径已即刻生效（脚本从 `main` 提供）。
+
 ## [1.14.3] — 2026-06-05
 
 补丁发布。**companion chip 现在会告诉你队列*为什么*在涨，应用内文档也补上了
