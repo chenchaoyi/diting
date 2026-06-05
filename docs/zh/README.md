@@ -331,6 +331,25 @@ DITING_INSTALL_MIRROR=ghproxy curl -fsSL https://raw.githubusercontent.com/chenc
 - `https://你的代理/` —— 用自定义/自建的 GitHub 代理作为唯一镜像（前缀
   形式：`<代理><github-url>`）。自己跑代理、想完全掌控信任路径时最合适。
 
+如果连 `install.sh` 本身都拉不下来——典型报错是 `curl: (35) …
+SSL_ERROR_SYSCALL in connection to raw.githubusercontent.com:443`——
+拦截发生在脚本运行之前，脚本里写什么都救不了。用同样的代理前缀拉脚本
+本身：
+
+```bash
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh | bash
+```
+
+诚实的提醒：把代理给的脚本直接管道进 `bash`，等于把脚本内容托付给该
+代理（脚本内部的 SHA256 校验只保护后续下载的 release 资产）。介意的话
+先下载、读一遍、再执行：
+
+```bash
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh -o install.sh
+less install.sh   # 约 700 行带注释的 bash
+bash install.sh
+```
+
 ### 源码安装（贡献者路径）
 
 需要 Python 3.11+、[uv](https://docs.astral.sh/uv/) 与 Xcode 命令行工具

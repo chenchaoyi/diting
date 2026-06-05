@@ -449,6 +449,55 @@ esac
 # ---- resolve version (must happen before print_header so the
 # tagline can show which version we're installing) ----
 
+# resolve_latest_version — print the latest release tag, or nothing.
+# The GitHub API is the fast path; on networks that reset GitHub TLS
+# (the same ones the asset mirror chain exists for) it fails, so fall
+# back to following the `releases/latest` redirect through the same
+# candidate chain — proxies relay the redirect, and the final URL ends
+# in `/tag/<version>`. Only a version-shaped tag is accepted, so a
+# proxy answering with a landing page can't poison the resolve. Trust
+# is unchanged either way: resolution only picks WHICH tag to fetch;
+# the tarball is still SHA256-verified against a GitHub-first SHASUMS.
+resolve_latest_version() {
+  local v src curl_url final
+  v="$(
+    curl --max-time 10 -fsSL \
+      "https://api.github.com/repos/${REPO_SLUG}/releases/latest" \
+      2>/dev/null \
+    | awk -F'"' '/"tag_name"/ { print $4; exit }'
+  )" || true
+  if [ -n "$v" ]; then
+    printf '%s\n' "$v"
+    return 0
+  fi
+  while IFS=' ' read -r src curl_url; do
+    [ -z "$curl_url" ] && continue
+    if [ "$src" != github ]; then
+      note "$(mirror_fallback_notice "$src")" >&2
+    fi
+    final="$(
+      curl --max-time 20 -fsSL -o /dev/null -w '%{url_effective}' \
+        "$curl_url" 2>/dev/null
+    )" || continue
+    case "$final" in
+      */tag/*)
+        v="${final##*/tag/}"
+        # Version-shape gate: optional `v` + leading digit. Rejects a
+        # proxy that 200s a landing page at some non-release URL.
+        case "$v" in
+          v[0-9]*|[0-9]*)
+            printf '%s\n' "$v"
+            return 0
+            ;;
+        esac
+        ;;
+    esac
+  done <<EOF
+$(build_candidates "https://github.com/${REPO_SLUG}/releases/latest" 0)
+EOF
+  return 1
+}
+
 if [ -n "${DITING_VERSION:-}" ]; then
   VERSION="$DITING_VERSION"
   VERSION_LOG_TEXT="pinned version: $VERSION (DITING_VERSION env override)"
@@ -457,13 +506,10 @@ else
   if [ -n "$TESTONLY" ]; then
     VERSION="v0.0.0-testonly"
   else
-    VERSION="$(
-      curl -fsSL "https://api.github.com/repos/${REPO_SLUG}/releases/latest" \
-      | awk -F'"' '/"tag_name"/ { print $4; exit }'
-    )"
+    VERSION="$(resolve_latest_version)" || true
   fi
   if [ -z "$VERSION" ]; then
-    die "could not resolve latest release; set DITING_VERSION to override"
+    die "could not resolve latest release (api.github.com and the releases/latest mirror chain all failed); pin a version with DITING_VERSION=vX.Y.Z, or see DITING_INSTALL_MIRROR in the README for mirror options"
   fi
   VERSION_LOG_TEXT="latest release: $VERSION"
   VERSION_DISPLAY="$VERSION"

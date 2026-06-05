@@ -371,6 +371,27 @@ Other `DITING_INSTALL_MIRROR` values:
   used as the sole mirror (prefix form: `<proxy><github-url>`). Best
   if you run your own proxy and want full control of the trust path.
 
+If even fetching `install.sh` fails — `curl: (35) … SSL_ERROR_SYSCALL
+in connection to raw.githubusercontent.com:443` is the usual shape —
+the block is upstream of the script, so no script logic can help.
+Fetch the script itself through a chain proxy (same prefix
+convention):
+
+```bash
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh | bash
+```
+
+Honest caveat: piping a proxy-served script to `bash` trusts that
+proxy with the script's contents (the SHA256 verification inside it
+only protects the release assets). If that bothers you, download the
+script first, read it, then run it:
+
+```bash
+curl -fsSL https://ghfast.top/https://raw.githubusercontent.com/chenchaoyi/diting/main/install.sh -o install.sh
+less install.sh   # it's ~700 lines of commented bash
+bash install.sh
+```
+
 ### From source (for contributors)
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/), plus the
