@@ -21,6 +21,9 @@ if TYPE_CHECKING:  # avoid importing the crypto stack at module load
     from .sink import CompanionSink
 
 FLUSH_INTERVAL_S = 3.0
+# Consecutive fully-failed flushes before the chip names the outage —
+# ~9 s at the flush interval, so a transient blip never flashes it.
+UNREACHABLE_AFTER_FAILURES = 3
 
 
 def _state_path_if_paired(state_path: Path | None) -> Path | None:
@@ -76,9 +79,15 @@ def subtitle_chip(sink: "CompanionSink") -> str:
     """Short companion status for the TUI header subtitle."""
     c = sink.client
     if c.pending and c.dropped:
-        return t("companion: {n} queued, {d} dropped", n=c.pending, d=c.dropped)
-    if c.pending:
-        return t("companion: {n} queued", n=c.pending)
-    if c.dropped:
+        chip = t("companion: {n} queued, {d} dropped", n=c.pending, d=c.dropped)
+    elif c.pending:
+        chip = t("companion: {n} queued", n=c.pending)
+    elif c.dropped:
         return t("companion: {d} dropped", d=c.dropped)
-    return t("companion: on")
+    else:
+        return t("companion: on")
+    # A queued backlog reads very differently depending on whether delivery
+    # is merely behind or failing outright — name a sustained outage.
+    if c.consecutive_failures >= UNREACHABLE_AFTER_FAILURES:
+        chip += t(" · relay unreachable")
+    return chip

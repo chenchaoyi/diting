@@ -1501,6 +1501,7 @@ _ZH: dict[str, str] = {
     "companion: {n} queued": "companion：{n} 待发",
     "companion: {d} dropped": "companion：丢弃 {d}",
     "companion: {n} queued, {d} dropped": "companion：{n} 待发，丢弃 {d}",
+    " · relay unreachable": " · relay 不可达",
     # ---- companion: push notification summaries (shown on the phone) ----
     "BLE nearby: {name}": "蓝牙在附近：{name}",
     "New service: {name}": "新服务：{name}",

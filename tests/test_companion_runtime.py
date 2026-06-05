@@ -30,13 +30,13 @@ def test_build_sink_when_paired(tmp_path, monkeypatch):
     assert sink.client.pending == 0
 
 
+class _Sink:
+    def __init__(self, c):
+        self.client = c
+
+
 def test_subtitle_chip_states():
     client = RelayClient("https://r.example", "c", "tok")
-
-    class _Sink:
-        def __init__(self, c):
-            self.client = c
-
     sink = _Sink(client)
     assert runtime.subtitle_chip(sink) == "companion: on"
     client._queue.append(({"seq": 1}, None, None))
@@ -44,3 +44,38 @@ def test_subtitle_chip_states():
     client._dropped = 2
     chip = runtime.subtitle_chip(sink)
     assert "1 queued" in chip and "2 dropped" in chip
+
+
+def _failing_client(failures: int) -> RelayClient:
+    """A client with one queued envelope and `failures` consecutive
+    fully-failed flushes behind it (transport error 0)."""
+    client = RelayClient("https://r.example", "c", "tok",
+                         transport=lambda url, headers, body: 0)
+    client.enqueue({"seq": 1})
+    for _ in range(failures):
+        client.flush()
+    return client
+
+
+def test_subtitle_chip_unreachable_at_threshold():
+    sink = _Sink(_failing_client(3))
+    chip = runtime.subtitle_chip(sink)
+    assert "1 queued" in chip and "relay unreachable" in chip
+
+
+def test_subtitle_chip_plain_below_threshold():
+    sink = _Sink(_failing_client(2))
+    chip = runtime.subtitle_chip(sink)
+    assert "1 queued" in chip and "relay unreachable" not in chip
+
+
+def test_subtitle_chip_recovers_after_successful_send():
+    client = _failing_client(3)
+    sink = _Sink(client)
+    assert "relay unreachable" in runtime.subtitle_chip(sink)
+    # Relay comes back: the drain succeeds and the annotation drops with it.
+    client._transport = lambda url, headers, body: 200
+    client.enqueue({"seq": 2})
+    client.flush()
+    chip = runtime.subtitle_chip(sink)
+    assert "relay unreachable" not in chip and chip == "companion: on"

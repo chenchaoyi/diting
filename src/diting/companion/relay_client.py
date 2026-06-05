@@ -67,6 +67,7 @@ class RelayClient:
         self._max = max_queue
         self._queue: deque[tuple[dict[str, Any], str | None, str | None]] = deque()
         self._dropped = 0
+        self._consecutive_failures = 0
 
     @property
     def pending(self) -> int:
@@ -75,6 +76,15 @@ class RelayClient:
     @property
     def dropped(self) -> int:
         return self._dropped
+
+    @property
+    def consecutive_failures(self) -> int:
+        """Consecutive flushes that attempted delivery and sent nothing.
+        Any successful send (even partial) resets it; a flush against an
+        empty queue proves nothing and leaves it unchanged. The subtitle
+        chip uses this to tell a sustained relay outage apart from a
+        transient blip."""
+        return self._consecutive_failures
 
     def enqueue(
         self,
@@ -114,6 +124,7 @@ class RelayClient:
 
     def flush(self) -> FlushReport:
         """Drain the queue in order until empty or a POST fails."""
+        attempted = bool(self._queue)
         sent = 0
         while self._queue:
             envelope, category, summary = self._queue[0]
@@ -123,4 +134,8 @@ class RelayClient:
                 sent += 1
             else:
                 break  # keep the rest queued in order; try again later
+        if sent:
+            self._consecutive_failures = 0
+        elif attempted:
+            self._consecutive_failures += 1
         return FlushReport(sent=sent, pending=len(self._queue), dropped=self._dropped)
