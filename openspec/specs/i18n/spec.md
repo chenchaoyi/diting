@@ -54,10 +54,26 @@ codepoints, not cells, and CJK glyphs occupy two terminal cells per
 single Python `str` codepoint, which produces visibly broken
 alignment in ZH.
 
+`fit_cells` SHALL accept an `ellipsis=True` keyword: when the text
+overflows the target, it truncates one cell short and appends `…` so the
+truncation is visible instead of reading like a real (shorter) value
+(`Device Information` → `Device Informati…`, never `Device Informati`).
+The output stays exactly `target` cells and never splits a wide glyph.
+Columns that render free-form names or service labels (BLE name /
+services, mDNS name / services, vendor cells) SHALL use the ellipsis form.
+
 #### Scenario: ZH "now" label in a 6-cell column
 - **WHEN** code aligns the "last seen" column with `pad_cells(t("now"), 6)` and ZH `"now"` is `"刚刚"` (4 cells)
 - **THEN** the cell renders `刚刚  ` (2 trailing spaces) — total 6 cells, columns align
 - **AND** `str.ljust(6)` would have produced 4 trailing spaces (codepoint count) → 8 cells, column breaks
+
+#### Scenario: Overflowing label truncates visibly
+- **WHEN** `fit_cells("Device Information", 16, ellipsis=True)` renders a services cell
+- **THEN** the cell reads `Device Informat…` — exactly 16 cells with a visible truncation mark
+
+#### Scenario: Fitting text gains no ellipsis
+- **WHEN** the text already fits within the target
+- **THEN** the output is identical to the non-ellipsis form (padded, no `…`)
 
 ### Requirement: JSONL log keys SHALL stay English regardless of UI language
 The `event-log` JSONL writer SHALL emit English JSON keys (`type`,
@@ -152,7 +168,6 @@ The class-value strings (`phone`, `laptop`, etc.) SHALL be passed through `t()` 
 - **WHEN** `DITING_LANG=en` (default) and a host has `device_class="tv"`
 - **THEN** the LAN row's class column renders `tv`; the detail modal renders `Class: tv`
 
-
 ### Requirement: ZH catalog SHALL close the copy gaps surfaced by the 2026-05-25 ZH-locale `/tui-audit` pass
 The ZH catalog in `src/diting/i18n.py` SHALL provide a translation for the public-scene LAN-probe help-modal line, SHALL stop self-mapping the Bonjour `service` sort token, SHALL translate the `Noise / SNR` glossary heading, SHALL preserve the leading space on the bare `" ago"` time-ago key, SHALL stop translating Apple Continuity protocol names (Apple Companion, Apple Nearby Info) with culturally-misleading Chinese ("配对" / "邻近"), and SHALL render the BLE detail Activity ad-interval hint with idiomatic value-last word order.
 
@@ -244,3 +259,4 @@ The acronym-preservation rule already in this capability covers any product/bran
 #### Scenario: Missing ZH translation falls back to EN
 - **WHEN** a census-summary key is absent from the ZH catalog mid-development
 - **THEN** the key falls back to its EN source per the existing `t()` fallback contract; the summary row still renders, with that fragment in English
+
