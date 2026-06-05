@@ -410,10 +410,12 @@ def _make_curl_shim(
 LOG="{fake_bin}/curl.log"
 DEST=""
 URL=""
+WRITEOUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --output|-o) DEST="$2"; shift 2 ;;
     --max-time)   shift 2 ;;
+    -w)           WRITEOUT="$2"; shift 2 ;;
     -fsSL|-fsSLO|-sSL|-fsS|-fs|--silent|--fail|--show-error|--location|-L|-f|-s|-S)
       shift ;;
     http*) URL="$1"; shift ;;
@@ -441,10 +443,18 @@ done
 
 # Write deterministic payloads. The tarball gets the canonical
 # bytes; SHASUMS gets a single-row file that names that arch's
-# tarball filename. The api.github.com latest-release call would
-# go through the basic stdout path (no --output) — we don't shim
-# it because DITING_VERSION is always pinned in tests.
+# tarball filename. The api.github.com latest-release call goes
+# through the basic stdout path (no --output) and yields empty JSON
+# — so an UNPINNED run falls through to the redirect fallback,
+# which the releases/latest branch below emulates: `-w` callers get
+# the redirect's final URL, `…/releases/latest` rewritten to
+# `…/releases/tag/v0.10.0` (matching the served tarball version).
 case "$URL" in
+  */releases/latest)
+    if [ -n "$WRITEOUT" ]; then
+      printf '%s' "${{URL%latest}}tag/v0.10.0"
+    fi
+    ;;
   *SHASUMS256.txt*)
     printf '%s' '{shasums_payload}' > "$DEST"
     ;;
@@ -769,3 +779,68 @@ def test_mirror_custom_url_override():
     assert "https://ghfast.top/" not in log
     assert "https://gh-proxy.com/" not in log
     assert "https://ghproxy.net/" not in log
+
+
+# ---- harden-version-resolve: latest-tag resolution fallback ----
+#
+# DITING_VERSION="" (empty) un-pins the version so the resolve path
+# runs. The shim's api.github.com branch returns empty JSON, so the
+# resolve always falls through to the releases/latest redirect; the
+# shim answers `-w %{url_effective}` calls with the URL rewritten to
+# `…/releases/tag/v0.10.0`, matching the served tarball version.
+
+def test_version_resolve_falls_back_to_redirect_when_api_fails():
+    """API yields nothing -> the releases/latest redirect (GitHub-
+    direct candidate) resolves v0.10.0 and the install proceeds into
+    the download phase under that version."""
+    proc, log = _run_with_curl_shim(
+        "resolve-redirect",
+        env_extra={"DITING_VERSION": ""},
+    )
+    # The API was attempted, then the redirect candidate.
+    assert "https://api.github.com/repos/chenchaoyi/diting/releases/latest" in log
+    assert "https://github.com/chenchaoyi/diting/releases/latest" in log
+    # Resolution landed on the redirect's tag (LOG-tier step 2 line).
+    assert "latest release: v0.10.0" in proc.stdout
+    # Proof the resolved tag drove the download step.
+    assert "diting-0.10.0-darwin" in proc.stdout
+
+
+def test_version_resolve_rejects_non_version_redirect():
+    """A candidate whose final URL is not a /tag/<version> shape is
+    rejected and the next candidate tried — here GitHub-direct
+    answers with a landing page (no redirect), the first chain proxy
+    serves the real redirect."""
+    proc, log = _run_with_curl_shim(
+        "resolve-reject-nonversion",
+        env_extra={"DITING_VERSION": ""},
+        html_urls=["https://github.com/chenchaoyi/diting/releases/latest"],
+    )
+    # Direct attempt happened but did not resolve; proxy attempt fired.
+    assert "https://github.com/chenchaoyi/diting/releases/latest" in log
+    assert (
+        "https://ghfast.top/https://github.com/chenchaoyi/diting/releases/latest"
+        in log
+    )
+    assert "latest release: v0.10.0" in proc.stdout
+
+
+def test_version_resolve_failure_names_both_escapes():
+    """API + every redirect candidate fail -> abort non-zero naming
+    BOTH escapes: DITING_VERSION to pin, DITING_INSTALL_MIRROR for
+    mirrors."""
+    proc, _log = _run_with_curl_shim(
+        "resolve-exhausted",
+        env_extra={"DITING_VERSION": ""},
+        fail_urls=[
+            "https://api.github.com/",
+            "https://github.com/chenchaoyi/diting/releases/latest",
+            "https://ghfast.top/",
+            "https://gh-proxy.com/",
+            "https://ghproxy.net/",
+        ],
+    )
+    assert proc.returncode != 0
+    assert "could not resolve latest release" in proc.stderr
+    assert "DITING_VERSION=vX.Y.Z" in proc.stderr
+    assert "DITING_INSTALL_MIRROR" in proc.stderr
