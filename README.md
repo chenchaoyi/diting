@@ -35,7 +35,7 @@
 <p align="center">
   <img src="docs/preview-events.svg" alt="diting TUI – Events modal" width="100%">
   <br>
-  <sub><i>Events modal (press <code>m</code> to open) — last 100 roam / RF-stir / latency / loss / link events, per-AP σ baseline, last-hour σ sparkline.</i></sub>
+  <sub><i>Events modal (press <code>m</code> to open) — last 1000 roam / RF-stir / latency / loss / link events, per-AP σ baseline, last-hour σ sparkline.</i></sub>
 </p>
 
 ## Why
@@ -80,7 +80,7 @@ TUI on top of the same APIs Apple uses internally:
   for what diting deliberately does not claim.
 - **Unified events log.** Roam / RF stir / latency spike / loss
   burst / link state — all five event types stream into one ring
-  buffer. Press `m` for a full-screen browser of the last 100; use
+  buffer. Press `m` for a full-screen browser of the last 1000; use
   `diting monitor` for headless JSONL output to a Home Assistant
   pipeline or a `tail -F` audit window.
 
@@ -507,7 +507,7 @@ With no override, `diting` autodetects the system locale —
 | `s` | cycle sort — Wi-Fi: by AP ↔ by signal; Bonjour: service ↔ by-host |
 | `n` | cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour → LAN |
 | `c` | force re-roam — cycle Wi-Fi off/on so macOS re-picks the strongest BSSID |
-| `m` | open / close the Events modal — last 100 roam / stir / latency / loss / link events |
+| `m` | open / close the Events modal — last 1000 roam / stir / latency / loss / link events |
 | `?` | open / close the in-app help screen |
 | `b` | open / close Wi-Fi Basics: SSID, BSSID, channel, band, security, roam score |
 | `j` | (in the Wi-Fi detail modal) join the inspected SSID — previously-saved networks confirm via Touch ID (or login password on Macs without a sensor) and join silently; new networks get a native macOS password prompt. Not hitless: a cross-SSID switch tears the current connection down for ~2-5 s. Enterprise / 802.1X is refused with a hint. |
