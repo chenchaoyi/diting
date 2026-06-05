@@ -52,15 +52,19 @@ Both fields are optional with a default of `None` for backwards compatibility wi
 - **THEN** the resulting object exposes both fields verbatim
 
 ### Requirement: The `EventRing` SHALL be size-bounded and thread-safe-by-construction
-The ring SHALL retain at most 100 events by default (configurable via
+The ring SHALL retain at most 1000 events by default (configurable via
 constructor arg). Older events SHALL roll off the front when the
 buffer is full. The ring SHALL be appendable from any coroutine in
 the asyncio loop without explicit locking — Python's GIL plus the
 single-thread asyncio model is the consistency guarantee.
 
 #### Scenario: Ring overflow
-- **WHEN** the 101st event is appended to a default-sized ring
-- **THEN** the oldest event is dropped silently, the new event lands at the tail, and `snapshot()` returns 100 events (newest last)
+- **WHEN** the 1001st event is appended to a default-sized ring
+- **THEN** the oldest event is dropped silently, the new event lands at the tail, and `snapshot()` returns 1000 events (newest last)
+
+#### Scenario: Custom capacity still honored
+- **WHEN** a ring is constructed with `capacity=5` and 6 events are appended
+- **THEN** `snapshot()` returns the 5 newest events
 
 ### Requirement: JSONL serialisation SHALL use locale-stable English keys
 `event_to_jsonl` SHALL emit JSON with English keys (`type`, `bssid`, `ssid`, `state`, `magnitude_db`, etc.) regardless of the active UI language. User-supplied strings (SSID, AP location names from aps.yaml) SHALL pass through with `ensure_ascii=False` so a Chinese SSID like `咖啡馆` lands readable in the log instead of `哖...`.
