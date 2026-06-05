@@ -11,6 +11,29 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.14.3] — 2026-06-05
+
+Patch release. **The companion chip now tells you *why* the queue is growing,
+and the in-app docs caught up with the insight/threat layer.**
+
+### Added
+
+- **`relay unreachable` in the companion chip.** When events are queued and
+  several consecutive flushes deliver nothing (~9 s of failures), the header
+  chip changes from `companion: 49 queued` to
+  `companion: 49 queued · relay unreachable` — so a corporate firewall
+  blocking egress to the relay reads as what it is, instead of a number that
+  climbs without explanation. A transient blip never flashes the warning; the
+  first successful send clears it.
+
+### Changed
+
+- **The `?` help and `b` glossary now document the insight/threat layer.**
+  The help modal gained an *Insights & threats* section (what `[INSIGHT]` /
+  `[THREAT]` rows mean, the familiarity classes, authoritative-signal keying),
+  the companion `k` binding, and a corrected `--notify` description; the
+  glossary defines `Familiarity` / `INSIGHT` / `THREAT`. Both fully translated.
+
 ## [1.14.2] — 2026-06-04
 
 Quality release. **The familiarity / insight layer now covers the BLE devices
