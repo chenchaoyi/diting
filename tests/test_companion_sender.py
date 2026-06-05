@@ -272,6 +272,44 @@ def test_flush_stops_and_preserves_order_on_failure():
     assert report2.sent == 2 and report2.pending == 0
 
 
+def test_consecutive_failures_increment_on_failed_flush():
+    # Every POST fails (transport error 0) — each attempted flush counts.
+    tx = _FakeTransport(0)
+    c = _client(tx)
+    c.enqueue({"seq": 1})
+    assert c.consecutive_failures == 0
+    for expected in (1, 2, 3):
+        c.flush()
+        assert c.consecutive_failures == expected
+
+
+def test_consecutive_failures_reset_on_partial_send():
+    # A flush that delivers ANYTHING proves the relay reachable — even when
+    # a later POST in the same drain fails.
+    tx = _FakeTransport(0)
+    c = _client(tx)
+    for s in (1, 2):
+        c.enqueue({"seq": s})
+    c.flush()
+    c.flush()
+    assert c.consecutive_failures == 2
+    tx._status = lambda n: 200 if n == 3 else 500  # next POST ok, then 500
+    c.flush()
+    assert c.consecutive_failures == 0
+
+
+def test_idle_flush_leaves_failure_counter_unchanged():
+    # Nothing queued — a flush proves nothing about reachability.
+    tx = _FakeTransport(0)
+    c = _client(tx)
+    c.enqueue({"seq": 1})
+    c.flush()
+    assert c.consecutive_failures == 1
+    c._queue.clear()
+    c.flush()
+    assert c.consecutive_failures == 1
+
+
 def test_queue_overflow_drops_oldest_and_counts():
     c = _client(_FakeTransport(200), max_queue=2)
     for s in (1, 2, 3):
