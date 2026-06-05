@@ -919,10 +919,10 @@ class EventsScreen(ModalScreen):
 
     def _render_body(self) -> Group:
         inv = getattr(self.app, "_inv", NetworkInventory())
-        events = [
+        events = _events_newest_first([
             ev for ev in self._ring
             if _events_filter_match(ev, self._filter)
-        ]
+        ])
         header = Text()
         header.append(t("Events ({n})", n=len(events)), style="bold cyan")
         header.append(t("  filter: {mode}", mode=t(self._filter)), style="dim")
@@ -973,6 +973,21 @@ class EventsScreen(ModalScreen):
         line.append(t("Press 1/2/3/4/5/6/7/0 to filter; m or Esc to close"),
                     style="dim italic")
         return line
+
+
+def _events_newest_first(events: list) -> list:
+    """Order a ring snapshot newest-first by event timestamp.
+
+    Ring order is *emission* order, which interleaves timestamps:
+    presence-gated anonymous BLE adverts deliberately carry their
+    first-observed timestamp but emit at gate-clear, while named
+    devices emit instantly (see the gate in ``ble.py`` — the JSONL
+    answers "when did the device appear"). The modal is where users
+    read history, so it sorts by timestamp; the strip and the JSONL
+    keep emission order. Stable for equal timestamps, so same-second
+    events keep their emission recency.
+    """
+    return sorted(events, key=lambda ev: ev.timestamp, reverse=True)
 
 
 def _events_filter_match(event: object, mode: str) -> bool:
@@ -2362,11 +2377,13 @@ def _ble_event_vendor_label(
     service_categories: tuple[str, ...],
 ) -> str:
     """Vendor-slot text for a BLE event line, mirroring the BLE list
-    vendor cell: the resolved vendor, else `(anonymous)` when the
-    device is truly silent, else `(unknown)`.
+    vendor cell: the resolved vendor (through the same display-alias
+    map the list uses, so one device never shows two names across
+    surfaces — `Huami`, not the raw IEEE registrant), else
+    `(anonymous)` when the device is truly silent, else `(unknown)`.
     """
     if vendor:
-        return vendor
+        return _BLE_VENDOR_DISPLAY.get(vendor, vendor)
     if _ble_event_is_silent(vendor, name, device_type, device_class,
                             service_categories):
         return t("(anonymous)")
@@ -3771,10 +3788,7 @@ def _fit_vendor(name: str) -> str:
     into the next column.
     """
     display = _BLE_VENDOR_DISPLAY.get(name, name)
-    if cell_len(display) <= _COL_BLE_VENDOR:
-        return pad_cells(display, _COL_BLE_VENDOR)
-    truncated = fit_cells(display, _COL_BLE_VENDOR - 1).rstrip()
-    return pad_cells(truncated + "…", _COL_BLE_VENDOR)
+    return fit_cells(display, _COL_BLE_VENDOR, ellipsis=True)
 
 
 # High-entropy local-name shapes that BLE devices publish in lieu of
@@ -3866,8 +3880,8 @@ def _ble_row_line(d: BLEDevice, now: datetime) -> Text:
     line.append("  ")
     line.append(vendor_cell + "  ",
                 style="cyan" if d.vendor else "dim")
-    line.append(fit_cells(name_text, _COL_BLE_NAME) + "  ", style=name_style)
-    line.append(fit_cells(label_text, _COL_BLE_SERVICES) + "  ",
+    line.append(fit_cells(name_text, _COL_BLE_NAME, ellipsis=True) + "  ", style=name_style)
+    line.append(fit_cells(label_text, _COL_BLE_SERVICES, ellipsis=True) + "  ",
                 style=label_style)
     # Use fit_cells (not raw f-string ljust) because t("now") resolves
     # to "刚刚" in zh — 2 code points but 4 terminal cells. str.ljust
@@ -3923,9 +3937,9 @@ def _ble_connected_row_line(d: BLEDevice) -> Text:
         vendor_cell = pad_cells(t("(unknown)"), _COL_BLE_VENDOR)
     vendor_style = "cyan" if d.vendor else "dim"
     line.append(vendor_cell + "  ", style=vendor_style)
-    line.append(fit_cells(name_text, _COL_BLE_NAME) + "  ", style=name_style)
+    line.append(fit_cells(name_text, _COL_BLE_NAME, ellipsis=True) + "  ", style=name_style)
     label_style = "white" if (d.type or d.device_class) else "dim"
-    line.append(fit_cells(label_text, _COL_BLE_SERVICES) + "  ",
+    line.append(fit_cells(label_text, _COL_BLE_SERVICES, ellipsis=True) + "  ",
                 style=label_style)
     # Connected peripherals have no advertisement timestamp, but they
     # ARE live by definition — render the AGO column as "online" rather
@@ -4136,8 +4150,8 @@ def _bonjour_row_line(
     line = Text()
     line.append("  ")
     line.append(vendor_cell + "  ", style=vendor_style)
-    line.append(fit_cells(name_text, _COL_MDNS_NAME) + "  ", style=name_style)
-    line.append(fit_cells(category, _COL_MDNS_SERVICES) + "  ", style="dim")
+    line.append(fit_cells(name_text, _COL_MDNS_NAME, ellipsis=True) + "  ", style=name_style)
+    line.append(fit_cells(category, _COL_MDNS_SERVICES, ellipsis=True) + "  ", style="dim")
     line.append(fit_cells(age_text, _COL_MDNS_AGE) + "  ", style="dim")
     line.append(fit_cells(host, _COL_MDNS_HOST), style="dim")
     return line
