@@ -11,6 +11,43 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.15.0] — 2026-06-05
+
+Feature release. **The events browser holds ten times the history, and a live
+office-floor audit drove a round of rendering polish.**
+
+### Added
+
+- **The event ring holds 1000 events (was 100).** One office hour of BLE /
+  LAN churn plus the at-launch census used to roll the interesting context
+  off before it was read; the `m` browser now scrolls the last 1000.
+
+### Changed
+
+- **Event rows show the same vendor names as the BLE list.** The events strip
+  used to render raw IEEE registrant strings (`Anhui Huami Information
+  Technology Co., Ltd.`) where the list shows `Huami`; both surfaces now share
+  the display-alias map.
+- **Truncation is visible.** Column overflow renders with a trailing `…`
+  (`Device Informat…`) instead of silently chopping (`Device Informati`) —
+  BLE and Bonjour name/services columns, vendor cells.
+- **The events browser orders by event time.** Presence-gated devices carry
+  their first-observed timestamp but emit later, so the modal used to
+  interleave timestamps; it now sorts newest-first. The JSONL log keeps
+  emission order and first-seen semantics unchanged.
+
+### Fixed
+
+- **A CI-only shutdown race in the TUI test harness.** Event-consumer workers
+  draining their last queued events during test-context teardown could crash
+  with `NoMatches('#conn')`; they now end quietly. No running-app behavior
+  change.
+- **The installer survives blocked GitHub APIs.** Version resolution falls
+  back through the same mirror chain as the asset downloads (the
+  `releases/latest` redirect), and the README documents how to fetch
+  `install.sh` itself through a mirror when `raw.githubusercontent.com` is
+  blocked. Already live for installs (the script is served from `main`).
+
 ## [1.14.3] — 2026-06-05
 
 Patch release. **The companion chip now tells you *why* the queue is growing,
