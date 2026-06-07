@@ -506,7 +506,8 @@ With no override, `diting` autodetects the system locale —
 | `r` | force a rescan now (CoreWLAN ~5 s throttle still applies) |
 | `s` | cycle sort — Wi-Fi: by AP ↔ by signal; Bonjour: service ↔ by-host |
 | `n` | cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour → LAN |
-| `c` | force re-roam — cycle Wi-Fi off/on so macOS re-picks the strongest BSSID |
+| `z` | zoom — maximize the Nearby list panel to the full screen (live updates, sorting and row selection keep working); `z` or Esc restores, and the zoom follows `n` across views |
+| `c` | Wi-Fi view only: force re-roam — cycle Wi-Fi off/on so macOS re-picks the strongest BSSID |
 | `m` | open / close the Events modal — last 1000 roam / stir / latency / loss / link events |
 | `?` | open / close the in-app help screen |
 | `b` | open / close Wi-Fi Basics: SSID, BSSID, channel, band, security, roam score |

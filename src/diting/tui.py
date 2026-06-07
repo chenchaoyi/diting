@@ -31,6 +31,7 @@ from textual.binding import Binding
 from textual.containers import Center, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen
+from textual.widget import Widget
 from textual.widgets import Footer, RichLog, Static
 
 from .backend import WiFiBackend
@@ -269,6 +270,9 @@ class ConnectionPanel(Static):
 
 
 class ScanPanel(VerticalScroll):
+    # ScrollableContainer defaults ALLOW_MAXIMIZE off; the four list
+    # panels opt in so the `z` zoom binding can maximize them in place.
+    ALLOW_MAXIMIZE = True
     DEFAULT_CSS = """
     ScanPanel {
         height: 1fr;
@@ -595,9 +599,10 @@ def _help_content() -> tuple[Text, Text]:
     line("p", t("pause / resume polling"))
     line("r", t("force a rescan now (CoreWLAN ~5 s throttle still applies)"))
     line("s", t("cycle scan sort:  by AP  ↔  by signal"))
-    line("c", t("force re-roam (cycle Wi-Fi off/on so the OS re-picks the"))
-    body.append(" " * 8 + t("strongest BSSID — fixes sticky associations)\n"))
+    line("c", t("Wi-Fi view only: force re-roam (cycle Wi-Fi off/on so the"))
+    body.append(" " * 8 + t("OS re-picks the strongest BSSID — fixes sticky associations)\n"))
     line("n", t("cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour → LAN"))
+    line("z", t("zoom — maximize the Nearby list panel (z or Esc restores)"))
     line("m", t("open the Events browser (filterable list, per-AP σ"))
     body.append(" " * 8 + t("baseline, last-hour σ sparkline)\n"))
     line("?", t("toggle this help"))
@@ -1570,6 +1575,8 @@ class BLEPanel(VerticalScroll):
     went).
     """
 
+    ALLOW_MAXIMIZE = True  # opt in to the `z` zoom (see ScanPanel)
+
     DEFAULT_CSS = """
     BLEPanel {
         height: 1fr;
@@ -1738,6 +1745,8 @@ class BonjourPanel(VerticalScroll):
     split (one flat list), no per-device history sparkline (mDNS
     state is a snapshot, not a numeric series).
     """
+
+    ALLOW_MAXIMIZE = True  # opt in to the `z` zoom (see ScanPanel)
 
     DEFAULT_CSS = """
     BonjourPanel {
@@ -2009,6 +2018,8 @@ class LANPanel(VerticalScroll):
     `(sweeping subnet…)` placeholder. After, one row per host
     sorted self → gateway → IP ascending.
     """
+
+    ALLOW_MAXIMIZE = True  # opt in to the `z` zoom (see ScanPanel)
 
     DEFAULT_CSS = """
     LANPanel {
@@ -5942,7 +5953,7 @@ class GroupedFooter(Static):
 
     1. **App control**: ``q`` quit · ``p`` pause
     2. **Scan / view**: ``r`` rescan · ``s`` sort · ``n`` view-toggle ·
-       ``c`` re-roam
+       ``z`` zoom · ``c`` re-roam (Wi-Fi view only)
     3. **Info**: ``?`` help · ``b`` basics
 
     The ``n`` binding's description is **dynamic** — it shows the OTHER
@@ -5980,14 +5991,21 @@ class GroupedFooter(Static):
             i = 0
         next_view = _view_display_name(VIEW_CYCLE[(i + 1) % len(VIEW_CYCLE)])
 
+        scan_group: list[tuple[str, str]] = [
+            ("r", t("Rescan")),
+            ("s", t("Sort")),
+            ("n", t("→ {view}", view=next_view)),
+            ("z", t("Zoom")),
+        ]
+        # Re-roam bounces the Wi-Fi link — a Wi-Fi-view action only.
+        # Off-Wi-Fi the entry disappears (and check_action disables
+        # the key), so the footer never advertises a key that acts on
+        # something the user is not looking at.
+        if view_mode == "wifi":
+            scan_group.append(("c", t("Re-roam")))
         groups: list[list[tuple[str, str]]] = [
             [("q", t("Quit")), ("p", t("Pause"))],
-            [
-                ("r", t("Rescan")),
-                ("s", t("Sort")),
-                ("n", t("→ {view}", view=next_view)),
-                ("c", t("Re-roam")),
-            ],
+            scan_group,
             [
                 ("m", t("Events")),
                 ("k", t("Companion")),
@@ -6662,6 +6680,7 @@ class DitingApp(App):
         Binding("r", "rescan", t("Rescan")),
         Binding("s", "cycle_sort", t("Sort")),
         Binding("n", "toggle_view", t("Toggle Wi-Fi / BLE / Bonjour / LAN view")),
+        Binding("z", "toggle_zoom", t("Zoom")),
         Binding("c", "reroam", t("Re-roam")),
         Binding("m", "show_events", t("Events")),
         Binding("question_mark", "show_help", t("Help")),
@@ -6683,6 +6702,11 @@ class DitingApp(App):
         # AND scene is public AND DITING_LAN_PROBE is unset. All
         # three gates are enforced in action_open_lan_probe_consent.
         Binding("P", "open_lan_probe_consent", show=False),
+        # Esc restores a zoomed panel. Hidden, and gated by
+        # check_action to "a panel is maximized on the default
+        # screen", so it never shadows a modal's own Esc binding
+        # (modal screens consume Esc before App bindings run).
+        Binding("escape", "unzoom", show=False),
     ]
 
     def __init__(
@@ -7910,6 +7934,12 @@ class DitingApp(App):
         cycle = VIEW_CYCLE
         i = cycle.index(self._view_mode) if self._view_mode in cycle else 0
         self._view_mode = cycle[(i + 1) % len(cycle)]
+        # Zoom follows the view: minimize BEFORE the display flip (the
+        # maximize target must never be a hidden widget), re-maximize
+        # the newly active panel after.
+        was_zoomed = self.screen.maximized is not None
+        if was_zoomed:
+            self.screen.minimize()
         scan = self.query_one("#scan", ScanPanel)
         ble = self.query_one("#ble", BLEPanel)
         mdns = self.query_one("#mdns", BonjourPanel)
@@ -7946,8 +7976,51 @@ class DitingApp(App):
         # (the original UX wart that motivated this whole feature).
         self._refresh_environment_panel()
         self.sub_title = self._build_subtitle()
-        # Refresh the footer so n's label flips to match the new view.
+        if was_zoomed:
+            self.screen.maximize(self._active_list_panel(), container=False)
+        # Refresh the footer so n's label flips to match the new view
+        # and the Wi-Fi-only re-roam entry appears / disappears.
         self.query_one("#footer", GroupedFooter).refresh_layout()
+
+    def _active_list_panel(self) -> Widget:
+        """The list-view widget occupying the shared panel slot."""
+        ids = {"wifi": "#scan", "ble": "#ble", "mdns": "#mdns", "lan": "#lan"}
+        return self.query_one(ids.get(self._view_mode, "#scan"))
+
+    def action_toggle_zoom(self) -> None:
+        """Maximize the active list panel in place — the live widget,
+        so polling updates, sort and row selection keep working — or
+        restore the stacked layout when already zoomed."""
+        if self.screen.maximized is not None:
+            self.screen.minimize()
+            return
+        self.screen.maximize(self._active_list_panel(), container=False)
+
+    def action_unzoom(self) -> None:
+        """Esc restore for a zoomed panel (check_action gates this to
+        'something is actually maximized')."""
+        if self.screen.maximized is not None:
+            self.screen.minimize()
+
+    def check_action(
+        self, action: str, parameters: tuple[object, ...]
+    ) -> bool | None:
+        """Scope view-dependent bindings.
+
+        - ``reroam`` (`c`) bounces the Wi-Fi link; it only makes sense
+          (and only shows in the footer) on the Wi-Fi view.
+        - ``toggle_zoom`` / ``unzoom`` act on the default screen's
+          panels; with a modal on top they must stay inert so modal
+          keymaps (notably Esc-to-close) are unaffected.
+        """
+        if action == "reroam" and self._view_mode != "wifi":
+            return False
+        if action in ("toggle_zoom", "unzoom"):
+            if self.screen is not self.screen_stack[0]:
+                return False
+            if action == "unzoom" and self.screen.maximized is None:
+                return False
+        return True
 
     def action_show_help(self) -> None:
         self.push_screen(HelpScreen())

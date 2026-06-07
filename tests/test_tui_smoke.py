@@ -1317,3 +1317,120 @@ def test_consumers_launch_wrapped_in_guard():
 
     source = inspect.getsource(tui_mod)
     assert source.count("self._consumer_guard(self._consume") == 5
+
+
+# ---------- panel zoom + scoped re-roam (add-panel-zoom-and-scope-reroam) ----------
+
+def test_zoom_maximizes_and_restores_active_panel():
+    """`z` maximizes the active list panel in place (the live widget,
+    not a snapshot modal); a second `z` — and Esc — restores."""
+    import asyncio
+    from diting.tui import ScanPanel
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            assert app.screen.maximized is None
+            await pilot.press("z")
+            await pilot.pause(0.1)
+            assert app.screen.maximized is app.query_one("#scan", ScanPanel)
+            await pilot.press("z")
+            await pilot.pause(0.1)
+            assert app.screen.maximized is None
+            # Esc restores too.
+            await pilot.press("z")
+            await pilot.pause(0.1)
+            assert app.screen.maximized is not None
+            await pilot.press("escape")
+            await pilot.pause(0.1)
+            assert app.screen.maximized is None
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_zoom_follows_view_cycle():
+    """Cycling views with `n` while zoomed keeps the zoom on the newly
+    active panel instead of dropping back to the cramped layout."""
+    import asyncio
+    from diting.tui import BLEPanel
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            await pilot.press("z")          # zoom the Wi-Fi scan panel
+            await pilot.pause(0.1)
+            await pilot.press("n")          # wifi → ble
+            await pilot.pause(0.3)
+            assert app.screen.maximized is app.query_one("#ble", BLEPanel)
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_zoom_inert_under_modal():
+    """`z` only acts on the default screen — with a modal open it must
+    not maximize a hidden panel, and Esc must close the modal."""
+    import asyncio
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            await pilot.press("question_mark")   # help modal
+            await pilot.pause(0.2)
+            await pilot.press("z")
+            await pilot.pause(0.1)
+            default_screen = app.screen_stack[0]
+            assert default_screen.maximized is None
+            await pilot.press("escape")          # closes the modal, not zoom
+            await pilot.pause(0.2)
+            assert isinstance(app.screen, type(default_screen))
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_reroam_disabled_off_wifi_view():
+    """`c` (re-roam) is a Wi-Fi-link action: check_action gates it to
+    the Wi-Fi view so pressing it on BLE/Bonjour/LAN does nothing."""
+    import asyncio
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            assert app.check_action("reroam", ()) in (True, None)
+            await pilot.press("n")               # → ble view
+            await pilot.pause(0.3)
+            assert app.check_action("reroam", ()) is False
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_footer_scopes_reroam_and_shows_zoom():
+    """The footer shows `c` re-roam only on the Wi-Fi view, and the
+    `z` zoom entry on every view."""
+    import asyncio
+    from diting.tui import GroupedFooter
+    from diting.i18n import t
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            footer = app.query_one("#footer", GroupedFooter)
+            text = footer.render().__str__()
+            assert t("Re-roam") in text
+            assert t("Zoom") in text
+            await pilot.press("n")               # → ble view
+            await pilot.pause(0.3)
+            text = footer.render().__str__()
+            assert t("Re-roam") not in text
+            assert t("Zoom") in text
+            await pilot.press("q")
+
+    asyncio.run(go())

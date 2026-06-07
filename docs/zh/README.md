@@ -450,7 +450,8 @@ DITING_LANG=zh uv run diting   # 用环境变量
 | `r` | 立即重扫（CoreWLAN ~5 秒限流仍然会生效） |
 | `s` | 排序切换 —— Wi-Fi：按 AP ↔ 按信号；Bonjour：service ↔ 按 host |
 | `n` | 切换附近视图：Wi-Fi BSSID → BLE → Bonjour → LAN |
-| `c` | 断开重连 —— 关再开 Wi-Fi，让系统重新挑选最强的 BSSID |
+| `z` | 放大 —— 把附近列表面板放大到全屏（实时刷新、排序、选行照常可用）；再按 `z` 或 Esc 还原，按 `n` 切视图时放大状态会跟过去 |
+| `c` | 仅 Wi-Fi 视图：断开重连 —— 关再开 Wi-Fi，让系统重新挑选最强的 BSSID |
 | `m` | 打开 / 关闭事件浏览器 —— 最近 1000 条 漫游 / 扰动 / 延迟 / 丢包 / 链路 |
 | `?` | 打开 / 关闭应用内帮助页 |
 | `b` | 打开 / 关闭 Wi-Fi 基础知识：SSID、BSSID、信道、频段、加密、漫游评分 |
