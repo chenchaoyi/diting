@@ -163,9 +163,19 @@ def _classify(rec: _Record | None, now: datetime) -> str:
     return OCCASIONAL
 
 
+def _aware(dt: datetime) -> datetime:
+    """Normalize to offset-aware, treating naive as LOCAL time — the
+    repo-wide convention ``event_log._iso`` documents. Producers are
+    mixed (BLE/Bonjour/LAN stamp aware UTC, the Wi-Fi connection
+    snapshot stamps naive ``datetime.now()``), so the store normalizes
+    at its own boundary; mixing the two in a comparison raises
+    ``TypeError`` and would kill the flush."""
+    return dt.astimezone() if dt.tzinfo is None else dt
+
+
 def _parse(ts: str) -> datetime | None:
     try:
-        return datetime.fromisoformat(ts)
+        return _aware(datetime.fromisoformat(ts))
     except ValueError:
         return None
 
@@ -205,6 +215,7 @@ class FamiliarityStore:
         (no stable identity — caller omits the field)."""
         if key is None:
             return None
+        now = _aware(now)
         rec = self._records.get(key)
         cls = _classify(rec, now)
         day = now.date().isoformat()
@@ -235,7 +246,7 @@ class FamiliarityStore:
     # ---- persist (bounded) ----
 
     def flush(self, now: datetime | None = None) -> None:
-        now = now or datetime.now().astimezone()
+        now = _aware(now) if now is not None else datetime.now().astimezone()
         self._prune(now)
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)

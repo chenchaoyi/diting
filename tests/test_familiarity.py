@@ -169,3 +169,50 @@ def test_ble_key_vendor_name_over_vendor_group():
 def test_ble_key_none_when_nothing_identifying():
     # Truly anonymous (no payload, no sd id, no vendor_id, no name, no vendor).
     assert familiarity_key("ble") is None
+
+
+# ---------- naive/aware tz mix (fix-familiarity-tz-mismatch) ----------
+#
+# The live producers are mixed: BLE/Bonjour/LAN pollers stamp tz-aware
+# UTC, but the Wi-Fi connection snapshot (and so every roam) stamps
+# naive datetime.now(). The store normalizes at its boundary — naive
+# means LOCAL time, the same convention event_log._iso documents.
+
+def test_mixed_naive_aware_observe_survives_flush(tmp_path):
+    # The 2026-06-07 live crash: one naive roam sighting + an aware
+    # default-now flush → TypeError in _prune's dictcomp.
+    p = tmp_path / "f.json"
+    s = FamiliarityStore(p)
+    s.observe_seen("ap:roamed", "ap", datetime(2026, 6, 7, 17, 14))  # naive
+    s.observe_seen("ble:x", "ble", _t(7))                            # aware
+    s.flush()  # default aware "now" — must not raise
+    import json
+    raw = json.loads(p.read_text("utf-8"))
+    for rec in raw.values():
+        # Persisted timestamps are uniformly offset-aware.
+        assert datetime.fromisoformat(rec["last_seen"]).tzinfo is not None
+
+
+def test_persisted_naive_record_heals_on_load(tmp_path):
+    # A store file written by an older build can hold naive strings;
+    # loading + classifying + pruning must treat them as local time,
+    # not raise.
+    p = tmp_path / "f.json"
+    p.write_text(
+        '{"ap:old": {"kind":"ap","first_seen_ever":"2026-06-01T00:00:00",'
+        '"last_seen":"2026-06-01T00:00:00","total_sightings":1,"days":["2026-06-01"]}}'
+    )
+    s = FamiliarityStore(p)
+    assert s.observe_seen("ap:old", "ap", _t(1, 13)) == OCCASIONAL
+    s.flush(now=_t(2))  # prune compares the healed timestamp — no raise
+    assert FamiliarityStore(p).record("ap:old") is not None
+
+
+def test_classify_across_naive_aware_mix(tmp_path):
+    # Habitual history built from naive (local) sightings, then an
+    # aware sighting after a long gap → the returning-gap subtraction
+    # crosses the mix and must classify correctly.
+    s = FamiliarityStore(tmp_path / "f.json")
+    for day in (1, 2, 3):
+        s.observe_seen("ble:x", "ble", datetime(2026, 6, day, 12, 0))  # naive
+    assert s.observe_seen("ble:x", "ble", _t(20)) == RETURNING

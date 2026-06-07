@@ -7048,7 +7048,12 @@ class DitingApp(App):
         store = self._familiarity_store
         if store is None:
             return
-        await asyncio.to_thread(store.flush)
+        # Same fail-soft contract as the on_unmount flush: baseline
+        # persistence is best-effort and must never crash the monitor.
+        try:
+            await asyncio.to_thread(store.flush)
+        except Exception:
+            pass
 
     def action_show_companion(self) -> None:
         self.push_screen(CompanionScreen())
