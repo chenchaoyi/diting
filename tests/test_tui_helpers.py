@@ -3877,3 +3877,50 @@ def test_events_newest_first_stable_for_equal_timestamps():
     ordered = _events_newest_first(ring)
     # Stable sort: equal timestamps keep emission order.
     assert [ev.identifier for ev in ordered] == ["first-emitted", "second-emitted"]
+
+
+# --- listening mark (add-listening-mark-empty-state) -----------------
+
+def _mark_lines(tick, caption="(sweeping…)"):
+    from diting.tui import _listening_mark
+    return _listening_mark(tick, caption).plain.split("\n")
+
+
+def test_listening_mark_frame0_is_rest():
+    """Frame 0 carries no pulse dot — the deterministic first paint
+    that snapshot captures and populated-panel transitions land on."""
+    lines = _mark_lines(0)
+    assert "·" not in lines[0]
+
+
+def test_listening_mark_pulse_travels_and_wraps():
+    """Frames 1..4 place the pulse at increasing distance from the
+    antenna; the cycle wraps back to the rest frame after."""
+    positions = []
+    for tick in range(1, 5):
+        row0 = _mark_lines(tick)[0]
+        assert row0.count("·") == 1
+        positions.append(row0.index("·"))
+    assert positions == sorted(positions)
+    assert len(set(positions)) == 4
+    # Wrap: tick 5 renders like tick 0 (rest), tick 6 like tick 1.
+    assert _mark_lines(5)[0] == _mark_lines(0)[0]
+    assert _mark_lines(6)[0] == _mark_lines(1)[0]
+
+
+def test_listening_mark_beast_rows_constant():
+    """The beast itself is the brand mark — its two body rows are
+    identical on every frame (only the antenna row gains the dot)."""
+    from diting.tui import _LOGO_MARK_ART
+    art_rows = _LOGO_MARK_ART.split("\n")
+    for tick in range(8):
+        lines = _mark_lines(tick)
+        assert lines[1] == art_rows[1]
+        assert lines[2] == art_rows[2]
+        # Antenna row minus the dot is the art's antenna row.
+        assert lines[0].replace("·", " ").rstrip() == art_rows[0].rstrip()
+
+
+def test_listening_mark_caption_appended():
+    lines = _mark_lines(0, caption="(sweeping subnet…)")
+    assert lines[-1] == "(sweeping subnet…)"

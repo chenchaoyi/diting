@@ -1434,3 +1434,81 @@ def test_footer_scopes_reroam_and_shows_zoom():
             await pilot.press("q")
 
     asyncio.run(go())
+
+
+# ---------- listening mark in waiting states (add-listening-mark-empty-state) ----------
+
+
+def _static_plain(body) -> str:
+    """Plain text of a Static's current content, via a rich capture."""
+    from rich.console import Console
+    console = Console(width=200, force_terminal=False, legacy_windows=False)
+    with console.capture() as cap:
+        console.print(body.content)
+    return cap.get()
+
+
+
+def test_lan_waiting_state_shows_listening_mark():
+    """Before the first sweep returns, the LAN panel shows the beast
+    mark above the sweeping caption."""
+    import asyncio
+    from diting.tui import LANPanel, _LOGO_MARK_ART
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.3)
+            for _ in range(3):           # wifi → ble → mdns → lan
+                await pilot.press("n")
+                await pilot.pause(0.2)
+            panel = app.query_one("#lan", LANPanel)
+            body = panel.query_one("#lan-body")
+            text = _static_plain(body)
+            from diting.i18n import t
+            beast_row = _LOGO_MARK_ART.split("\n")[1]
+            assert beast_row in text
+            assert t("(sweeping subnet…)") in text
+            await pilot.press("q")
+
+    asyncio.run(go())
+
+
+def test_lan_rows_clear_listening_mark():
+    """The first inventory update with hosts replaces the mark with
+    host rows — no animation residue on a populated panel."""
+    import asyncio
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+    from diting.tui import LANPanel, _LOGO_MARK_ART
+    from diting.lan import LANHost
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.3)
+            for _ in range(3):
+                await pilot.press("n")
+                await pilot.pause(0.2)
+            panel = app.query_one("#lan", LANPanel)
+            now = datetime.now(timezone.utc)
+            host = LANHost(
+                mac="aa:bb:cc:dd:ee:01", ip="192.168.1.23",
+                vendor="Espressif", hostname=None, bonjour_name=None,
+                bonjour_services=(), first_seen=now, last_seen=now,
+                is_gateway=False, is_self=False, is_randomised_mac=False,
+            )
+            update = SimpleNamespace(
+                hosts=(host,), subnet="192.168.1.0/24",
+                subnet_capped=False, cap_prefix=None,
+                last_sweep_at=now, next_sweep_at=now,
+            )
+            panel.update_hosts(update)
+            body = panel.query_one("#lan-body")
+            text = _static_plain(body)
+            beast_row = _LOGO_MARK_ART.split("\n")[1]
+            assert beast_row not in text
+            assert "192.168.1.23" in text
+            await pilot.press("q")
+
+    asyncio.run(go())
