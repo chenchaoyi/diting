@@ -50,6 +50,16 @@ from typing import Iterable
 
 from .network import NetworkInventory, cluster_label
 
+
+def _aware(dt: datetime) -> datetime:
+    """Normalize to offset-aware, treating naive as LOCAL time (the
+    ``event_log._iso`` convention). The monitor ingests timestamps from
+    several producers and compares them against caller-supplied nows;
+    mixing naive and aware in those comparisons raises ``TypeError``,
+    so every entry point normalizes at the boundary."""
+    return dt.astimezone() if dt.tzinfo is None else dt
+
+
 # Spec-defined defaults; surfaced as constants so the events pipeline
 # (and the modal stats panel) can reference them directly.
 DEFAULT_BASELINE_WINDOW_S = 300.0      # 5 minutes
@@ -176,6 +186,7 @@ class EnvironmentMonitor:
         """
         if rssi_dbm is None or not bssid:
             return
+        now = _aware(now)
         b = bssid.lower()
         state = self._state.setdefault(b, {
             "bssid": b,
@@ -210,6 +221,7 @@ class EnvironmentMonitor:
         co-located bucket so a spike that shows up on >= 2 APs is
         labelled high-confidence.
         """
+        now = _aware(now)
         candidates: list[tuple[str, str, float, str]] = []
         # (bssid, location, magnitude_db, mode)
         for bssid, state in self._state.items():
@@ -279,7 +291,7 @@ class EnvironmentMonitor:
         out: list[APBaseline] = []
         order = {"co_located": 0, "spatial_channel": 1, "ignored": 2}
         # Snapshot now so the comparison is stable across the loop.
-        now = datetime.now()
+        now = datetime.now().astimezone()
         for bssid, state in self._state.items():
             mode = self._classify_mode(bssid)
             baseline = self._baseline_sigma(bssid, state, now)
@@ -330,7 +342,7 @@ class EnvironmentMonitor:
         state = self._state.get(b)
         if state is None or not state["history"]:
             return None
-        now = datetime.now()
+        now = datetime.now().astimezone()
         mode = self._classify_mode(b)
         baseline = self._baseline_sigma(b, state, now)
         current = self._current_sigma(state, now)
@@ -355,6 +367,7 @@ class EnvironmentMonitor:
         away). ``last_event_at`` is the most recent event time
         across all APs, or ``None``.
         """
+        now = _aware(now)
         max_sigma = None
         last_event = None
         any_active = False

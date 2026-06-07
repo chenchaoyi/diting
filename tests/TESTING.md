@@ -239,6 +239,7 @@ consumes the exact payload dict the JSONL writer emits (via an
 | Calibration loadable from file | `test_environment.py::test_calibration_overrides_adaptive_baseline`, `::test_calibration_round_trip`, `::test_load_calibration_returns_empty_dict_on_missing_file` |
 | Wording: correlation, not presence | (review-enforced — no string in `i18n.py` asserts "person" / "motion" / "presence") |
 | `RFStirEvent` carries the current `Connection.ssid` on emit | `test_environment.py::test_rf_stir_event_carries_ssid_from_current_connection` |
+| **fix-familiarity-tz-mismatch** (hardening) — the monitor normalizes timestamps at its boundary (naive means LOCAL): mixed naive/aware `ingest` plus an aware `fire_events` / `aggregate_sigma` / `baseline_summary` never raises; all runtime producers (`Connection` / `ScanResult` / `LatencySample` / `NetworkChangeEvent`) now stamp aware-local | `test_environment.py::test_mixed_naive_aware_timestamps_do_not_raise` |
 
 ### `scenes`
 

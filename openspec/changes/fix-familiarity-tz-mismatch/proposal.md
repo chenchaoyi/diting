@@ -24,6 +24,15 @@ no crash guard, so the whole TUI dies.
 - The TUI's periodic familiarity flush gets the same fail-soft guard
   the shutdown flush already has — a store bug must degrade the
   baseline, never crash the monitor.
+- **Producer hardening (follow-up in the same change):** every runtime
+  producer that stamped naive `datetime.now()` now stamps aware-local
+  (`Connection` / `ScanResult` in `macos_backend` + `_helper`,
+  `LatencySample` in `latency`, `NetworkChangeEvent` and the
+  environment-collection ticks in `tui`, `session_meta` in
+  `event_log`), and `EnvironmentMonitor` — which had the same latent
+  naive-vs-aware comparison hazard in its rolling-window math — gets
+  the same boundary normalization as the familiarity store. The
+  snapshot script's synthetic backends follow.
 
 ## Capabilities
 
@@ -42,8 +51,18 @@ no crash guard, so the whole TUI dies.
 
 - `src/diting/familiarity.py` — timestamp normalization at the store
   boundary (`observe_seen`, `_parse`).
-- `src/diting/tui.py` — guard the periodic `_familiarity_flush`.
-- `tests/test_familiarity.py` — mixed-tz regression coverage.
-- No wire-format, schema, or companion-protocol impact; the on-disk
-  store file stays back-compatible (naive strings simply parse to
-  local-aware on the next load).
+- `src/diting/tui.py` — guard the periodic `_familiarity_flush`; flip
+  the naive-cluster sites (sparkline default now, last-event-ago,
+  joining deadline, environment ticks, `NetworkChangeEvent`).
+- `src/diting/environment.py` — `_aware()` boundary normalization on
+  `ingest` / `fire_events` / `aggregate_sigma`; internal nows aware.
+- `src/diting/macos_backend.py`, `src/diting/_helper.py`,
+  `src/diting/latency.py`, `src/diting/event_log.py` — producers stamp
+  aware-local.
+- `scripts/tui_snapshot.py` — synthetic backends stamp aware-local.
+- `tests/test_familiarity.py`, `tests/test_environment.py`,
+  `tests/test_tui_helpers.py` — mixed-tz regression coverage.
+- No wire-format, schema, or companion-protocol impact (`event_log.
+  _iso` already normalized emitted timestamps); the on-disk store file
+  stays back-compatible (naive strings simply parse to local-aware on
+  the next load).

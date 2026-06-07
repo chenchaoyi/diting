@@ -31,10 +31,6 @@ emitting.
 
 **Non-Goals:**
 
-- Making every producer tz-aware (`macos_backend`, `_helper`,
-  `latency`). Worth doing eventually, but the store must be robust at
-  its boundary regardless — third-party/test callers can always hand
-  it a naive datetime.
 - Migrating / rewriting the on-disk store file. Normalizing at parse
   time heals old naive strings on the next load with no format change.
 
@@ -46,10 +42,26 @@ emitting.
   as local time, matching `event_log._iso`). Applied in
   `observe_seen` (incoming `now`, so new writes are uniformly aware)
   and `_parse` (read-back, so old records and any record written by a
-  future naive caller still compare cleanly). Alternative considered:
-  fixing `macos_backend.py` to stamp aware datetimes — rejected as the
-  *only* fix because it leaves the store one new naive caller away
-  from the same crash; can land separately as hardening.
+  future naive caller still compare cleanly). Fixing only the
+  producers was rejected as the *sole* fix because it leaves the store
+  one new naive caller away from the same crash.
+- **Producer hardening on top (second commit).** The codebase had two
+  self-consistent tz clusters: BLE/Bonjour/LAN (aware-UTC) and
+  Wi-Fi/environment/latency (naive-local). The naive cluster flips to
+  aware-local in one move — producers (`macos_backend`, `_helper`,
+  `latency`, `tui`'s `NetworkChangeEvent`, `event_log` session_meta)
+  AND the consumers doing arithmetic on them (environment ticks,
+  sparkline, last-event-ago, joining deadline) — because flipping
+  either side alone would create the same naive-vs-aware mix in the
+  other direction. The snapshot script's synthetic backends follow for
+  the same reason.
+- **`EnvironmentMonitor` gets the same boundary normalization.** Its
+  rolling-window math (`ingest` trim, `_current_sigma`,
+  `aggregate_sigma`) had the identical latent hazard — a mixed-tz
+  ingest raised `TypeError` (pinned by the new regression test before
+  the fix). Normalizing `ingest`/`fire_events`/`aggregate_sigma` at
+  the boundary makes the monitor immune to any future producer mix,
+  exactly like the familiarity store.
 - **Treat naive as local, not UTC.** Matches the repo-wide `_iso`
   convention and the actual producers (`datetime.now()` is local wall
   clock). Treating naive as UTC would skew classification by the UTC

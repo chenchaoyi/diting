@@ -776,7 +776,7 @@ def test_environment_diagnostic_line_stable():
 
 def test_environment_diagnostic_line_active_marks_warning():
     """The 'active' label gets a ⚠ prefix and surfaces last-event-ago."""
-    last = datetime.now()
+    last = datetime.now().astimezone()  # the monitor stamps aware-local
     text = _environment_diagnostic_line("active", 7.8, last).plain
     assert "⚠" in text
     assert "active" in text
@@ -1601,8 +1601,9 @@ def test_wifi_detail_signal_history_omitted_when_under_two_samples():
 def test_wifi_detail_signal_history_renders_sparkline_and_sigma():
     """With ≥2 samples the section renders. We don't assert the exact
     sparkline glyphs (Unicode block characters vary per terminal) — we
-    just confirm the header + sample-count summary appear. Uses naive
-    datetimes to match the monitor's internal `datetime.now()` calls."""
+    just confirm the header + sample-count summary appear. Naive
+    datetimes are fine here — the monitor normalizes them as local
+    time at its boundary."""
     from diting.environment import EnvironmentMonitor
     monitor = EnvironmentMonitor(inventory=NetworkInventory(aps=()))
     now = datetime.now()

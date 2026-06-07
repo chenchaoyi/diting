@@ -77,14 +77,14 @@ class _GoodBackend(WiFiBackend):
             rssi_dbm=-58, noise_dbm=-95, tx_rate_mbps=360.0,
             channel=48, channel_width_mhz=80, channel_band="5 GHz",
             phy_mode="802.11ax", security="WPA2 Enterprise",
-            mcs_index=7, nss=2, timestamp=datetime.now(),
+            mcs_index=7, nss=2, timestamp=datetime.now().astimezone(),
             interface_mac="de:ad:be:ef:00:01", country_code="CN",
             ip_address="192.168.1.42", router_ip="192.168.1.1",
             max_link_speed_mbps=867,
         )
 
     def scan(self) -> list[ScanResult]:
-        ts = datetime.now()
+        ts = datetime.now().astimezone()
         rows = [
             ("Office-WiFi",  "aa:bb:cc:11:22:53", -58, 48, 80, "WPA2 Enterprise", 78, True),
             ("Office-Guest", "aa:bb:cc:11:22:54", -60, 48, 80, "Open",            None, None),
@@ -122,7 +122,7 @@ class _RedactedBackend(_GoodBackend):
     """Helper not granted / Location Services denied: scan rows
     have None SSID / BSSID like macOS 14.4+ produces."""
     def scan(self) -> list[ScanResult]:
-        ts = datetime.now()
+        ts = datetime.now().astimezone()
         return [
             ScanResult(
                 ssid=None, bssid=None, rssi_dbm=-58 - i,
@@ -552,7 +552,7 @@ def _regression_scenarios() -> list[Scenario]:
         events_panel = pilot.app.query_one("#roam", EventsPanel)
         events_panel.append_event(
             RFStirEvent(
-                timestamp=datetime.now(),
+                timestamp=datetime.now().astimezone(),
                 bssid="aa:bb:cc:11:22:53",
                 location="1F-bedroom",
                 magnitude_db=8.3, duration_s=12.0,
@@ -562,12 +562,12 @@ def _regression_scenarios() -> list[Scenario]:
         )
         if ble_devices is not None:
             pilot.app._latest_ble = ble_devices
-            pilot.app._latest_ble_connected = _ble_connected(datetime.now())
+            pilot.app._latest_ble_connected = _ble_connected(datetime.now().astimezone())
             pilot.app._ble_permission_state = "granted"
             from diting.tui import BLEPanel
             ble_panel = pilot.app.query_one(BLEPanel)
             ble_panel.update_devices(
-                ble_devices, _ble_connected(datetime.now()), "granted",
+                ble_devices, _ble_connected(datetime.now().astimezone()), "granted",
             )
         await pilot.pause(0.3)
 
@@ -606,7 +606,7 @@ def _regression_scenarios() -> list[Scenario]:
             LANHostSeenEvent,
         )
         events_panel = pilot.app.query_one("#roam", EventsPanel)
-        now = datetime.now()
+        now = datetime.now().astimezone()
         for ev in (
             RoamEvent(
                 timestamp=now,
@@ -983,7 +983,7 @@ def _regression_scenarios() -> list[Scenario]:
             lang="en",
             setup=lambda: _build_good(lang="en"),
             after_mount=lambda pilot: _switch_to_ble(
-                pilot, ble_devices=_ble_devices_normal(datetime.now()),
+                pilot, ble_devices=_ble_devices_normal(datetime.now().astimezone()),
             ),
             assertions=(
                 ("BLE panel header", lambda t: "Nearby BLE" in t or "BLE" in t),
@@ -1006,7 +1006,7 @@ def _regression_scenarios() -> list[Scenario]:
             setup=lambda: _build_good(lang="en"),
             after_mount=lambda pilot: _switch_to_ble_and_inspect(
                 pilot,
-                ble_devices=_ble_devices_normal(datetime.now()),
+                ble_devices=_ble_devices_normal(datetime.now().astimezone()),
                 steps=5,
             ),
             assertions=(
@@ -1133,7 +1133,7 @@ def _regression_scenarios() -> list[Scenario]:
             lang="en",
             setup=lambda: _build_good(lang="en"),
             after_mount=lambda pilot: _switch_to_ble(
-                pilot, ble_devices=_ble_devices_unknown_heavy(datetime.now()),
+                pilot, ble_devices=_ble_devices_unknown_heavy(datetime.now().astimezone()),
             ),
             assertions=(),
             inspectors=(
@@ -1651,7 +1651,7 @@ def default_out_dir(mode: str) -> Path:
     is going to surface accidentally.
     """
     if mode == "explore":
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
         return Path(f"/tmp/wfs-tui-audit-{stamp}")
     return Path("snapshot-output")
 

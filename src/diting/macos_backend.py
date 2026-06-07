@@ -239,7 +239,7 @@ class MacOSWiFiBackend(WiFiBackend):
             security=_SECURITY.get(int(iface.security())),
             mcs_index=_maybe_int(mcs),
             nss=_maybe_int(nss),
-            timestamp=datetime.now(),
+            timestamp=datetime.now().astimezone(),
             interface_mac=iface.hardwareAddress() or None,
             # CoreWLAN.countryCode is TCC-redacted in unprivileged
             # processes; the helper sees it. Cache the last value the
@@ -367,7 +367,7 @@ class MacOSWiFiBackend(WiFiBackend):
         result, error = iface.scanForNetworksWithName_error_(None, None)
         if error is not None or result is None:
             return []
-        ts = datetime.now()
+        ts = datetime.now().astimezone()
         out: list[ScanResult] = []
         for net in result:
             ch_num, ch_width, ch_band = _channel_fields(net.wlanChannel())
