@@ -7242,6 +7242,12 @@ class DitingApp(App):
         history follows along so the modal's last-hour chart picks
         up the σ value at fire time.
         """
+        # ``now`` arrives from several callers (scan tick, connection
+        # timestamp — including injected test backends); normalize
+        # naive-as-local so the σ-history arithmetic below never mixes
+        # tz-ness (the environment monitor does the same internally).
+        if now.tzinfo is None:
+            now = now.astimezone()
         if self._environment_monitor is None:
             return
         events = self._environment_monitor.fire_events(now)

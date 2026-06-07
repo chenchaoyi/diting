@@ -38,14 +38,14 @@ class _FakeBackend(WiFiBackend):
             noise_dbm=-94, tx_rate_mbps=300.0,
             channel=48, channel_width_mhz=80, channel_band="5 GHz",
             phy_mode="802.11ax", security="WPA2 Personal",
-            mcs_index=5, nss=2, timestamp=datetime.now(),
+            mcs_index=5, nss=2, timestamp=datetime.now().astimezone(),
             interface_mac="84:2f:57:9b:15:59", country_code="CN",
             ip_address="10.0.0.2", router_ip="10.0.0.1",
             max_link_speed_mbps=867,
         )
 
     def scan(self) -> list[ScanResult]:
-        ts = datetime.now()
+        ts = datetime.now().astimezone()
         return [
             ScanResult(
                 ssid="testnet", bssid="40:fe:95:89:c7:e3",
@@ -633,7 +633,7 @@ def test_unified_events_panel_renders_roam_and_stir_interleaved():
             panel = app.query_one("#roam", EventsPanel)
             panel.append_event(
                 RoamEvent(
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now().astimezone(),
                     previous_bssid="aa:bb:cc:11:22:50",
                     previous_channel=36,
                     new_bssid="aa:bb:cc:33:44:10",
@@ -643,7 +643,7 @@ def test_unified_events_panel_renders_roam_and_stir_interleaved():
             )
             panel.append_event(
                 RFStirEvent(
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now().astimezone(),
                     bssid="aa:bb:cc:11:22:53",
                     location="1F-bedroom",
                     magnitude_db=8.3, duration_s=12.0,
