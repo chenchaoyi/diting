@@ -11,6 +11,23 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.16.1] — 2026-06-07
+
+Hotfix. **One radio, one identity — BSSID octet padding normalized.**
+
+### Fixed
+
+- **The current connection could appear as a duplicate row of its own
+  AP.** macOS formats the SCDynamicStore `CachedScanRecord` BSSID
+  without octet zero-padding (`…:3c:b`) — the TCC fallback that feeds
+  the *current* connection on macOS 26 — while scan paths return padded
+  octets (`…:3c:0b`). diting only lowercased, so the same radio became
+  two identities: a duplicate same-SSID row under one AP group,
+  inflated group counts, a phantom-roam hazard on the spelling flip,
+  and split familiarity history. Every producer now normalizes to the
+  canonical lowercase zero-padded form, and the current-row merge
+  compares normalized spellings. (#183)
+
 ## [1.16.0] — 2026-06-07
 
 Feature release. **The four list views zoom to full screen, and a
