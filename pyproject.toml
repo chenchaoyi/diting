@@ -1,6 +1,6 @@
 [project]
 name = "diting"
-version = "1.15.0"
+version = "1.16.0"
 description = "macOS terminal listening post for Wi-Fi, BLE, link health, and the RF environment — your Mac hears more than it tells you"
 readme = "README.md"
 license = "MIT"
