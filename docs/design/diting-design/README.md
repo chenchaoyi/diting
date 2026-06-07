@@ -140,6 +140,11 @@ elsewhere. Five principles cover almost everything:
   scan cycle and a 1Hz latency cycle; that *is* the motion. Static
   surfaces (docs, marketing) get **no fades, no bounces, no
   parallax**. A prefers-reduced-motion-by-default brand.
+  **One diegetic exception:** while a list panel is waiting on a
+  sweep, the beast mark renders with a single radar pulse dot
+  travelling from its antenna at ≤2 Hz — a picture of the sweep
+  actually in flight, frame-frozen the moment polling pauses and
+  gone the moment rows land. The mark's geometry is untouched.
 - **Hover states.** A subtle background lift to `--bg-row-alt`
   (`#262626`); no colour-shift, no glow.
 - **Press states.** Bound to keyboard shortcuts in the actual

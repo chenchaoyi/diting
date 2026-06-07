@@ -269,10 +269,124 @@ class ConnectionPanel(Static):
             self.update(Group(header, Text(""), body, signal_line))
 
 
-class ScanPanel(VerticalScroll):
+# ---------- listening mark (animated waiting state) ----------
+
+# Pixel-art rendering of `docs/design/diting-design/assets/logo-mark.svg`.
+# The SVG is a 9-col × 7-row grid on 8-pixel cells (radar antenna + body
+# with a centre cutout + two pairs of feet + an underbar). We collapse
+# each vertical pair of grid rows into one terminal row using Unicode
+# half-block characters (Block Elements range, U+2580..U+259F), which
+# Fira Code renders at exactly the cell grid with no anti-aliasing gaps.
+# The seventh "underbar" grid row is delivered by the BrandHeader's
+# `border-bottom: tall #fea62b` style rather than a fourth content row,
+# which keeps the underbar's width tied to the actual rendered width.
+# Shared by the brand header (`_LogoMark`) and the list panels'
+# waiting-state animation (`_listening_mark`).
+_LOGO_MARK_ART = "  █      \n█▀██████▄\n▀██▀▀▀▀██"
+
+_WAIT_FRAMES = 5      # frame 0 = rest (no pulse), then 4 travelling positions
+_WAIT_TICK_S = 0.6    # ≤2 Hz repaint of one small Static — negligible
+
+
+def _listening_mark(tick: int, caption: str) -> Text:
+    """One frame of the waiting-state mark.
+
+    The beast renders exactly as the brand header draws it (the mark is
+    the only mark — its geometry is never touched); the animation is a
+    single radar pulse dot travelling away from the antenna, a picture
+    of the sweep that is actually in flight. Pure ``(tick, caption) →
+    Text`` so frames are unit-testable without an App. Frame 0 is the
+    rest frame (no dot) so first paints and snapshot captures are
+    deterministic.
+    """
+    rows = _LOGO_MARK_ART.split("\n")
+    phase = tick % _WAIT_FRAMES
+    antenna = list(rows[0].ljust(9))
+    if phase:
+        antenna[3 + phase] = "·"
+    out = Text()
+    out.append("".join(antenna).rstrip(), style="bold #fea62b")
+    out.append("\n")
+    out.append(rows[1], style="bold #fea62b")
+    out.append("\n")
+    out.append(rows[2], style="bold #fea62b")
+    out.append("\n")
+    out.append(caption, style="dim italic")
+    return out
+
+
+class _ListeningWait:
+    """Waiting-state animation shared by the four list panels.
+
+    The timer is created paused and only resumed while the panel is
+    visible AND showing a waiting placeholder — a populated or hidden
+    panel carries zero animation cost. The tick frame-freezes while
+    polling is paused (`p`): the pulse pictures a sweep in flight, so
+    it must not pretend one is running. Subclasses set
+    ``_WAIT_BODY_ID`` and call ``_init_listening_wait`` from
+    ``on_mount``, ``_show_listening_wait`` on every waiting-state
+    paint, and ``_clear_listening_wait`` on every data paint.
+    """
+
+    _WAIT_BODY_ID: str
+
+    def _init_listening_wait(self) -> None:
+        self._wait_tick = 0
+        self._wait_caption: str | None = None
+        self._wait_timer = self.set_interval(
+            _WAIT_TICK_S, self._advance_listening_wait, pause=True,
+        )
+
+    def _show_listening_wait(self, caption: str) -> None:
+        self._wait_caption = caption
+        self._wait_tick = 0
+        try:
+            self.query_one(self._WAIT_BODY_ID, Static).update(
+                _listening_mark(0, caption)
+            )
+        except NoMatches:
+            return
+        # Timer exists only after _init_listening_wait (i.e. mounted);
+        # unmounted panels in unit tests still get the frame painted.
+        timer = getattr(self, "_wait_timer", None)
+        if timer is not None and self.display:
+            timer.resume()
+
+    def _clear_listening_wait(self) -> None:
+        self._wait_caption = None
+        timer = getattr(self, "_wait_timer", None)
+        if timer is not None:
+            timer.pause()
+
+    def _advance_listening_wait(self) -> None:
+        if self._wait_caption is None or not self.display:
+            return
+        if getattr(self.app, "_paused", False):
+            return  # frame-freeze: nothing is sweeping while paused
+        self._wait_tick += 1
+        try:
+            self.query_one(self._WAIT_BODY_ID, Static).update(
+                _listening_mark(self._wait_tick, self._wait_caption)
+            )
+        except NoMatches:
+            pass
+
+    def on_hide(self) -> None:
+        timer = getattr(self, "_wait_timer", None)
+        if timer is not None:
+            timer.pause()
+
+    def on_show(self) -> None:
+        timer = getattr(self, "_wait_timer", None)
+        if timer is not None and self._wait_caption is not None:
+            timer.resume()
+
+
+class ScanPanel(_ListeningWait, VerticalScroll):
     # ScrollableContainer defaults ALLOW_MAXIMIZE off; the four list
     # panels opt in so the `z` zoom binding can maximize them in place.
     ALLOW_MAXIMIZE = True
+    _WAIT_BODY_ID = "#scan-body"
     DEFAULT_CSS = """
     ScanPanel {
         height: 1fr;
@@ -292,6 +406,8 @@ class ScanPanel(VerticalScroll):
         # / sort / scan-age) lands in the subtitle once update_scan runs.
         self.border_title = _view_tabs_border_title("wifi")
         self.border_subtitle = t("Nearby BSSIDs")
+        self._init_listening_wait()
+        self._show_listening_wait(t("(scanning...)"))
         # Per-line mapping populated on every update_scan() call. Mirrors
         # BLEPanel._y_to_id — index into ``_y_to_key`` by body line, get
         # back the scan-row identifier (or None for header / group /
@@ -352,12 +468,12 @@ class ScanPanel(VerticalScroll):
             t("Nearby BSSIDs") + f" ({len(results)}){ago}{identity}{sort_label}"
         )
         if not results:
-            self.query_one("#scan-body", Static).update(
-                Text(t("(no APs from last scan — likely throttle, retrying)"),
-                     style="dim italic")
+            self._show_listening_wait(
+                t("(no APs from last scan — likely throttle, retrying)")
             )
             self._y_to_key = []
             return
+        self._clear_listening_wait()
 
         lines: list[Text] = [_header_line()]
         # Per-line key map parallel to ``lines``. Header / group-summary
@@ -1563,7 +1679,7 @@ def _basics_content() -> tuple[Text, Text]:
     return body, footer
 
 
-class BLEPanel(VerticalScroll):
+class BLEPanel(_ListeningWait, VerticalScroll):
     """Nearby BLE devices, swapped into the third panel slot when the
     user toggles to the BLE view via the `n` binding.
 
@@ -1576,6 +1692,7 @@ class BLEPanel(VerticalScroll):
     """
 
     ALLOW_MAXIMIZE = True  # opt in to the `z` zoom (see ScanPanel)
+    _WAIT_BODY_ID = "#ble-body"
 
     DEFAULT_CSS = """
     BLEPanel {
@@ -1599,6 +1716,8 @@ class BLEPanel(VerticalScroll):
         # / state placeholder) lands in the subtitle.
         self.border_title = _view_tabs_border_title("ble")
         self.border_subtitle = t("Nearby BLE devices")
+        self._init_listening_wait()
+        self._show_listening_wait(t("(no BLE devices yet — scanning...)"))
         # Per-line mapping populated on every update_devices() call.
         # ``_y_to_id[i]`` is the identifier rendered at body line i, or
         # None for header / spacer rows. Used by ``on_click`` to turn a
@@ -1661,10 +1780,11 @@ class BLEPanel(VerticalScroll):
             total = len(devices) + len(connected)
             self.border_subtitle = base_title + f" ({total})"
             if not devices and not connected:
-                body.update(Text(t("(no BLE devices yet — scanning...)"),
-                                 style="dim italic"))
+                self._show_listening_wait(
+                    t("(no BLE devices yet — scanning...)"))
                 self._y_to_id = []
                 return
+            self._clear_listening_wait()
             lines: list[Text] = []
             # Per-line identifier map for click-to-select. Mirrors
             # ``lines`` 1:1 — header / spacer rows hold None.
@@ -1712,6 +1832,7 @@ class BLEPanel(VerticalScroll):
         # already the tab indicator; subtitle is just the panel name.
         self.border_subtitle = base_title
         self._y_to_id = []
+        self._clear_listening_wait()
         if permission_state == "denied":
             body.update(Text(t("(BLE permission required)"),
                              style="dim italic"))
@@ -1735,7 +1856,7 @@ class BLEPanel(VerticalScroll):
                              style="dim italic"))
 
 
-class BonjourPanel(VerticalScroll):
+class BonjourPanel(_ListeningWait, VerticalScroll):
     """Nearby mDNS / Bonjour devices, swapped into the third panel
     slot when the user toggles to the mDNS view via the `n` binding
     (third position in the wifi → ble → mdns cycle).
@@ -1747,6 +1868,7 @@ class BonjourPanel(VerticalScroll):
     """
 
     ALLOW_MAXIMIZE = True  # opt in to the `z` zoom (see ScanPanel)
+    _WAIT_BODY_ID = "#mdns-body"
 
     DEFAULT_CSS = """
     BonjourPanel {
@@ -1770,6 +1892,8 @@ class BonjourPanel(VerticalScroll):
         # Tab indicator in title; panel-specific detail in subtitle.
         self.border_title = _view_tabs_border_title("mdns")
         self.border_subtitle = t("Nearby Bonjour devices")
+        self._init_listening_wait()
+        self._show_listening_wait(t("(no Bonjour devices yet — scanning...)"))
         # Per-line mapping populated on every update_devices() call —
         # mirrors BLEPanel._y_to_id / ScanPanel._y_to_key. Used by
         # on_click to turn a click into a selection.
@@ -1811,12 +1935,11 @@ class BonjourPanel(VerticalScroll):
         self.border_title = _view_tabs_border_title("mdns")
         if not devices:
             self.border_subtitle = base_title
-            body.update(Text(
-                t("(no Bonjour devices yet — scanning...)"),
-                style="dim italic",
-            ))
+            self._show_listening_wait(
+                t("(no Bonjour devices yet — scanning...)"))
             self._y_to_key = []
             return
+        self._clear_listening_wait()
         now = datetime.now(timezone.utc)
         if sort_mode == "by-host":
             row_specs = _bonjour_by_host_rows(devices, now, lan_lookup=lan_lookup)
@@ -2009,7 +2132,7 @@ def _lan_row_line(
     return line
 
 
-class LANPanel(VerticalScroll):
+class LANPanel(_ListeningWait, VerticalScroll):
     """Nearby LAN hosts (ARP + ICMP discovery), swapped into the
     third panel slot when the user toggles to the LAN view via the
     `n` binding (fourth position in the wifi → ble → mdns → lan cycle).
@@ -2020,6 +2143,7 @@ class LANPanel(VerticalScroll):
     """
 
     ALLOW_MAXIMIZE = True  # opt in to the `z` zoom (see ScanPanel)
+    _WAIT_BODY_ID = "#lan-body"
 
     DEFAULT_CSS = """
     LANPanel {
@@ -2041,6 +2165,8 @@ class LANPanel(VerticalScroll):
     def on_mount(self) -> None:
         self.border_title = _view_tabs_border_title("lan")
         self.border_subtitle = t("Nearby LAN hosts")
+        self._init_listening_wait()
+        self._show_listening_wait(t("(sweeping subnet…)"))
         # Per-line key map for mouse click → select-and-inspect.
         self._y_to_key: list[str | None] = []
 
@@ -2084,12 +2210,10 @@ class LANPanel(VerticalScroll):
         self.border_title = _view_tabs_border_title("lan")
         if update is None or not update.hosts:
             self.border_subtitle = base_title
-            body.update(Text(
-                t("(sweeping subnet…)"),
-                style="dim italic",
-            ))
+            self._show_listening_wait(t("(sweeping subnet…)"))
             self._y_to_key = []
             return
+        self._clear_listening_wait()
         now = datetime.now(timezone.utc)
         self.border_subtitle = (
             base_title + f" ({len(update.hosts)})"
@@ -6469,16 +6593,10 @@ def _import_bonjour_poller():
 
 # ---------- brand header ----------
 
-# Pixel-art rendering of `docs/design/diting-design/assets/logo-mark.svg`.
-# The SVG is a 9-col × 7-row grid on 8-pixel cells (radar antenna + body
-# with a centre cutout + two pairs of feet + an underbar). We collapse
-# each vertical pair of grid rows into one terminal row using Unicode
-# half-block characters (Block Elements range, U+2580..U+259F), which
-# Fira Code renders at exactly the cell grid with no anti-aliasing gaps.
-# The seventh "underbar" grid row is delivered by the BrandHeader's
-# `border-bottom: tall #fea62b` style rather than a fourth content row,
-# which keeps the underbar's width tied to the actual rendered width.
-_LOGO_MARK_ART = "  █      \n█▀██████▄\n▀██▀▀▀▀██"
+# `_LOGO_MARK_ART` lives next to the listening-mark helpers above the
+# list panels (it is shared by the brand header and the waiting-state
+# animation); see the comment there for how the SVG grid collapses
+# into half-block rows.
 
 
 class _LogoMark(Static):
