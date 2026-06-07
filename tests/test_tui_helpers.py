@@ -132,6 +132,17 @@ def test_merge_current_case_insensitive_match():
     assert len(out) == 1
 
 
+def test_merge_current_unpadded_bssid_match():
+    """The 2026-06-07 live duplicate-row bug: the SCDynamicStore
+    fallback spells the current BSSID without octet zero-padding
+    (`3c:b`) while the scan row is padded (`3c:0b`). The merge must
+    treat them as one radio, not show two same-SSID rows."""
+    conn = _conn(bssid="40:fe:95:8a:3c:b")
+    scan = [_scan("40:fe:95:8a:3c:0b")]
+    out = _merge_current(scan, conn)
+    assert len(out) == 1
+
+
 # --- _group_by_ap ----------------------------------------------------
 
 INVENTORY = NetworkInventory(
