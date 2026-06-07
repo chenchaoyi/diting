@@ -489,7 +489,7 @@ class LatencyPoller:
         1000 so a network outage caps the call at ~1 s. ``-t`` is the
         IP TTL, not a time bound.
         """
-        ts = datetime.now()
+        ts = datetime.now().astimezone()
         try:
             proc = subprocess.run(
                 [self._ping_path, "-c", "1", "-W", "1000", "-t", "64", ip],
@@ -527,7 +527,7 @@ class LatencyPoller:
         so the diagnostic-panel cadence stays even.
         """
         import socket
-        ts = datetime.now()
+        ts = datetime.now().astimezone()
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1.0)
         start = time.monotonic()

@@ -330,3 +330,28 @@ def test_rf_stir_event_ssid_remembers_last_non_none():
         )
     events = monitor.fire_events(base + timedelta(seconds=burst_start + 4))
     assert events[0].ssid == "tedo_5G"
+
+
+def test_mixed_naive_aware_timestamps_do_not_raise():
+    """tz hardening (fix-familiarity-tz-mismatch): producers are mixed
+    in the wild (the Wi-Fi poll path stamped naive local, scans and the
+    TUI's collection ticks stamp aware), so the monitor normalizes at
+    its boundary — naive means LOCAL time. A naive/aware ingest mix
+    followed by aware-now queries must never raise."""
+    from datetime import timezone
+
+    monitor = EnvironmentMonitor(inventory=_INV, cooldown_s=0.0)
+    bssid = "aa:bb:cc:11:22:10"
+    naive = datetime(2026, 6, 7, 17, 13, 0)
+    aware = naive.astimezone()  # same instant, aware-local
+    for i in range(10):
+        # Alternate tz-ness sample to sample — worst case.
+        ts = naive if i % 2 == 0 else aware
+        monitor.ingest(bssid, -55 - (i % 3), ts + timedelta(seconds=i * 5))
+    now_aware = aware + timedelta(seconds=60)
+    monitor.fire_events(now_aware)                  # must not raise
+    label, sigma, last_event = monitor.aggregate_sigma(now_aware)
+    assert label in ("stable", "active", "quiet")
+    monitor.baseline_summary()                      # internal now — must not raise
+    # A UTC-aware now (the TUI's collect cadence) works too.
+    monitor.fire_events(datetime(2026, 6, 7, 9, 15, 0, tzinfo=timezone.utc))

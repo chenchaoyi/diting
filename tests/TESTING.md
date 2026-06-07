@@ -239,6 +239,7 @@ consumes the exact payload dict the JSONL writer emits (via an
 | Calibration loadable from file | `test_environment.py::test_calibration_overrides_adaptive_baseline`, `::test_calibration_round_trip`, `::test_load_calibration_returns_empty_dict_on_missing_file` |
 | Wording: correlation, not presence | (review-enforced — no string in `i18n.py` asserts "person" / "motion" / "presence") |
 | `RFStirEvent` carries the current `Connection.ssid` on emit | `test_environment.py::test_rf_stir_event_carries_ssid_from_current_connection` |
+| **fix-familiarity-tz-mismatch** (hardening) — the monitor normalizes timestamps at its boundary (naive means LOCAL): mixed naive/aware `ingest` plus an aware `fire_events` / `aggregate_sigma` / `baseline_summary` never raises; all runtime producers (`Connection` / `ScanResult` / `LatencySample` / `NetworkChangeEvent`) now stamp aware-local | `test_environment.py::test_mixed_naive_aware_timestamps_do_not_raise` |
 
 ### `scenes`
 
@@ -297,6 +298,7 @@ consumes the exact payload dict the JSONL writer emits (via an
 | `observe_left` folds the seen→left dwell into a per-entity EWMA (`0.3·new + 0.7·old`); first sample seeds it | `test_familiarity.py::test_dwell_ewma_folds` |
 | Store persists across restart (round-trips records, days set, dwell); reads fail-soft (corrupt file → empty, corrupt record skipped, never raises) | `test_familiarity.py::test_persistence_round_trip`, `::test_corrupt_file_is_failsoft`, `::test_corrupt_record_skipped_valid_kept` |
 | Bounded: ages out entities unseen `> _AGE_OUT_DAYS` (30) on flush; caps to `_MAX_ENTITIES` most-recently-seen | `test_familiarity.py::test_age_out_on_flush` |
+| **fix-familiarity-tz-mismatch** — the store tolerates any naive/aware timestamp mix without raising, normalizing naive as LOCAL time at its boundary: mixed-tz observes survive a flush and persist aware; a persisted naive `last_seen` heals on load (classify + prune don't raise); classification arithmetic stays correct across the mix (naive habitual sighting → aware `returning` check) | `test_familiarity.py::test_mixed_naive_aware_observe_survives_flush`, `::test_persisted_naive_record_heals_on_load`, `::test_classify_across_naive_aware_mix` |
 | BLE seen/left construction stamps `vendor_id` + `manufacturer_hex` (cluster-left uses the cluster anchor, not the evicting member, so the dwell folds under the seen key); left-side dwell lands under the same payload key | `test_event_log.py::test_ble_familiarity_keys_on_payload_not_rotating_id`, `::test_ble_left_folds_dwell_under_payload_key` |
 | Baseline accrues even with logging disabled (the store updates ahead of the sink guard) | `test_event_log.py::test_baseline_accrues_even_when_logging_disabled` |
 

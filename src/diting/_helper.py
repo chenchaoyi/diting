@@ -125,7 +125,7 @@ def scan(binary: str, timeout: float = 12.0) -> tuple[list[ScanResult], dict]:
     if not isinstance(iface_meta, dict):
         iface_meta = {}
     nets = payload.get("networks") or []
-    ts = datetime.now()
+    ts = datetime.now().astimezone()
     out: list[ScanResult] = []
     for net in nets:
         bssid = net.get("bssid")

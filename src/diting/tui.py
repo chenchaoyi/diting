@@ -1193,7 +1193,7 @@ def _sigma_sparkline(
     n_buckets = 30
     bucket_seconds = 120.0  # 2 minutes per bucket → 1 h window
     if now is None:
-        now = datetime.now()
+        now = datetime.now().astimezone()
     # Reference frame: bucket 29 ends at ``now``; bucket 0 starts an
     # hour earlier. Anything older falls off the left.
     cutoff = now - timedelta(seconds=bucket_seconds * n_buckets)
@@ -2990,7 +2990,7 @@ def _environment_diagnostic_line(
         )
     if last_event_at is not None:
         line.append("  ·  ", style="dim")
-        elapsed = max(0, int((datetime.now() - last_event_at).total_seconds()))
+        elapsed = max(0, int((datetime.now().astimezone() - last_event_at).total_seconds()))
         line.append(t("last event {n}s ago", n=elapsed), style="dim")
     return line
 
@@ -5224,7 +5224,7 @@ class WifiDetailScreen(ModalScreen):
             if (
                 r.ssid is not None
                 and target_ssid == r.ssid
-                and datetime.now() < deadline
+                and datetime.now().astimezone() < deadline
             ):
                 head_label += "  ·  " + t("(joining…)")
         self._heading(out, head_label)
@@ -7048,7 +7048,12 @@ class DitingApp(App):
         store = self._familiarity_store
         if store is None:
             return
-        await asyncio.to_thread(store.flush)
+        # Same fail-soft contract as the on_unmount flush: baseline
+        # persistence is best-effort and must never crash the monitor.
+        try:
+            await asyncio.to_thread(store.flush)
+        except Exception:
+            pass
 
     def action_show_companion(self) -> None:
         self.push_screen(CompanionScreen())
@@ -7192,7 +7197,7 @@ class DitingApp(App):
                 # this is what lets neighbour APs (the 'spatial channel'
                 # bucket) ever build up enough samples to fire events.
                 if self._environment_monitor is not None and event.results:
-                    now = datetime.now()
+                    now = datetime.now().astimezone()
                     for r in event.results:
                         if r.bssid is not None:
                             self._environment_monitor.ingest(
@@ -7237,6 +7242,12 @@ class DitingApp(App):
         history follows along so the modal's last-hour chart picks
         up the σ value at fire time.
         """
+        # ``now`` arrives from several callers (scan tick, connection
+        # timestamp — including injected test backends); normalize
+        # naive-as-local so the σ-history arithmetic below never mixes
+        # tz-ness (the environment monitor does the same internally).
+        if now.tzinfo is None:
+            now = now.astimezone()
         if self._environment_monitor is None:
             return
         events = self._environment_monitor.fire_events(now)
@@ -7481,7 +7492,7 @@ class DitingApp(App):
             if self._latest_connection else None
         )
         ev = NetworkChangeEvent(
-            timestamp=datetime.now(),
+            timestamp=datetime.now().astimezone(),
             previous_router_ip=previous_router_ip,
             new_router_ip=new_router_ip,
             previous_ssid=None,
@@ -7853,7 +7864,7 @@ class DitingApp(App):
         """``(label, sigma, last_event_at)`` from the EnvironmentMonitor."""
         if self._environment_monitor is None:
             return None
-        return self._environment_monitor.aggregate_sigma(datetime.now())
+        return self._environment_monitor.aggregate_sigma(datetime.now().astimezone())
 
     def action_toggle_pause(self) -> None:
         self._paused = not self._paused
@@ -8543,7 +8554,7 @@ class DitingApp(App):
                 severity="error",
             )
             return
-        self._app_joining_to = (ssid, datetime.now() + timedelta(seconds=10))
+        self._app_joining_to = (ssid, datetime.now().astimezone() + timedelta(seconds=10))
         self._sync_open_detail_modal()
 
         async def _run() -> None:

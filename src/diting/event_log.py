@@ -208,7 +208,7 @@ class EventLogger:
         if self._session_meta_written:
             return
         if now is None:
-            now = datetime.now()
+            now = datetime.now().astimezone()
         try:
             version = _pkg_version("diting")
         except PackageNotFoundError:
