@@ -11,6 +11,44 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.16.0] — 2026-06-07
+
+Feature release. **The four list views zoom to full screen, and a
+timestamp-mixing crash found live is fixed at every boundary.**
+
+### Added
+
+- **`z` zooms the active list panel.** Wi-Fi / BLE / Bonjour / LAN lists
+  share one cramped panel slot; in dense environments the entry count far
+  exceeds the visible rows. `z` maximizes the live panel to the full
+  screen — polling updates, `s` sort and `↑/↓/enter` row-inspect keep
+  working because it is the same widget, not a snapshot. `z` or Esc
+  restores, and cycling views with `n` carries the zoom along. (#180)
+
+### Changed
+
+- **`c` re-roam is Wi-Fi-view-only.** It bounces the Wi-Fi link, so the
+  footer now advertises it — and the key fires — only while the Wi-Fi
+  view is active. (#180)
+
+### Fixed
+
+- **A timezone-mixing `TypeError` crashed the TUI ~60 s after an AP
+  roam.** The familiarity store recorded each sighting's timestamp
+  verbatim: BLE / Bonjour / LAN pollers stamp tz-aware UTC, but the Wi-Fi
+  connection snapshot — and so every roam — stamped naive local. One roam
+  planted a naive record, and the next periodic flush compared it against
+  an aware prune cutoff and killed the app. The store now normalizes at
+  its boundary (naive means local time), already-persisted naive records
+  heal on load, and the periodic flush is fail-soft like the shutdown
+  flush. (#179)
+- **The same latent hazard in the environment monitor.** Its rolling-σ
+  window math could raise on a mixed-tz ingest; it now normalizes at
+  `ingest` / `fire_events` / `aggregate_sigma`. All runtime producers
+  (connection snapshot, scan results, latency samples, network-change
+  events) now stamp aware-local timestamps. No JSONL change — emitted
+  timestamps were already normalized to local+offset. (#179)
+
 ## [1.15.0] — 2026-06-05
 
 Feature release. **The events browser holds ten times the history, and a live
