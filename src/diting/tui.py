@@ -72,7 +72,7 @@ from .events import (
 )
 from .i18n import cell_len, fit_cells, pad_cells, t
 from .latency import LatencyAggregate
-from .models import Connection, ScanResult
+from .models import Connection, ScanResult, normalize_bssid
 from .network import (
     NetworkInventory, band_label, cluster_label, format_bssid,
     lookup_ap_vendor,
@@ -2778,7 +2778,10 @@ def _merge_current(
     """
     if conn is None or conn.bssid is None:
         return scan
-    target = conn.bssid.lower()
+    # Normalize both sides: producers emit the canonical zero-padded
+    # form, but injected backends (tests, snapshot fakes) and the
+    # pre-fix SCDynamicStore spelling ("…:3c:b") must still match.
+    target = normalize_bssid(conn.bssid)
     synth = ScanResult(
         ssid=conn.ssid,
         bssid=conn.bssid,
@@ -2795,7 +2798,7 @@ def _merge_current(
     out: list[ScanResult] = []
     replaced = False
     for r in scan:
-        if r.bssid and r.bssid.lower() == target:
+        if r.bssid and normalize_bssid(r.bssid) == target:
             out.append(synth)
             replaced = True
         else:

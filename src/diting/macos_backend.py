@@ -18,7 +18,7 @@ from CoreWLAN import CWWiFiClient
 
 from . import _dynamic_store, _helper
 from .backend import AssociateResult, PermissionState, WiFiBackend
-from .models import Connection, ScanResult
+from .models import Connection, ScanResult, normalize_bssid
 
 # CoreWLAN enums → human strings. Values mirror the CoreWLAN headers; we
 # look them up by integer rather than importing constants so a future macOS
@@ -208,7 +208,10 @@ class MacOSWiFiBackend(WiFiBackend):
         # 1 Hz tick is negligible.
         cached = _dynamic_store.read_current_identity(iface.interfaceName())
         ssid = ssid or cached.ssid
-        bssid = bssid or cached.bssid
+        # Normalize whichever source won: CoreWLAN's iface.bssid() is
+        # padded in practice, but the canonical spelling is enforced
+        # here so every consumer compares one identity.
+        bssid = normalize_bssid(bssid or cached.bssid)
         if cached.channel is not None:
             ch_num = cached.channel
             ch_band = _band_from_channel_number(cached.channel)
@@ -373,7 +376,7 @@ class MacOSWiFiBackend(WiFiBackend):
             ch_num, ch_width, ch_band = _channel_fields(net.wlanChannel())
             bssid = net.bssid()
             if isinstance(bssid, str):
-                bssid = bssid.lower() or None
+                bssid = normalize_bssid(bssid) or None
             out.append(
                 ScanResult(
                     ssid=net.ssid(),

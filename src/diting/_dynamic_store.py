@@ -27,6 +27,8 @@ from dataclasses import dataclass
 
 from SystemConfiguration import SCDynamicStoreCopyValue, SCDynamicStoreCreate
 
+from .models import normalize_bssid
+
 # macOS uses this as the placeholder when redacting BSSID. Any other
 # locally-administered MAC starting with 02 is technically valid, so
 # we only filter the exact placeholder value.
@@ -96,7 +98,10 @@ def read_current_identity(interface_name: str) -> CachedAssociation:
             if not stale:
                 raw_b = root.get("BSSID")
                 if isinstance(raw_b, str) and raw_b != _REDACTED_BSSID:
-                    bssid = raw_b.lower()
+                    # macOS writes these octets un-padded ("…:3c:b");
+                    # normalize so the current connection matches its
+                    # zero-padded scan row downstream.
+                    bssid = normalize_bssid(raw_b)
                 raw_s = root.get("SSID_STR")
                 if isinstance(raw_s, str) and raw_s:
                     ssid = raw_s

@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .backend import AssociateResult
-from .models import ScanResult
+from .models import ScanResult, normalize_bssid
 
 # Mirrors CoreWLAN enum values; the helper passes the raw integers
 # straight through so we can decode them once on this side.
@@ -130,7 +130,7 @@ def scan(binary: str, timeout: float = 12.0) -> tuple[list[ScanResult], dict]:
     for net in nets:
         bssid = net.get("bssid")
         if isinstance(bssid, str):
-            bssid = bssid.lower() or None
+            bssid = normalize_bssid(bssid) or None
         else:
             bssid = None
         out.append(

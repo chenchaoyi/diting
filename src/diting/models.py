@@ -13,6 +13,33 @@ All numeric fields are typed `int | None` / `float | None` because:
 from dataclasses import dataclass
 from datetime import datetime
 
+_HEX = set("0123456789abcdef")
+
+
+def normalize_bssid(raw: str | None) -> str | None:
+    """Canonical BSSID spelling: lowercase, colon-separated, each octet
+    zero-padded to two hex digits.
+
+    macOS formats some surfaces without octet padding — the
+    SCDynamicStore ``CachedScanRecord`` renders ``…:3c:0b`` as
+    ``…:3c:b`` — while scan paths return padded octets. Un-normalized,
+    the same radio becomes two identities downstream (duplicate Nearby
+    rows, phantom roams, split familiarity history), so every producer
+    applies this at its boundary. Fail-soft: a string that doesn't
+    parse as six 1–2-char hex octets is returned lowercased as-is,
+    never raised on — same convention as the ARP / MiBeacon MAC
+    parsers that fixed this quirk at their own boundaries.
+    """
+    if raw is None:
+        return None
+    s = raw.lower()
+    parts = s.split(":")
+    if len(parts) != 6:
+        return s
+    if any(not p or len(p) > 2 or any(c not in _HEX for c in p) for p in parts):
+        return s
+    return ":".join(p.zfill(2) for p in parts)
+
 
 @dataclass(frozen=True, slots=True)
 class Connection:
