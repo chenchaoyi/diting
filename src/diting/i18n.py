@@ -179,6 +179,7 @@ _ZH: dict[str, str] = {
     "Rescan": "重扫",
     "Sort": "排序",
     "Re-roam": "重选 AP",
+    "Zoom": "放大",
     "View": "视图",  # legacy; kept for command-palette / Ctrl+P
     # ---- Startup splash (v1.8.0) ----
     # Pre-alt-screen status block. The two macOS-product strings
@@ -889,10 +890,12 @@ _ZH: dict[str, str] = {
         "立即重新扫描（CoreWLAN 仍有 ~5 s 限流）",
     "cycle scan sort:  by AP  ↔  by signal":
         "扫描排序切换：按 AP ↔ 按信号",
-    "force re-roam (cycle Wi-Fi off/on so the OS re-picks the":
-        "重选 AP（关再开 Wi-Fi，让系统重新挑选",
-    "strongest BSSID — fixes sticky associations)\n":
-        "最强 BSSID —— 解决卡死在弱 AP 的问题）\n",
+    "Wi-Fi view only: force re-roam (cycle Wi-Fi off/on so the":
+        "仅 Wi-Fi 视图：重选 AP（关再开 Wi-Fi，让系统",
+    "OS re-picks the strongest BSSID — fixes sticky associations)\n":
+        "重新挑选最强 BSSID —— 解决卡死在弱 AP 的问题）\n",
+    "zoom — maximize the Nearby list panel (z or Esc restores)":
+        "放大 —— 将附近列表面板放大到全屏（z 或 Esc 还原）",
     "toggle this help": "切换帮助",
     "cycle Nearby view: Wi-Fi BSSIDs → BLE → Bonjour":
         "切换附近视图：Wi-Fi BSSID → BLE → Bonjour",
