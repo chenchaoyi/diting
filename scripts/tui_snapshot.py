@@ -454,6 +454,48 @@ def _inspect_redacted_scan(_app: "Any", text: str) -> list[Finding]:
     return []
 
 
+def _inspect_ble_event_vendor_overflow(app: "Any", *_args) -> list[Finding]:
+    """BLE event rows resolve the vendor through the display-alias map
+    but, unlike the BLE list's ``_fit_vendor``, apply NO length cap.
+    An unaliased long-tail IEEE registrant string (e.g. 'GuangDong
+    Oppo Mobile Telecommunications Corp., Ltd.') therefore renders at
+    full length in the events strip / modal. In the zh UI the effect
+    is amplified — a 50-char English vendor in an otherwise-Chinese
+    event log reads as noise. Surfaced from a 2026-06-08 zh audit."""
+    from diting.tui import _BLE_VENDOR_DISPLAY
+    devices = list(getattr(app, "_latest_ble", []) or [])
+    # The BLE list caps the vendor cell near this width via _fit_vendor;
+    # the event line has no equivalent bound.
+    thresh = 24
+    offenders = sorted(
+        {
+            d.vendor for d in devices
+            if d.vendor
+            and d.vendor not in _BLE_VENDOR_DISPLAY
+            and len(d.vendor) > thresh
+        },
+        key=len,
+        reverse=True,
+    )
+    if not offenders:
+        return []
+    longest = offenders[0]
+    return [Finding(
+        severity="note",
+        message=(
+            f"{len(offenders)} BLE vendor(s) exceed {thresh} chars with no "
+            f"display alias — longest {len(longest)}: '{longest}'. Event "
+            f"rows render these at full length (the BLE list caps them via "
+            f"_fit_vendor)."
+        ),
+        suggestion=(
+            "Add the long-tail vendors to _BLE_VENDOR_DISPLAY in "
+            "src/diting/tui.py, and/or cap the event vendor slot in "
+            "_ble_event_vendor_label with fit_cells the way _fit_vendor does."
+        ),
+    )]
+
+
 def _inspect_environment_silent(app: "Any", *_args) -> list[Finding]:
     """The Diagnostics panel renders an Environment row even with
     no σ data; if we expected stir events but got none, surface."""
@@ -1383,6 +1425,7 @@ def _explore_scenarios() -> list[Scenario]:
             inspectors=(
                 _inspect_ble_unknown_vendors,
                 _inspect_ble_no_name_no_type,
+                _inspect_ble_event_vendor_overflow,
             ),
         ),
         Scenario(
