@@ -70,7 +70,7 @@ from .events import (
     LinkStateEvent,
     LossBurstEvent,
 )
-from .i18n import cell_len, fit_cells, pad_cells, t
+from .i18n import cell_len, fit_cells, get_lang, pad_cells, t
 from .latency import LatencyAggregate
 from .models import Connection, ScanResult, normalize_bssid
 from .network import (
@@ -2504,6 +2504,14 @@ def _ble_event_is_silent(
     )
 
 
+# Cap for the event-line vendor slot. The BLE *list* caps its vendor
+# cell at _COL_BLE_VENDOR (18) with padding; the event line is free-flow
+# so it caps truncate-only at a slightly more generous width — enough
+# for real names like `RESIDEO TECHNOLOGIES, INC.` (26) while still
+# bounding a 48-char unaliased IEEE registrant.
+_BLE_EVENT_VENDOR_MAX = 28
+
+
 def _ble_event_vendor_label(
     vendor: str | None,
     name: str | None,
@@ -2514,11 +2522,17 @@ def _ble_event_vendor_label(
     """Vendor-slot text for a BLE event line, mirroring the BLE list
     vendor cell: the resolved vendor (through the same display-alias
     map the list uses, so one device never shows two names across
-    surfaces — `Huami`, not the raw IEEE registrant), else
-    `(anonymous)` when the device is truly silent, else `(unknown)`.
+    surfaces — `Huami`, not the raw IEEE registrant), capped to
+    `_BLE_EVENT_VENDOR_MAX` cells with a visible ellipsis when it
+    overflows so an unaliased long-tail registrant does not dominate
+    the line; else `(anonymous)` when the device is truly silent, else
+    `(unknown)`.
     """
     if vendor:
-        return _BLE_VENDOR_DISPLAY.get(vendor, vendor)
+        display = _BLE_VENDOR_DISPLAY.get(vendor, vendor)
+        # Truncate-only (rstrip the padding fit_cells adds): the event
+        # line is free-flow, not a fixed column, so no trailing pad.
+        return fit_cells(display, _BLE_EVENT_VENDOR_MAX, ellipsis=True).rstrip()
     if _ble_event_is_silent(vendor, name, device_type, device_class,
                             service_categories):
         return t("(anonymous)")
@@ -3428,6 +3442,20 @@ def _channel_hint(label: str, channel: int, results: list[ScanResult]) -> Text:
     return text
 
 
+def _format_reason_clause(translated: list[str]) -> str:
+    """Wrap roam-score reasons in locale-correct list punctuation.
+
+    English: ` (a, b)` — half-width parens, comma separator. Chinese:
+    `（a、b）` — full-width parens and a `、` separator, so the clause
+    reads as Chinese prose rather than mixing half-width `( )` / `,`
+    into Chinese text. The reasons themselves are already translated
+    by the caller; this only governs the wrapping punctuation.
+    """
+    if get_lang() == "zh":
+        return "（" + "、".join(translated) + "）"
+    return " (" + ", ".join(translated) + ")"
+
+
 def _health_line(results: list[ScanResult], current: Connection | None) -> Text:
     """Explain the current association in terms a human can act on.
 
@@ -3492,7 +3520,7 @@ def _score_line(results: list[ScanResult], current: Connection | None) -> Text:
         # natural ("信号强") rather than a literal translation of every
         # space-separated word.
         translated = [t(r) for r in current_score.reasons[:2]]
-        line.append(f" ({', '.join(translated)})", style="dim")
+        line.append(_format_reason_clause(translated), style="dim")
     if candidate is None:
         line.append(t("  ·  no clearly better same-SSID BSSID"), style="dim")
         return line
@@ -3509,7 +3537,7 @@ def _score_line(results: list[ScanResult], current: Connection | None) -> Text:
         line.append(f" {row.bssid}", style="dim")
     if score.reasons:
         translated = [t(r) for r in score.reasons[:2]]
-        line.append(f" ({', '.join(translated)})", style="dim")
+        line.append(_format_reason_clause(translated), style="dim")
     line.append(t("  press c to re-roam"), style="dim")
     return line
 
@@ -3915,6 +3943,13 @@ _BLE_VENDOR_DISPLAY: dict[str, str] = {
     # 2026-05-16 confirmed the registrant string came through with
     # the double-space.
     "Hangzhou Tuya Information  Technology Co., Ltd": "Tuya",
+    # Long-tail registrants confirmed in a 2026-06-08 live audit —
+    # without aliases these render as 40–52-char strings in the events
+    # strip (the cap would otherwise truncate them mid-word).
+    "Qualcomm Technologies International, Ltd. (QTIL)": "Qualcomm",
+    "GuangDong Oppo Mobile Telecommunications Corp., Ltd.": "OPPO",
+    "RESIDEO TECHNOLOGIES, INC.": "Resideo",
+    "Sony Corporation": "Sony",
 }
 
 

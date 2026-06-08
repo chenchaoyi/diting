@@ -3852,6 +3852,66 @@ def test_ble_event_vendor_label_passes_through_unaliased():
     assert label == "Acme Widgets Ltd."
 
 
+# --- event vendor cap (fix-event-vendor-cap-zh-reason-punct) ----------
+
+def test_ble_event_vendor_caps_long_unaliased():
+    """A long unaliased registrant is truncated to the cap with a
+    trailing ellipsis, not rendered at full length."""
+    from diting.tui import _ble_event_vendor_label, _BLE_EVENT_VENDOR_MAX
+    from diting.i18n import cell_len
+    # Synthetic so the cap test stays independent of the alias map.
+    raw = "Some Exceedingly Long Unaliased Vendor Name Corp., Ltd."
+    label = _ble_event_vendor_label(raw, None, None, None, ())
+    assert label != raw
+    assert label.endswith("…")
+    assert cell_len(label) <= _BLE_EVENT_VENDOR_MAX
+    # Truncate-only: no trailing padding (free-flow line, not a column).
+    assert label == label.rstrip()
+
+
+def test_ble_event_vendor_short_unchanged():
+    """An unaliased vendor within the cap is untouched — no ellipsis,
+    no trailing padding."""
+    from diting.tui import _ble_event_vendor_label
+    label = _ble_event_vendor_label("Ericsson AB", None, None, None, ())
+    assert label == "Ericsson AB"
+
+
+def test_ble_event_vendor_alias_still_applies():
+    """Aliasing happens before the cap, so a known long registrant
+    still collapses to its short alias rather than being truncated."""
+    from diting.tui import _ble_event_vendor_label
+    label = _ble_event_vendor_label(
+        "Anhui Huami Information Technology Co., Ltd.", None, None, None, (),
+    )
+    assert label == "Huami"
+
+
+# --- roam-reason punctuation (fix-event-vendor-cap-zh-reason-punct) ---
+
+def test_reason_clause_ascii_in_en():
+    from diting import i18n
+    from diting.tui import _format_reason_clause
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("en")
+        assert _format_reason_clause(["strong signal", "5 GHz"]) == \
+            " (strong signal, 5 GHz)"
+    finally:
+        i18n.set_lang(saved)
+
+
+def test_reason_clause_fullwidth_in_zh():
+    from diting import i18n
+    from diting.tui import _format_reason_clause
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("zh")
+        assert _format_reason_clause(["信号强", "5 GHz"]) == "（信号强、5 GHz）"
+    finally:
+        i18n.set_lang(saved)
+
+
 def test_events_newest_first_sorts_interleaved_timestamps():
     # Emission order interleaves timestamps (gated first-seen vs instant
     # named) — the modal must read monotonically newest-first.
