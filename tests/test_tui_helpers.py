@@ -3984,3 +3984,76 @@ def test_listening_mark_beast_rows_constant():
 def test_listening_mark_caption_appended():
     lines = _mark_lines(0, caption="(sweeping subnet…)")
     assert lines[-1] == "(sweeping subnet…)"
+
+
+# --- pairing-screen presence line (show-paired-mobile-count) ----------
+
+def _presence_now():
+    from datetime import datetime, timezone
+    return datetime(2026, 6, 8, 5, 0, 30, tzinfo=timezone.utc)
+
+
+def test_presence_line_loading():
+    """Before the first poll completes (presence None, no error) the
+    line reads a dim loading state, not zero."""
+    from diting.tui import _format_presence_line
+    txt = _format_presence_line(None, errored=False, now=_presence_now()).plain
+    assert "↔" in txt
+    # Not the zero label.
+    from diting.i18n import t
+    assert t("No devices connected") not in txt
+
+
+def test_presence_line_connected_singular():
+    from diting import i18n
+    from diting.tui import _format_presence_line
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("en")
+        p = {"active": 1, "ttl_s": 90, "as_of": "2026-06-08T05:00:30Z"}
+        txt = _format_presence_line(p, errored=False, now=_presence_now()).plain
+        assert "1 device connected" in txt
+        assert "devices" not in txt  # singular, not "1 devices"
+    finally:
+        i18n.set_lang(saved)
+
+
+def test_presence_line_connected_plural_with_age():
+    from diting import i18n
+    from diting.tui import _format_presence_line
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("en")
+        # as_of 10s before now → relative age shown.
+        p = {"active": 3, "ttl_s": 90, "as_of": "2026-06-08T05:00:20Z"}
+        txt = _format_presence_line(p, errored=False, now=_presence_now()).plain
+        assert "3 devices connected" in txt
+        assert "10s ago" in txt
+    finally:
+        i18n.set_lang(saved)
+
+
+def test_presence_line_zero():
+    from diting import i18n
+    from diting.tui import _format_presence_line
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("en")
+        p = {"active": 0, "ttl_s": 90, "as_of": "2026-06-08T05:00:30Z"}
+        txt = _format_presence_line(p, errored=False, now=_presence_now()).plain
+        assert "No devices connected" in txt
+    finally:
+        i18n.set_lang(saved)
+
+
+def test_presence_line_error():
+    from diting import i18n
+    from diting.tui import _format_presence_line
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("en")
+        # errored=True ignores any stale presence and never fabricates.
+        txt = _format_presence_line(None, errored=True, now=_presence_now()).plain
+        assert "Can't confirm connections" in txt
+    finally:
+        i18n.set_lang(saved)

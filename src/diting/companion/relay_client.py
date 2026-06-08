@@ -23,6 +23,10 @@ from urllib.parse import quote
 
 # (url, headers, body) -> HTTP status code; 0 means transport error.
 Transport = Callable[[str, dict[str, str], bytes], int]
+# (url, headers) -> response body bytes, or None on any error / non-2xx.
+# Separate from Transport because presence is a GET that needs the body,
+# while the producer path is a POST that only needs the status.
+GetTransport = Callable[[str, dict[str, str]], "bytes | None"]
 
 DEFAULT_MAX_QUEUE = 1000
 CATEGORY_HEADER = "X-Diting-Category"
@@ -43,6 +47,22 @@ def urllib_transport(url: str, headers: dict[str, str], body: bytes) -> int:
         return 0
 
 
+def urllib_get_transport(url: str, headers: dict[str, str]) -> "bytes | None":
+    """GET ``url`` and return the response body, or None on any failure.
+
+    Short timeout — the presence poll runs on a UI timer and must never
+    block the screen; a slow/absent relay degrades to the "can't
+    confirm" state rather than hanging."""
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if 200 <= resp.status < 300:
+                return resp.read()
+            return None
+    except (urllib.error.URLError, OSError):
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class FlushReport:
     sent: int
@@ -58,12 +78,14 @@ class RelayClient:
         token: str,
         *,
         transport: Transport = urllib_transport,
+        get_transport: GetTransport = urllib_get_transport,
         max_queue: int = DEFAULT_MAX_QUEUE,
     ) -> None:
         self._base = relay_url.rstrip("/")
         self._channel = channel
         self._token = token
         self._transport = transport
+        self._get_transport = get_transport
         self._max = max_queue
         self._queue: deque[tuple[dict[str, Any], str | None, str | None]] = deque()
         self._dropped = 0
@@ -100,6 +122,28 @@ class RelayClient:
 
     def _url(self) -> str:
         return f"{self._base}/v1/channel/{quote(self._channel, safe='')}"
+
+    def fetch_presence(self) -> "dict[str, Any] | None":
+        """GET the channel's connected-phone count, or None on any
+        failure. Returns the relay's ``{active, ttl_s, as_of}`` parsed
+        from JSON. Count-only — carries no device identity. Never
+        raises: a transport error, non-2xx, or unparseable body all
+        degrade to None so the caller can show a "can't confirm" state
+        rather than crash the screen."""
+        headers = {
+            "authorization": f"Bearer {self._token}",
+            "user-agent": USER_AGENT,
+        }
+        raw = self._get_transport(f"{self._url()}/presence", headers)
+        if not raw:
+            return None
+        try:
+            obj = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+        if not isinstance(obj, dict) or not isinstance(obj.get("active"), int):
+            return None
+        return obj
 
     def _post(self, envelope: dict[str, Any], category: str | None, summary: str | None) -> int:
         headers = {

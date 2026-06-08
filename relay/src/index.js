@@ -12,6 +12,10 @@ import { buildPushPayload, sendPush } from "./apns.js";
 const SUPPORTED_VERSIONS = new Set([1]);
 const CATEGORIES = new Set(["link", "ble", "lan", "bonjour", "env"]);
 
+// Channel-presence window. ≥ 2× the mobile pull cadence so one missed
+// poll doesn't drop a phone from the connected count.
+const PRESENCE_TTL_SECONDS = 90;
+
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), {
     status,
@@ -46,6 +50,22 @@ function validateEnvelope(obj, channelId) {
       throw new HttpError(400, `envelope '${k}' must be a non-empty string`);
     }
   }
+}
+
+// Opaque, per-channel, non-reversible dedupe key for a pulling phone.
+// All phones on a channel share the bearer token, so the token can't
+// separate them — but the Worker has the connection IP. We hash it with
+// the channel as salt and NEVER store the IP. Phones behind one NAT
+// collapse to a single entry (undercount); we never store identity.
+// When the IP is absent (local/test), a fixed sentinel makes any pull
+// register as one puller.
+async function pullerKey(channelId, request) {
+  const ip = request.headers.get("cf-connecting-ip") || "local";
+  const data = new TextEncoder().encode(`${channelId}:${ip}`);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 async function getChannel(env, channelId) {
@@ -124,6 +144,17 @@ async function handleStore(env, ctx, channelId, request) {
 
 async function handlePull(env, channelId, url, request) {
   await authorizeExisting(env, channelId, request);
+  // The phone's authenticated pull is the presence heartbeat: upsert an
+  // opaque per-connection key so the desktop can show a connected count.
+  // Only /pull registers presence — /presence (the desktop poll) never
+  // does, so the desktop reading the count cannot inflate it.
+  const puller = await pullerKey(channelId, request);
+  await env.DB.prepare(
+    "INSERT INTO presence (channel, puller, last_seen) VALUES (?, ?, ?) " +
+      "ON CONFLICT(channel, puller) DO UPDATE SET last_seen=excluded.last_seen",
+  )
+    .bind(channelId, puller, nowSec())
+    .run();
   const since = Number.parseInt(url.searchParams.get("since") || "0", 10) || 0;
   const limit = Number(env.MAX_PULL) || 500;
   const now = nowSec();
@@ -140,6 +171,29 @@ async function handlePull(env, channelId, url, request) {
   const envelopes = results.map((r) => JSON.parse(r.body));
   const cursor = envelopes.length ? envelopes[envelopes.length - 1].seq : since;
   return json({ envelopes, cursor });
+}
+
+// Count-only channel presence. Read-only: does NOT register the caller
+// as a puller (only /pull does), so a desktop polling this never inflates
+// the count. Lazy-prunes expired rows, then counts the live ones. Returns
+// no device identity — just a number, the window width, and a timestamp.
+async function handlePresence(env, channelId, request) {
+  await authorizeExisting(env, channelId, request);
+  const now = nowSec();
+  const cutoff = now - PRESENCE_TTL_SECONDS;
+  await env.DB.prepare("DELETE FROM presence WHERE channel=? AND last_seen<=?")
+    .bind(channelId, cutoff)
+    .run();
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM presence WHERE channel=? AND last_seen>?",
+  )
+    .bind(channelId, cutoff)
+    .first();
+  return json({
+    active: (row && row.n) || 0,
+    ttl_s: PRESENCE_TTL_SECONDS,
+    as_of: new Date(now * 1000).toISOString(),
+  });
 }
 
 async function handleRegisterApns(env, channelId, request) {
@@ -164,6 +218,7 @@ async function handleRegisterApns(env, channelId, request) {
 async function handleUnpair(env, channelId, request) {
   await authorizeExisting(env, channelId, request);
   await env.DB.prepare("DELETE FROM envelopes WHERE channel=?").bind(channelId).run();
+  await env.DB.prepare("DELETE FROM presence WHERE channel=?").bind(channelId).run();
   await env.DB.prepare("DELETE FROM channels WHERE channel=?").bind(channelId).run();
   return json({ ok: true });
 }
@@ -186,6 +241,9 @@ async function route(request, env, ctx) {
   }
   if (sub === "apns" && request.method === "POST") {
     return handleRegisterApns(env, channelId, request);
+  }
+  if (sub === "presence" && request.method === "GET") {
+    return handlePresence(env, channelId, request);
   }
   throw new HttpError(404, "not found");
 }

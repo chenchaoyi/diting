@@ -15,10 +15,19 @@ diting repo (`openspec/changes/add-companion-bridge`).
   optional `X-Diting-Category: ble|lan|link|bonjour|env` header is forwarded
   as a coarse hint (no identifiers).
 - `GET /v1/channel/:id?since=N` — pull envelopes with `seq > N` in order
-  (consumer). Expired rows (past TTL) are excluded and lazily purged.
+  (consumer). Expired rows (past TTL) are excluded and lazily purged. Each
+  authenticated pull also upserts a short-TTL (90 s) presence entry keyed
+  by an opaque, non-reversible hash of the connection (`sha256(channel +
+  ":" + cf-connecting-ip)`) — never the IP, never a device identity.
+- `GET /v1/channel/:id/presence` — count-only connected-puller report for
+  the desktop pairing screen: `{ "active": N, "ttl_s": 90, "as_of": "…" }`.
+  Read-only (does not itself register a puller), so a desktop polling it
+  never inflates the count. Phones behind one NAT collapse to one entry
+  (undercount); the relay stores nothing identifying.
 - `POST /v1/channel/:id/apns` — register the consumer's APNs device token
   (`{ "token": "...", "sandbox": false }`).
-- `DELETE /v1/channel/:id` — unpair: drop the channel and its envelopes.
+- `DELETE /v1/channel/:id` — unpair: drop the channel, its envelopes, and
+  its presence rows.
 
 Auth bearer = `urlsafe_b64(HMAC-SHA256(channel_key, "diting-companion/v1 relay-auth"))`,
 derived identically by the desktop (`diting.companion.protocol.auth`) and

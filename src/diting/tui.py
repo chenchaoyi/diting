@@ -6712,6 +6712,64 @@ class BrandHeader(Horizontal):
         yield _TitleStack()
 
 
+# ---------- companion pairing screen ----------
+
+def _presence_age_text(as_of: object, now: datetime) -> str:
+    """Relative age of a presence ``as_of`` ISO timestamp, or '' when it
+    can't be parsed. ``now`` must be tz-aware (the relay stamps UTC)."""
+    if not isinstance(as_of, str):
+        return ""
+    try:
+        ts = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    ago = (now - ts).total_seconds()
+    if ago < 2:
+        return t("now")
+    return _format_duration_short(ago) + t(" ago")
+
+
+def _format_presence_line(
+    presence: "dict[str, Any] | None",
+    *,
+    errored: bool,
+    now: datetime,
+) -> Text:
+    """One connected-phone-count line for the pairing screen.
+
+    Honest-number states, each with distinguishing colour:
+      - errored        → `↔ Can't confirm connections` (yellow); never a
+                         stale or fabricated number.
+      - presence None  → `↔ checking connections…` (dim); first poll pending.
+      - active == 0    → `↔ No devices connected` (dim); zero is shown, not hidden.
+      - active >= 1    → `↔ N devices connected · <age>` (cyan); count is a
+                         measurement, rendered in the mono/data face.
+    Count-only — the relay carries no device identity.
+    """
+    line = Text()
+    line.append("↔ ", style="dim")
+    if errored:
+        line.append(t("Can't confirm connections"), style="yellow")
+        return line
+    if presence is None:
+        line.append(t("checking connections…"), style="dim italic")
+        return line
+    active = presence.get("active", 0)
+    if not isinstance(active, int) or active <= 0:
+        line.append(t("No devices connected"), style="dim")
+        return line
+    label = (
+        t("1 device connected") if active == 1
+        else t("{n} devices connected", n=active)
+    )
+    line.append(label, style="bold cyan")
+    age = _presence_age_text(presence.get("as_of"), now)
+    if age:
+        line.append("  ·  ", style="dim")
+        line.append(age, style="dim")
+    return line
+
+
 # ---------- App ----------
 
 class CompanionScreen(ModalScreen):
@@ -6749,6 +6807,16 @@ class CompanionScreen(ModalScreen):
     }
     """
 
+    # Connected-phone count poll cadence — one tiny GET while the
+    # screen is open; the timer is scoped to the screen lifecycle.
+    _PRESENCE_POLL_S = 4.0
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._presence: dict[str, Any] | None = None
+        self._presence_errored = False
+        self._presence_timer = None
+
     def compose(self) -> ComposeResult:
         body, footer = self._content()
         yield Vertical(
@@ -6756,9 +6824,69 @@ class CompanionScreen(ModalScreen):
                 Static(body, id="companion-content"),
                 id="companion-scroll",
             ),
+            Static(self._presence_text(), id="companion-presence"),
             Static(footer, id="companion-footer"),
             id="companion-box",
         )
+
+    def on_mount(self) -> None:
+        # Poll presence while the screen is open; kick one off immediately
+        # so the line resolves from "checking…" without a 4 s wait.
+        self._presence_timer = self.set_interval(
+            self._PRESENCE_POLL_S, self._poll_presence,
+        )
+        self.call_after_refresh(self._poll_presence)
+
+    def on_unmount(self) -> None:
+        if self._presence_timer is not None:
+            self._presence_timer.stop()
+
+    def _presence_text(self) -> Text:
+        return _format_presence_line(
+            self._presence,
+            errored=self._presence_errored,
+            now=datetime.now().astimezone(),
+        )
+
+    def _render_presence(self) -> None:
+        try:
+            self.query_one("#companion-presence", Static).update(
+                self._presence_text()
+            )
+        except NoMatches:
+            pass
+
+    async def _poll_presence(self) -> None:
+        """Fetch the connected count off the event loop and re-render.
+        Never raises — a failed poll degrades to the 'can't confirm'
+        state rather than disturbing the screen."""
+        import os
+
+        from .companion import state as cstate
+        from .companion.relay_client import RelayClient
+
+        # Honour the companion mute (`--no-companion` / DITING_COMPANION=0):
+        # no relay traffic at all, including the presence poll. Leaves the
+        # line in its dim "checking…" rest state.
+        if os.environ.get("DITING_COMPANION") == "0":
+            return
+        st = cstate.load_state()
+        if st is None:
+            self._presence = None
+            self._presence_errored = False
+            self._render_presence()
+            return
+        try:
+            client = RelayClient(st.relay_url, st.channel, st.relay_token())
+            result = await asyncio.to_thread(client.fetch_presence)
+        except Exception:
+            result = None
+        if result is None:
+            self._presence_errored = True
+        else:
+            self._presence = result
+            self._presence_errored = False
+        self._render_presence()
 
     def _content(self) -> tuple[Text, Text]:
         import os
@@ -6796,7 +6924,12 @@ class CompanionScreen(ModalScreen):
         relay = os.environ.get("DITING_COMPANION_RELAY") or DEFAULT_RELAY_URL
         cstate.PairingState.generate(relay).save()
         self.app._reload_companion()  # type: ignore[attr-defined]
+        # New channel → the old count is meaningless; reset to "checking…"
+        # and let the next poll resolve against the new channel.
+        self._presence = None
+        self._presence_errored = False
         self._refresh()
+        self.call_after_refresh(self._poll_presence)
 
     def action_unpair(self) -> None:
         from .companion import state as cstate
@@ -6809,6 +6942,7 @@ class CompanionScreen(ModalScreen):
         body, footer = self._content()
         self.query_one("#companion-content", Static).update(body)
         self.query_one("#companion-footer", Static).update(footer)
+        self._render_presence()
 
 
 class DitingApp(App):

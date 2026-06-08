@@ -467,3 +467,45 @@ def test_sink_forwards_and_seals_insight_as_v2(tmp_path):
     assert sealed["type"] == "insight"
     assert "salience" not in sealed           # local-only field stripped
     assert sealed["detail"] == {"ssid": "cafe", "new_vendor": "TP-Link"}
+
+
+# --- presence fetch (show-paired-mobile-count) -----------------------
+
+def test_fetch_presence_parses_active_count():
+    body = b'{"active": 2, "ttl_s": 90, "as_of": "2026-06-08T05:00:00Z"}'
+    seen = {}
+
+    def get_tx(url, headers):
+        seen["url"] = url
+        seen["auth"] = headers.get("authorization")
+        return body
+
+    client = RelayClient(
+        "https://r.example/", "chan-1", "tok", get_transport=get_tx,
+    )
+    out = client.fetch_presence()
+    assert out == {"active": 2, "ttl_s": 90, "as_of": "2026-06-08T05:00:00Z"}
+    assert seen["url"] == "https://r.example/v1/channel/chan-1/presence"
+    assert seen["auth"] == "Bearer tok"
+
+
+def test_fetch_presence_none_on_transport_error():
+    client = RelayClient(
+        "https://r.example/", "chan-1", "tok",
+        get_transport=lambda url, headers: None,  # transport failure / non-2xx
+    )
+    assert client.fetch_presence() is None
+
+
+def test_fetch_presence_none_on_bad_json():
+    bad = RelayClient(
+        "https://r.example/", "chan-1", "tok",
+        get_transport=lambda url, headers: b"not json",
+    )
+    assert bad.fetch_presence() is None
+    # A well-formed JSON object missing the count is also None (defensive).
+    missing = RelayClient(
+        "https://r.example/", "chan-1", "tok",
+        get_transport=lambda url, headers: b'{"ttl_s": 90}',
+    )
+    assert missing.fetch_presence() is None

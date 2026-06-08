@@ -1512,3 +1512,28 @@ def test_lan_rows_clear_listening_mark():
             await pilot.press("q")
 
     asyncio.run(go())
+
+
+def test_companion_modal_renders_presence_line(tmp_path, monkeypatch):
+    """The pairing modal carries a connected-count line under the QR.
+    Under DITING_COMPANION=0 (self-test mute) the poll is skipped, so the
+    line stays in its dim 'checking…' rest state — and crucially makes no
+    real relay call during the test."""
+    import asyncio
+    from diting.i18n import t
+    monkeypatch.setenv("DITING_COMPANION_STATE", str(tmp_path / "companion.json"))
+    monkeypatch.setenv("DITING_COMPANION", "0")
+
+    async def go():
+        app = DitingApp(_FakeBackend(), _INVENTORY)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(0.4)
+            await pilot.press("k")
+            await pilot.pause(0.3)
+            line = app.screen.query_one("#companion-presence")
+            text = str(line.render())
+            assert "↔" in text
+            assert t("checking connections…") in text
+            await pilot.press("escape")
+
+    asyncio.run(go())
