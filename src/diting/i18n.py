@@ -1537,6 +1537,12 @@ _ZH: dict[str, str] = {
     "channel: ": "通道：",
     "relay: ": "中继：",
     "r re-pair · u unpair · esc close": "r 重新配对 · u 解除配对 · esc 关闭",
+    # Connected-phone count on the pairing screen (show-paired-mobile-count).
+    "checking connections…": "检查连接中…",
+    "No devices connected": "暂无设备连接",
+    "1 device connected": "1 台设备已连接",
+    "{n} devices connected": "{n} 台设备已连接",
+    "Can't confirm connections": "无法确认连接数",
     "companion: unknown action {action!r} (use pair / status / unpair)":
         "companion：未知动作 {action!r}（可用 pair / status / unpair）",
 
