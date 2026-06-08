@@ -11,6 +11,40 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.16.2] — 2026-06-08
+
+Feature + polish release. **The pairing screen shows how many phones are
+connected, and a live Chinese-UI audit drove two rendering fixes.**
+
+### Added
+
+- **The pairing screen shows a connected-phone count.** Open `k`
+  (`Companion — scan in diting-mobile`) and a line under the QR reports
+  whether any diting-mobile is pulling this channel right now —
+  `N devices connected` / `No devices connected` / `Can't confirm
+  connections`, with a relative timestamp and semantic colour. Count
+  only, no device list: the relay tracks recent pullers by an opaque
+  per-connection hash with a 90 s TTL — no device identity, no
+  wire-format change. Phones behind one NAT read as one. The relay must
+  be deployed for the count to populate; until then the line shows
+  "can't confirm".
+
+### Changed
+
+- **Roam-score reasons use Chinese punctuation in the Chinese UI.** The
+  reason clause now renders `（信号强、5 GHz）` with full-width parens and
+  a `、` separator, instead of jamming half-width `( , )` into Chinese
+  prose.
+
+### Fixed
+
+- **BLE event rows no longer render a wall of vendor text.** Long-tail
+  IEEE registrant strings (`GuangDong Oppo Mobile Telecommunications
+  Corp., Ltd.`, `Qualcomm Technologies International, Ltd. (QTIL)`) were
+  shown at full length in the events strip; they now alias to a short
+  name where known and cap with an ellipsis otherwise — matching the
+  BLE list's vendor column.
+
 ## [1.16.1] — 2026-06-07
 
 Hotfix. **One radio, one identity — BSSID octet padding normalized.**
