@@ -832,7 +832,7 @@ def _run_analyze(args: list[str]) -> None:
             "✓ wrote {path}  ({kb:.1f} KB{suffix})",
             path=str(report_path),
             kb=report_size_kb,
-            suffix=", anonymized" if anonymize else "",
+            suffix=t(", anonymized") if anonymize else "",
         ), file=chrome)
         print(t(
             "✓ wrote {path}  ({kb:.1f} KB)",

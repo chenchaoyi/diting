@@ -1735,6 +1735,38 @@ _ZH: dict[str, str] = {
         "  BLE 设备                           出现次数",
     "  LAN host                           dhcp rotations":
         "  LAN 主机                           DHCP 轮换",
+    # analyze --for-llm bundle summary + scope + CLI errors (fix-analyze-output-zh)
+    "✓ wrote {path}  ({kb:.1f} KB{suffix})":
+        "✓ 已写入 {path}  （{kb:.1f} KB{suffix}）",
+    "✓ wrote {path}  ({kb:.1f} KB)":
+        "✓ 已写入 {path}  （{kb:.1f} KB）",
+    ", anonymized": "，已匿名化",
+    "to analyze with an LLM:": "用 LLM 分析：",
+    "  1. open https://claude.ai or chat.openai.com":
+        "  1. 打开 https://claude.ai 或 chat.openai.com",
+    "  2. drag-drop the report.md file into the chat":
+        "  2. 把 report.md 拖进聊天窗口",
+    "  3. paste the contents of prompt.txt":
+        "  3. 粘贴 prompt.txt 的内容",
+    "  4. submit": "  4. 发送",
+    "(if you're pasting into a public LLM and want to scrub identifiers, re-run with --anonymize)":
+        "（若要粘进公共 LLM 并想抹掉标识符，加 --anonymize 重新运行）",
+    "anonymization mapping (keep this private — do NOT paste):":
+        "匿名化映射（请保密 —— 不要粘贴）：",
+    "Scope: {files} files · {span} · --since {since}":
+        "范围：{files} 个文件 · {span} · --since {since}",
+    "diting analyze: --since requires a duration argument (e.g. --since 7d)":
+        "diting analyze：--since 需要一个时长参数（例如 --since 7d）",
+    "diting analyze: invalid --since value: {exc}":
+        "diting analyze：无效的 --since 值：{exc}",
+    "--ble-presence-gate requires a duration (e.g. --ble-presence-gate 5s)":
+        "--ble-presence-gate 需要一个时长（例如 --ble-presence-gate 5s）",
+    "--ble-presence-gate: invalid duration {raw!r}: {exc}":
+        "--ble-presence-gate：无效时长 {raw!r}：{exc}",
+    "warning: DITING_BLE_PRESENCE_GATE={env!r} is not a valid duration; using scene default {default}s":
+        "警告：DITING_BLE_PRESENCE_GATE={env!r} 不是有效时长；使用场景默认 {default}s",
+    "warning: DITING_LAN_PROBE={raw!r} is not '0' or '1'; using scene default ({default})":
+        "警告：DITING_LAN_PROBE={raw!r} 不是 '0' 或 '1'；使用场景默认（{default}）",
     "Network change(s) detected": "检测到网络切换",
     "{n} gateway-IP transition(s) during this session: "
     "{moves}. Treat per-network statistics separately — "
