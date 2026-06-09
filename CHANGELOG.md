@@ -11,6 +11,41 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.18.0] — 2026-06-09
+
+Feature release. **diting now records what it *monitored*, not just what fired —
+so a quiet capture tells an AI something instead of nothing.**
+
+### Added
+
+- **Monitoring-coverage manifest.** `session_meta` now carries a `monitors`
+  block (which signals were active — wifi / ble / lan / latency / rf_stir — plus
+  cadence / targets) and a `permissions` block. This lets a reader tell
+  "monitored and quiet" from "never monitored."
+- **Steady-state connection quality in the log.** The `associated` `link_state`
+  carries a nested `quality` object (RSSI / noise / SNR / tx-rate / channel /
+  width / band / PHY) — data diting always had but never wrote — so a static
+  single-BSSID session finally records its signal quality. Local-only (stripped
+  before the companion wire).
+- **Periodic `link_sample` + `scan_summary` events.** While associated, a
+  throttled `link_sample` captures quality over time (an RSSI distribution, not
+  one snapshot); each scan pass logs a `scan_summary` with neighbor count +
+  co-channel count. Both local-only.
+- **`analyze` observability sections.** `diting analyze` synthesizes three new
+  sections — **Monitoring coverage** (zero events under an active monitor reads
+  as "monitored & quiet", e.g. "latency probed, 0 spikes → stable"; inactive →
+  "not observed"), **Connection quality** (RSSI p50 / min / max + SNR + steady
+  channel / band / PHY), and **Neighbors** (neighbor + co-channel count) — in
+  the terminal report, the `--for-llm` document (EN + ZH), and `--json`. The LLM
+  prompt tells the model that silence under an active monitor is a finding, not
+  "unknown."
+
+### Notes
+
+- All the new fields / events are local-only; the versioned companion protocol
+  is unchanged (fixtures + manifest byte-identical). Logs from older diting
+  versions analyze exactly as before — the new sections are simply omitted.
+
 ## [1.17.1] — 2026-06-09
 
 Polish release — the `diting analyze --for-llm` workflow gets faster, fully

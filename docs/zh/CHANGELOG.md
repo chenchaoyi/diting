@@ -10,6 +10,36 @@
 
 ## [Unreleased]
 
+## [1.18.0] — 2026-06-09
+
+功能发布。**diting 现在会记录它*监听了什么*，而不只是触发了什么 —— 于是一份
+安静的抓取也能给 AI 说出点东西，而不是一无所知。**
+
+### Added
+
+- **监听覆盖清单。** `session_meta` 现在带一个 `monitors` 块（哪些信号在监听
+  —— wifi / ble / lan / latency / rf_stir —— 外加节奏 / 目标）和一个
+  `permissions` 块。这让读者能区分「监听了但安静」和「从未监听」。
+- **日志里的稳态连接质量。** `associated` 的 `link_state` 带一个嵌套的
+  `quality` 对象（RSSI / 噪声 / SNR / 速率 / 信道 / 带宽 / 频段 / PHY）——
+  diting 一直有这些数据、却从不写入 —— 于是静止的单 BSSID 会话终于记录了自己
+  的信号质量。Local-only（在 companion 上线前剥离）。
+- **周期 `link_sample` + `scan_summary` 事件。** 关联期间，限流的 `link_sample`
+  记录随时间的质量（一个 RSSI 分布，而非单个快照）；每次扫描记一条
+  `scan_summary`，含邻居数 + 同信道数。两者都是 local-only。
+- **`analyze` 可观测性段落。** `diting analyze` 合成三个新段落 ——
+  **监听覆盖**（活跃监听下的 0 事件读作「监听了但安静」，如「latency 已探测、
+  0 spike → 稳定」；未活跃 → 「未监听」）、**连接质量**（RSSI p50 / min / max
+  + SNR + 稳定的信道 / 频段 / PHY）、**邻居**（邻居 + 同信道数）—— 渲染进终端
+  报告、`--for-llm` 文档（EN + ZH）和 `--json`。LLM 提示词会告诉模型：活跃监听
+  下的安静是一个结论，而非「未知」。
+
+### Notes
+
+- 所有新字段 / 事件都是 local-only；版本化的 companion 协议未变（fixtures +
+  manifest 逐字节一致）。旧版 diting 的日志分析结果与以前完全一致 —— 新段落
+  只是被省略。
+
 ## [1.17.1] — 2026-06-09
 
 打磨发布 —— `diting analyze --for-llm` 的工作流更快、完全双语，还能把原始
