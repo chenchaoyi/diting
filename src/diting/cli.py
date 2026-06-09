@@ -705,6 +705,7 @@ def _run_analyze(args: list[str]) -> None:
     for_llm: bool = False
     for_llm_outdir: Path | None = None
     anonymize: bool = False
+    raw: bool = False
     json_mode: bool = False
     i = 0
     while i < len(args):
@@ -771,6 +772,11 @@ def _run_analyze(args: list[str]) -> None:
             continue
         if a == "--anonymize":
             anonymize = True
+            i += 1
+            continue
+        if a == "--raw":
+            raw = True
+            for_llm = True  # --raw only makes sense with the briefing
             i += 1
             continue
         if a.startswith("-"):
@@ -850,12 +856,32 @@ def _run_analyze(args: list[str]) -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         anonymizer = analyze.Anonymizer() if anonymize else None
-        doc = analyze.build_llm_document(report, anonymizer=anonymizer)
+        doc = analyze.build_llm_document(
+            report, anonymizer=anonymizer, raw_attached=raw,
+        )
         out_path.write_text(doc)
         size_kb = out_path.stat().st_size / 1024.0
         # Skip clipboard under --json (an agent run shouldn't hijack the
         # human's clipboard). The mapping is never copied.
         copied = (not json_mode) and _copy_to_clipboard(doc)
+
+        # --raw: the AI also gets the raw event log. Reference the user's
+        # existing input file(s) — no rewrite — UNLESS --anonymize, where the
+        # original carries real identifiers so we write a scrubbed copy that
+        # reuses the briefing's handles (same anonymizer instance).
+        raw_files: list[Path] = []
+        if raw:
+            if anonymizer is not None:
+                raw_out = out_path.parent / f"diting-raw-anonymized-{ts}.jsonl"
+                with raw_out.open("w") as fh:
+                    for ev in all_events:
+                        fh.write(json.dumps(
+                            analyze.scrub_event(ev, anonymizer),
+                            ensure_ascii=False,
+                        ) + "\n")
+                raw_files = [raw_out]
+            else:
+                raw_files = list(paths)
 
         print(t(
             "✓ wrote {path}  ({kb:.1f} KB{suffix})",
@@ -879,6 +905,15 @@ def _run_analyze(args: list[str]) -> None:
         print("  Kimi      https://www.kimi.com", file=chrome)
         print(t("  … or any other capable chat — submit and read back."),
               file=chrome)
+        if raw_files:
+            print(file=chrome)
+            print(t(
+                "also attach the raw event log to the same chat "
+                "(too big for the clipboard):",
+            ), file=chrome)
+            for rf in raw_files:
+                kb = rf.stat().st_size / 1024.0
+                print(f"  {rf}  ({kb:.0f} KB)", file=chrome)
         if anonymizer is not None:
             mapping = anonymizer.mapping()
             if mapping:
@@ -1031,12 +1066,16 @@ def _analyze_help() -> str:
         "                  lands in (default ./diting-analysis-for-llm-<ts>.md);\n"
         "                  implies --for-llm\n"
         "  --anonymize     replace identifiers with stable handles in the file\n"
+        "  --raw           also hand the AI the raw event log: attach your\n"
+        "                  existing .jsonl alongside the briefing (with\n"
+        "                  --anonymize, a scrubbed copy is written instead)\n"
         "\n"
         "Examples:\n"
         "  diting analyze\n"
         "  diting analyze diting-20260608.jsonl --json | jq .insights\n"
         "  diting analyze *.jsonl --since 7d --for-llm    # → clipboard\n"
         "  diting analyze foo.jsonl --for-llm -o /tmp/run.md\n"
+        "  diting analyze foo.jsonl --for-llm --raw       # + attach raw log\n"
     )
 
 

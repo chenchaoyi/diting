@@ -1746,6 +1746,9 @@ _ZH: dict[str, str] = {
         "把这个文件粘贴到任意 AI 聊天（已包含提示词 + 数据）：",
     "  … or any other capable chat — submit and read back.":
         "  …… 或任何其它有能力的聊天 —— 发送后看回复。",
+    "also attach the raw event log to the same chat "
+    "(too big for the clipboard):":
+        "再把原始事件日志附到同一个聊天（太大，进不了剪贴板）：",
     "diting analyze: output path is a directory: {path}":
         "diting analyze：输出路径是一个目录：{path}",
     "diting analyze: {flag} requires a path argument":

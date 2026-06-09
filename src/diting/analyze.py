@@ -1482,6 +1482,11 @@ class Anonymizer:
         "host": "HOST",
         "ble": "BLE",
         "mac": "MAC",
+        # `name` is only used when scrubbing a raw event log (--raw
+        # --anonymize): BLE / device advertised names can be PII
+        # ("ccy's iPhone"). The aggregated report never surfaces raw
+        # names, so this prefix stays unused there.
+        "name": "NAME",
     }
 
     def __init__(self) -> None:
@@ -2056,11 +2061,12 @@ def scene_llm_context_paragraph(report: Report) -> str:
     )
 
 
-def build_llm_prompt(report: Report) -> str:
-    """Compose the analyst prompt for `prompt.txt`.
+def build_llm_prompt(report: Report, *, raw_attached: bool = False) -> str:
+    """Compose the analyst prompt.
 
-    Substitutes `<span>` and `<files>` from the report context.
-    The rest of the text is constant.
+    Substitutes the analyzed span / file count from the report context.
+    When ``raw_attached`` is set (the `--raw` flow), adds a line telling
+    the model a raw JSONL event log is attached alongside the briefing.
     """
     if report.span_start and report.span_end:
         span_str = (
@@ -2104,6 +2110,12 @@ def build_llm_prompt(report: Report) -> str:
             f"- off-hours 异常：在本应安静的时段（公司夜间、家里工作日）"
             f"出现的活动，比同样的活动出现在正常时段更值得注意 —— 点"
             f"出来，并说明可能是什么在活动。\n\n"
+            + (
+                "随附了一份原始 JSONL 事件日志（与本简报一起附上）。用它来"
+                "核对摘要、并深入摘要没有覆盖的细节（精确时间戳、RSSI 序列、"
+                "事件顺序）—— 但人口计数请以简报里按稳定身份的数字为准，"
+                "因为原始 id 会高估。\n\n" if raw_attached else ""
+            ) +
             f"输出格式：markdown。不要逐字重复报告数据 —— 要解读它。"
             f"结论先行，再给证据。任何超出数据所示的推断都标为「假设」。\n\n"
             f"重要：不要臆测数据没有触及的原因。如果某处看着可疑但你"
@@ -2151,6 +2163,14 @@ def build_llm_prompt(report: Report) -> str:
         f"(office overnight, home workday) is more noteworthy than the "
         f"same activity in-hours — call it out and say what could be "
         f"active.\n\n"
+        + (
+            "A raw JSONL event log is attached alongside this briefing. "
+            "Use it to verify the summary and to investigate specifics the "
+            "summary doesn't cover (exact timestamps, RSSI sequences, event "
+            "ordering) — but trust the briefing's stable-identity figures for "
+            "population counts, since raw ids over-count.\n\n"
+            if raw_attached else ""
+        ) +
         f"Output format: markdown. Don't repeat the report data "
         f"verbatim — interpret it. Lead with conclusions, then "
         f"evidence. Mark any inference beyond what the data "
@@ -2165,6 +2185,7 @@ def build_llm_document(
     report: Report,
     *,
     anonymizer: "Anonymizer | None" = None,
+    raw_attached: bool = False,
 ) -> str:
     """One self-contained Markdown document for `--for-llm`: the analyst
     prompt, a horizontal rule, then the full Markdown report inline.
@@ -2172,11 +2193,52 @@ def build_llm_document(
     Handing this single string to an LLM (paste or attach) gives it both
     the instructions and the data — no second file to copy. When
     `anonymizer` is non-None, the report half is anonymized; the prompt
-    half carries no identifiers.
+    half carries no identifiers. When `raw_attached` is set, the prompt
+    tells the model a raw JSONL log accompanies the briefing.
     """
-    prompt = build_llm_prompt(report)
+    prompt = build_llm_prompt(report, raw_attached=raw_attached)
     body = render_markdown(report, anonymizer=anonymizer)
     return f"{prompt}\n\n---\n\n{body}"
+
+
+# Every event field that can carry PII, grouped by Anonymizer `kind`.
+# Mirrors scripts/scrub_capture.py so a scrubbed raw log leaks nothing the
+# committable-fixture scrubber would catch; shared values reuse the briefing's
+# handles (same Anonymizer instance). `vendor` / `category` / magnitudes /
+# timestamps / event-type names pass through (not identifying).
+_SCRUB_FIELDS: dict[str, tuple[str, ...]] = {
+    "ssid": ("ssid", "previous_ssid", "new_ssid"),
+    "bssid": ("bssid", "previous_bssid", "new_bssid"),
+    "ip": (
+        "ip", "previous_ip", "new_ip", "target_ip",
+        "gateway_ip", "router_ip", "new_router_ip", "previous_router_ip",
+    ),
+    "host": ("host", "hostname", "bonjour_name"),
+    "ble": ("identifier",),
+    "mac": ("mac",),
+    "name": ("name",),  # BLE / device advertised names can be PII
+}
+
+
+def scrub_event(ev: dict[str, Any], anonymizer: "Anonymizer") -> dict[str, Any]:
+    """Return a copy of a JSONL event with identifying fields replaced by the
+    anonymizer's stable handles. RFC1918-only for IPs (the anonymizer enforces
+    the policy; public IPs / vendor / category / magnitudes / timestamps pass
+    through). Also scrubs any `addrs` IP list. Used to write a scrubbed raw log
+    under `--raw --anonymize`."""
+    out = dict(ev)
+    for kind, fields in _SCRUB_FIELDS.items():
+        for f in fields:
+            val = out.get(f)
+            if isinstance(val, str) and val:
+                out[f] = anonymizer.map(kind, val)
+    addrs = out.get("addrs")
+    if isinstance(addrs, list):
+        out["addrs"] = [
+            anonymizer.map("ip", a) if isinstance(a, str) else a
+            for a in addrs
+        ]
+    return out
 
 
 def report_to_dict(report: Report) -> dict[str, Any]:

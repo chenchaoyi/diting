@@ -439,6 +439,20 @@ DeepSeek（`chat.deepseek.com`）、Gemini、Kimi，随你用。`-o PATH` 指定
 遥测、没有上传 —— diting 把文件写在本地、放进你的剪贴板，谁能看
 由你决定。
 
+想让模型拿到完整的事件日志、而不只是提炼后的简报？加 `--raw`：
+
+```bash
+diting analyze diting-20260608.jsonl --for-llm --raw
+```
+
+简报照样进剪贴板；`--raw` 额外提示你把**已有的 `.jsonl` 附**到同一个
+聊天（它引用原文件 —— 不复制、不重写），且提示词会告诉模型原始日志已
+附上，供深挖细节（精确时间戳、RSSI 序列、事件顺序），而人口计数仍以
+简报里按稳定身份的数字为准。原始日志很大，所以是文件附件、不是粘贴。
+加 `--anonymize` 时，diting 唯一会写的文件是脱敏的
+`diting-raw-anonymized-<时间戳>.jsonl`（真实标识符 —— 含设备名 —— 用
+简报的句柄替换），你附它而不是原文件。
+
 要粘进公网 LLM 时加 `--anonymize`：
 
 ```bash
