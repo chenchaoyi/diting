@@ -22,7 +22,14 @@ _TS_RE = re.compile(TS_PATTERN)
 # and the fixture generator excludes them, so a strict consumer (mobile
 # `validate_event`) never sees a key it would reject. Carrying any of these
 # across the wire is a deferred, version-coordinated change.
-LOCAL_ONLY_FIELDS: frozenset[str] = frozenset({"familiarity", "salience", "security"})
+LOCAL_ONLY_FIELDS: frozenset[str] = frozenset({
+    "familiarity", "salience", "security",
+    # capture-context: the `associated` link_state's steady-state quality
+    # rides under a single nested `quality` object that's stripped before the
+    # wire. A nested object (not the bare `rssi_dbm` etc.) avoids colliding
+    # with the legitimate wire `rssi_dbm` on `ble_device_seen`.
+    "quality",
+})
 
 
 def _tag_ok(value: Any, tag: str) -> bool:

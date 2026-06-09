@@ -24,7 +24,7 @@ from pathlib import Path
 from . import i18n
 from . import familiarity as _familiarity
 from ._watchdog import SilenceClock, WatchdogConfig, maybe_notify
-from .event_log import EventLogger
+from .event_log import EventLogger, build_monitors_manifest
 from .environment import (
     EnvironmentMonitor,
     load_calibration,
@@ -395,11 +395,22 @@ async def _run_monitor(
         startup_conn = backend.get_connection()
     except Exception:
         startup_conn = None
+    try:
+        _perm = backend.permission_state()
+    except Exception:
+        _perm = None
     logger.emit_session_meta(
         scene=_scene_mod.get_scene(),
         scene_source=scene_source,
         ssid=startup_conn.ssid if startup_conn else None,
         gateway_ip=startup_conn.router_ip if startup_conn else None,
+        # `monitor` runs Wi-Fi scan + latency + rf_stir (EnvironmentMonitor);
+        # it does NOT run BLE or LAN sweeps (those are TUI-only).
+        monitors=build_monitors_manifest(
+            scan_interval_s=7.0, ble=False, lan=False,
+            latency=True, rf_stir=True,
+        ),
+        permissions={"location": _perm} if _perm is not None else None,
     )
 
     poller = WiFiPoller(backend)
