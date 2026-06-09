@@ -1019,3 +1019,59 @@ def test_vendor_only_device_gets_vendor_group_familiarity(tmp_path):
     # First sighting of the vendor group → first_time, and a record exists.
     assert _read_jsonl(path)[0]["familiarity"] == "first_time"
     assert store.record("ble:vg:Huawei Technologies Co., Ltd.") is not None
+
+
+# ---------- capture-context: coverage manifest + link quality ----------
+
+def _capture_lines(emit):
+    import io, json as _json
+    from diting.event_log import EventLogger
+    buf = io.StringIO()
+    log = EventLogger(buf, owns_sink=False)
+    emit(log)
+    return [_json.loads(l) for l in buf.getvalue().splitlines()]
+
+
+def test_session_meta_carries_monitors_manifest_and_permissions():
+    from diting.event_log import build_monitors_manifest
+    lines = _capture_lines(lambda log: log.emit_session_meta(
+        scene="office", scene_source="auto",
+        monitors=build_monitors_manifest(
+            scan_interval_s=7.0, ble=False, lan=False, latency=True, rf_stir=True,
+        ),
+        permissions={"location": "granted"},
+    ))
+    sm = lines[0]
+    assert sm["type"] == "session_meta"
+    assert sm["monitors"]["wifi"]["active"] is True
+    assert sm["monitors"]["wifi"]["scan_interval_s"] == 7.0
+    assert sm["monitors"]["ble"]["active"] is False     # monitor doesn't run BLE
+    assert sm["monitors"]["latency"]["active"] is True
+    assert sm["monitors"]["latency"]["targets"] == ["gateway", "wan"]
+    assert sm["monitors"]["rf_stir"]["active"] is True
+    assert sm["permissions"]["location"] == "granted"
+
+
+def test_associated_link_state_carries_nested_quality_with_snr():
+    from datetime import datetime, timezone
+    from diting.models import Connection
+    c = Connection(
+        ssid="X", bssid="aa:bb:cc:dd:ee:01", rssi_dbm=-50, noise_dbm=-94,
+        tx_rate_mbps=300.0, channel=36, channel_width_mhz=80,
+        channel_band="5 GHz", phy_mode="ax", security="WPA2",
+        mcs_index=7, nss=2, timestamp=datetime.now(timezone.utc),
+    )
+    lines = _capture_lines(lambda log: log.emit_connection_update(c, vendor="Acme"))
+    ls = lines[0]
+    assert ls["state"] == "associated"
+    q = ls["quality"]
+    assert q["rssi_dbm"] == -50 and q["channel"] == 36 and q["channel_band"] == "5 GHz"
+    assert q["snr_db"] == 44                      # rssi - noise
+    assert q["phy_mode"] == "ax"
+
+
+def test_link_state_quality_is_local_only_stripped_before_wire():
+    from diting.companion.protocol.events_schema import LOCAL_ONLY_FIELDS
+    assert "quality" in LOCAL_ONLY_FIELDS
+    # bare rssi_dbm must NOT be local-only (it's a real wire field on ble_device_seen)
+    assert "rssi_dbm" not in LOCAL_ONLY_FIELDS

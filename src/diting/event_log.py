@@ -87,6 +87,62 @@ def _iso(now: datetime) -> str:
     return now.isoformat()
 
 
+def _link_quality(conn: "Connection") -> dict[str, Any]:
+    """Steady-state signal quality from a Connection, for the local JSONL
+    (capture-context). Every key here is in LOCAL_ONLY_FIELDS — stripped
+    before the companion wire. Absent connection fields are omitted (not
+    measured); SNR is derived from rssi − noise when both are present."""
+    q: dict[str, Any] = {}
+    pairs = (
+        ("rssi_dbm", conn.rssi_dbm),
+        ("noise_dbm", conn.noise_dbm),
+        ("tx_rate_mbps", conn.tx_rate_mbps),
+        ("channel", conn.channel),
+        ("channel_width_mhz", conn.channel_width_mhz),
+        ("channel_band", conn.channel_band),
+        ("phy_mode", conn.phy_mode),
+    )
+    for key, val in pairs:
+        if val is not None:
+            q[key] = val
+    if conn.rssi_dbm is not None and conn.noise_dbm is not None:
+        q["snr_db"] = conn.rssi_dbm - conn.noise_dbm
+    return q
+
+
+def build_monitors_manifest(
+    *,
+    wifi: bool = True,
+    scan_interval_s: float | None = None,
+    ble: bool = False,
+    ble_gate_s: float | None = None,
+    lan: bool = False,
+    latency: bool = True,
+    latency_targets: tuple[str, ...] = ("gateway", "wan"),
+    rf_stir: bool = True,
+) -> dict[str, Any]:
+    """Build the `session_meta.monitors` manifest (capture-context). Each
+    signal source maps to `{"active": bool, …}`; `active` is the load-bearing
+    field — it lets a consumer read "no rf_stir events" as "monitored & quiet"
+    rather than "never monitored". Callers pass what they actually wired up."""
+    wifi_obj: dict[str, Any] = {"active": bool(wifi)}
+    if wifi and scan_interval_s is not None:
+        wifi_obj["scan_interval_s"] = scan_interval_s
+    ble_obj: dict[str, Any] = {"active": bool(ble)}
+    if ble and ble_gate_s is not None:
+        ble_obj["presence_gate_s"] = ble_gate_s
+    latency_obj: dict[str, Any] = {"active": bool(latency)}
+    if latency:
+        latency_obj["targets"] = list(latency_targets)
+    return {
+        "wifi": wifi_obj,
+        "ble": ble_obj,
+        "lan": {"active": bool(lan)},
+        "latency": latency_obj,
+        "rf_stir": {"active": bool(rf_stir)},
+    }
+
+
 class EventLogger:
     """Append-only JSONL emitter for diting events.
 
@@ -186,6 +242,8 @@ class EventLogger:
         scene_source: str,
         ssid: str | None = None,
         gateway_ip: str | None = None,
+        monitors: "dict[str, Any] | None" = None,
+        permissions: "dict[str, Any] | None" = None,
         now: datetime | None = None,
     ) -> None:
         """Write the JSONL session header. Idempotent — only the
@@ -226,6 +284,12 @@ class EventLogger:
             "gateway_ip": gateway_ip,
             "hostname": socket.gethostname(),
         }
+        # capture-context: monitoring-coverage manifest so downstream tools can
+        # read "no rf_stir" as "monitored & quiet" vs "never monitored".
+        if monitors is not None:
+            payload["monitors"] = monitors
+        if permissions is not None:
+            payload["permissions"] = permissions
         self._emit(payload)
         self._session_meta_written = True
 
@@ -277,6 +341,9 @@ class EventLogger:
                 # payload, and it stays in the JSONL log.
                 if conn.security:
                     payload["security"] = conn.security
+                q = _link_quality(conn)
+                if q:
+                    payload["quality"] = q  # local-only nested object
                 self._emit(payload)
             self._last_assoc_bssid = new_bssid
             return
@@ -307,6 +374,9 @@ class EventLogger:
                 payload["vendor"] = vendor
             if conn.security:
                 payload["security"] = conn.security  # desktop-local (see above)
+            q = _link_quality(conn)
+            if q:
+                payload["quality"] = q  # local-only nested object
             self._emit(payload)
         self._last_assoc_bssid = new_bssid
 

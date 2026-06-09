@@ -51,7 +51,7 @@ from .environment import (
     EnvironmentMonitor,
     RFStirEvent,
 )
-from .event_log import EventLogger
+from .event_log import EventLogger, build_monitors_manifest
 from .familiarity import FamiliarityStore
 from .insights import InsightEngine, format_insight_summary
 from .threats import ThreatEngine
@@ -7098,11 +7098,27 @@ class DitingApp(App):
             startup_conn = None
         startup_ssid = startup_conn.ssid if startup_conn else None
         startup_gateway = startup_conn.router_ip if startup_conn else None
+        try:
+            _perm = backend.permission_state()
+        except Exception:
+            _perm = None
         self._event_logger.emit_session_meta(
             scene=scene,
             scene_source=scene_source,
             ssid=startup_ssid,
             gateway_ip=startup_gateway,
+            # The TUI runs the full stack — Wi-Fi scan + BLE (when a helper
+            # is present) + LAN sweep + latency + rf_stir — gated by the
+            # same flags that wire up the consumers below.
+            monitors=build_monitors_manifest(
+                scan_interval_s=scan_interval,
+                ble=ble_helper_path is not None,
+                ble_gate_s=ble_presence_gate_s,
+                lan=lan_active_probe,
+                latency=enable_latency,
+                rf_stir=enable_environment,
+            ),
+            permissions={"location": _perm} if _perm is not None else None,
         )
         self._event_log_path = event_log_path
         # Per-(event_type, target) last-emit monotonic timestamp,
