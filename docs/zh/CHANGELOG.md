@@ -10,6 +10,43 @@
 
 ## [Unreleased]
 
+## [1.17.0] — 2026-06-09
+
+功能发布。**`diting analyze` 读出长时段抓取的节律，整个 CLI 也变成 agent
+可以放心驱动的工具。**
+
+### Added
+
+- **`analyze` 的时序与人口洞察。** 长日志（≥ 2 小时，不再只看多文件 /
+  `--since`）现在会呈现：BLE 到达节律（峰/谷小时）、停留分布（短暂人流 vs
+  常驻）、按*稳定*身份计数的设备人口（不再用滚动的 BLE 地址 —— 是 79 台真实
+  设备，而非成千上万次轮换）、按场景的 off-hours 标记，以及跨信号共现解读
+  （例如「丢包集中在到达繁忙的时段 → 空口争用；在该窗口再抓一段」）。
+  `--for-llm` 的 prompt 也加入了配套的时序分析视角。
+
+- **`once` / `analyze` / `watch` 的 `--json` 机器可读输出**，让编码 agent 或
+  脚本无需抓取文字就能采集信号。`once` / `analyze` 输出单个 JSON 文档；
+  `watch` 输出按行分隔的流。JSON 独占 stdout（人类文案走 stderr）；即使
+  `--lang zh`，JSON 的键也保持稳定英文。`monitor` 本来就是 JSONL 流。
+
+### Changed
+
+- **CLI 绝不打印 traceback。** 任何意外错误都只是 stderr 一行
+  `diting: <消息>` + exit 1（`--json` 下是 `{"error","code"}` JSON 对象）；
+  `DITING_DEBUG=1` 可恢复堆栈。每个子命令有带示例的 `--help`；退出码约定
+  明确（`0` 正常 · `1` 运行时 · `2` 用法）。
+- **`analyze --for-llm` 的输出目录改用 `-o` / `--out-dir`**（隐含
+  `--for-llm`；`--for-llm=DIR` 保留兼容）—— 裸的 `--for-llm <log>` 不再吞掉
+  输入。
+- **analyze 的跨会话块遵循 `--lang zh`**（按小时、热力图、网络、趋势、主要
+  贡献来源），且 top-contributors 的 BLE 排名现在按稳定身份对真实设备计数，
+  不再用滚动地址。
+
+### Fixed
+
+- **`diting analyze --for-llm <log.jsonl>` 不再崩溃**（原 `FileExistsError`
+  堆栈）；输出目录与已存在文件冲突时给出干净的用法错误。
+
 ## [1.16.2] — 2026-06-08
 
 功能 + 打磨发布。**配对界面会显示有几台手机已连接，外加一轮中文界面实测
