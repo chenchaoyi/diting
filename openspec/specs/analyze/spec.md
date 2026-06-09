@@ -154,7 +154,7 @@ The prompt SHALL additionally include a **temporal & population lenses** section
 
 #### Scenario: Office-mode capture gives the LLM the office prior
 - **WHEN** `diting analyze diting-office.jsonl --for-llm` runs against an office-scene log
-- **THEN** the generated `prompt.txt` includes a `[Scene context]` paragraph mentioning `office` mode and the "dense enterprise env" prior; the paragraph appears BEFORE the role / tasks / output-format / guardrail sections
+- **THEN** the prompt section of the generated file includes a `[Scene context]` paragraph mentioning `office` mode and the "dense enterprise env" prior; the paragraph appears BEFORE the role / tasks / output-format / guardrail sections
 
 #### Scenario: Multi-scene bundle acknowledges the mix
 - **WHEN** the bundle spans both home-scene and office-scene logs
@@ -169,57 +169,74 @@ The prompt SHALL additionally include a **temporal & population lenses** section
 - **THEN** the prompt includes a temporal & population lenses section naming rhythm, recurrence-by-stable-identity (with the rotating-MAC caution), dwell, coincidence, and off-hours reasoning, and asks the LLM to state what each pattern implies
 
 ### Requirement: `diting analyze` SHALL accept a `--for-llm` flag that writes a Markdown report + paste-ready prompt to a bundle directory
-When `--for-llm [outdir]` is set on the analyze CLI, the tool SHALL write a two-file bundle to `outdir` (default `./diting-llm-<ISO-8601-timestamp>/`):
+When `--for-llm` is set on the analyze CLI, the tool SHALL write a **single
+self-contained Markdown file** (default `./diting-analysis-for-llm-<ISO-8601-
+timestamp>.md` in the current working directory) and SHALL copy that file's
+content to the system clipboard by default. `-o` / `--out-dir` names the output
+location: a value ending in `.md` is the exact output file; any other value is
+a directory the file is written into under the default name. An `-o` value that
+already exists as a non-directory, non-`.md` file SHALL be a usage error
+(exit 2), not a crash.
 
-1. `report.md` — Markdown rendition of the same data the terminal report produces (Scope, per-file timelines, all A2 cross-session blocks, all per-session heuristic insights). The Markdown report SHALL:
-   - Use fenced code blocks (` ```text `) for ASCII charts (hour-of-day bars, day×hour heatmap, daily-trend sparkline) so Markdown viewers don't try to interpret block characters as formatting.
-   - Use Markdown tables for ranked / per-bucket data (per-network ranking, top contributors).
-   - Include a `## Glossary` section defining diting-specific terms (`stir`, `co_located` vs `spatial_channel`, `roam` vs `band_switch`, the 7 new BLE / Bonjour / LAN transition event types, family names) so the LLM doesn't have to guess from context.
+The file SHALL contain, in order:
 
-2. `prompt.txt` — a paste-ready analyst prompt. The template SHALL include five sections:
-   - Role / data context line (string-substituted with `<span>` and `<files>` from the analyzed input).
-   - Task list: identify top patterns; for each, name likely root cause + supporting evidence; suggest follow-up investigations; restate trends with explicit confidence tags; respect anonymization handles when present.
-   - Output format instruction (markdown, conclusions-first, mark inferences as "hypothesis").
-   - Guardrail line ("don't speculate beyond data").
+1. The paste-ready analyst prompt. The template SHALL include: a role / data
+   context line (string-substituted with the analyzed span and files); a task
+   list (identify top patterns; name likely root cause + supporting evidence;
+   suggest follow-ups; restate trends with explicit confidence tags; respect
+   anonymization handles when present); an output-format instruction
+   (markdown, conclusions-first, mark inferences as "hypothesis"); and a
+   "don't speculate beyond data" guardrail.
+2. A separator, then the Markdown report — the same data the terminal report
+   produces (Scope, per-file timelines, all cross-session blocks, all
+   per-session heuristic insights). The Markdown report SHALL use fenced
+   ` ```text ` blocks for ASCII charts, Markdown tables for ranked data, and
+   include a `## Glossary` section defining diting-specific terms.
 
-#### Scenario: Multi-file `--for-llm` invocation writes the bundle
+The clipboard SHALL receive the same (anonymized, when `--anonymize` is set)
+content; failure to reach the clipboard (e.g. `pbcopy` unavailable) SHALL
+degrade silently with the written file as the fallback.
+
+#### Scenario: `--for-llm` writes one combined file
 - **WHEN** the user runs `diting analyze diting-*.jsonl --since 30d --for-llm`
-- **THEN** the tool writes `report.md` + `prompt.txt` to a new timestamped directory under the current working directory; both files exist and are non-empty
+- **THEN** the tool writes one `diting-analysis-for-llm-<timestamp>.md` under the cwd that contains both the analyst prompt and the full report, and that single file is non-empty
 
-#### Scenario: `--for-llm` accepts an explicit outdir
-- **WHEN** the user runs `diting analyze foo.jsonl --for-llm /tmp/my-analysis`
-- **THEN** the bundle is written to `/tmp/my-analysis/report.md` and `/tmp/my-analysis/prompt.txt`; the timestamped default is NOT generated
+#### Scenario: `--for-llm` copies the content to the clipboard by default
+- **WHEN** `--for-llm` succeeds
+- **THEN** the combined file content is placed on the system clipboard (no extra flag needed), so the user can paste it straight into an AI chat
 
-#### Scenario: Report Markdown includes the glossary
-- **WHEN** the bundle's `report.md` is opened
-- **THEN** it contains a `## Glossary` section listing the diting-specific terms (`stir`, `roam`, `ble_device_seen`, etc.) so the consuming LLM has the vocabulary
+#### Scenario: `-o` names a file or a directory
+- **WHEN** the user runs `--for-llm -o /tmp/run.md` (or `-o /tmp/dir`)
+- **THEN** the file is written to `/tmp/run.md` (or `/tmp/dir/diting-analysis-for-llm-<timestamp>.md`); the timestamped cwd default is NOT used
 
-#### Scenario: Prompt includes all five required sections
-- **WHEN** `prompt.txt` is read
-- **THEN** it contains: role line referencing diting + the analyzed span; numbered task list; output-format instruction; "don't speculate beyond data" guardrail; honour-anonymization clause when applicable
+#### Scenario: Combined file includes the glossary and the prompt
+- **WHEN** the written file is opened
+- **THEN** it contains the analyst prompt sections (role line, numbered task list, output-format instruction, guardrail) AND a `## Glossary` section, in one document
 
 ### Requirement: After writing the bundle the CLI SHALL print terminal-side guidance copy
-After `--for-llm` succeeds, the CLI SHALL print a four-step instruction block to stdout:
+After `--for-llm` succeeds, the CLI SHALL print guidance that confirms the file
+was written and copied to the clipboard, and points the user at **any capable
+AI chat** — naming a few examples with URLs (e.g. Claude, ChatGPT, DeepSeek,
+Gemini, Kimi) rather than presenting a closed list of providers. The guidance
+SHALL make clear the pasted content already carries both the prompt and the
+data.
 
-```
-to analyze with an LLM:
-  1. open https://claude.ai or chat.openai.com
-  2. drag-drop the report.md file into the chat
-  3. paste the contents of prompt.txt
-  4. submit
-```
+When `--anonymize` is NOT set, the guidance SHALL additionally include a
+one-line nudge mentioning the `--anonymize` flag for users pasting into a
+public LLM.
 
-When `--anonymize` is NOT set, the guidance SHALL additionally include a one-line nudge mentioning the `--anonymize` flag for users pasting into a public LLM.
+When `--anonymize` IS set, the guidance SHALL print the in-memory handle ↔
+original mapping to the terminal (and SHALL NOT write it into the file or copy
+it to the clipboard) so the user can decode the LLM's references later without
+leaking the mapping into a public chat.
 
-When `--anonymize` IS set, the guidance SHALL print the in-memory handle ↔ original mapping to stdout (and SHALL NOT write it into the bundle) so the user can decode the LLM's references later without leaking the mapping into a public chat.
-
-#### Scenario: Default guidance includes the anonymize-hint
+#### Scenario: Guidance is provider-neutral and names DeepSeek among examples
 - **WHEN** the user runs `--for-llm` without `--anonymize`
-- **THEN** the post-write stdout includes a hint like `(if you're pasting into a public LLM and want to scrub identifiers, re-run with --anonymize)`
+- **THEN** the post-write output frames the targets as "any AI chat", lists several examples including DeepSeek with URLs, confirms the clipboard copy, and includes the `--anonymize` nudge
 
 #### Scenario: Anonymize-mode prints handle mapping to terminal only
 - **WHEN** the user runs `--for-llm --anonymize`
-- **THEN** the stdout prints the mapping `SSID_1 ↔ <original>` etc.; the bundle's `report.md` contains an `## Anonymization` placeholder section that points users back at their terminal output but does NOT itself contain the mapping
+- **THEN** the terminal prints the mapping `SSID_1 ↔ <original>` etc.; the written file contains an `## Anonymization` placeholder pointing back at the terminal, and the mapping is neither in the file nor on the clipboard
 
 ### Requirement: `--anonymize` SHALL replace privacy-sensitive identifiers with stable handles before writing the report
 When `--anonymize` is set, the report-rendering pipeline SHALL replace the following with stable handles assigned in first-seen order:
@@ -241,22 +258,22 @@ The JSONL log file SHALL NOT be modified by `--anonymize` — anonymization runs
 
 #### Scenario: Same identifier maps to the same handle everywhere in the report
 - **WHEN** the BSSID `aa:bb:cc:11:22:33` appears 30 times across roam / rf_stir / per-network blocks
-- **THEN** every occurrence in `report.md` renders as `AP_1` (or whichever handle was assigned at first sight)
+- **THEN** every occurrence in the generated file renders as `AP_1` (or whichever handle was assigned at first sight)
 
 #### Scenario: Public IPs pass through unchanged
 - **WHEN** a `latency_spike` event has `target_ip=1.1.1.1` (Cloudflare public DNS)
-- **THEN** `report.md` renders `1.1.1.1` verbatim; the IP is not assigned a handle
+- **THEN** the generated file renders `1.1.1.1` verbatim; the IP is not assigned a handle
 
 #### Scenario: RFC1918 IPs get handles
 - **WHEN** a `lan_host_seen` event has `ip=192.168.1.42`
-- **THEN** `report.md` renders the address as `IP_1` (or the next available handle); the original mapping appears only in the terminal output
+- **THEN** the generated file renders the address as `IP_1` (or the next available handle); the original mapping appears only in the terminal output
 
 #### Scenario: Vendor and category names are not anonymized
 - **WHEN** the report mentions an event with `vendor="Apple, Inc."` and `category="AirPlay"`
-- **THEN** both strings appear verbatim in `report.md`; only identifying fields get handles
+- **THEN** both strings appear verbatim in the generated file; only identifying fields get handles
 
 ### Requirement: Anonymization mapping SHALL be surfaced to the terminal but NOT written into the report bundle
-The `report.md`'s `## Anonymization` section SHALL be a placeholder that reads (paraphrased):
+The generated file's `## Anonymization` section SHALL be a placeholder that reads (paraphrased):
 
 > Anonymization is active. Handle ↔ original mappings were printed to your terminal when this report was generated. Keep that mapping private — pasting it into a public LLM chat defeats the anonymization purpose.
 
@@ -264,7 +281,7 @@ The actual mapping table SHALL print to stdout at CLI-end. The user is responsib
 
 #### Scenario: Report doesn't leak the mapping
 - **WHEN** `--for-llm --anonymize` runs on input that maps `home-5G` → `SSID_1`
-- **THEN** `report.md` contains the string `SSID_1` but does NOT contain the string `home-5G`
+- **THEN** the generated file contains the string `SSID_1` but does NOT contain the string `home-5G`
 
 #### Scenario: Terminal prints the mapping
 - **WHEN** the same run completes
