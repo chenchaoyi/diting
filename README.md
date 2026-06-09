@@ -488,9 +488,13 @@ gets the instructions *and* the data in one piece. The workflow is just:
 run → open any AI chat → ⌘V → submit
 ```
 
-No drag-drop, no second copy. Any capable chat works — Claude
-(`claude.ai`), ChatGPT (`chat.openai.com`), DeepSeek
-(`chat.deepseek.com`), Gemini, Kimi, or whatever you use. `-o PATH`
+No drag-drop, no second copy. Under `--lang zh` the whole document
+— the analyst prompt and the report — is written in Chinese and the
+prompt asks the model to answer in Chinese, so you get a Chinese
+analysis back (technical tokens like `ble_device_seen` stay verbatim).
+Any capable chat works — Claude (`claude.ai`), ChatGPT
+(`chat.openai.com`), DeepSeek (`chat.deepseek.com`), Gemini, Kimi, or
+whatever you use. `-o PATH`
 sets the output (`-o run.md` for a file, `-o dir/` for a directory). No
 API key, no telemetry, no upload — diting writes the file locally and
 puts it on your clipboard; you control who sees it.
