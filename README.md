@@ -464,6 +464,16 @@ run — a single overnight log (≥ 2 h), multiple files, or a
   devices by sighting count** (keyed on stable identity, so a
   privacy-rotating device's many addresses fold into one row);
   LAN hosts by DHCP-rotation count
+- **Monitoring coverage** — which signals were watched, and what
+  *silence* means: zero `latency_spike` under active probing reads
+  as "latency probed, link stable," not "unknown"; an inactive
+  monitor is "not observed." So a quiet capture says something
+  instead of nothing.
+- **Connection quality** — RSSI p50 / min / max, SNR, and the
+  steady channel / band / PHY, so even a static single-BSSID
+  session conveys signal strength.
+- **Neighbors** — visible BSSID count + co-channel count, for
+  interference context the roam events can't convey.
 
 `--since` accepts `30d` / `7d` / `24h` / `90m` / `60s`. A short
 single-session log (no `--since`, under ~2 h) keeps the lean

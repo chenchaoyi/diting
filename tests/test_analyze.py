@@ -1283,3 +1283,92 @@ def test_llm_document_follows_lang_zh():
         assert "术语表" not in en and "请用中文" not in en
     finally:
         i18n.set_lang(saved)
+
+
+# ---------- analyze-observability ----------
+
+def _obs_events():
+    return [
+        {"type": "session_meta", "ts": "2026-06-08T20:00:00+08:00",
+         "scene": "office", "scene_source": "auto",
+         "monitors": {"wifi": {"active": True, "scan_interval_s": 7.0},
+                      "ble": {"active": True}, "lan": {"active": False},
+                      "latency": {"active": True, "targets": ["gateway", "wan"]},
+                      "rf_stir": {"active": True}},
+         "permissions": {"location": "granted"}},
+        {"type": "link_state", "ts": "2026-06-08T20:00:01+08:00",
+         "state": "associated", "ssid": "Net", "bssid": "aa:bb:cc:dd:ee:01",
+         "security": "WPA2",
+         "quality": {"rssi_dbm": -50, "noise_dbm": -94, "snr_db": 44,
+                     "channel": 36, "channel_band": "5 GHz", "phy_mode": "ax"}},
+        {"type": "link_sample", "ts": "2026-06-08T20:01:01+08:00",
+         "bssid": "aa:bb:cc:dd:ee:01",
+         "quality": {"rssi_dbm": -55, "snr_db": 39, "channel": 36,
+                     "channel_band": "5 GHz", "phy_mode": "ax"}},
+        {"type": "scan_summary", "ts": "2026-06-08T20:01:05+08:00",
+         "neighbor_count": 38, "co_channel_count": 9, "current_channel": 36},
+        {"type": "ble_device_seen", "ts": "2026-06-08T20:00:30+08:00",
+         "identifier": "x", "vendor": "Acme", "name": "d"},
+    ]
+
+
+def test_coverage_negative_space_monitored_quiet_vs_not_observed():
+    r = analyze(_obs_events(), source_path="x")
+    assert r.coverage is not None
+    # latency active + 0 events → monitored & quiet
+    assert r.coverage.signal_events["latency"] == 0
+    assert r.coverage.monitors["latency"]["active"] is True
+    assert r.coverage.monitors["lan"]["active"] is False   # not observed
+    out = render(r)
+    assert "latency: monitored · 0 events → probed, link stable" in out
+    assert "rf_stir: monitored · 0 events → static environment" in out
+    assert "lan: not observed" in out
+
+
+def test_connection_quality_rssi_distribution():
+    r = analyze(_obs_events(), source_path="x")
+    cq = r.connection_quality
+    assert cq is not None
+    assert cq.rssi_min == -55 and cq.rssi_max == -50
+    assert -55 <= cq.rssi_p50 <= -50
+    assert cq.channel == 36 and cq.channel_band == "5 GHz" and cq.security == "WPA2"
+    assert cq.samples == 2
+    assert "Connection quality" in render(r)
+
+
+def test_neighbors_section():
+    r = analyze(_obs_events(), source_path="x")
+    assert r.neighbors is not None
+    assert r.neighbors.neighbor_count == 38 and r.neighbors.co_channel_count == 9
+    assert "38 BSSIDs visible · 9 co-channel (channel 36)" in render(r)
+
+
+def test_observability_omitted_for_pre_observability_log():
+    # No monitors / quality / scan_summary → all three summaries None,
+    # sections absent (older logs unchanged).
+    r = analyze([
+        {"type": "session_meta", "ts": "2026-06-08T20:00:00+08:00", "scene": "home"},
+        {"type": "link_state", "ts": "2026-06-08T20:00:01+08:00",
+         "state": "associated", "ssid": "N", "bssid": "aa:bb:cc:dd:ee:01"},
+    ], source_path="x")
+    assert r.coverage is None and r.connection_quality is None and r.neighbors is None
+    out = render(r)
+    assert "Monitoring coverage" not in out and "Neighbors" not in out
+
+
+def test_observability_in_json_and_zh():
+    from diting import i18n
+    from diting.analyze import report_to_dict
+    r = analyze(_obs_events(), source_path="x")
+    d = report_to_dict(r)
+    assert d["coverage"]["signal_events"]["latency"] == 0
+    assert d["connection_quality"]["rssi_min"] == -55
+    assert d["neighbors"]["co_channel_count"] == 9
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("zh")
+        md = render_markdown(r)
+        assert "## 监听覆盖" in md and "## 连接质量" in md and "## 邻居" in md
+        assert "Monitoring coverage" not in md
+    finally:
+        i18n.set_lang(saved)
