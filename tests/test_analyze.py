@@ -938,14 +938,14 @@ def _write_min_log(tmp_path):
 
 def test_for_llm_writes_report_markdown(tmp_path, capsys):
     out = tmp_path / "bundle"
-    cli._run_analyze([str(_write_min_log(tmp_path)), "--for-llm", str(out)])
+    cli._run_analyze([str(_write_min_log(tmp_path)), "--for-llm", "-o", str(out)])
     body = (out / "report.md").read_text()
     assert body.startswith("# diting analysis report")
 
 
 def test_for_llm_writes_prompt_txt(tmp_path, capsys):
     out = tmp_path / "bundle"
-    cli._run_analyze([str(_write_min_log(tmp_path)), "--for-llm", str(out)])
+    cli._run_analyze([str(_write_min_log(tmp_path)), "--for-llm", "-o", str(out)])
     assert (out / "prompt.txt").read_text().strip()
 
 
@@ -1194,3 +1194,17 @@ def test_scene_paragraph_states_rhythm_on_long_log():
     para = scene_llm_context_paragraph(_long_office_report())
     assert "rhythm" in para.lower()
     assert "20:00" in para  # observed peak hour
+
+
+def test_report_to_dict_is_json_serializable_with_stable_keys():
+    from diting.analyze import report_to_dict
+    events = [_seen(h, vendor="Acme", name=f"d{h}") for h in range(0, 6)]
+    events += [_left(0, 5), _left(1, 4000)]
+    r = analyze(events, source_path="x.jsonl")
+    d = report_to_dict(r)
+    import json as _json
+    _json.dumps(d)  # fully serializable
+    # Stable English keys + temporal block present.
+    assert d["total_events"] == r.total_events
+    assert d["temporal"]["ble_population"]["distinct_devices"] >= 1
+    assert isinstance(d["insights"], list)

@@ -473,3 +473,159 @@ def test_no_companion_env_makes_build_sink_inert(monkeypatch, tmp_path) -> None:
     PairingState.generate("https://r.example").save(path)
     monkeypatch.setenv("DITING_COMPANION", "0")
     assert runtime.build_sink(path) is None
+
+
+# ------------------------------------------------------------------
+# agent-friendly CLI (agent-friendly-cli)
+# ------------------------------------------------------------------
+
+import json as _json
+
+
+def test_main_guard_turns_exception_into_clean_message(monkeypatch, capsys):
+    """An uncaught exception in a runner becomes one `diting: …` line on
+    stderr + exit 1 — never a traceback."""
+    def boom():
+        raise RuntimeError("kaboom")
+    monkeypatch.setattr(cli, "_dispatch", boom)
+    monkeypatch.setattr("sys.argv", ["diting", "once"])
+    monkeypatch.delenv("DITING_DEBUG", raising=False)
+    with pytest.raises(SystemExit) as ei:
+        cli.main()
+    assert ei.value.code == 1
+    err = capsys.readouterr().err
+    assert err.strip() == "diting: kaboom"
+    assert "Traceback" not in err
+
+
+def test_main_guard_debug_reraises(monkeypatch):
+    def boom():
+        raise RuntimeError("kaboom")
+    monkeypatch.setattr(cli, "_dispatch", boom)
+    monkeypatch.setattr("sys.argv", ["diting", "once"])
+    monkeypatch.setenv("DITING_DEBUG", "1")
+    with pytest.raises(RuntimeError, match="kaboom"):
+        cli.main()
+
+
+def test_main_guard_passes_systemexit_code_through(monkeypatch):
+    def usage_exit():
+        raise SystemExit(2)
+    monkeypatch.setattr(cli, "_dispatch", usage_exit)
+    monkeypatch.setattr("sys.argv", ["diting", "analyze", "--bogus"])
+    with pytest.raises(SystemExit) as ei:
+        cli.main()
+    assert ei.value.code == 2
+
+
+def test_main_guard_emits_json_error_under_json(monkeypatch, capsys):
+    def boom():
+        raise RuntimeError("kaboom")
+    monkeypatch.setattr(cli, "_dispatch", boom)
+    monkeypatch.setattr("sys.argv", ["diting", "analyze", "--json", "x.jsonl"])
+    monkeypatch.delenv("DITING_DEBUG", raising=False)
+    with pytest.raises(SystemExit) as ei:
+        cli.main()
+    assert ei.value.code == 1
+    obj = _json.loads(capsys.readouterr().err.strip())
+    assert obj == {"error": "kaboom", "code": 1}
+
+
+def test_for_llm_is_boolean_does_not_eat_input(tmp_path, monkeypatch, capsys):
+    """The reported crash: `--for-llm <log>` must treat the log as input,
+    not as the out-dir. With no -o it defaults to diting-llm-<ts>/."""
+    log = tmp_path / "diting-x.jsonl"
+    log.write_text(
+        '{"type":"session_meta","ts":"2026-05-07T22:00:00+00:00","scene":"home"}\n'
+        '{"type":"link_state","state":"associated","ts":"2026-05-07T22:00:01+00:00"}\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    cli._run_analyze(["--for-llm", str(log)])  # the crashing arg order
+    bundles = list(tmp_path.glob("diting-llm-*"))
+    assert len(bundles) == 1 and (bundles[0] / "report.md").exists()
+
+
+def test_for_llm_outdir_is_a_file_is_usage_error(tmp_path):
+    log = tmp_path / "diting-x.jsonl"
+    log.write_text('{"type":"link_state","state":"associated","ts":"2026-05-07T22:00:00+00:00"}\n')
+    afile = tmp_path / "not-a-dir"
+    afile.write_text("x")
+    with pytest.raises(SystemExit) as ei:
+        cli._run_analyze([str(log), "--for-llm", "-o", str(afile)])
+    assert ei.value.code == 2
+
+
+def test_analyze_json_is_pure_parseable_document(tmp_path, capsys):
+    log = tmp_path / "diting-x.jsonl"
+    log.write_text(
+        '{"type":"session_meta","ts":"2026-05-07T22:00:00+00:00","scene":"office"}\n'
+        '{"type":"ble_device_seen","ts":"2026-05-07T22:00:01+00:00","vendor":"Acme","name":"d"}\n'
+    )
+    cli._run_analyze([str(log), "--json"])
+    out = capsys.readouterr().out
+    doc = _json.loads(out)  # the whole stdout is one JSON document
+    assert doc["total_events"] == 2
+    assert "temporal" in doc and "insights" in doc
+
+
+def test_analyze_json_keys_stay_english_under_zh(tmp_path, capsys):
+    from diting import i18n
+    log = tmp_path / "diting-x.jsonl"
+    log.write_text('{"type":"link_state","state":"associated","ts":"2026-05-07T22:00:00+00:00"}\n')
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("zh")
+        cli._run_analyze([str(log), "--json"])
+        doc = _json.loads(capsys.readouterr().out)
+        assert "total_events" in doc and "counts_by_type" in doc
+    finally:
+        i18n.set_lang(saved)
+
+
+def test_watch_event_to_json_shapes_each_kind():
+    from diting.poller import ScanUpdate, RoamEvent, ConnectionUpdate
+    from diting.models import Connection
+    from datetime import datetime, timezone
+    inv = __import__("diting.network", fromlist=["NetworkInventory"]).NetworkInventory(aps=())
+    state = {"last_key": None, "last_rssi": None, "last_print_at": 0.0}
+    scan = cli._watch_event_to_json(ScanUpdate(results=[]), state, inv)
+    assert scan["kind"] == "scan" and scan["bssid_count"] == 0
+    roam = cli._watch_event_to_json(
+        RoamEvent(timestamp=datetime.now(timezone.utc),
+                  previous_bssid="a", new_bssid="b",
+                  previous_channel=1, new_channel=36), state, inv)
+    assert roam["kind"] == "roam" and roam["new_bssid"] == "b"
+    conn = Connection(
+        ssid="X", bssid="aa:bb:cc:dd:ee:ff", rssi_dbm=-50, noise_dbm=-94,
+        tx_rate_mbps=300.0, channel=36, channel_width_mhz=80,
+        channel_band="5 GHz", phy_mode="ax", security="WPA2",
+        mcs_index=7, nss=2, timestamp=datetime.now(timezone.utc),
+    )
+    obj = cli._watch_event_to_json(ConnectionUpdate(connection=conn), state, inv)
+    assert obj["kind"] == "connection" and obj["connection"]["ssid"] == "X"
+    # Same unchanged connection within the heartbeat → deduped to None.
+    assert cli._watch_event_to_json(ConnectionUpdate(connection=conn), state, inv) is None
+
+
+def test_subcommand_help_prints_and_exits_zero(monkeypatch, capsys):
+    for cmd in ("once", "watch", "analyze"):
+        monkeypatch.setattr("sys.argv", ["diting", cmd, "--help"])
+        cli.main()
+        out = capsys.readouterr().out
+        assert "--json" in out and "Examples:" in out
+
+
+def test_connection_to_dict_round_trips():
+    from diting.models import Connection, connection_to_dict
+    from datetime import datetime, timezone
+    c = Connection(
+        ssid="X", bssid="aa:bb:cc:dd:ee:ff", rssi_dbm=-50, noise_dbm=-94,
+        tx_rate_mbps=300.0, channel=36, channel_width_mhz=80,
+        channel_band="5 GHz", phy_mode="ax", security="WPA2",
+        mcs_index=7, nss=2,
+        timestamp=datetime(2026, 6, 9, 12, 0, tzinfo=timezone.utc),
+    )
+    d = connection_to_dict(c)
+    assert d["ssid"] == "X"
+    assert d["timestamp"] == "2026-06-09T12:00:00+00:00"
+    assert _json.dumps(d)  # fully JSON-serializable

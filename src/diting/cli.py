@@ -115,10 +115,26 @@ def _print_connection(c: Connection, inv: NetworkInventory) -> None:
         print(f"  {pad_cells(label, label_w)}  {value}")
 
 
-def _run_once() -> None:
+def _run_once(args: list[str] | None = None) -> None:
+    args = args or []
+    if "--help" in args or "-h" in args:
+        print(_once_help(), end="")
+        return
+    json_mode = "--json" in args
     backend = MacOSWiFiBackend()
     inv = load_inventory()
     conn = backend.get_connection()
+    state = backend.permission_state()
+    if json_mode:
+        from .models import connection_to_dict
+        payload = {
+            "backend": backend.name,
+            "permission_state": state,
+            "associated": conn is not None,
+            "connection": connection_to_dict(conn) if conn else None,
+        }
+        print(json.dumps(payload, ensure_ascii=False))
+        sys.exit(0 if conn is not None else 1)
     print(t("backend:    {name}", name=backend.name))
     if conn is None:
         print(t("status:     not associated"))
@@ -126,7 +142,6 @@ def _run_once() -> None:
     print(t("timestamp:  {ts}", ts=conn.timestamp.isoformat(timespec="seconds")))
     print()
     _print_connection(conn, inv)
-    state = backend.permission_state()
     if state == "denied":
         print()
         print(_denied_hint(), end="")
@@ -188,33 +203,92 @@ def _format_roam_line(event: RoamEvent, inv: NetworkInventory) -> str:
     return f"ROAM   {prev}  ->  {new}   {tag}"
 
 
-async def _run_watch() -> None:
+async def _run_watch(args: list[str] | None = None) -> None:
+    args = args or []
+    if "--help" in args or "-h" in args:
+        print(_watch_help(), end="")
+        return
+    json_mode = "--json" in args
+    # In --json mode the change-event line-stream is the stdout output;
+    # all the human chrome (backend / inventory / hints) goes to stderr.
+    chrome = sys.stderr if json_mode else sys.stdout
     backend = MacOSWiFiBackend()
     inv = load_inventory()
-    print(t("backend: {name}  (Ctrl+C to quit)", name=backend.name))
+    print(t("backend: {name}  (Ctrl+C to quit)", name=backend.name),
+          file=chrome)
     if inv.aps or inv.radio_overrides:
         print(t(
             "inventory: {n_aps} APs, {n_overrides} overrides — {path}",
             n_aps=len(inv.aps),
             n_overrides=len(inv.radio_overrides),
             path=resolve_config_path(),
-        ))
+        ), file=chrome)
     perm = backend.permission_state()
     if perm == "denied":
-        print()
-        print(_denied_hint(), end="")
+        print(file=chrome)
+        print(_denied_hint(), end="", file=chrome)
     elif perm == "fallback":
-        print(_fallback_hint(), end="")
-    print()
+        print(_fallback_hint(), end="", file=chrome)
+    print(file=chrome)
 
     poller = WiFiPoller(backend)
     state: dict = {"last_key": None, "last_rssi": None, "last_print_at": 0.0}
 
     async for event in poller.events():
+        if json_mode:
+            obj = _watch_event_to_json(event, state, inv)
+            if obj is not None:
+                print(json.dumps(obj, ensure_ascii=False), flush=True)
+            continue
         line = _render(event, state, inv)
         if line is not None:
             now_str = datetime.now().strftime("%H:%M:%S")
             print(f"{now_str}  {line}", flush=True)
+
+
+def _watch_event_to_json(
+    event: Event, state: dict, inv: NetworkInventory,
+) -> dict | None:
+    """One JSON object per surfaced watch event, or None to skip — the
+    same dedup decision `_render` makes, shaped as data instead of prose.
+    Locale-stable English keys; ts is ISO-8601 with offset."""
+    ts = datetime.now().astimezone().isoformat()
+    if isinstance(event, ScanUpdate):
+        return {
+            "ts": ts, "kind": "scan",
+            "bssid_count": len(event.results),
+        }
+    if isinstance(event, RoamEvent):
+        return {
+            "ts": ts, "kind": "roam",
+            "previous_bssid": event.previous_bssid,
+            "new_bssid": event.new_bssid,
+            "previous_channel": event.previous_channel,
+            "new_channel": event.new_channel,
+        }
+    assert isinstance(event, ConnectionUpdate)
+    c = event.connection
+    key = _identity_key(c)
+    rssi = c.rssi_dbm if c is not None else None
+    now = time.monotonic()
+    identity_changed = key != state["last_key"]
+    rssi_jumped = (
+        rssi is not None and state["last_rssi"] is not None
+        and abs(rssi - state["last_rssi"]) >= _RSSI_DELTA_THRESHOLD_DB
+    )
+    heartbeat_due = now - state["last_print_at"] >= _HEARTBEAT_SECONDS
+    first_print = state["last_print_at"] == 0.0
+    if not (identity_changed or rssi_jumped or heartbeat_due or first_print):
+        return None
+    state["last_key"] = key
+    state["last_rssi"] = rssi
+    state["last_print_at"] = now
+    from .models import connection_to_dict
+    return {
+        "ts": ts, "kind": "connection",
+        "associated": c is not None,
+        "connection": connection_to_dict(c) if c is not None else None,
+    }
 
 
 def _render(event: Event, state: dict, inv: NetworkInventory) -> str | None:
@@ -608,14 +682,22 @@ def _run_analyze(args: list[str]) -> None:
     """
     from . import analyze
 
+    if "--help" in args or "-h" in args:
+        print(_analyze_help(), end="")
+        return
     paths: list[Path] = []
     since: timedelta | None = None
     for_llm: bool = False
     for_llm_outdir: Path | None = None
     anonymize: bool = False
+    json_mode: bool = False
     i = 0
     while i < len(args):
         a = args[i]
+        if a == "--json":
+            json_mode = True
+            i += 1
+            continue
         if a == "--since":
             if i + 1 >= len(args):
                 print(t(
@@ -645,24 +727,41 @@ def _run_analyze(args: list[str]) -> None:
             i += 1
             continue
         if a == "--for-llm":
+            # Boolean only — the out-dir lives in -o / --out-dir, so a
+            # bare `--for-llm <log>` no longer swallows the input log
+            # (the old footgun: it became the out-dir and mkdir crashed).
             for_llm = True
-            # Optional next arg is the outdir path. If the next arg
-            # starts with '-' (another flag) treat it as missing.
-            if i + 1 < len(args) and not args[i + 1].startswith("-"):
-                for_llm_outdir = Path(args[i + 1]).expanduser()
-                i += 2
-            else:
-                i += 1
+            i += 1
             continue
-        if a.startswith("--for-llm="):
+        if a.startswith("--for-llm="):  # back-compat: --for-llm=DIR
             for_llm = True
             for_llm_outdir = Path(a.split("=", 1)[1]).expanduser()
+            i += 1
+            continue
+        if a in ("-o", "--out-dir"):
+            if i + 1 >= len(args):
+                print(t(
+                    "diting analyze: {flag} requires a directory argument",
+                    flag=a,
+                ), file=sys.stderr)
+                sys.exit(2)
+            for_llm_outdir = Path(args[i + 1]).expanduser()
+            for_llm = True  # giving an out-dir means "write the bundle"
+            i += 2
+            continue
+        if a.startswith("--out-dir="):
+            for_llm_outdir = Path(a.split("=", 1)[1]).expanduser()
+            for_llm = True
             i += 1
             continue
         if a == "--anonymize":
             anonymize = True
             i += 1
             continue
+        if a.startswith("-"):
+            print(t("diting analyze: unknown flag {flag!r}", flag=a),
+                  file=sys.stderr)
+            sys.exit(2)
         paths.append(Path(a).expanduser())
         i += 1
 
@@ -702,11 +801,23 @@ def _run_analyze(args: list[str]) -> None:
         since=since,
     )
 
+    # In --json mode the structured report is the stdout output; the LLM
+    # bundle (if also requested) is still written, but its human summary
+    # goes to stderr so stdout stays pure JSON. `chrome` is the stream
+    # for any human prose.
+    chrome = sys.stderr if json_mode else sys.stdout
+
     if for_llm:
         # Build the bundle: report.md + prompt.txt under outdir.
         if for_llm_outdir is None:
             ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
             for_llm_outdir = Path(f"diting-llm-{ts}")
+        if for_llm_outdir.exists() and not for_llm_outdir.is_dir():
+            print(t(
+                "diting analyze: output path is not a directory: {path}",
+                path=str(for_llm_outdir),
+            ), file=sys.stderr)
+            sys.exit(2)
         for_llm_outdir.mkdir(parents=True, exist_ok=True)
         anonymizer = analyze.Anonymizer() if anonymize else None
         md = analyze.render_markdown(report, anonymizer=anonymizer)
@@ -722,34 +833,42 @@ def _run_analyze(args: list[str]) -> None:
             path=str(report_path),
             kb=report_size_kb,
             suffix=", anonymized" if anonymize else "",
-        ))
+        ), file=chrome)
         print(t(
             "✓ wrote {path}  ({kb:.1f} KB)",
             path=str(prompt_path),
             kb=prompt_size_kb,
-        ))
-        print()
-        print(t("to analyze with an LLM:"))
-        print(t("  1. open https://claude.ai or chat.openai.com"))
-        print(t("  2. drag-drop the report.md file into the chat"))
-        print(t("  3. paste the contents of prompt.txt"))
-        print(t("  4. submit"))
+        ), file=chrome)
+        print(file=chrome)
+        print(t("to analyze with an LLM:"), file=chrome)
+        print(t("  1. open https://claude.ai or chat.openai.com"), file=chrome)
+        print(t("  2. drag-drop the report.md file into the chat"), file=chrome)
+        print(t("  3. paste the contents of prompt.txt"), file=chrome)
+        print(t("  4. submit"), file=chrome)
         if anonymizer is not None:
             mapping = anonymizer.mapping()
             if mapping:
-                print()
+                print(file=chrome)
                 print(t(
                     "anonymization mapping "
                     "(keep this private — do NOT paste):",
-                ))
+                ), file=chrome)
                 for handle, original in mapping:
-                    print(f"  {handle} ↔ {original}")
+                    print(f"  {handle} ↔ {original}", file=chrome)
         else:
-            print()
+            print(file=chrome)
             print(t(
                 "(if you're pasting into a public LLM and want to "
                 "scrub identifiers, re-run with --anonymize)",
-            ))
+            ), file=chrome)
+        if not json_mode:
+            return
+
+    if json_mode:
+        import json as _json
+        print(_json.dumps(
+            analyze.report_to_dict(report), ensure_ascii=False,
+        ))
         return
 
     print(analyze.render(report), end="")
@@ -758,24 +877,33 @@ def _run_analyze(args: list[str]) -> None:
 # ---------- entry ----------
 
 def _usage() -> str:
-    """Compose the --help text using the active language. Resolved at
-    print time, not at module import, so ``--lang zh --help`` sees the
-    Chinese version after :func:`main` has applied the language."""
-    return t(
+    """The top-level `--help` text.
+
+    CLI usage / help is English-only by design: it is developer- and
+    agent-facing (CLI help and `--json` output are conventionally
+    English), and a previous bilingual version had silently drifted to
+    English-only. Runtime user-facing prose and error messages remain
+    fully localized via ``t()``."""
+    return (
         "usage: diting [GLOBAL OPTS] [SUBCOMMAND [SUBCOMMAND OPTS]]\n"
         "\n"
         "Default (no SUBCOMMAND): launch the TUI dashboard.\n"
         "\n"
-        "Subcommands:\n"
-        "  once         print the current connection and exit\n"
-        "  watch        stream events as plain text until Ctrl+C\n"
+        "Subcommands (run `diting SUBCOMMAND --help` for details):\n"
+        "  once         print the current connection and exit  [--json]\n"
+        "  watch        stream connection / scan / roam events  [--json]\n"
         "  monitor      headless JSONL events (long-runs / Home Assistant)\n"
         "                 flags: --out FILE  --notify  --gateway IP  --wan IP\n"
         "  calibrate    record an empty-room RSSI baseline (default 300 s)\n"
         "                 flags: --duration SECONDS\n"
-        "  analyze      read a JSONL log, print rule-based insights\n"
+        "  analyze      read a JSONL log, print rule-based insights  [--json]\n"
         "                 (newest diting-*.jsonl in cwd when no PATH given)\n"
-        "                 flags: --since DUR  --for-llm [DIR]  --anonymize\n"
+        "                 flags: --since DUR  --for-llm  -o DIR  --anonymize\n"
+        "\n"
+        "Automation: once / watch / analyze accept --json for machine-\n"
+        "readable output (JSON keys are stable English; chrome goes to\n"
+        "stderr). monitor already streams JSONL. Exit codes: 0 ok · 1\n"
+        "runtime error (incl. once when not associated) · 2 usage error.\n"
         "\n"
         "Global options:\n"
         "  --lang L                interface language: en or zh\n"
@@ -813,6 +941,61 @@ def _usage() -> str:
         "                          1; M-SEARCH still runs when 0. Env-only.\n"
         "  --version, -V           print the running version and exit\n"
         "  -h, --help              show this message\n"
+    )
+
+
+def _once_help() -> str:
+    return (
+        "usage: diting once [--json]\n"
+        "\n"
+        "Print the current Wi-Fi connection snapshot and exit.\n"
+        "\n"
+        "  --json    emit one JSON object (backend, permission_state,\n"
+        "            associated, connection) to stdout; keys are stable\n"
+        "            English. Exit 0 associated, 1 not associated.\n"
+        "\n"
+        "Examples:\n"
+        "  diting once\n"
+        "  diting once --json | jq .connection.rssi_dbm\n"
+    )
+
+
+def _watch_help() -> str:
+    return (
+        "usage: diting watch [--json]\n"
+        "\n"
+        "Stream connection / scan / roam change-events until Ctrl+C.\n"
+        "\n"
+        "  --json    emit one JSON object per event, newline-delimited\n"
+        "            (tailable); chrome goes to stderr so stdout is a\n"
+        "            clean JSON line-stream.\n"
+        "\n"
+        "Examples:\n"
+        "  diting watch\n"
+        "  diting watch --json | jq -c 'select(.kind==\"roam\")'\n"
+    )
+
+
+def _analyze_help() -> str:
+    return (
+        "usage: diting analyze [PATH ...] [--since DUR] [--json]\n"
+        "                      [--for-llm [-o DIR]] [--anonymize]\n"
+        "\n"
+        "Read a JSONL log and print rule-based insights. With no PATH,\n"
+        "uses the newest diting-*.jsonl in the current directory.\n"
+        "\n"
+        "  --since DUR     keep only events within the last DUR (7d/24h/90m)\n"
+        "  --json          emit the full report as one JSON object to stdout\n"
+        "                  (stable English keys); chrome goes to stderr\n"
+        "  --for-llm       write an LLM bundle (report.md + prompt.txt)\n"
+        "  -o, --out-dir   bundle directory (default diting-llm-<timestamp>/);\n"
+        "                  implies --for-llm\n"
+        "  --anonymize     replace identifiers with stable handles in the bundle\n"
+        "\n"
+        "Examples:\n"
+        "  diting analyze\n"
+        "  diting analyze diting-20260608.jsonl --json | jq .insights\n"
+        "  diting analyze *.jsonl --since 7d --for-llm -o /tmp/bundle\n"
     )
 
 
@@ -1588,6 +1771,34 @@ def _ensure_helper_ready() -> str | None:
 
 
 def main() -> None:
+    """Top-level entry — a safety net so an agent (or a frozen binary)
+    never sees a Python traceback.
+
+    Deliberate `SystemExit` codes propagate unchanged (usage = 2,
+    runtime = 1, ok = 0); `KeyboardInterrupt` exits 130 quietly; any
+    other uncaught exception becomes a single `diting: <message>` line
+    on stderr (or a JSON error object under `--json`) and exits 1.
+    `DITING_DEBUG=1` re-raises so developers still get the traceback.
+    """
+    try:
+        _dispatch()
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except BaseException as exc:  # noqa: BLE001 — top-level safety net
+        if os.environ.get("DITING_DEBUG"):
+            raise
+        msg = str(exc) or exc.__class__.__name__
+        if "--json" in sys.argv:
+            import json as _json
+            print(_json.dumps({"error": msg, "code": 1}), file=sys.stderr)
+        else:
+            print(f"diting: {msg}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _dispatch() -> None:
     args = sys.argv[1:]
     # --version short-circuits before any locale / log / TUI work.
     # We deliberately do NOT pass it through to subcommand parsers;
@@ -1652,11 +1863,11 @@ def main() -> None:
         return
     cmd = args[0]
     if cmd == "once":
-        _run_once()
+        _run_once(args[1:])
         return
     if cmd == "watch":
         try:
-            asyncio.run(_run_watch())
+            asyncio.run(_run_watch(args[1:]))
         except KeyboardInterrupt:
             pass
         return

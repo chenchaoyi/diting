@@ -487,6 +487,27 @@ to terminal stdout only — never into the bundle — so you can
 decode the LLM's references later without leaking the mapping
 into the chat.
 
+### Use from an agent or a script
+
+`once`, `watch`, and `analyze` accept `--json` for machine-readable
+output, so a coding agent (Claude Code et al.) or a script can collect
+signals without scraping prose:
+
+```bash
+diting once --json | jq .connection.rssi_dbm         # current RSSI
+diting analyze diting-20260608.jsonl --json | jq .insights
+diting watch --json | jq -c 'select(.kind=="roam")'  # tail roams
+```
+
+JSON goes to stdout, all human chrome (banners, hints) to stderr, and
+JSON keys stay stable English regardless of `--lang`. `monitor` already
+streams JSONL. The CLI never prints a traceback — an unexpected error is
+one `diting: <message>` line (a JSON `{"error", "code"}` object under
+`--json`), and exit codes are stable: `0` ok · `1` runtime error (incl.
+`once` when not associated) · `2` usage error. `DITING_DEBUG=1` restores
+the traceback for debugging. Run `diting <subcommand> --help` for
+per-command usage and examples.
+
 ## Switching language
 
 ```bash

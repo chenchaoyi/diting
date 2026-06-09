@@ -431,6 +431,25 @@ Inc.`、`Cisco Systems`）原样保留。句柄↔原值的对应表只打到
 终端 stdout —— 永远不写进 bundle —— 所以你事后能解码 LLM
 的引用，又不会把映射泄露到聊天里。
 
+### 给 agent / 脚本调用
+
+`once`、`watch`、`analyze` 都接受 `--json`，输出机器可读结果，
+让编码 agent（Claude Code 等）或脚本无需抓取文字就能采集信号：
+
+```bash
+diting once --json | jq .connection.rssi_dbm         # 当前 RSSI
+diting analyze diting-20260608.jsonl --json | jq .insights
+diting watch --json | jq -c 'select(.kind=="roam")'  # 跟踪漫游
+```
+
+JSON 走 stdout，所有人类文案（横幅、提示）走 stderr，且无论
+`--lang` 如何，JSON 的键始终是稳定的英文。`monitor` 本来就是
+JSONL 流。CLI 绝不打印 traceback —— 意外错误只是一行
+`diting: <消息>`（`--json` 下是 `{"error", "code"}` JSON 对象），
+退出码稳定：`0` 正常 · `1` 运行时错误（含 `once` 未关联）· `2`
+用法错误。`DITING_DEBUG=1` 可恢复 traceback 便于调试。运行
+`diting <子命令> --help` 查看每个命令的用法与示例。
+
 ## 切换语言
 
 ```bash

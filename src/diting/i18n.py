@@ -607,87 +607,8 @@ _ZH: dict[str, str] = {
     "MS device beacon": "Microsoft 信标",
 
     # ---- CLI --help ----
-    "usage: diting [GLOBAL OPTS] [SUBCOMMAND [SUBCOMMAND OPTS]]\n"
-    "\n"
-    "Default (no SUBCOMMAND): launch the TUI dashboard.\n"
-    "\n"
-    "Subcommands:\n"
-    "  once         print the current connection and exit\n"
-    "  watch        stream events as plain text until Ctrl+C\n"
-    "  monitor      headless JSONL events (long-runs / Home Assistant)\n"
-    "                 flags: --out FILE  --notify  --gateway IP  --wan IP\n"
-    "  calibrate    record an empty-room RSSI baseline (default 300 s)\n"
-    "                 flags: --duration SECONDS\n"
-    "  analyze      read a JSONL log, print rule-based insights\n"
-    "                 (newest diting-*.jsonl in cwd when no PATH given)\n"
-    "                 flags: --since DUR  --for-llm [DIR]  --anonymize\n"
-    "  companion    pair with diting-mobile, forward events off-device\n"
-    "                 actions: pair [--relay URL] | status | unpair\n"
-    "\n"
-    "Global options:\n"
-    "  --lang L                interface language: en or zh\n"
-    "                          (env: DITING_LANG; else system locale)\n"
-    "  --log [PATH]            also write JSONL while TUI runs; no path =\n"
-    "                          ./diting-YYYYMMDD-HHMMSS.jsonl in cwd. Same\n"
-    "                          schema as `diting monitor`; append-mode +\n"
-    "                          line-flushed so events survive Ctrl+C\n"
-    "                          (env: DITING_LOG=PATH or =auto)\n"
-    "  --notify                raise OS banners on anomaly events while\n"
-    "                          TUI runs (also accepted by `monitor`)\n"
-    "  --scene SCENE           home / office / public / audit (default home)\n"
-    "                          sets sensitivity defaults for the environment;\n"
-    "                          tags JSONL session_meta + LLM bundle context\n"
-    "                          (env: DITING_SCENE)\n"
-    "  --ble-presence-gate D   override the scene's BLE presence gate.\n"
-    "                          Anonymous BLE adverts must be observed for at\n"
-    "                          least D (e.g. 5s, 30s, 2m) before emitting\n"
-    "                          events; 0 disables the gate. Wins over scene\n"
-    "                          default (home=5s / office=15s / public=30s /\n"
-    "                          audit=0s). Named + connected peripherals\n"
-    "                          bypass. (env: DITING_BLE_PRESENCE_GATE)\n"
-    "  --version, -V           print the running version and exit\n"
-    "  -h, --help              show this message\n":
-        "用法：diting [全局选项] [子命令 [子命令选项]]\n"
-        "\n"
-        "默认（不带子命令）：启动 TUI 仪表盘。\n"
-        "\n"
-        "子命令：\n"
-        "  once         打印当前连接快照后退出\n"
-        "  watch        以纯文本流式输出事件，直到 Ctrl+C\n"
-        "  monitor      无 TUI 长时运行，逐行 JSONL 事件\n"
-        "                 选项：--out FILE  --notify  --gateway IP  --wan IP\n"
-        "  calibrate    采集「房间没人」基线（默认 300 秒）\n"
-        "                 选项：--duration SECONDS\n"
-        "  analyze      读取 JSONL 日志，输出基于规则的洞察\n"
-        "                 （不带 PATH 时使用 cwd 里最新的 diting-*.jsonl）\n"
-        "                 选项：--since DUR  --for-llm [DIR]  --anonymize\n"
-        "  companion    与 diting-mobile 配对，把事件转发到手机\n"
-        "                 动作：pair [--relay URL] | status | unpair\n"
-        "\n"
-        "全局选项：\n"
-        "  --lang L                界面语言：en 或 zh\n"
-        "                          （环境变量：DITING_LANG；否则随系统 locale）\n"
-        "  --log [PATH]            TUI 运行的同时把 JSONL 事件追加写入文件；\n"
-        "                          不带 PATH 时写入 cwd 的\n"
-        "                          ./diting-YYYYMMDD-HHMMSS.jsonl。schema 与\n"
-        "                          `diting monitor` 一致，append + 行刷新，\n"
-        "                          Ctrl+C / kill 后已写入的事件都在\n"
-        "                          （环境变量：DITING_LOG=PATH 或 =auto）\n"
-        "  --notify                TUI 运行时在异常事件触发处弹出 macOS\n"
-        "                          通知中心横幅（`monitor` 子命令也接受）\n"
-        "  --scene SCENE           home / office / public / audit（默认 home）\n"
-        "                          按环境给灵敏度设默认值；写入 JSONL\n"
-        "                          session_meta + LLM bundle 上下文\n"
-        "                          （环境变量：DITING_SCENE）\n"
-        "  --ble-presence-gate D   覆盖场景默认的 BLE presence gate。匿名\n"
-        "                          BLE 广播必须被持续观察至少 D（例如 5s /\n"
-        "                          30s / 2m）才会发事件；填 0 关闭门控。\n"
-        "                          优先级高于场景默认（home=5s / office=15s\n"
-        "                          / public=30s / audit=0s）。带 name 的\n"
-        "                          设备和已连接外设直通。\n"
-        "                          （环境变量：DITING_BLE_PRESENCE_GATE）\n"
-        "  --version, -V           打印当前版本号后退出\n"
-        "  -h, --help              显示本说明\n",
+    # NOTE: CLI --help / usage text is English-only by design (agent /
+    # dev-facing; the prior bilingual block had drifted). See cli._usage.
     "diting: unknown subcommand {cmd!r}":
         "diting：未知子命令 {cmd!r}",
     "note: writing JSONL events to {path}":
@@ -1787,6 +1708,13 @@ _ZH: dict[str, str] = {
         "请提供路径：diting analyze ~/wifi-20260507.jsonl",
     "diting analyze: file not found: {path}":
         "diting analyze：找不到文件：{path}",
+    # agent-friendly-cli runtime errors
+    "diting analyze: {flag} requires a directory argument":
+        "diting analyze：{flag} 需要一个目录参数",
+    "diting analyze: unknown flag {flag!r}":
+        "diting analyze：未知选项 {flag!r}",
+    "diting analyze: output path is not a directory: {path}":
+        "diting analyze：输出路径不是目录：{path}",
     "Network change(s) detected": "检测到网络切换",
     "{n} gateway-IP transition(s) during this session: "
     "{moves}. Treat per-network statistics separately — "
