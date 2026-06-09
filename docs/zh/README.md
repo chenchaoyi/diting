@@ -111,13 +111,14 @@ Apple 的面板不会告诉你你连在哪台 AP；谛听会，而且按 `c` 一
   `--json`，输出干净的机器可读结果（即使 `--lang zh`，键也保持
   稳定英文）；CLI 绝不打印 traceback，且退出码有明确约定。见
   [给 agent / 脚本调用](#给-agent--脚本调用)。
-- **把数据丢给 ChatGPT / Claude 做更深的解读。**
-  `diting analyze --for-llm` 写出一份 Markdown 报告 + 一段可粘
-  贴的「分析师」提示词；把 .md 拖进 chat.openai.com 或 claude.ai，
-  粘贴提示词，让 LLM 反过来给你做模式聚类、假设排序、后续调查
-  建议。加 `--anonymize` 在粘到公网 LLM 前把 SSID / BSSID /
-  RFC1918 IP / 主机名 / BLE 标识 / LAN MAC 全部替换为稳定句柄。
-  句柄↔原值的对应表只打到你的终端 —— 不会写进 bundle。
+- **把数据交给 AI 聊天做更深的解读。**
+  `diting analyze --for-llm` 写出**一个**自包含的 `.md`（分析师
+  提示词 + 完整报告）并**复制到剪贴板** —— 打开任意 AI 聊天
+  （Claude / ChatGPT / DeepSeek / Gemini / Kimi / ……），粘贴，
+  就能拿回模式聚类、假设排序、后续调查建议。加 `--anonymize`
+  在粘到公网 LLM 前把 SSID / BSSID / RFC1918 IP / 主机名 / BLE
+  标识 / LAN MAC 全部替换为稳定句柄。句柄↔原值的对应表只打到
+  你的终端 —— 不会写进文件，也不会进剪贴板。
 - **（未来）室内人员感知。** 长期目标，需要外置硬件配合。详见
   [路线图](#路线图)。
 
@@ -414,24 +415,27 @@ diting analyze 'diting-*.jsonl' --since 30d
 也能通过 `diting analyze --json` 输出为单个 JSON 文档 —— 见
 [给 agent / 脚本调用](#给-agent--脚本调用)。
 
-### 把数据交给 ChatGPT / Claude 做更深解读
+### 把数据交给 AI 聊天做更深解读
 
 ```bash
 diting analyze 'diting-*.jsonl' --since 30d --for-llm
 ```
 
-写一份可粘贴包到 `./diting-llm-<时间戳>/`：
+写出**一个**自包含文件 —— `./diting-analysis-for-llm-<时间戳>.md`
+—— 并**复制到剪贴板**。文件里先是分析师提示词，紧接着内联整份
+Markdown 报告（排行数据用表格、ASCII 图用围栏代码块、附 Glossary
+段定义 diting 术语），所以模型一次就拿到指令 + 数据。流程就是：
 
-- `report.md` —— Markdown 版本的同一份分析，排行数据用表格，
-  ASCII 图用围栏代码块，附带 Glossary 段定义 diting 自己的
-  术语（`rf_stir` 之类），LLM 不用猜上下文。
-- `prompt.txt` —— 可粘贴的「分析师」提示词，要求 LLM 识别
-  数据支持的主要模式、给出最可能的根因 + 证据、建议后续调
-  查方向，并把任何超出数据范围的推断标为 "hypothesis"。
+```
+运行 → 打开任意 AI 聊天 → ⌘V → 提交
+```
 
-CLI 接着会打印四步粘贴流程（打开 chat.openai.com / claude.ai
-→ 拖入 `.md` → 粘 prompt → 提交）。没有 API key、没有遥测、
-没有上传 —— diting 把文件写在本地，谁能看由你决定。
+不用拖拽、不用复制第二次。任何有能力的聊天都行 —— Claude
+（`claude.ai`）、ChatGPT（`chat.openai.com`）、DeepSeek
+（`chat.deepseek.com`）、Gemini、Kimi，随你用。`-o PATH` 指定
+输出（`-o run.md` 给文件，`-o dir/` 给目录）。没有 API key、没有
+遥测、没有上传 —— diting 把文件写在本地、放进你的剪贴板，谁能看
+由你决定。
 
 要粘进公网 LLM 时加 `--anonymize`：
 
@@ -443,7 +447,7 @@ SSID / BSSID / RFC1918 IP / 主机名 / BLE 标识 / LAN MAC 全部
 被替换为稳定句柄（`SSID_1`、`AP_1`、`IP_1`、`HOST_1`、`BLE_1`、
 `MAC_1`）。公网 IP（`8.8.8.8`、`1.1.1.1`）和厂商名（`Apple,
 Inc.`、`Cisco Systems`）原样保留。句柄↔原值的对应表只打到
-终端 stdout —— 永远不写进 bundle —— 所以你事后能解码 LLM
+终端 —— 永远不写进文件、也不进剪贴板 —— 所以你事后能解码 LLM
 的引用，又不会把映射泄露到聊天里。
 
 ### 给 agent / 脚本调用

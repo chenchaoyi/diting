@@ -919,14 +919,15 @@ def test_build_llm_prompt_pre_scene_aware_falls_back_to_general_priors():
     assert "general priors" in prompt
 
 
-# ---------- --for-llm bundle writer (tmp_path-safe) ----------
+# ---------- --for-llm file writer (tmp_path-safe) ----------
 #
-# These exercise the CLI bundle writer. The default outdir is
-# `./diting-llm-<ts>/` in the CURRENT directory, so every test here either
-# passes an explicit tmp_path outdir or `monkeypatch.chdir(tmp_path)` first
-# — a bundle must NEVER be written into the repo working tree (a stray
-# manual run once did, and nearly got committed; .gitignore now blocks it,
-# and these tests pin the hygiene).
+# These exercise the CLI --for-llm writer. The default output is one
+# `./diting-analysis-for-llm-<ts>.md` in the CURRENT directory, so every test
+# here either passes an explicit tmp_path `-o` or `monkeypatch.chdir(tmp_path)`
+# first — a file must NEVER be written into the repo working tree (a stray
+# manual run once did, and nearly got committed; .gitignore now blocks it, and
+# these tests pin the hygiene). They also stub `cli._copy_to_clipboard` so the
+# suite never touches the real clipboard.
 
 from diting import cli  # noqa: E402
 
@@ -944,32 +945,50 @@ def _write_min_log(tmp_path):
     return log
 
 
-def test_for_llm_writes_report_markdown(tmp_path, capsys):
-    out = tmp_path / "bundle"
+def test_for_llm_writes_single_combined_file(tmp_path, monkeypatch, capsys):
+    """simplify-llm-bundle: --for-llm writes ONE .md holding the prompt +
+    the report, not the old report.md / prompt.txt pair."""
+    monkeypatch.setattr(cli, "_copy_to_clipboard", lambda text: False)
+    out = tmp_path / "run.md"
     cli._run_analyze([str(_write_min_log(tmp_path)), "--for-llm", "-o", str(out)])
-    body = (out / "report.md").read_text()
-    assert body.startswith("# diting analysis report")
+    doc = out.read_text()
+    assert "# diting analysis report" in doc           # report half present
+    assert "\n---\n" in doc                              # prompt | report rule
+    assert "hypothesis" in doc.lower()                   # prompt half present
+    # the old two-file split is gone
+    assert not (tmp_path / "report.md").exists()
+    assert not (tmp_path / "prompt.txt").exists()
 
 
-def test_for_llm_writes_prompt_txt(tmp_path, capsys):
-    out = tmp_path / "bundle"
-    cli._run_analyze([str(_write_min_log(tmp_path)), "--for-llm", "-o", str(out)])
-    assert (out / "prompt.txt").read_text().strip()
+def test_for_llm_copies_combined_doc_to_clipboard_by_default(
+    tmp_path, monkeypatch,
+):
+    captured: dict[str, str] = {}
+
+    def _fake_copy(text: str) -> bool:
+        captured["text"] = text
+        return True
+
+    monkeypatch.setattr(cli, "_copy_to_clipboard", _fake_copy)
+    monkeypatch.chdir(tmp_path)
+    cli._run_analyze([str(_write_min_log(tmp_path)), "--for-llm"])
+    assert "# diting analysis report" in captured["text"]  # clipboard got the doc
+    assert "\n---\n" in captured["text"]
 
 
-def test_for_llm_default_outdir_is_cwd_relative_not_repo(
+def test_for_llm_default_file_is_cwd_relative_not_repo(
     tmp_path, monkeypatch, capsys,
 ):
-    """No explicit outdir → a `diting-llm-<ts>/` dir under the CURRENT
-    working dir. Chdir to tmp_path so it lands there (proving the
+    """No explicit -o → one `diting-analysis-for-llm-<ts>.md` under the
+    CURRENT working dir. Chdir to tmp_path so it lands there (proving the
     cwd-relative default) and the repo tree stays clean."""
+    monkeypatch.setattr(cli, "_copy_to_clipboard", lambda text: False)
     log = _write_min_log(tmp_path)
     monkeypatch.chdir(tmp_path)
     cli._run_analyze([str(log), "--for-llm"])
-    bundles = list(tmp_path.glob("diting-llm-*"))
-    assert len(bundles) == 1
-    assert (bundles[0] / "report.md").exists()
-    assert (bundles[0] / "prompt.txt").exists()
+    files = list(tmp_path.glob("diting-analysis-for-llm-*.md"))
+    assert len(files) == 1 and files[0].read_text().strip()
+    assert not list(tmp_path.glob("diting-llm-*"))  # no leftover bundle dir
 
 
 # ------------------------------------------------------------------

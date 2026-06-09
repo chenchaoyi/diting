@@ -89,5 +89,6 @@ snapshot-output/
 # Claude Code scheduled-task local state.
 .claude/scheduled_tasks.lock
 
-# LLM-bridge export bundles (contain real capture data — never commit)
+# LLM-bridge export bundles / files (contain real capture data — never commit)
 diting-llm-*/
+diting-analysis-for-llm-*.md

@@ -1738,6 +1738,18 @@ _ZH: dict[str, str] = {
     # analyze --for-llm bundle summary + scope + CLI errors (fix-analyze-output-zh)
     "✓ wrote {path}  ({kb:.1f} KB{suffix})":
         "✓ 已写入 {path}  （{kb:.1f} KB{suffix}）",
+    # simplify-llm-bundle: single file + clipboard + provider-neutral guidance
+    "✓ copied to clipboard": "✓ 已复制到剪贴板",
+    "paste into any AI chat (it already has the prompt + the data):":
+        "粘贴到任意 AI 聊天即可（已包含提示词 + 数据）：",
+    "paste this file into any AI chat (it has the prompt + the data):":
+        "把这个文件粘贴到任意 AI 聊天（已包含提示词 + 数据）：",
+    "  … or any other capable chat — submit and read back.":
+        "  …… 或任何其它有能力的聊天 —— 发送后看回复。",
+    "diting analyze: output path is a directory: {path}":
+        "diting analyze：输出路径是一个目录：{path}",
+    "diting analyze: {flag} requires a path argument":
+        "diting analyze：{flag} 需要一个路径参数",
     "✓ wrote {path}  ({kb:.1f} KB)":
         "✓ 已写入 {path}  （{kb:.1f} KB）",
     ", anonymized": "，已匿名化",

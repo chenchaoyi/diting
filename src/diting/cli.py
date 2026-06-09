@@ -667,6 +667,21 @@ async def _run_calibrate(args: list[str]) -> None:
 
 # ---------- analyze (rule-based JSONL log reader) ----------
 
+def _copy_to_clipboard(text: str) -> bool:
+    """Put ``text`` on the macOS clipboard via ``pbcopy``. Returns True on
+    success. Best-effort: if pbcopy is missing or fails (non-macOS, no GUI
+    session), degrade silently — the written file is the fallback. Patched
+    in tests so they never touch the real clipboard."""
+    try:
+        proc = subprocess.run(
+            ["pbcopy"], input=text.encode("utf-8"),
+            check=True, capture_output=True,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _run_analyze(args: list[str]) -> None:
     """Read JSONL log(s) and print rule-based insights.
 
@@ -741,12 +756,12 @@ def _run_analyze(args: list[str]) -> None:
         if a in ("-o", "--out-dir"):
             if i + 1 >= len(args):
                 print(t(
-                    "diting analyze: {flag} requires a directory argument",
+                    "diting analyze: {flag} requires a path argument",
                     flag=a,
                 ), file=sys.stderr)
                 sys.exit(2)
             for_llm_outdir = Path(args[i + 1]).expanduser()
-            for_llm = True  # giving an out-dir means "write the bundle"
+            for_llm = True  # giving an output path means "write the file"
             i += 2
             continue
         if a.startswith("--out-dir="):
@@ -808,43 +823,62 @@ def _run_analyze(args: list[str]) -> None:
     chrome = sys.stderr if json_mode else sys.stdout
 
     if for_llm:
-        # Build the bundle: report.md + prompt.txt under outdir.
+        # One self-contained file (prompt + report) + clipboard by default,
+        # so the workflow is: run → paste into any AI chat.
+        ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+        default_name = f"diting-analysis-for-llm-{ts}.md"
         if for_llm_outdir is None:
-            ts = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-            for_llm_outdir = Path(f"diting-llm-{ts}")
-        if for_llm_outdir.exists() and not for_llm_outdir.is_dir():
+            out_path = Path(default_name)
+        elif for_llm_outdir.suffix == ".md":
+            out_path = for_llm_outdir           # -o names the file
+        elif for_llm_outdir.exists() and not for_llm_outdir.is_dir():
+            # -o points at an existing non-.md file — ambiguous; don't
+            # mkdir over it. (Use a .md suffix to name an output file.)
             print(t(
                 "diting analyze: output path is not a directory: {path}",
                 path=str(for_llm_outdir),
             ), file=sys.stderr)
             sys.exit(2)
-        for_llm_outdir.mkdir(parents=True, exist_ok=True)
+        else:
+            out_path = for_llm_outdir / default_name  # -o names a directory
+        if out_path.exists() and out_path.is_dir():
+            print(t(
+                "diting analyze: output path is a directory: {path}",
+                path=str(out_path),
+            ), file=sys.stderr)
+            sys.exit(2)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
         anonymizer = analyze.Anonymizer() if anonymize else None
-        md = analyze.render_markdown(report, anonymizer=anonymizer)
-        prompt = analyze.build_llm_prompt(report)
-        report_path = for_llm_outdir / "report.md"
-        prompt_path = for_llm_outdir / "prompt.txt"
-        report_path.write_text(md)
-        prompt_path.write_text(prompt)
-        report_size_kb = report_path.stat().st_size / 1024.0
-        prompt_size_kb = prompt_path.stat().st_size / 1024.0
+        doc = analyze.build_llm_document(report, anonymizer=anonymizer)
+        out_path.write_text(doc)
+        size_kb = out_path.stat().st_size / 1024.0
+        # Skip clipboard under --json (an agent run shouldn't hijack the
+        # human's clipboard). The mapping is never copied.
+        copied = (not json_mode) and _copy_to_clipboard(doc)
+
         print(t(
             "✓ wrote {path}  ({kb:.1f} KB{suffix})",
-            path=str(report_path),
-            kb=report_size_kb,
+            path=str(out_path),
+            kb=size_kb,
             suffix=t(", anonymized") if anonymize else "",
         ), file=chrome)
-        print(t(
-            "✓ wrote {path}  ({kb:.1f} KB)",
-            path=str(prompt_path),
-            kb=prompt_size_kb,
-        ), file=chrome)
+        if copied:
+            print(t("✓ copied to clipboard"), file=chrome)
         print(file=chrome)
-        print(t("to analyze with an LLM:"), file=chrome)
-        print(t("  1. open https://claude.ai or chat.openai.com"), file=chrome)
-        print(t("  2. drag-drop the report.md file into the chat"), file=chrome)
-        print(t("  3. paste the contents of prompt.txt"), file=chrome)
-        print(t("  4. submit"), file=chrome)
+        print(t(
+            "paste into any AI chat (it already has the prompt + the data):",
+        ) if copied else t(
+            "paste this file into any AI chat (it has the prompt + the data):",
+        ), file=chrome)
+        # Brand + URL lines are language-neutral — not run through t().
+        print("  Claude    https://claude.ai", file=chrome)
+        print("  ChatGPT   https://chat.openai.com", file=chrome)
+        print("  DeepSeek  https://chat.deepseek.com", file=chrome)
+        print("  Gemini    https://gemini.google.com", file=chrome)
+        print("  Kimi      https://www.kimi.com", file=chrome)
+        print(t("  … or any other capable chat — submit and read back."),
+              file=chrome)
         if anonymizer is not None:
             mapping = anonymizer.mapping()
             if mapping:
@@ -899,8 +933,9 @@ def _usage() -> str:
         "  analyze      read a JSONL log, print rule-based insights  [--json]\n"
         "                 (newest diting-*.jsonl in cwd when no PATH given)\n"
         "                 flags: --since DUR · --anonymize ·\n"
-        "                        --for-llm [-o DIR]  (write an LLM bundle;\n"
-        "                        -o sets its dir, default diting-llm-<ts>/)\n"
+        "                        --for-llm [-o PATH]  (write one .md file with\n"
+        "                        the prompt + report, and copy it to the\n"
+        "                        clipboard — paste into any AI chat)\n"
         "\n"
         "Automation: once / watch / analyze accept --json for machine-\n"
         "readable output (JSON keys are stable English; chrome goes to\n"
@@ -981,7 +1016,7 @@ def _watch_help() -> str:
 def _analyze_help() -> str:
     return (
         "usage: diting analyze [PATH ...] [--since DUR] [--json]\n"
-        "                      [--for-llm [-o DIR]] [--anonymize]\n"
+        "                      [--for-llm [-o PATH]] [--anonymize]\n"
         "\n"
         "Read a JSONL log and print rule-based insights. With no PATH,\n"
         "uses the newest diting-*.jsonl in the current directory.\n"
@@ -989,15 +1024,19 @@ def _analyze_help() -> str:
         "  --since DUR     keep only events within the last DUR (7d/24h/90m)\n"
         "  --json          emit the full report as one JSON object to stdout\n"
         "                  (stable English keys); chrome goes to stderr\n"
-        "  --for-llm       write an LLM bundle (report.md + prompt.txt)\n"
-        "  -o, --out-dir   bundle directory (default diting-llm-<timestamp>/);\n"
+        "  --for-llm       write ONE .md file holding the analyst prompt +\n"
+        "                  the full report, and copy it to the clipboard so\n"
+        "                  you can paste it straight into any AI chat\n"
+        "  -o, --out-dir   output path: a .md file, or a directory the file\n"
+        "                  lands in (default ./diting-analysis-for-llm-<ts>.md);\n"
         "                  implies --for-llm\n"
-        "  --anonymize     replace identifiers with stable handles in the bundle\n"
+        "  --anonymize     replace identifiers with stable handles in the file\n"
         "\n"
         "Examples:\n"
         "  diting analyze\n"
         "  diting analyze diting-20260608.jsonl --json | jq .insights\n"
-        "  diting analyze *.jsonl --since 7d --for-llm -o /tmp/bundle\n"
+        "  diting analyze *.jsonl --since 7d --for-llm    # → clipboard\n"
+        "  diting analyze foo.jsonl --for-llm -o /tmp/run.md\n"
     )
 
 
