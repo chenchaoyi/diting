@@ -11,6 +11,44 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.17.1] — 2026-06-09
+
+Polish release — the `diting analyze --for-llm` workflow gets faster, fully
+bilingual, and able to hand the AI the raw log.
+
+### Changed
+
+- **One file + clipboard, not two.** `--for-llm` now writes a single
+  self-contained `diting-analysis-for-llm-<ts>.md` (analyst prompt + report
+  inline) and copies it to the clipboard by default — the workflow is *run →
+  ⌘V into any AI chat*. The old `report.md` + `prompt.txt` split is gone.
+  `-o` names a `.md` file or a directory.
+- **Provider-neutral guidance.** The post-write copy points at *any* AI chat
+  (Claude / ChatGPT / DeepSeek / Gemini / Kimi / …), not just two.
+- **The LLM document follows `--lang`.** Under `--lang zh` the prompt, report,
+  glossary, and scene context are Chinese and the prompt asks the model to
+  answer in Chinese — so a Chinese run yields a Chinese analysis. Technical
+  tokens (`ble_device_seen`, BSSIDs, vendor names) stay verbatim.
+
+### Added
+
+- **`--for-llm --raw`** also hands the AI the raw event log: it references your
+  existing `.jsonl` (no rewrite) and tells you to attach it alongside the
+  briefing, and the prompt tells the model the raw log is there for deep-dives.
+  `--raw` implies `--for-llm`. With `--anonymize`, diting instead writes one
+  scrubbed `diting-raw-anonymized-<ts>.jsonl` (real identifiers — including
+  device names — replaced with the briefing's handles).
+
+### Fixed
+
+- The `--for-llm` summary, the `--since` / `--ble-presence-gate` /
+  `DITING_LAN_PROBE` CLI errors, and the analyze cross-session blocks
+  (hour-of-day / heatmap / networks / trend / top-contributors) now render
+  under `--lang zh` instead of falling through to English. An AST audit guard
+  keeps every `t()` string in `cli.py` / `analyze.py` translated.
+- Top-contributors BLE ranks by stable identity, not the rotating address, so
+  it lists real devices by sighting count instead of a row of "1 seen".
+
 ## [1.17.0] — 2026-06-09
 
 Feature release. **`diting analyze` reads the rhythm of a long capture, and

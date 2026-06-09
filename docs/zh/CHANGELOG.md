@@ -10,6 +10,40 @@
 
 ## [Unreleased]
 
+## [1.17.1] — 2026-06-09
+
+打磨发布 —— `diting analyze --for-llm` 的工作流更快、完全双语，还能把原始
+日志一起交给 AI。
+
+### Changed
+
+- **一个文件 + 剪贴板，不再是两个。** `--for-llm` 现在写出一个自包含的
+  `diting-analysis-for-llm-<ts>.md`（分析提示词 + 报告内联）并默认复制到
+  剪贴板 —— 流程就是「运行 → ⌘V 进任意 AI 聊天」。旧的 `report.md` +
+  `prompt.txt` 两文件拆分已移除。`-o` 可给 `.md` 文件或目录。
+- **provider-neutral 引导。** 写完后的提示指向*任意* AI 聊天（Claude /
+  ChatGPT / DeepSeek / Gemini / Kimi / ……），不再只有两个。
+- **LLM 文档遵循 `--lang`。** `--lang zh` 下提示词、报告、术语表、场景背景
+  都是中文，且提示词要求模型用中文回答 —— 所以中文运行得到中文分析。
+  技术 token（`ble_device_seen`、BSSID、厂商名）保持原样。
+
+### Added
+
+- **`--for-llm --raw`** 把原始事件日志也交给 AI：引用你已有的 `.jsonl`
+  （不重写）并提示你把它与简报一起附上，提示词会告诉模型原始日志可供深挖。
+  `--raw` 隐含 `--for-llm`。配合 `--anonymize` 时，diting 改为写一个脱敏的
+  `diting-raw-anonymized-<ts>.jsonl`（真实标识符 —— 含设备名 —— 用简报的
+  句柄替换）。
+
+### Fixed
+
+- `--for-llm` 摘要、`--since` / `--ble-presence-gate` / `DITING_LAN_PROBE`
+  的 CLI 报错、以及 analyze 的跨会话块（按小时 / 热力图 / 网络 / 趋势 /
+  主要贡献来源）现在在 `--lang zh` 下渲染为中文，不再落回英文。一个 AST
+  审计守卫确保 `cli.py` / `analyze.py` 里每个 `t()` 字符串都有翻译。
+- top-contributors 的 BLE 按稳定身份排名，而非滚动地址，所以列出按出现
+  次数排序的真实设备，而不是一排「1 次」。
+
 ## [1.17.0] — 2026-06-09
 
 功能发布。**`diting analyze` 读出长时段抓取的节律，整个 CLI 也变成 agent
