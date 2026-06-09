@@ -244,3 +244,49 @@ def test_fit_cells_ellipsis_exact_width_with_cjk():
 def test_fit_cells_ellipsis_noop_when_fits():
     from diting.i18n import fit_cells
     assert fit_cells("HID", 16, ellipsis=True) == fit_cells("HID", 16)
+
+
+# ---------- fix-analyze-output-zh: catalog coverage guard ----------
+
+def test_analyze_and_cli_output_strings_are_translated_in_zh():
+    """Audit guard: every literal `t("...")` key in cli.py and analyze.py
+    must have a ZH catalog entry — no user-facing output falls through to
+    English under `--lang zh`. This is the class the --for-llm bundle
+    summary and the cross-session blocks fell into; the test stops it
+    from recurring.
+
+    Allowlist: keys whose ZH rendering is intentionally identical to the
+    EN source (pure units / acronyms with no Chinese form)."""
+    import ast
+    from pathlib import Path
+
+    # Keys that are deliberately the same string in both languages.
+    allow_identical = {"{n}s"}
+
+    src_dir = Path(__file__).resolve().parents[1] / "src" / "diting"
+    keys: set[str] = set()
+    for fname in ("cli.py", "analyze.py"):
+        tree = ast.parse((src_dir / fname).read_text("utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "t"
+                and node.args
+            ):
+                try:
+                    key = ast.literal_eval(node.args[0])
+                except (ValueError, SyntaxError):
+                    continue  # dynamic arg, not a literal — skip
+                if isinstance(key, str):
+                    keys.add(key)
+
+    i18n.set_lang(i18n.ZH)
+    missing = sorted(
+        k for k in keys
+        if k not in allow_identical and i18n.t(k) == k
+    )
+    assert not missing, (
+        "These cli.py / analyze.py t() strings have no ZH translation "
+        f"(fall through to English under --lang zh): {missing}"
+    )
