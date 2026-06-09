@@ -131,14 +131,15 @@ BSSID. Same path as menu-off-then-on, in one keystroke.
   (keys stay stable English even under `--lang zh`); the CLI never
   prints a traceback and has documented exit codes. See
   [Use from an agent](#use-from-an-agent-or-a-script).
-- **Hand it to ChatGPT or Claude for richer interpretation.**
-  `diting analyze --for-llm` writes a Markdown report + a paste-
-  ready analyst prompt; drag the report into chat.openai.com or
-  claude.ai, paste the prompt, get back pattern clustering and
+- **Hand it to an AI chat for richer interpretation.**
+  `diting analyze --for-llm` writes one self-contained `.md`
+  (analyst prompt + the full report) and copies it to your
+  clipboard — open any AI chat (Claude / ChatGPT / DeepSeek /
+  Gemini / Kimi / …), paste, and get back pattern clustering and
   hypothesis-ranking. Add `--anonymize` to scrub SSIDs / BSSIDs /
   RFC1918 IPs / hostnames / BLE identifiers before pasting into
   a public LLM. The handle↔original mapping prints to your
-  terminal only — never into the bundle.
+  terminal only — never into the file or onto the clipboard.
 - **(Future) Room-presence sensing.** Long-term, hardware-assisted
   flagship. See [Roadmap](#roadmap).
 
@@ -470,30 +471,29 @@ per-session layout. The whole report is also available as one
 JSON document via `diting analyze --json` — see
 [Use from an agent](#use-from-an-agent-or-a-script).
 
-### Pass the data to ChatGPT or Claude for richer interpretation
+### Hand the data to an AI chat for richer interpretation
 
 ```bash
 diting analyze 'diting-*.jsonl' --since 30d --for-llm
 ```
 
-Writes a paste-ready bundle to `./diting-llm-<timestamp>/`:
+Writes **one** self-contained file —
+`./diting-analysis-for-llm-<timestamp>.md` — and **copies it to your
+clipboard**. The file holds the analyst prompt followed by the full
+Markdown report inline (tables for ranked data, fenced code blocks for
+the ASCII charts, a glossary of diting-specific terms), so the model
+gets the instructions *and* the data in one piece. The workflow is just:
 
-- `report.md` — Markdown rendition of the same analysis the
-  terminal produces, with tables for ranked data, fenced
-  code blocks for the ASCII charts, and a glossary section
-  defining diting-specific terms so the LLM doesn't have
-  to guess.
-- `prompt.txt` — a paste-ready analyst prompt that asks the
-  LLM to identify the top patterns the data supports, name
-  likely root causes + supporting evidence, suggest follow-up
-  investigations, and label any inferences as "hypothesis"
-  rather than "fact".
+```
+run → open any AI chat → ⌘V → submit
+```
 
-The CLI then prints a four-step paste workflow (open
-chat.openai.com / claude.ai → drag-drop the `.md` → paste
-the prompt → submit). No API key, no telemetry, no upload —
-diting writes the files locally and the user controls who
-sees them.
+No drag-drop, no second copy. Any capable chat works — Claude
+(`claude.ai`), ChatGPT (`chat.openai.com`), DeepSeek
+(`chat.deepseek.com`), Gemini, Kimi, or whatever you use. `-o PATH`
+sets the output (`-o run.md` for a file, `-o dir/` for a directory). No
+API key, no telemetry, no upload — diting writes the file locally and
+puts it on your clipboard; you control who sees it.
 
 Add `--anonymize` when pasting into a public LLM:
 
@@ -506,9 +506,9 @@ LAN MACs get replaced with stable handles (`SSID_1`, `AP_1`,
 `IP_1`, `HOST_1`, `BLE_1`, `MAC_1`). Public IPs (`8.8.8.8`,
 `1.1.1.1`) and vendor names (`Apple, Inc.`, `Cisco Systems`)
 pass through unchanged. The handle↔original mapping prints
-to terminal stdout only — never into the bundle — so you can
-decode the LLM's references later without leaking the mapping
-into the chat.
+to the terminal only — never into the file or onto the
+clipboard — so you can decode the LLM's references later
+without leaking the mapping into the chat.
 
 ### Use from an agent or a script
 

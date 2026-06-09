@@ -533,7 +533,8 @@ def test_main_guard_emits_json_error_under_json(monkeypatch, capsys):
 
 def test_for_llm_is_boolean_does_not_eat_input(tmp_path, monkeypatch, capsys):
     """The reported crash: `--for-llm <log>` must treat the log as input,
-    not as the out-dir. With no -o it defaults to diting-llm-<ts>/."""
+    not as the out-path. With no -o it writes one file to cwd."""
+    monkeypatch.setattr(cli, "_copy_to_clipboard", lambda text: False)
     log = tmp_path / "diting-x.jsonl"
     log.write_text(
         '{"type":"session_meta","ts":"2026-05-07T22:00:00+00:00","scene":"home"}\n'
@@ -541,14 +542,15 @@ def test_for_llm_is_boolean_does_not_eat_input(tmp_path, monkeypatch, capsys):
     )
     monkeypatch.chdir(tmp_path)
     cli._run_analyze(["--for-llm", str(log)])  # the crashing arg order
-    bundles = list(tmp_path.glob("diting-llm-*"))
-    assert len(bundles) == 1 and (bundles[0] / "report.md").exists()
+    files = list(tmp_path.glob("diting-analysis-for-llm-*.md"))
+    assert len(files) == 1 and files[0].read_text().strip()
 
 
-def test_for_llm_outdir_is_a_file_is_usage_error(tmp_path):
+def test_for_llm_out_path_is_a_non_md_file_is_usage_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_copy_to_clipboard", lambda text: False)
     log = tmp_path / "diting-x.jsonl"
     log.write_text('{"type":"link_state","state":"associated","ts":"2026-05-07T22:00:00+00:00"}\n')
-    afile = tmp_path / "not-a-dir"
+    afile = tmp_path / "not-a-dir"  # exists, not a directory, no .md suffix
     afile.write_text("x")
     with pytest.raises(SystemExit) as ei:
         cli._run_analyze([str(log), "--for-llm", "-o", str(afile)])
@@ -629,3 +631,21 @@ def test_connection_to_dict_round_trips():
     assert d["ssid"] == "X"
     assert d["timestamp"] == "2026-06-09T12:00:00+00:00"
     assert _json.dumps(d)  # fully JSON-serializable
+
+
+def test_for_llm_guidance_is_provider_neutral_and_names_deepseek(
+    tmp_path, monkeypatch, capsys,
+):
+    """simplify-llm-bundle: the post-write guidance frames targets as 'any
+    AI chat', confirms the clipboard copy, and lists DeepSeek among the
+    examples (not just Claude / ChatGPT)."""
+    monkeypatch.setattr(cli, "_copy_to_clipboard", lambda text: True)
+    log = tmp_path / "diting-x.jsonl"
+    log.write_text('{"type":"link_state","state":"associated","ts":"2026-05-07T22:00:00+00:00"}\n')
+    monkeypatch.chdir(tmp_path)
+    cli._run_analyze([str(log), "--for-llm"])
+    out = capsys.readouterr().out
+    assert "any AI chat" in out
+    assert "copied to clipboard" in out
+    assert "deepseek.com" in out
+    assert "gemini" in out.lower() and "kimi" in out.lower()

@@ -2008,6 +2008,24 @@ def build_llm_prompt(report: Report) -> str:
     )
 
 
+def build_llm_document(
+    report: Report,
+    *,
+    anonymizer: "Anonymizer | None" = None,
+) -> str:
+    """One self-contained Markdown document for `--for-llm`: the analyst
+    prompt, a horizontal rule, then the full Markdown report inline.
+
+    Handing this single string to an LLM (paste or attach) gives it both
+    the instructions and the data — no second file to copy. When
+    `anonymizer` is non-None, the report half is anonymized; the prompt
+    half carries no identifiers.
+    """
+    prompt = build_llm_prompt(report)
+    body = render_markdown(report, anonymizer=anonymizer)
+    return f"{prompt}\n\n---\n\n{body}"
+
+
 def report_to_dict(report: Report) -> dict[str, Any]:
     """Machine-readable view of a Report for `diting analyze --json`.
 
