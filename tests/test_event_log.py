@@ -1075,3 +1075,63 @@ def test_link_state_quality_is_local_only_stripped_before_wire():
     assert "quality" in LOCAL_ONLY_FIELDS
     # bare rssi_dbm must NOT be local-only (it's a real wire field on ble_device_seen)
     assert "rssi_dbm" not in LOCAL_ONLY_FIELDS
+
+
+# ---------- capture-sampling: link_sample + scan_summary ----------
+
+def _conn_for_sample(channel=36):
+    from datetime import datetime, timezone
+    from diting.models import Connection
+    return Connection(
+        ssid="X", bssid="AA:BB:CC:DD:EE:01", rssi_dbm=-50, noise_dbm=-94,
+        tx_rate_mbps=300.0, channel=channel, channel_width_mhz=80,
+        channel_band="5 GHz", phy_mode="ax", security="WPA2",
+        mcs_index=7, nss=2, timestamp=datetime.now(timezone.utc),
+    )
+
+
+def test_link_sample_throttles_to_one_per_window_and_nests_quality():
+    import io, json as _json
+    from datetime import datetime, timezone, timedelta
+    from diting.event_log import EventLogger
+    buf = io.StringIO()
+    log = EventLogger(buf, owns_sink=False)
+    t0 = datetime(2026, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
+    for s in range(0, 181, 10):  # every 10s for 3 min, floor 60s
+        log.emit_link_sample(_conn_for_sample(), now=t0 + timedelta(seconds=s),
+                             interval_s=60)
+    samples = [_json.loads(l) for l in buf.getvalue().splitlines()]
+    assert all(s["type"] == "link_sample" for s in samples)
+    assert len(samples) == 4                       # 0,60,120,180
+    assert samples[0]["bssid"] == "aa:bb:cc:dd:ee:01"
+    assert samples[0]["quality"]["snr_db"] == 44
+
+
+def test_scan_summary_counts_neighbors_and_co_channel():
+    import io, json as _json
+    from diting.event_log import EventLogger
+    buf = io.StringIO()
+    log = EventLogger(buf, owns_sink=False)
+    log.emit_scan_summary(neighbor_count=38, co_channel_count=9,
+                          current_channel=36)
+    row = _json.loads(buf.getvalue().splitlines()[0])
+    assert row["type"] == "scan_summary"
+    assert row["neighbor_count"] == 38
+    assert row["co_channel_count"] == 9
+    assert row["current_channel"] == 36
+
+
+def test_link_sample_and_scan_summary_are_local_only():
+    import io
+    from diting.event_log import EventLogger
+    seen: list[str] = []
+    buf = io.StringIO()
+    log = EventLogger(buf, owns_sink=False)
+    log.add_observer(lambda p: seen.append(p.get("type")))  # companion-like tap
+    log.emit_link_sample(_conn_for_sample())
+    log.emit_scan_summary(neighbor_count=1, co_channel_count=None,
+                          current_channel=None)
+    # both written to the JSONL sink…
+    assert "link_sample" in buf.getvalue() and "scan_summary" in buf.getvalue()
+    # …but never offered to the observer (local-only)
+    assert "link_sample" not in seen and "scan_summary" not in seen
