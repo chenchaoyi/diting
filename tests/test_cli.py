@@ -649,3 +649,76 @@ def test_for_llm_guidance_is_provider_neutral_and_names_deepseek(
     assert "copied to clipboard" in out
     assert "deepseek.com" in out
     assert "gemini" in out.lower() and "kimi" in out.lower()
+
+
+def test_for_llm_raw_references_original_no_rewrite(tmp_path, monkeypatch, capsys):
+    """for-llm-raw: --raw references the existing log (no rewrite) and the
+    guidance lists it to attach; the prompt mentions the raw log."""
+    monkeypatch.setattr(cli, "_copy_to_clipboard", lambda text: False)
+    log = tmp_path / "diting-x.jsonl"
+    log.write_text(
+        '{"type":"session_meta","ts":"2026-05-07T22:00:00+00:00","scene":"home"}\n'
+        '{"type":"link_state","state":"associated","ts":"2026-05-07T22:00:01+00:00","bssid":"aa:bb:cc:dd:ee:01","ssid":"Net"}\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    cli._run_analyze([str(log), "--for-llm", "--raw"])
+    out = capsys.readouterr().out
+    # only the briefing was written — no copy of the log
+    briefings = list(tmp_path.glob("diting-analysis-for-llm-*.md"))
+    assert len(briefings) == 1
+    assert not list(tmp_path.glob("diting-raw-anonymized-*.jsonl"))
+    assert "diting-x.jsonl" in out               # original referenced
+    assert "attach the raw event log" in out
+    assert "raw JSONL event log is attached" in briefings[0].read_text()
+
+
+def test_raw_implies_for_llm(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_copy_to_clipboard", lambda text: False)
+    log = tmp_path / "diting-x.jsonl"
+    log.write_text('{"type":"link_state","state":"associated","ts":"2026-05-07T22:00:00+00:00"}\n')
+    monkeypatch.chdir(tmp_path)
+    cli._run_analyze([str(log), "--raw"])  # no explicit --for-llm
+    assert len(list(tmp_path.glob("diting-analysis-for-llm-*.md"))) == 1
+
+
+def test_raw_anonymize_writes_scrubbed_log_with_matching_handles(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(cli, "_copy_to_clipboard", lambda text: False)
+    log = tmp_path / "diting-x.jsonl"
+    log.write_text(
+        '{"type":"link_state","state":"associated","ts":"2026-05-07T22:00:00+00:00","bssid":"aa:bb:cc:dd:ee:01","ssid":"HomeNet"}\n'
+        '{"type":"ble_device_seen","ts":"2026-05-07T22:00:01+00:00","identifier":"uuid-1","name":"Joe iPhone","vendor":"Apple, Inc."}\n'
+        '{"type":"latency_spike","ts":"2026-05-07T22:00:02+00:00","target_ip":"1.1.1.1","rtt_ms":300}\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    cli._run_analyze([str(log), "--for-llm", "--raw", "--anonymize"])
+    scrubbed = list(tmp_path.glob("diting-raw-anonymized-*.jsonl"))
+    assert len(scrubbed) == 1
+    import json as _json
+    blob = scrubbed[0].read_text()
+    rows = [_json.loads(line) for line in blob.splitlines()]
+    # real identifiers gone, handles in; public IP + vendor verbatim
+    assert "aa:bb:cc:dd:ee:01" not in blob and "HomeNet" not in blob
+    assert "Joe iPhone" not in blob              # device name scrubbed
+    assert "AP_1" in blob and "SSID_1" in blob and "NAME_1" in blob
+    assert any(r.get("target_ip") == "1.1.1.1" for r in rows)  # public IP kept
+    assert "Apple, Inc." in blob                 # vendor preserved
+
+
+def test_scrub_event_maps_identifiers_keeps_public_ip():
+    from diting.analyze import Anonymizer, scrub_event
+    anon = Anonymizer()
+    ev = {
+        "type": "lan_host_dhcp_rotation", "mac": "de:ad:be:ef:00:01",
+        "new_ip": "192.168.1.5", "target_ip": "8.8.8.8",
+        "hostname": "nas.local", "name": "Bob Mac", "vendor": "Acme",
+    }
+    out = scrub_event(ev, anon)
+    assert out["mac"].startswith("MAC_")
+    assert out["new_ip"].startswith("IP_")       # RFC1918 → handle
+    assert out["target_ip"] == "8.8.8.8"          # public IP verbatim
+    assert out["hostname"].startswith("HOST_")
+    assert out["name"].startswith("NAME_")
+    assert out["vendor"] == "Acme"                # not identifying
+    assert ev["mac"] == "de:ad:be:ef:00:01"       # input not mutated

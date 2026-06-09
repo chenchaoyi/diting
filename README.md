@@ -499,6 +499,24 @@ sets the output (`-o run.md` for a file, `-o dir/` for a directory). No
 API key, no telemetry, no upload — diting writes the file locally and
 puts it on your clipboard; you control who sees it.
 
+Want the model to have the complete event log, not just the
+distilled briefing? Add `--raw`:
+
+```bash
+diting analyze diting-20260608.jsonl --for-llm --raw
+```
+
+The briefing still goes to your clipboard; `--raw` additionally tells
+you to **attach your existing `.jsonl`** to the same chat (it references
+the original file — no copy, no rewrite), and the prompt tells the model
+the raw log is attached for deep-dives (exact timestamps, RSSI sequences,
+event ordering) while trusting the briefing's stable-identity figures for
+counts. The raw log is large, so it's a file attachment, not a paste.
+With `--anonymize`, the only file diting writes is a scrubbed
+`diting-raw-anonymized-<timestamp>.jsonl` (real identifiers — including
+device names — replaced with the briefing's handles), and that's what
+you attach instead of the original.
+
 Add `--anonymize` when pasting into a public LLM:
 
 ```bash
