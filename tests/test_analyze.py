@@ -472,17 +472,25 @@ def test_top_contributors_ranks_bssids_by_roam_plus_stir():
     assert top.bssids[0].stir_count == 1
 
 
-def test_top_contributors_ranks_ble_identifiers_by_seen_count():
+def test_top_contributors_ranks_ble_by_stable_identity_not_rotating_id():
     events = [
-        _ev_a2("2026-05-21T09:00:00+08:00", "ble_device_seen", identifier="abc",
+        _ev_a2("2026-05-21T09:00:00+08:00", "ble_device_seen", identifier="rot-1",
             name="Magic Keyboard", vendor="Apple, Inc."),
-        _ev_a2("2026-05-21T09:05:00+08:00", "ble_device_seen", identifier="abc"),
-        _ev_a2("2026-05-21T09:10:00+08:00", "ble_device_seen", identifier="def",
+        _ev_a2("2026-05-21T09:05:00+08:00", "ble_device_seen", identifier="rot-2",
+            name="Magic Keyboard", vendor="Apple, Inc."),
+        _ev_a2("2026-05-21T09:10:00+08:00", "ble_device_seen", identifier="rot-3",
             name="AirPods Pro", vendor="Apple, Inc."),
     ]
     top = aggregate_top_contributors(events)
-    assert top.ble_identifiers[0].identifier == "abc"
+    # Magic Keyboard seen twice across two rotated ids → one entry, count 2.
     assert top.ble_identifiers[0].seen_count == 2
+    assert "Magic Keyboard" in top.ble_identifiers[0].label
+    assert top.ble_identifiers[0].identifier.startswith("ble:")  # stable key
+    # An unkeyable sighting (no vendor / name) is skipped, not ranked.
+    top2 = aggregate_top_contributors(
+        [_ev_a2("2026-05-21T09:00:00+08:00", "ble_device_seen", identifier="x")]
+    )
+    assert top2.ble_identifiers == ()
 
 
 def test_top_contributors_ranks_lan_hosts_by_dhcp_rotation_count():
@@ -1208,3 +1216,23 @@ def test_report_to_dict_is_json_serializable_with_stable_keys():
     assert d["total_events"] == r.total_events
     assert d["temporal"]["ble_population"]["distinct_devices"] >= 1
     assert isinstance(d["insights"], list)
+
+
+def test_cross_session_blocks_localized_under_zh():
+    """fix-analyze-cross-blocks: a zh run renders the cross-session block
+    headers in Chinese, not English (they were t()-wrapped but had no ZH)."""
+    from diting import i18n
+    events = [_seen(h, vendor="Acme", name=f"d{h}") for h in range(0, 6)]
+    events += [_left(0, 5)]
+    r = analyze(events, source_path="x.jsonl")
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("zh")
+        out = render(r)
+        assert "按小时事件分布" in out          # hour-of-day header
+        assert "天 × 小时 热力图（密度）" in out  # heatmap header
+        assert "主要贡献来源" in out             # top contributors
+        assert "Top contributors" not in out     # no English leak
+        assert "Events by hour-of-day" not in out
+    finally:
+        i18n.set_lang(saved)
