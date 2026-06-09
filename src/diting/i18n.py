@@ -1573,6 +1573,86 @@ _ZH: dict[str, str] = {
         "丢包风暴：{n}  峰值 {pct}%",
     "Insights": "洞察",
     "TODO: ": "待办：",
+    # ---- temporal / population analysis (enrich-temporal-analysis) ----
+    "BLE arrivals": "BLE 到达",
+    "RF stir": "RF 扰动",
+    "packet loss": "丢包",
+    "latency spikes": "延迟尖峰",
+    "roams": "漫游",
+    "BLE arrival rhythm": "BLE 到达节律",
+    "BLE arrivals peak around {peak}:00 ({pk}/h) and bottom "
+    "out around {quiet}:00 ({qt}/h). {shape}":
+        "BLE 到达在 {peak}:00 前后达到峰值（{pk}/小时），在 {quiet}:00 "
+        "前后最少（{qt}/小时）。{shape}",
+    "The busiest {n} hours hold {pct}% of arrivals — a "
+    "concentrated daily cycle (people arriving / leaving), "
+    "not a flat background.":
+        "最忙的 {n} 个小时占了 {pct}% 的到达 —— 是明显的日周期（人进进出出），"
+        "不是平的背景噪声。",
+    "Arrivals are spread fairly evenly across the day — a "
+    "steady ambient churn rather than a clear arrival cycle.":
+        "到达在一天里分布相当均匀 —— 是稳定的环境流动，而非清晰的到达周期。",
+    "Treat the peak hours as your occupancy window; capture "
+    "during one to see what is actually arriving.":
+        "把峰值时段当作你的「有人」窗口；在其中一个时段开 --log 抓一次，看看到底是什么在到达。",
+    "BLE dwell — foot-traffic vs residents": "BLE 停留 —— 人流 vs 常驻",
+    "{n} departures: median dwell {p50}, 90th-pct {p90}. "
+    "{trans} brief (<2 min), {ling} lingering, {res} "
+    "resident (>30 min). {read}":
+        "{n} 次离开：停留中位数 {p50}，90 分位 {p90}。{trans} 次短暂（<2 分钟），"
+        "{ling} 次逗留，{res} 次常驻（>30 分钟）。{read}",
+    "{pct}% of sightings were brief — high transient "
+    "foot-traffic (devices passing through), not a stable "
+    "resident population.":
+        "{pct}% 的出现都很短暂 —— 是高人流（设备路过），不是稳定的常驻设备群。",
+    "Most devices lingered — a stable resident population "
+    "rather than pass-through traffic.":
+        "大多数设备都逗留了 —— 是稳定的常驻设备群，而非路过的流量。",
+    "Device population": "设备人口",
+    "{n} distinct physical devices over the log (counted by "
+    "stable identity, not the rotating BLE address). {res} "
+    "were present across most of the span (fixtures / "
+    "regulars); {passers} appeared in a single hour "
+    "(pass-bys).{unk}":
+        "整段日志里 {n} 台不同的物理设备（按稳定身份计数，而非滚动的 BLE 地址）。"
+        "{res} 台贯穿了大部分时段（固定装置 / 常客）；{passers} 台只在某一个小时出现（过客）。{unk}",
+    " {u} sightings had no stable identity and are excluded "
+    "from the count.":
+        " 另有 {u} 次出现没有稳定身份，未计入设备数。",
+    "Activity during expected-quiet hours": "本应安静的时段有活动",
+    "{pct}% of all events fell in the `{scene}` scene's "
+    "expected-quiet window ({band}). Off-baseline timing "
+    "is more noteworthy than the same activity in-hours.":
+        "{pct}% 的事件落在 `{scene}` 场景本应安静的时段（{band}）。"
+        "偏离基线的时间点，比同样的活动出现在正常时段更值得注意。",
+    "Skim the overnight events: a device that is active "
+    "when the space should be empty is worth identifying.":
+        "扫一眼夜间的事件：在本该空无一人时还在活动的设备，值得弄清楚是什么。",
+    "Signals coinciding in time": "信号在时间上重合",
+    "{label} concentrated in the busy BLE-arrival hours "
+    "({hours}) — {frac}% of it fell when arrivals were "
+    "above the daily median. A shared timing is a "
+    "hypothesis, not a cause: e.g. loss / latency rising "
+    "as devices arrive points to airtime contention "
+    "during the busy window.":
+        "{label} 集中在 BLE 到达繁忙的时段（{hours}）—— 其中 {frac}% 发生在"
+        "到达量高于当日中位数的时候。时间重合是一个假设，不是因果：例如随着设备到达"
+        "而上升的丢包 / 延迟，指向繁忙窗口里的空口争用。",
+    "Capture with --log during {hours} and re-analyze to "
+    "test whether the signals are actually linked.":
+        "在 {hours} 用 --log 抓一段再分析，验证这些信号是否真的相关。",
+    "Temporal & population": "时序与人口",
+    "  BLE rhythm   peak {peak}:00 ({pk}/h) · quiet {quiet}:00 "
+    "({qt}/h)":
+        "  BLE 节律    峰值 {peak}:00（{pk}/h）· 谷值 {quiet}:00（{qt}/h）",
+    "  Population   {n} devices · {res} resident · {passers} "
+    "pass-by":
+        "  人口        {n} 台设备 · {res} 常驻 · {passers} 过客",
+    "  Dwell        p50 {p50} · p90 {p90} · {trans} brief / "
+    "{ling} lingering / {res} resident":
+        "  停留        p50 {p50} · p90 {p90} · {trans} 短暂 / "
+        "{ling} 逗留 / {res} 常驻",
+    "  Co-peaks     {joined}": "  共峰        {joined}",
 
     "Empty log": "空日志",
     "No JSONL events parsed. Is diting still writing? "

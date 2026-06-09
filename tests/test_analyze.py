@@ -962,3 +962,235 @@ def test_for_llm_default_outdir_is_cwd_relative_not_repo(
     assert len(bundles) == 1
     assert (bundles[0] / "report.md").exists()
     assert (bundles[0] / "prompt.txt").exists()
+
+
+# ------------------------------------------------------------------
+# temporal / population (enrich-temporal-analysis)
+# ------------------------------------------------------------------
+
+from diting.analyze import (  # noqa: E402
+    _ble_stable_key,
+    aggregate_ble_dwell,
+    aggregate_ble_population,
+    aggregate_co_peaks,
+    aggregate_hourly_rhythm,
+    aggregate_hour_of_day,
+)
+
+
+def _th(hour: int, minute: int = 0, day: int = 7) -> str:
+    """ISO-8601 UTC timestamp with hour control (for temporal tests)."""
+    return f"2026-05-{day:02d}T{hour:02d}:{minute:02d}:00+00:00"
+
+
+def _seen(hour: int, *, vendor=None, name=None, ident=None, day=7) -> dict:
+    f = {"type": "ble_device_seen", "ts": _th(hour, day=day)}
+    if vendor is not None:
+        f["vendor"] = vendor
+    if name is not None:
+        f["name"] = name
+    if ident is not None:
+        f["identifier"] = ident
+    return f
+
+
+def _left(hour: int, dwell_s: float) -> dict:
+    return {"type": "ble_device_left", "ts": _th(hour), "seen_for_seconds": dwell_s}
+
+
+# ---- gate ----
+
+def test_long_span_enables_temporal_aggregations():
+    """A single long log (no --since, one file) still gets temporal
+    analysis — the gate fires on span alone."""
+    events = [_seen(h, vendor="Acme", name=f"d{h}") for h in range(0, 6)]
+    r = analyze(events, source_path="x.jsonl")
+    assert r.hourly_rhythms  # non-empty
+    assert r.ble_population is not None
+
+
+def test_short_span_stays_lean():
+    """A short single log keeps the legacy shape — no temporal block."""
+    events = [
+        _ev("ble_device_seen", _t(0), vendor="Acme", name="d"),
+        _ev("ble_device_seen", _t(5), vendor="Acme", name="e"),
+    ]
+    r = analyze(events, source_path="x.jsonl")
+    assert r.hourly_rhythms == {}
+    assert r.ble_population is None
+    assert not any("rhythm" in i.title.lower() for i in r.insights)
+
+
+# ---- stable key ----
+
+def test_ble_stable_key_matches_familiarity_key():
+    from diting.familiarity import familiarity_key
+    row = {"type": "ble_device_seen", "vendor": "Acme Corp", "name": "Widget"}
+    assert _ble_stable_key(row) == familiarity_key(
+        "ble", name="Widget", vendor="Acme Corp",
+    )
+    # No identity at all → None (never the rotating identifier).
+    assert _ble_stable_key({"type": "ble_device_seen", "identifier": "x"}) is None
+
+
+def test_population_counts_distinct_devices_not_rotating_ids():
+    """The same physical device under many rotated identifiers counts
+    once — keyed on vendor/name, not the rotating id."""
+    events = [
+        _seen(h, vendor="Acme", name="Widget", ident=f"rot-{h}")
+        for h in range(0, 6)
+    ]
+    r = analyze(events, source_path="x.jsonl")
+    assert r.ble_population.distinct_devices == 1  # not 6
+
+
+def test_population_splits_residents_from_passersby():
+    events = []
+    # One device present every hour 0..5 (resident).
+    for h in range(0, 6):
+        events.append(_seen(h, vendor="Fixture", name="Beacon"))
+    # Three devices each seen in exactly one hour (pass-bys).
+    events.append(_seen(1, vendor="V1", name="P1"))
+    events.append(_seen(2, vendor="V2", name="P2"))
+    events.append(_seen(3, vendor="V3", name="P3"))
+    pop = aggregate_ble_population(events)
+    assert pop.distinct_devices == 4
+    assert pop.residents == 1
+    assert pop.passersby == 3
+
+
+# ---- dwell ----
+
+def test_dwell_summary_splits_transient_lingering_resident():
+    events = [
+        _left(0, 5),      # transient
+        _left(0, 30),     # transient
+        _left(1, 600),    # lingering
+        _left(2, 5000),   # resident
+    ]
+    dw = aggregate_ble_dwell(events)
+    assert dw.n == 4
+    assert dw.transient == 2
+    assert dw.lingering == 1
+    assert dw.resident == 1
+    assert dw.p50_s == 315.0  # median of [5,30,600,5000] = (30+600)/2
+
+
+# ---- rhythm ----
+
+def test_hourly_rhythm_finds_peak_quiet_and_concentration():
+    # 100 events in hour 9, 5 each in hours 0,1,2 → concentrated.
+    events = [_seen(9, vendor="A", name=str(i)) for i in range(100)]
+    events += [_seen(h, vendor="A", name=f"{h}-{i}") for h in (0, 1, 2) for i in range(5)]
+    hod = aggregate_hour_of_day(events)
+    rh = aggregate_hourly_rhythm(hod, "ble_device_seen")
+    assert rh.peak_hour == 9
+    assert rh.peak_count == 100
+    assert rh.quiet_count == 5
+    assert rh.concentrated  # top-3 share well above 0.6
+
+
+def test_co_peaks_detects_shared_peak_hour():
+    rhythms = {
+        "ble_device_seen": aggregate_hourly_rhythm(
+            {9: {"ble_device_seen": 10}, 1: {"ble_device_seen": 1}},
+            "ble_device_seen",
+        ),
+        "loss_burst": aggregate_hourly_rhythm(
+            {9: {"loss_burst": 5}, 2: {"loss_burst": 1}}, "loss_burst",
+        ),
+    }
+    co = aggregate_co_peaks(rhythms)
+    assert co == ((9, ("ble_device_seen", "loss_burst")),)
+
+
+# ---- heuristics ----
+
+def _office_long(events: list[dict]) -> "object":
+    return analyze([_ev_sm("office")] + events, source_path="x.jsonl")
+
+
+def test_arrival_rhythm_insight_names_peak_and_quiet():
+    events = [_seen(20, vendor="A", name=str(i)) for i in range(60)]
+    events += [_seen(3, vendor="A", name=f"q{i}") for i in range(5)]
+    r = analyze(events, source_path="x.jsonl")
+    rhythm = next(i for i in r.insights if i.title == "BLE arrival rhythm")
+    assert "20:00" in rhythm.detail and "3:00" in rhythm.detail
+
+
+def test_dwell_insight_reads_transient_foot_traffic():
+    # 40 left events, mostly short → "high transient foot-traffic".
+    events = [_seen(h, vendor="A", name=str(h)) for h in range(0, 6)]
+    events += [_left(0, 10) for _ in range(35)] + [_left(1, 4000) for _ in range(5)]
+    r = analyze(events, source_path="x.jsonl")
+    dwell = next(i for i in r.insights if "dwell" in i.title.lower())
+    assert "transient foot-traffic" in dwell.detail
+
+
+def test_population_insight_reports_fixtures_vs_passersby():
+    events = [_seen(h, vendor="Fix", name="B") for h in range(0, 6)]
+    events += [_seen(h, vendor=f"V{h}", name=f"P{h}") for h in range(0, 6)]
+    r = analyze(events, source_path="x.jsonl")
+    pop = next(i for i in r.insights if i.title == "Device population")
+    assert "distinct physical devices" in pop.detail
+    assert "rotating BLE address" in pop.detail
+
+
+def test_off_hours_insight_scene_gated_office():
+    # Office scene, most events overnight (00–06 = expected-quiet band).
+    events = [_seen(2, vendor="A", name=f"n{i}") for i in range(40)]
+    events += [_seen(20, vendor="A", name=f"d{i}") for i in range(10)]
+    r = _office_long(events)
+    off = next(
+        (i for i in r.insights if i.title == "Activity during expected-quiet hours"),
+        None,
+    )
+    assert off is not None and "office" in off.detail and "00:00–06:00" in off.detail
+
+
+def test_off_hours_insight_not_for_public_scene():
+    # Public scene has no expected-quiet prior → no off-hours insight.
+    events = [_seen(2, vendor="A", name=f"n{i}") for i in range(40)]
+    r = analyze([_ev_sm("public")] + events, source_path="x.jsonl")
+    assert not any(
+        i.title == "Activity during expected-quiet hours" for i in r.insights
+    )
+
+
+def test_co_peak_insight_is_hypothesis_with_follow_up():
+    # Loss concentrated in the busy BLE-arrival hour → coincidence insight.
+    events = [_seen(9, vendor="A", name=str(i)) for i in range(100)]
+    events += [_seen(h, vendor="A", name=f"{h}-{i}") for h in (0, 1) for i in range(2)]
+    events += [{"type": "loss_burst", "ts": _th(9, m), "loss_pct": 50} for m in range(5)]
+    r = analyze(events, source_path="x.jsonl")
+    co = next((i for i in r.insights if i.title == "Signals coinciding in time"), None)
+    assert co is not None
+    assert "hypothesis, not a cause" in co.detail
+    assert "09:00" in co.todo  # concrete follow-up window
+
+
+# ---- LLM prompt ----
+
+def _long_office_report():
+    events = [_seen(20, vendor="A", name=str(i)) for i in range(60)]
+    events += [_seen(3, vendor="A", name=f"q{i}") for i in range(5)]
+    return analyze([_ev_sm("office")] + events, source_path="x.jsonl")
+
+
+def test_llm_prompt_includes_temporal_lenses():
+    prompt = build_llm_prompt(_long_office_report())
+    assert "Temporal & population lenses" in prompt
+    for kw in ("Rhythm", "Recurrence", "Dwell", "coincidence", "Off-hours"):
+        assert kw in prompt
+
+
+def test_llm_prompt_warns_rotating_mac_overcount():
+    prompt = build_llm_prompt(_long_office_report())
+    assert "rotate" in prompt and "over-count" in prompt
+
+
+def test_scene_paragraph_states_rhythm_on_long_log():
+    from diting.analyze import scene_llm_context_paragraph
+    para = scene_llm_context_paragraph(_long_office_report())
+    assert "rhythm" in para.lower()
+    assert "20:00" in para  # observed peak hour

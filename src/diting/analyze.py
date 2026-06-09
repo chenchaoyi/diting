@@ -129,6 +129,196 @@ class TopContributors:
     lan_hosts: tuple[TopLAN, ...]
 
 
+# ---------- temporal / population (enrich-temporal-analysis) ----------
+
+# A capture this long counts as a "long-timeline run" — temporal analysis
+# enables on span alone, not just multi-file / --since. A 13 h overnight
+# log IS a long-timeline run.
+_LONG_SPAN = timedelta(hours=2)
+# Dwell band edges (seconds): a pass-by vs a lingering vs a fixture.
+_DWELL_TRANSIENT_S = 120        # < 2 min
+_DWELL_RESIDENT_S = 1800        # >= 30 min
+# A category's activity is "concentrated" when its busiest few hours hold
+# at least this share of the total.
+_CONCENTRATION_HOURS = 3
+_CONCENTRATION_SHARE = 0.6
+# A device "present across most of the span" (>= this fraction of the
+# spanned hours, with a small floor) reads as a fixture/regular.
+_RESIDENT_HOURS_FRAC = 0.5
+_RESIDENT_HOURS_FLOOR = 3
+# Scene → the band of hours that scene expects to be quiet. Activity here
+# is more noteworthy than the same activity in-hours.
+_EXPECTED_QUIET_HOURS = {
+    "office": range(0, 6),       # overnight in an office
+    "home": range(10, 17),       # the workday at home
+}
+
+
+@dataclass(frozen=True, slots=True)
+class DwellSummary:
+    """seen→left dwell distribution for BLE devices over the log."""
+    n: int
+    p50_s: float
+    p90_s: float
+    transient: int      # dwell < _DWELL_TRANSIENT_S
+    lingering: int      # in between
+    resident: int       # dwell >= _DWELL_RESIDENT_S
+
+
+@dataclass(frozen=True, slots=True)
+class PopulationSummary:
+    """Distinct PHYSICAL BLE devices over the log, keyed on the stable
+    familiarity ladder (never the rotating `identifier`)."""
+    distinct_devices: int
+    residents: int          # present across most of the spanned hours
+    passersby: int          # seen in exactly one hour
+    unkeyable_sightings: int  # sightings with no stable identity (honest)
+
+
+@dataclass(frozen=True, slots=True)
+class HourlyRhythm:
+    """One category's distribution across the 24 hours of the day."""
+    category: str
+    peak_hour: int
+    peak_count: int
+    quiet_hour: int
+    quiet_count: int
+    top_hours_share: float   # share of total in the busiest _CONCENTRATION_HOURS
+    total: int
+
+    @property
+    def concentrated(self) -> bool:
+        return self.top_hours_share >= _CONCENTRATION_SHARE
+
+
+def _ble_stable_key(row: dict[str, Any]) -> str | None:
+    """Stable physical-device identity for a BLE JSONL row, via the same
+    ladder ``familiarity.familiarity_key`` uses — manufacturer payload →
+    service-data id → (vendor_id, name) → vendor-group → None — so the
+    offline analyser and the live store can't drift. NEVER the rotating
+    `identifier` (a single device emits many). In serialised logs only
+    name / vendor survive (the richer rungs are in-memory-only), so most
+    rows resolve to the (name) / vendor-group tail; that's recurrence
+    grouping for a population count, not a per-device or trust claim."""
+    from .familiarity import familiarity_key
+    return familiarity_key(
+        "ble",
+        manufacturer_hex=row.get("manufacturer_hex"),
+        vendor_id=row.get("vendor_id"),
+        name=row.get("name"),
+        service_data_id=row.get("service_data_id"),
+        vendor=row.get("vendor"),
+    )
+
+
+def aggregate_ble_dwell(events: list[dict[str, Any]]) -> DwellSummary | None:
+    """Dwell distribution from ``ble_device_left.seen_for_seconds``.
+    Returns None when there are no usable left events."""
+    dwells = [
+        float(e["seen_for_seconds"])
+        for e in events
+        if e.get("type") == "ble_device_left"
+        and isinstance(e.get("seen_for_seconds"), (int, float))
+        and e["seen_for_seconds"] >= 0
+    ]
+    if not dwells:
+        return None
+    dwells.sort()
+    p90 = dwells[min(len(dwells) - 1, (len(dwells) * 9) // 10)]
+    return DwellSummary(
+        n=len(dwells),
+        p50_s=statistics.median(dwells),
+        p90_s=p90,
+        transient=sum(1 for d in dwells if d < _DWELL_TRANSIENT_S),
+        lingering=sum(
+            1 for d in dwells if _DWELL_TRANSIENT_S <= d < _DWELL_RESIDENT_S
+        ),
+        resident=sum(1 for d in dwells if d >= _DWELL_RESIDENT_S),
+    )
+
+
+def aggregate_ble_population(
+    events: list[dict[str, Any]],
+) -> PopulationSummary | None:
+    """Distinct physical BLE devices + a resident-vs-passer-by split,
+    keyed on the stable familiarity ladder. Returns None with no BLE
+    sightings."""
+    hours_by_key: dict[str, set[int]] = {}
+    unkeyable = 0
+    spanned: set[int] = set()
+    any_ble = False
+    for e in events:
+        if e.get("type") != "ble_device_seen":
+            continue
+        any_ble = True
+        ts = _parse_ts(e.get("ts", ""))
+        if ts is None:
+            continue
+        spanned.add(ts.hour)
+        key = _ble_stable_key(e)
+        if key is None:
+            unkeyable += 1
+            continue
+        hours_by_key.setdefault(key, set()).add(ts.hour)
+    if not any_ble:
+        return None
+    # A device is a "resident/fixture" when it shows up across most of the
+    # hours the log actually spans (with a small floor so a 4 h log still
+    # has a meaningful bar).
+    resident_cut = max(
+        _RESIDENT_HOURS_FLOOR,
+        int(len(spanned) * _RESIDENT_HOURS_FRAC),
+    )
+    residents = sum(1 for hs in hours_by_key.values() if len(hs) >= resident_cut)
+    passersby = sum(1 for hs in hours_by_key.values() if len(hs) == 1)
+    return PopulationSummary(
+        distinct_devices=len(hours_by_key),
+        residents=residents,
+        passersby=passersby,
+        unkeyable_sightings=unkeyable,
+    )
+
+
+def aggregate_hourly_rhythm(
+    hour_of_day: dict[int, dict[str, int]], category: str,
+) -> HourlyRhythm | None:
+    """Peak / quiet hour + busiest-few-hours concentration for one event
+    category, from the already-computed hour buckets. None when the
+    category has no events."""
+    counts = {h: hour_of_day.get(h, {}).get(category, 0) for h in range(24)}
+    total = sum(counts.values())
+    if total == 0:
+        return None
+    active = {h: n for h, n in counts.items() if n > 0}
+    peak_hour = max(active, key=lambda h: active[h])
+    quiet_hour = min(active, key=lambda h: active[h])
+    top = sorted(active.values(), reverse=True)[:_CONCENTRATION_HOURS]
+    return HourlyRhythm(
+        category=category,
+        peak_hour=peak_hour,
+        peak_count=active[peak_hour],
+        quiet_hour=quiet_hour,
+        quiet_count=active[quiet_hour],
+        top_hours_share=sum(top) / total,
+        total=total,
+    )
+
+
+def aggregate_co_peaks(
+    rhythms: dict[str, HourlyRhythm],
+) -> tuple[tuple[int, tuple[str, ...]], ...]:
+    """Hours where two or more categories share their peak — the raw
+    material for a cross-signal coincidence insight. Sorted by hour."""
+    by_hour: dict[int, list[str]] = {}
+    for cat, rh in rhythms.items():
+        by_hour.setdefault(rh.peak_hour, []).append(cat)
+    return tuple(
+        (h, tuple(sorted(cats)))
+        for h, cats in sorted(by_hour.items())
+        if len(cats) >= 2
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Report:
     """Aggregated stats + insights for a log (or merged set of logs)."""
@@ -191,6 +381,13 @@ class Report:
     # not from session_meta itself.
     observed_bssid_count: int = 0
     observed_ble_identifier_count: int = 0
+    # ---------- temporal / population (enrich-temporal-analysis) ----------
+    # Populated alongside the cross-session aggregations (same gate, now
+    # also fired by a long span). Empty / None on short single-session runs.
+    ble_dwell: DwellSummary | None = None
+    ble_population: PopulationSummary | None = None
+    hourly_rhythms: dict[str, "HourlyRhythm"] = field(default_factory=dict)
+    co_peaks: tuple[tuple[int, tuple[str, ...]], ...] = ()
 
 
 # ---------- analyser ----------
@@ -328,19 +525,40 @@ def analyze(
     paths_t = tuple(source_paths) if source_paths else (
         (source_path,) if source_path else ()
     )
-    enable_cross_session = (len(paths_t) > 1) or (since is not None)
+    # A long single log is a long-timeline run too — enable temporal
+    # analysis on span alone, not only on multi-file / --since. (The
+    # user's 13 h overnight log otherwise got no temporal output.)
+    span = (
+        (max(timestamps) - min(timestamps)) if timestamps else timedelta(0)
+    )
+    enable_cross_session = (
+        (len(paths_t) > 1) or (since is not None) or (span >= _LONG_SPAN)
+    )
     if enable_cross_session:
         hour_buckets = aggregate_hour_of_day(events)
         dxh = aggregate_day_of_week_x_hour(events)
         per_net = aggregate_per_network(events)
         daily = aggregate_daily_trend(events)
         contributors = aggregate_top_contributors(events)
+        dwell = aggregate_ble_dwell(events)
+        population = aggregate_ble_population(events)
+        rhythms = {
+            cat: rh
+            for cat in ("ble_device_seen", "rf_stir", "loss_burst",
+                        "latency_spike", "roam")
+            if (rh := aggregate_hourly_rhythm(hour_buckets, cat)) is not None
+        }
+        co_peaks = aggregate_co_peaks(rhythms)
     else:
         hour_buckets = {}
         dxh = ()
         per_net = ()
         daily = ()
         contributors = None
+        dwell = None
+        population = None
+        rhythms = {}
+        co_peaks = ()
 
     report = Report(
         path=source_path or (paths_t[0] if paths_t else ""),
@@ -380,6 +598,10 @@ def analyze(
         scene_sources=scene_sources_map,
         observed_bssid_count=len(distinct_bssids),
         observed_ble_identifier_count=len(distinct_ble_identifiers),
+        ble_dwell=dwell,
+        ble_population=population,
+        hourly_rhythms=rhythms,
+        co_peaks=co_peaks,
     )
 
     insights = list(_run_heuristics(report, events))
@@ -969,6 +1191,11 @@ def _run_heuristics(
                 ),
             ))
 
+    # -- T (temporal / population, enrich-temporal-analysis). These only
+    #    have inputs on a long-timeline run (the aggregates are None /
+    #    empty otherwise), so each guards on its own aggregate.
+    out.extend(_temporal_heuristics(r))
+
     # -- 9. Short session warning
     if (
         r.span_start is not None and r.span_end is not None
@@ -987,6 +1214,187 @@ def _run_heuristics(
                 "(an evening, a workday) for richer signal."
             ),
         ))
+
+    return out
+
+
+def _category_label(category: str) -> str:
+    """Short human label for an event category in temporal copy."""
+    return {
+        "ble_device_seen": t("BLE arrivals"),
+        "rf_stir": t("RF stir"),
+        "loss_burst": t("packet loss"),
+        "latency_spike": t("latency spikes"),
+        "roam": t("roams"),
+    }.get(category, category)
+
+
+def _hour_band(hours: range) -> str:
+    """`range(0, 6)` → `00:00–06:00`."""
+    return f"{hours.start:02d}:00–{hours.stop:02d}:00"
+
+
+def _temporal_heuristics(r: "Report") -> list[Insight]:
+    """Temporal / population / coincidence insights for a long-timeline
+    run. Each guards on its own aggregate, so a short log (aggregates
+    None / empty) yields nothing."""
+    out: list[Insight] = []
+
+    # -- T1. BLE arrival rhythm
+    rh = r.hourly_rhythms.get("ble_device_seen")
+    if rh is not None and rh.total >= 50:
+        if rh.concentrated:
+            shape = t(
+                "The busiest {n} hours hold {pct}% of arrivals — a "
+                "concentrated daily cycle (people arriving / leaving), "
+                "not a flat background.",
+                n=_CONCENTRATION_HOURS, pct=int(rh.top_hours_share * 100),
+            )
+        else:
+            shape = t(
+                "Arrivals are spread fairly evenly across the day — a "
+                "steady ambient churn rather than a clear arrival cycle."
+            )
+        out.append(Insight(
+            severity="info",
+            title=t("BLE arrival rhythm"),
+            detail=t(
+                "BLE arrivals peak around {peak}:00 ({pk}/h) and bottom "
+                "out around {quiet}:00 ({qt}/h). {shape}",
+                peak=rh.peak_hour, pk=rh.peak_count,
+                quiet=rh.quiet_hour, qt=rh.quiet_count, shape=shape,
+            ),
+            todo=t(
+                "Treat the peak hours as your occupancy window; capture "
+                "during one to see what is actually arriving."
+            ),
+        ))
+
+    # -- T2. Dwell / foot-traffic read
+    dw = r.ble_dwell
+    if dw is not None and dw.n >= 30:
+        frac = dw.transient / dw.n
+        if frac >= 0.5:
+            read = t(
+                "{pct}% of sightings were brief — high transient "
+                "foot-traffic (devices passing through), not a stable "
+                "resident population.",
+                pct=int(frac * 100),
+            )
+        else:
+            read = t(
+                "Most devices lingered — a stable resident population "
+                "rather than pass-through traffic."
+            )
+        out.append(Insight(
+            severity="info",
+            title=t("BLE dwell — foot-traffic vs residents"),
+            detail=t(
+                "{n} departures: median dwell {p50}, 90th-pct {p90}. "
+                "{trans} brief (<2 min), {ling} lingering, {res} "
+                "resident (>30 min). {read}",
+                n=dw.n, p50=_format_duration(dw.p50_s),
+                p90=_format_duration(dw.p90_s), trans=dw.transient,
+                ling=dw.lingering, res=dw.resident, read=read,
+            ),
+        ))
+
+    # -- T3. Population — fixtures vs pass-bys
+    pop = r.ble_population
+    if pop is not None and pop.distinct_devices >= 5:
+        unk = (
+            t(
+                " {u} sightings had no stable identity and are excluded "
+                "from the count.",
+                u=pop.unkeyable_sightings,
+            )
+            if pop.unkeyable_sightings else ""
+        )
+        out.append(Insight(
+            severity="info",
+            title=t("Device population"),
+            detail=t(
+                "{n} distinct physical devices over the log (counted by "
+                "stable identity, not the rotating BLE address). {res} "
+                "were present across most of the span (fixtures / "
+                "regulars); {passers} appeared in a single hour "
+                "(pass-bys).{unk}",
+                n=pop.distinct_devices, res=pop.residents,
+                passers=pop.passersby, unk=unk,
+            ),
+        ))
+
+    # -- T4. Off-hours activity (scene-aware)
+    scene = r.scenes[0] if len(set(r.scenes)) == 1 else None
+    quiet_hours = _EXPECTED_QUIET_HOURS.get(scene) if scene else None
+    if quiet_hours is not None and r.hour_of_day:
+        total = sum(sum(b.values()) for b in r.hour_of_day.values())
+        quiet_total = sum(
+            sum(b.values())
+            for h, b in r.hour_of_day.items() if h in quiet_hours
+        )
+        share = (quiet_total / total) if total else 0.0
+        if share >= 0.15:
+            out.append(Insight(
+                severity="note",
+                title=t("Activity during expected-quiet hours"),
+                detail=t(
+                    "{pct}% of all events fell in the `{scene}` scene's "
+                    "expected-quiet window ({band}). Off-baseline timing "
+                    "is more noteworthy than the same activity in-hours.",
+                    pct=int(share * 100), scene=scene,
+                    band=_hour_band(quiet_hours),
+                ),
+                todo=t(
+                    "Skim the overnight events: a device that is active "
+                    "when the space should be empty is worth identifying."
+                ),
+            ))
+
+    # -- T5. Cross-signal coincidence — a rare signal concentrating in the
+    #    busy arrival hours is a hypothesis worth a targeted re-capture.
+    ble_rh = r.hourly_rhythms.get("ble_device_seen")
+    if ble_rh is not None and r.hour_of_day:
+        ble_counts = {
+            h: r.hour_of_day.get(h, {}).get("ble_device_seen", 0)
+            for h in range(24)
+        }
+        active = [n for n in ble_counts.values() if n > 0]
+        median = statistics.median(active) if active else 0
+        busy = {h for h, n in ble_counts.items() if n > median}
+        for cat in ("loss_burst", "latency_spike", "rf_stir"):
+            crh = r.hourly_rhythms.get(cat)
+            if crh is None or crh.total < 3:
+                continue
+            in_busy = sum(
+                r.hour_of_day.get(h, {}).get(cat, 0) for h in busy
+            )
+            if in_busy / crh.total < 0.6:
+                continue
+            hours = sorted(
+                h for h in range(24)
+                if r.hour_of_day.get(h, {}).get(cat, 0) > 0 and h in busy
+            )
+            hours_str = ", ".join(f"{h:02d}:00" for h in hours)
+            out.append(Insight(
+                severity="note",
+                title=t("Signals coinciding in time"),
+                detail=t(
+                    "{label} concentrated in the busy BLE-arrival hours "
+                    "({hours}) — {frac}% of it fell when arrivals were "
+                    "above the daily median. A shared timing is a "
+                    "hypothesis, not a cause: e.g. loss / latency rising "
+                    "as devices arrive points to airtime contention "
+                    "during the busy window.",
+                    label=_category_label(cat), hours=hours_str,
+                    frac=int(in_busy / crh.total * 100),
+                ),
+                todo=t(
+                    "Capture with --log during {hours} and re-analyze to "
+                    "test whether the signals are actually linked.",
+                    hours=hours_str,
+                ),
+            ))
 
     return out
 
@@ -1152,6 +1560,9 @@ def render_markdown(
     enable_cross = (
         len(report.source_paths) > 1 or report.since is not None
     )
+    # Cross-session BLOCKS also render for a single long log (hour_of_day
+    # non-empty ⇔ the analyser's temporal gate fired).
+    show_temporal_blocks = enable_cross or bool(report.hour_of_day)
 
     # ---- Scope
     if enable_cross:
@@ -1214,7 +1625,38 @@ def render_markdown(
             lines.append("")
 
     # ---- Cross-session blocks
-    if enable_cross and report.hour_of_day:
+    if show_temporal_blocks and (
+        report.ble_population or report.ble_dwell
+        or report.hourly_rhythms
+    ):
+        lines.append("## Temporal & population")
+        lines.append("")
+        rh = report.hourly_rhythms.get("ble_device_seen")
+        if rh is not None:
+            lines.append(
+                f"- **BLE rhythm**: peak {rh.peak_hour:02d}:00 "
+                f"({rh.peak_count}/h), quiet {rh.quiet_hour:02d}:00 "
+                f"({rh.quiet_count}/h); busiest {_CONCENTRATION_HOURS} hours "
+                f"hold {int(rh.top_hours_share * 100)}% of arrivals."
+            )
+        if report.ble_population is not None:
+            p = report.ble_population
+            lines.append(
+                f"- **Population**: {p.distinct_devices} distinct devices "
+                f"(by stable identity, not rotating address) — "
+                f"{p.residents} resident, {p.passersby} pass-by, "
+                f"{p.unkeyable_sightings} unkeyable sightings."
+            )
+        if report.ble_dwell is not None:
+            d = report.ble_dwell
+            lines.append(
+                f"- **Dwell**: p50 {_format_duration(d.p50_s)}, p90 "
+                f"{_format_duration(d.p90_s)} — {d.transient} brief / "
+                f"{d.lingering} lingering / {d.resident} resident."
+            )
+        lines.append("")
+
+    if show_temporal_blocks and report.hour_of_day:
         lines.append("## Events by hour-of-day")
         lines.append("")
         totals = {
@@ -1230,7 +1672,7 @@ def render_markdown(
             lines.append(f"| {h:02d} | {totals[h]} | `{top}` |")
         lines.append("")
 
-    if enable_cross and report.day_of_week_x_hour:
+    if show_temporal_blocks and report.day_of_week_x_hour:
         lines.append("## Day × hour heatmap (density)")
         lines.append("")
         lines.append("```text")
@@ -1249,7 +1691,7 @@ def render_markdown(
         lines.append("```")
         lines.append("")
 
-    if enable_cross and report.per_network:
+    if show_temporal_blocks and report.per_network:
         lines.append("## Top networks by event volume")
         lines.append("")
         lines.append("| Network | Events | Breakdown |")
@@ -1276,7 +1718,7 @@ def render_markdown(
             lines.append(f"| {label} | {n.total} | {bd} |")
         lines.append("")
 
-    if enable_cross and report.daily_trend:
+    if show_temporal_blocks and report.daily_trend:
         lines.append(
             f"## Daily trend ({len(report.daily_trend)}-day window)"
         )
@@ -1298,7 +1740,7 @@ def render_markdown(
             )
         lines.append("")
 
-    if enable_cross and report.top_contributors is not None:
+    if show_temporal_blocks and report.top_contributors is not None:
         tc = report.top_contributors
         lines.append("## Top contributors")
         lines.append("")
@@ -1472,11 +1914,19 @@ def scene_llm_context_paragraph(report: Report) -> str:
         facts = (
             f" ({'; '.join(env_facts)})" if env_facts else ""
         )
+        rhythm = ""
+        rh = report.hourly_rhythms.get("ble_device_seen")
+        if rh is not None and rh.total >= 50:
+            rhythm = (
+                f" Observed BLE-arrival rhythm: busiest around "
+                f"{rh.peak_hour:02d}:00, quietest around "
+                f"{rh.quiet_hour:02d}:00."
+            )
         return (
             f"[Scene context]\n"
             f"These sessions were captured in `{scene}` mode{facts}. "
             f"{prior} Look for departures from this baseline, not "
-            f"the baseline itself."
+            f"the baseline itself.{rhythm}"
         )
     # Multi-scene
     parts = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
@@ -1524,6 +1974,27 @@ def build_llm_prompt(report: Report) -> str:
         f"5. If the report includes an Anonymization appendix, "
         f"do NOT try to decode the handles — analyze using the "
         f"handles as opaque identifiers.\n\n"
+        f"Temporal & population lenses — apply these explicitly:\n"
+        f"- Rhythm & clustering: when does each signal concentrate "
+        f"(BLE arrivals, loss, latency, stir, roams) by hour? Name "
+        f"the peak / quiet windows and any ramp (e.g. a morning "
+        f"fill-up), and say what the timing implies (occupancy, a "
+        f"congestion window, a backup job).\n"
+        f"- Recurrence by STABLE identity: distinguish a few physical "
+        f"devices present all day from many brief pass-bys. CAUTION: "
+        f"BLE MAC / per-sighting ids rotate, so counting raw ids "
+        f"over-counts — reason from the report's stable-identity "
+        f"population figures, not sighting counts.\n"
+        f"- Dwell: transient (seconds) vs resident (hours) — high "
+        f"transient share means foot-traffic, not a fixed population.\n"
+        f"- Cross-signal coincidence: do loss / latency / stir cluster "
+        f"in the same hours as the BLE-arrival peak? If so, state the "
+        f"hypothesis (e.g. airtime contention as people arrive) and "
+        f"the capture that would test it — do not assert cause.\n"
+        f"- Off-hours anomalies: activity when the scene expects quiet "
+        f"(office overnight, home workday) is more noteworthy than the "
+        f"same activity in-hours — call it out and say what could be "
+        f"active.\n\n"
         f"Output format: markdown. Don't repeat the report data "
         f"verbatim — interpret it. Lead with conclusions, then "
         f"evidence. Mark any inference beyond what the data "
@@ -1546,10 +2017,14 @@ def render(report: Report) -> str:
     lines.append(t("diting analyse {path}", path=header_path))
     lines.append("=" * 60)
 
-    # Scope header (cross-session signal).
+    # Scope header (multi-file / --since signal only).
     enable_cross_session = (
         len(report.source_paths) > 1 or report.since is not None
     )
+    # The cross-session BLOCKS (hour-of-day, temporal, etc.) also show
+    # for a single long log — `hour_of_day` is non-empty exactly when the
+    # analyser's temporal gate fired (multi-file / --since / long span).
+    show_temporal_blocks = enable_cross_session or bool(report.hour_of_day)
     if enable_cross_session:
         if report.span_start and report.span_end:
             span_days = (report.span_end - report.span_start).days
@@ -1685,7 +2160,8 @@ def render(report: Report) -> str:
         ))
 
     # ---------- cross-session blocks (A2) ----------
-    if enable_cross_session:
+    if show_temporal_blocks:
+        lines.extend(_render_temporal(report))
         lines.extend(_render_hour_of_day(report.hour_of_day))
         lines.extend(_render_day_x_hour(report.day_of_week_x_hour))
         lines.extend(_render_per_network(report.per_network))
@@ -1716,6 +2192,43 @@ def _density_char(value: int, max_value: int) -> str:
     # 8 bins of intensity.
     idx = max(0, min(7, int((value - 1) * 8 / max(max_value, 1))))
     return _BAR_BLOCKS[idx]
+
+
+def _render_temporal(report: Report) -> list[str]:
+    """Compact at-a-glance temporal / population block (the numbers
+    behind the temporal insights). Empty when no aggregate is set."""
+    pop, dw = report.ble_population, report.ble_dwell
+    rh = report.hourly_rhythms.get("ble_device_seen")
+    if pop is None and dw is None and rh is None:
+        return []
+    out = ["", t("Temporal & population"), "-" * 60]
+    if rh is not None:
+        out.append(t(
+            "  BLE rhythm   peak {peak}:00 ({pk}/h) · quiet {quiet}:00 "
+            "({qt}/h)",
+            peak=rh.peak_hour, pk=rh.peak_count,
+            quiet=rh.quiet_hour, qt=rh.quiet_count,
+        ))
+    if pop is not None:
+        out.append(t(
+            "  Population   {n} devices · {res} resident · {passers} "
+            "pass-by",
+            n=pop.distinct_devices, res=pop.residents, passers=pop.passersby,
+        ))
+    if dw is not None:
+        out.append(t(
+            "  Dwell        p50 {p50} · p90 {p90} · {trans} brief / "
+            "{ling} lingering / {res} resident",
+            p50=_format_duration(dw.p50_s), p90=_format_duration(dw.p90_s),
+            trans=dw.transient, ling=dw.lingering, res=dw.resident,
+        ))
+    if report.co_peaks:
+        joined = "; ".join(
+            f"{h:02d}:00 (" + ", ".join(_category_label(c) for c in cats) + ")"
+            for h, cats in report.co_peaks
+        )
+        out.append(t("  Co-peaks     {joined}", joined=joined))
+    return out
 
 
 def _render_hour_of_day(buckets: dict[int, dict[str, int]]) -> list[str]:
