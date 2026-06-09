@@ -177,6 +177,10 @@ class EventLogger:
         # idempotency flag lets callers ask for it unconditionally
         # without double-writing if the codepath fires twice.
         self._session_meta_written: bool = False
+        # capture-sampling: last-emit wall-clock for the throttled local-only
+        # periodic samples. None until the first emit.
+        self._last_link_sample: datetime | None = None
+        self._last_scan_summary: datetime | None = None
         # Taps: each receives every emitted payload dict (a copy) just before
         # it is written, so they forward/observe the exact bytes the JSONL
         # writer produces — no second serialiser to drift. Any registered
@@ -882,6 +886,72 @@ class EventLogger:
                 pass
         if self._sink is not None:
             self._write(payload)
+
+    def _emit_local(self, payload: dict[str, Any]) -> None:
+        """Write a local-only event to the JSONL sink, bypassing the observer
+        fan-out (companion / insight taps) and salience stamping. For event
+        types that exist only in the local log (`link_sample`, `scan_summary`)
+        and must never reach the versioned companion wire."""
+        if self._sink is not None:
+            self._write(payload)
+
+    def emit_link_sample(
+        self,
+        conn: "Connection | None",
+        *,
+        now: datetime | None = None,
+        interval_s: float = 60.0,
+    ) -> None:
+        """Throttled periodic quality sample while associated (capture-sampling).
+        Local-only. Drops calls that arrive before `interval_s` elapses, so a
+        per-poll caller yields at most one sample per cadence window."""
+        if self._sink is None:
+            return
+        if conn is None or conn.bssid is None:
+            return
+        if now is None:
+            now = datetime.now(timezone.utc)
+        last = self._last_link_sample
+        if last is not None and (now - last).total_seconds() < interval_s:
+            return
+        q = _link_quality(conn)
+        if not q:
+            return
+        self._last_link_sample = now
+        self._emit_local({
+            "ts": _iso(now),
+            "type": "link_sample",
+            "bssid": conn.bssid.lower(),
+            "quality": q,
+        })
+
+    def emit_scan_summary(
+        self,
+        *,
+        neighbor_count: int,
+        co_channel_count: int | None,
+        current_channel: int | None,
+        now: datetime | None = None,
+        interval_s: float = 60.0,
+    ) -> None:
+        """Throttled per-scan neighborhood summary (capture-sampling).
+        Local-only. `co_channel_count` is null when not associated / channel
+        unknown."""
+        if self._sink is None:
+            return
+        if now is None:
+            now = datetime.now(timezone.utc)
+        last = self._last_scan_summary
+        if last is not None and (now - last).total_seconds() < interval_s:
+            return
+        self._last_scan_summary = now
+        self._emit_local({
+            "ts": _iso(now),
+            "type": "scan_summary",
+            "neighbor_count": neighbor_count,
+            "co_channel_count": co_channel_count,
+            "current_channel": current_channel,
+        })
 
     def _write(self, payload: dict[str, Any]) -> None:
         sink = self._sink

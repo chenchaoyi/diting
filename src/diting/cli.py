@@ -441,6 +441,8 @@ async def _run_monitor(
         )
 
     last_ssid: dict[str, str | None] = {"value": None}
+    # capture-sampling: current channel for co-channel counts in scan_summary.
+    sampling_state: dict[str, int | None] = {"channel": None}
 
     async def wifi_consumer() -> None:
         async for event in poller.events():
@@ -455,6 +457,10 @@ async def _run_monitor(
                         conn.bssid if conn else None
                     ),
                 )
+                # capture-sampling: track channel for co-channel counts +
+                # emit a throttled periodic quality sample while associated.
+                sampling_state["channel"] = conn.channel if conn else None
+                logger.emit_link_sample(conn, now=now)
                 if conn is None:
                     continue
                 # Late-bind LatencyPoller once we know the gateway.
@@ -494,6 +500,17 @@ async def _run_monitor(
                             r.bssid, r.rssi_dbm, now,
                             ssid=r.ssid,
                         )
+                # capture-sampling: throttled neighborhood summary.
+                _ch = sampling_state["channel"]
+                logger.emit_scan_summary(
+                    neighbor_count=len(event.results),
+                    co_channel_count=(
+                        sum(1 for r in event.results if r.channel == _ch)
+                        if _ch is not None else None
+                    ),
+                    current_channel=_ch,
+                    now=now,
+                )
                 for stir in monitor.fire_events(now):
                     logger.emit_rf_stir(stir)
                     await _notify(

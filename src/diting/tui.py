@@ -7498,6 +7498,10 @@ class DitingApp(App):
                         if event.connection else None
                     ),
                 )
+                # capture-sampling: throttled periodic quality sample while
+                # associated (local-only; gives an RSSI distribution over the
+                # session, not just the join snapshot).
+                self._event_logger.emit_link_sample(event.connection)
                 # Feed the EnvironmentMonitor with the live connection
                 # RSSI on every tick (1 Hz). This is the highest-rate
                 # samples we get for the AP we are actually using —
@@ -7523,6 +7527,19 @@ class DitingApp(App):
                 if event.results:
                     self._cached_scan = event.results
                     self._last_successful_scan_at = time.monotonic()
+                # capture-sampling: throttled neighborhood summary (local-only).
+                _ch = (
+                    self._latest_connection.channel
+                    if self._latest_connection else None
+                )
+                self._event_logger.emit_scan_summary(
+                    neighbor_count=len(event.results),
+                    co_channel_count=(
+                        sum(1 for r in event.results if r.channel == _ch)
+                        if _ch is not None else None
+                    ),
+                    current_channel=_ch,
+                )
                 # Every BSSID seen in the scan feeds the monitor too;
                 # this is what lets neighbour APs (the 'spatial channel'
                 # bucket) ever build up enough samples to fire events.
