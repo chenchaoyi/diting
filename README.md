@@ -116,16 +116,21 @@ BSSID. Same path as menu-off-then-on, in one keystroke.
   unexplained RF variance — diting names what changed and when.
   Long-running sessions land in `--log` JSONL for after-the-fact
   analysis with `diting analyze`.
-- **See patterns across weeks of sessions.** Point `diting
-  analyze` at multiple JSONL files (shell glob) with an optional
-  `--since 7d` window and it surfaces the patterns single-session
-  reports miss: an hour-of-day chart, a day×hour heatmap, a
-  per-network event-volume ranking, a daily trend with 7-day
-  rolling average, and a top-contributors block — which BSSIDs /
-  BLE devices / LAN hosts caused the most churn over the window.
-  The JSONL log itself captures BLE / Bonjour / LAN transition
-  events alongside the Wi-Fi state, so the aggregations work over
-  the full event vocabulary.
+- **Read the rhythm of a long capture.** Point `diting analyze`
+  at a single overnight log (or multiple files with `--since 7d`)
+  and it surfaces what a per-session report misses: the BLE
+  arrival rhythm (peak / quiet hours), a dwell distribution
+  (foot-traffic vs residents), the distinct device population
+  counted by *stable* identity (real devices, not rotated
+  addresses), scene-aware off-hours activity, and cross-signal
+  coincidences (loss concentrated in the busy arrival hours →
+  airtime contention) — plus hour-of-day / heatmap / per-network /
+  daily-trend / top-contributor charts.
+- **Drive it from an agent or a script.** `once`, `watch`, and
+  `analyze` accept `--json` for clean machine-readable output
+  (keys stay stable English even under `--lang zh`); the CLI never
+  prints a traceback and has documented exit codes. See
+  [Use from an agent](#use-from-an-agent-or-a-script).
 - **Hand it to ChatGPT or Claude for richer interpretation.**
   `diting analyze --for-llm` writes a Markdown report + a paste-
   ready analyst prompt; drag the report into chat.openai.com or
@@ -428,24 +433,42 @@ reports can't:
 diting analyze 'diting-*.jsonl' --since 30d
 ```
 
-…produces (on top of the per-session block):
+…produces, on top of the per-session block, **temporal &
+population intelligence** whenever the capture is a long-timeline
+run — a single overnight log (≥ 2 h), multiple files, or a
+`--since` window:
 
-- **Scope header** — file count, observed span, active filter
-- **Events by hour-of-day** — 24-row ASCII bar chart
-- **Day × hour heatmap** — 7×24 density grid using
-  `▁▂▃▄▅▆▇█` so weekend mornings and weekday lunch hours pop
-  out visually
+- **BLE arrival rhythm** — the peak / quiet hours and whether
+  activity is a concentrated daily cycle (people arriving /
+  leaving) or a flat background
+- **Dwell distribution** — transient pass-bys vs lingering vs
+  resident devices (p50 / p90), reading a high transient share as
+  foot-traffic rather than a fixed population
+- **Device population** — distinct *physical* devices counted by
+  **stable identity** (never the rotating BLE address, which would
+  report thousands of phantoms), split into all-span fixtures vs
+  single-hour pass-bys
+- **Off-hours activity** — scene-aware: activity when the scene
+  expects quiet (office overnight, home workday) is flagged as
+  more noteworthy than the same activity in-hours
+- **Cross-signal coincidence** — when loss / latency / stir
+  concentrate in the busy arrival hours, a hypothesis (e.g.
+  airtime contention as people arrive) with a concrete next
+  capture window — never an asserted cause
+- **Events by hour-of-day** / **Day × hour heatmap** — a 24-row
+  ASCII bar chart + a 7×24 `▁▂▃▄▅▆▇█` density grid
 - **Top networks** — events per associated BSSID, ranked
 - **Daily trend** — per-day total + 7-day rolling average
-- **Top contributors** — three sub-rankings: BSSIDs by
-  roam + RF-stir count; BLE identifiers by `seen` count
-  (catches privacy-rotating devices); LAN hosts by
-  DHCP-rotation count
+- **Top contributors** — BSSIDs by roam + RF-stir count; **BLE
+  devices by sighting count** (keyed on stable identity, so a
+  privacy-rotating device's many addresses fold into one row);
+  LAN hosts by DHCP-rotation count
 
-`--since` accepts `30d` / `7d` / `24h` / `90m` / `60s`.
-Single-file no-`--since` invocations keep the original
-per-session layout verbatim — the cross-session blocks only
-render when the user is genuinely doing a multi-session view.
+`--since` accepts `30d` / `7d` / `24h` / `90m` / `60s`. A short
+single-session log (no `--since`, under ~2 h) keeps the lean
+per-session layout. The whole report is also available as one
+JSON document via `diting analyze --json` — see
+[Use from an agent](#use-from-an-agent-or-a-script).
 
 ### Pass the data to ChatGPT or Claude for richer interpretation
 
@@ -575,6 +598,10 @@ push-worthy events, and the phone pulls and decrypts them.
   self-test run that shouldn't spam your phone) disables forwarding without
   unpairing. When paired, the TUI header shows a `companion:` chip with the
   relay queue state.
+- **Connected-count on the pairing screen.** The QR view (`k`) shows whether
+  any phone is currently pulling this channel — a privacy-light count, not a
+  device list (the relay tracks recent pullers by an opaque per-connection
+  hash, no identity).
 - **Honest limit.** The event source is this Mac — a sleeping laptop emits
   nothing. 24/7 home monitoring is a separate always-on device, not this.
 
@@ -753,11 +780,11 @@ ordering is intent.
 
 ### Near-term
 
-- **mDNS / Bonjour LAN inventory.** A `n`-toggleable third view
-  alongside Wi-Fi / BLE listing every Sonos, Apple TV, HomePod,
-  NAS, printer, AirDrop-capable Mac, HomeKit hub, Time Capsule,
-  and other service-advertising peer. Answers "what's on my
-  network and is it alive" with a much richer answer than ARP.
+- ~~**mDNS / Bonjour LAN inventory.**~~ **[shipped]** A
+  `n`-toggleable view alongside Wi-Fi / BLE / LAN listing every
+  Sonos, Apple TV, HomePod, NAS, printer, AirDrop-capable Mac,
+  HomeKit hub, Time Capsule, and other service-advertising peer —
+  a much richer answer than ARP.
 - **Anomaly watchdog mode.** Headless long-runs that push macOS
   Notification Centre alerts on high-confidence events (stir,
   loss burst, latency spike). Today's `diting monitor --notify`
