@@ -1255,3 +1255,31 @@ def test_cross_session_blocks_localized_under_zh():
         assert "Events by hour-of-day" not in out
     finally:
         i18n.set_lang(saved)
+
+
+def test_llm_document_follows_lang_zh():
+    """localize-llm-document: under --lang zh the prompt + report Markdown
+    render in Chinese (with an explicit respond-in-Chinese instruction),
+    while technical tokens stay verbatim; English is unchanged."""
+    from diting import i18n
+    from diting.analyze import build_llm_document
+    events = [_seen(h, vendor="Acme", name=f"d{h}") for h in range(0, 6)]
+    events += [_left(0, 5), _left(1, 4000)]
+    r = analyze(events, source_path="x.jsonl")
+    saved = i18n.get_lang()
+    try:
+        i18n.set_lang("zh")
+        doc = build_llm_document(r)
+        assert "请用中文输出" in doc            # respond-in-Chinese lever
+        assert "你是一名无线 / 网络分析师" in doc  # prompt is Chinese
+        assert "## 术语表" in doc               # report headers Chinese
+        assert "## 时序与人口" in doc
+        assert "ble_device_seen" in doc          # tokens verbatim
+        assert "## Glossary" not in doc          # no English header leak
+        assert "You are a wireless" not in doc
+        i18n.set_lang("en")
+        en = build_llm_document(r)
+        assert "## Glossary" in en and "You are a wireless" in en
+        assert "术语表" not in en and "请用中文" not in en
+    finally:
+        i18n.set_lang(saved)

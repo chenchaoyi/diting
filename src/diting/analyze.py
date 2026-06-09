@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from . import i18n
 from .i18n import pad_cells, t
 
 
@@ -1547,18 +1548,20 @@ def render_markdown(
     `## Anonymization` placeholder).
     """
     a = anonymizer
+    zh = i18n.get_lang() == i18n.ZH
     def ax(kind: str, value: str | None) -> str:
         if a is None or value is None:
             return value or ""
         return a.map(kind, value) or ""
 
     lines: list[str] = []
-    lines.append("# diting analysis report")
+    lines.append("# diting 分析报告" if zh else "# diting analysis report")
     lines.append("")
     # Scene line surfaces the environment the JSONL was captured in.
     # Always rendered (single or multi-session). Pre-scene-aware
     # captures show `unknown (pre-scene-aware capture)`.
-    lines.append(f"**Scene:** {scene_summary(report)}")
+    lines.append(f"**{'场景' if zh else 'Scene'}：** {scene_summary(report)}"
+                 if zh else f"**Scene:** {scene_summary(report)}")
     lines.append("")
     enable_cross = (
         len(report.source_paths) > 1 or report.since is not None
@@ -1581,27 +1584,34 @@ def render_markdown(
             _format_duration(report.since.total_seconds())
             if report.since is not None else "none"
         )
-        lines.append(
-            f"**Scope:** {len(report.source_paths) or 1} files · "
-            f"{span_str} · `--since {since_str}`",
-        )
+        if zh:
+            lines.append(
+                f"**范围：** {len(report.source_paths) or 1} 个文件 · "
+                f"{span_str} · `--since {since_str}`",
+            )
+        else:
+            lines.append(
+                f"**Scope:** {len(report.source_paths) or 1} files · "
+                f"{span_str} · `--since {since_str}`",
+            )
         lines.append("")
 
     # ---- Counts
     if report.counts_by_type:
-        lines.append("## Total events by type")
+        lines.append("## 按类型统计的事件总数" if zh else "## Total events by type")
         lines.append("")
-        lines.append("| Type | Count |")
+        lines.append("| 类型 | 数量 |" if zh else "| Type | Count |")
         lines.append("|---|---:|")
         for k, v in sorted(report.counts_by_type.items()):
             lines.append(f"| `{k}` | {v} |")
-        lines.append(f"| **total** | **{report.total_events}** |")
+        lines.append(f"| **合计** | **{report.total_events}** |" if zh
+                     else f"| **total** | **{report.total_events}** |")
         lines.append("")
 
     # ---- Connection summary
     if report.associations:
         ssid, bssid = report.associations[-1]
-        lines.append("## Latest association")
+        lines.append("## 最近一次关联" if zh else "## Latest association")
         lines.append("")
         lines.append(
             f"- SSID: `{ax('ssid', ssid) or '?'}`"
@@ -1613,18 +1623,18 @@ def render_markdown(
 
     # ---- Heuristic insights
     if report.insights:
-        lines.append("## Per-session heuristic insights")
+        lines.append("## 逐会话启发式洞察" if zh else "## Per-session heuristic insights")
         lines.append("")
         for ins in report.insights:
             lines.append(f"### {ins.title}")
             lines.append("")
-            lines.append(f"**Severity:** {ins.severity}")
+            lines.append(f"**严重度：** {ins.severity}" if zh else f"**Severity:** {ins.severity}")
             lines.append("")
             for line in ins.detail.splitlines() or [""]:
                 lines.append(line)
             if ins.todo:
                 lines.append("")
-                lines.append(f"**TODO:** {ins.todo}")
+                lines.append(f"**待办：** {ins.todo}" if zh else f"**TODO:** {ins.todo}")
             lines.append("")
 
     # ---- Cross-session blocks
@@ -1632,40 +1642,62 @@ def render_markdown(
         report.ble_population or report.ble_dwell
         or report.hourly_rhythms
     ):
-        lines.append("## Temporal & population")
+        lines.append("## 时序与人口" if zh else "## Temporal & population")
         lines.append("")
         rh = report.hourly_rhythms.get("ble_device_seen")
         if rh is not None:
-            lines.append(
-                f"- **BLE rhythm**: peak {rh.peak_hour:02d}:00 "
-                f"({rh.peak_count}/h), quiet {rh.quiet_hour:02d}:00 "
-                f"({rh.quiet_count}/h); busiest {_CONCENTRATION_HOURS} hours "
-                f"hold {int(rh.top_hours_share * 100)}% of arrivals."
-            )
+            if zh:
+                lines.append(
+                    f"- **BLE 节律**：峰值 {rh.peak_hour:02d}:00"
+                    f"（{rh.peak_count}/小时），谷值 {rh.quiet_hour:02d}:00"
+                    f"（{rh.quiet_count}/小时）；最忙的 {_CONCENTRATION_HOURS} "
+                    f"小时占了到达的 {int(rh.top_hours_share * 100)}%。"
+                )
+            else:
+                lines.append(
+                    f"- **BLE rhythm**: peak {rh.peak_hour:02d}:00 "
+                    f"({rh.peak_count}/h), quiet {rh.quiet_hour:02d}:00 "
+                    f"({rh.quiet_count}/h); busiest {_CONCENTRATION_HOURS} hours "
+                    f"hold {int(rh.top_hours_share * 100)}% of arrivals."
+                )
         if report.ble_population is not None:
             p = report.ble_population
-            lines.append(
-                f"- **Population**: {p.distinct_devices} distinct devices "
-                f"(by stable identity, not rotating address) — "
-                f"{p.residents} resident, {p.passersby} pass-by, "
-                f"{p.unkeyable_sightings} unkeyable sightings."
-            )
+            if zh:
+                lines.append(
+                    f"- **人口**：{p.distinct_devices} 台不同设备"
+                    f"（按稳定身份，而非滚动地址）—— {p.residents} 常驻、"
+                    f"{p.passersby} 过客、{p.unkeyable_sightings} 次不可定位的出现。"
+                )
+            else:
+                lines.append(
+                    f"- **Population**: {p.distinct_devices} distinct devices "
+                    f"(by stable identity, not rotating address) — "
+                    f"{p.residents} resident, {p.passersby} pass-by, "
+                    f"{p.unkeyable_sightings} unkeyable sightings."
+                )
         if report.ble_dwell is not None:
             d = report.ble_dwell
-            lines.append(
-                f"- **Dwell**: p50 {_format_duration(d.p50_s)}, p90 "
-                f"{_format_duration(d.p90_s)} — {d.transient} brief / "
-                f"{d.lingering} lingering / {d.resident} resident."
-            )
+            if zh:
+                lines.append(
+                    f"- **停留**：p50 {_format_duration(d.p50_s)}、p90 "
+                    f"{_format_duration(d.p90_s)} —— {d.transient} 短暂 / "
+                    f"{d.lingering} 逗留 / {d.resident} 常驻。"
+                )
+            else:
+                lines.append(
+                    f"- **Dwell**: p50 {_format_duration(d.p50_s)}, p90 "
+                    f"{_format_duration(d.p90_s)} — {d.transient} brief / "
+                    f"{d.lingering} lingering / {d.resident} resident."
+                )
         lines.append("")
 
     if show_temporal_blocks and report.hour_of_day:
-        lines.append("## Events by hour-of-day")
+        lines.append("## 按小时事件分布" if zh else "## Events by hour-of-day")
         lines.append("")
         totals = {
             h: sum(report.hour_of_day[h].values()) for h in range(24)
         }
-        lines.append("| Hour | Total | Top type |")
+        lines.append("| 小时 | 合计 | 最多类型 |" if zh else "| Hour | Total | Top type |")
         lines.append("|---:|---:|---|")
         for h in range(24):
             top = (
@@ -1676,7 +1708,7 @@ def render_markdown(
         lines.append("")
 
     if show_temporal_blocks and report.day_of_week_x_hour:
-        lines.append("## Day × hour heatmap (density)")
+        lines.append("## 天 × 小时 热力图（密度）" if zh else "## Day × hour heatmap (density)")
         lines.append("")
         lines.append("```text")
         max_cell = max(
@@ -1684,7 +1716,8 @@ def render_markdown(
             default=0,
         )
         if max_cell > 0:
-            names = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+            names = (("周一","周二","周三","周四","周五","周六","周日") if zh
+                     else ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
             for i, row in enumerate(report.day_of_week_x_hour):
                 cells = "".join(
                     _density_char(v, max_cell) for v in row
@@ -1695,9 +1728,9 @@ def render_markdown(
         lines.append("")
 
     if show_temporal_blocks and report.per_network:
-        lines.append("## Top networks by event volume")
+        lines.append("## 按事件量排名的网络" if zh else "## Top networks by event volume")
         lines.append("")
-        lines.append("| Network | Events | Breakdown |")
+        lines.append("| 网络 | 事件 | 明细 |" if zh else "| Network | Events | Breakdown |")
         lines.append("|---|---:|---|")
         for n in report.per_network[:10]:
             if a is not None and n.network_label != "(unknown network)":
@@ -1723,7 +1756,8 @@ def render_markdown(
 
     if show_temporal_blocks and report.daily_trend:
         lines.append(
-            f"## Daily trend ({len(report.daily_trend)}-day window)"
+            (f"## 每日趋势（{len(report.daily_trend)} 天窗口）" if zh
+             else f"## Daily trend ({len(report.daily_trend)}-day window)")
         )
         lines.append("")
         lines.append("```text")
@@ -1732,10 +1766,10 @@ def render_markdown(
             _density_char(d.total, max_total)
             for d in report.daily_trend
         )
-        lines.append(f"  total  {spark}")
+        lines.append(f"  {'合计' if zh else 'total'}  {spark}")
         lines.append("```")
         lines.append("")
-        lines.append("| Date | Total | 7-day avg |")
+        lines.append("| 日期 | 合计 | 7 天均值 |" if zh else "| Date | Total | 7-day avg |")
         lines.append("|---|---:|---:|")
         for d in report.daily_trend:
             lines.append(
@@ -1745,10 +1779,11 @@ def render_markdown(
 
     if show_temporal_blocks and report.top_contributors is not None:
         tc = report.top_contributors
-        lines.append("## Top contributors")
+        lines.append("## 主要贡献来源" if zh else "## Top contributors")
         lines.append("")
         if tc.bssids:
-            lines.append("### BSSIDs (by `roam` + `rf_stir` count)")
+            lines.append("### BSSID（按 `roam` + `rf_stir` 次数）" if zh
+                         else "### BSSIDs (by `roam` + `rf_stir` count)")
             lines.append("")
             lines.append("| BSSID | roam + stir |")
             lines.append("|---|---:|")
@@ -1759,9 +1794,10 @@ def render_markdown(
                 )
             lines.append("")
         if tc.ble_identifiers:
-            lines.append("### BLE identifiers (by `ble_device_seen` count)")
+            lines.append("### BLE 设备（按 `ble_device_seen` 次数）" if zh
+                         else "### BLE identifiers (by `ble_device_seen` count)")
             lines.append("")
-            lines.append("| Identifier | Seen |")
+            lines.append("| 标识 | 出现 |" if zh else "| Identifier | Seen |")
             lines.append("|---|---:|")
             for ble in tc.ble_identifiers:
                 label = (
@@ -1773,10 +1809,11 @@ def render_markdown(
             lines.append("")
         if tc.lan_hosts:
             lines.append(
-                "### LAN hosts (by `lan_host_dhcp_rotation` count)",
+                "### LAN 主机（按 `lan_host_dhcp_rotation` 次数）" if zh
+                else "### LAN hosts (by `lan_host_dhcp_rotation` count)",
             )
             lines.append("")
-            lines.append("| MAC | DHCP rotations |")
+            lines.append("| MAC | DHCP 轮换 |" if zh else "| MAC | DHCP rotations |")
             lines.append("|---|---:|")
             for lan in tc.lan_hosts:
                 label = (
@@ -1786,60 +1823,104 @@ def render_markdown(
             lines.append("")
 
     # ---- Glossary (always included — LLM benefits regardless of mode)
-    lines.append("## Glossary")
+    lines.append("## 术语表" if zh else "## Glossary")
     lines.append("")
-    lines.append(
-        "- `rf_stir` — RSSI variance crossed a threshold; the "
-        "ambient RF environment is moving. Modes: `co_located` "
-        "(multiple BSSIDs of the same physical AP both stirred — "
-        "likely real motion); `spatial_channel` (one BSSID "
-        "stirred, neighbours quiet — likely interference or "
-        "client-side hardware quirk)."
-    )
-    lines.append(
-        "- `roam` — the client's associated BSSID changed. "
-        "`kind=band_switch` is between two radios of the same "
-        "physical AP (e.g. 2.4 → 5 GHz on the same hardware); "
-        "`kind=inter_ap` is between physically distinct APs."
-    )
-    lines.append(
-        "- `latency_spike` / `loss_burst` — gateway- or "
-        "WAN-anchored RTT exceeded thresholds (>200 ms AND >5× "
-        "median for spikes; 3 of last 5 probes lost for bursts)."
-    )
-    lines.append(
-        "- `link_state` — `associated` / `disassociated` "
-        "transitions on the active Wi-Fi interface."
-    )
-    lines.append(
-        "- `ble_device_seen` / `ble_device_left` — a BLE device "
-        "(advertising OR connected) entered or aged out of the "
-        "tracked-state map. No debounce; even single-advertisement "
-        "ghost MACs fire one event each."
-    )
-    lines.append(
-        "- `bonjour_service_seen` / `bonjour_service_left` — an "
-        "mDNS service-instance was first observed or removed."
-    )
-    lines.append(
-        "- `lan_host_seen` / `lan_host_left` / "
-        "`lan_host_dhcp_rotation` — a LAN host (non-self / "
-        "non-gateway) joined / departed / changed IP within "
-        "the local /24 sweep."
-    )
+    if zh:
+        # Event-type tokens stay verbatim — they're the data's vocabulary.
+        lines.append(
+            "- `rf_stir` —— RSSI 方差越过阈值；周围 RF 环境在变化。"
+            "模式：`co_located`（同一物理 AP 的多个 BSSID 一起 stir —— "
+            "多半是真实移动）；`spatial_channel`（单个 BSSID stir、邻居"
+            "安静 —— 多半是干扰或客户端硬件怪癖）。"
+        )
+        lines.append(
+            "- `roam` —— 客户端关联的 BSSID 变了。`kind=band_switch` 是"
+            "同一物理 AP 的两个射频之间（例如同硬件 2.4 → 5 GHz）；"
+            "`kind=inter_ap` 是物理上不同的 AP 之间。"
+        )
+        lines.append(
+            "- `latency_spike` / `loss_burst` —— 网关或 WAN 锚定的 RTT "
+            "越过阈值（spike：>200 ms 且 >5× 中位数；burst：最近 5 次"
+            "探测丢了 3 次）。"
+        )
+        lines.append(
+            "- `link_state` —— 活动 Wi-Fi 接口上的 `associated` / "
+            "`disassociated` 转换。"
+        )
+        lines.append(
+            "- `ble_device_seen` / `ble_device_left` —— 一个 BLE 设备"
+            "（广播中或已连接）进入或老化出跟踪状态表。无去抖；连单条"
+            "广播的幽灵 MAC 也各发一个事件。"
+        )
+        lines.append(
+            "- `bonjour_service_seen` / `bonjour_service_left` —— 一个 "
+            "mDNS 服务实例首次被观察到或被移除。"
+        )
+        lines.append(
+            "- `lan_host_seen` / `lan_host_left` / "
+            "`lan_host_dhcp_rotation` —— 一台 LAN 主机（非自身 / 非网关）"
+            "在本地 /24 扫描内加入 / 离开 / 换了 IP。"
+        )
+    else:
+        lines.append(
+            "- `rf_stir` — RSSI variance crossed a threshold; the "
+            "ambient RF environment is moving. Modes: `co_located` "
+            "(multiple BSSIDs of the same physical AP both stirred — "
+            "likely real motion); `spatial_channel` (one BSSID "
+            "stirred, neighbours quiet — likely interference or "
+            "client-side hardware quirk)."
+        )
+        lines.append(
+            "- `roam` — the client's associated BSSID changed. "
+            "`kind=band_switch` is between two radios of the same "
+            "physical AP (e.g. 2.4 → 5 GHz on the same hardware); "
+            "`kind=inter_ap` is between physically distinct APs."
+        )
+        lines.append(
+            "- `latency_spike` / `loss_burst` — gateway- or "
+            "WAN-anchored RTT exceeded thresholds (>200 ms AND >5× "
+            "median for spikes; 3 of last 5 probes lost for bursts)."
+        )
+        lines.append(
+            "- `link_state` — `associated` / `disassociated` "
+            "transitions on the active Wi-Fi interface."
+        )
+        lines.append(
+            "- `ble_device_seen` / `ble_device_left` — a BLE device "
+            "(advertising OR connected) entered or aged out of the "
+            "tracked-state map. No debounce; even single-advertisement "
+            "ghost MACs fire one event each."
+        )
+        lines.append(
+            "- `bonjour_service_seen` / `bonjour_service_left` — an "
+            "mDNS service-instance was first observed or removed."
+        )
+        lines.append(
+            "- `lan_host_seen` / `lan_host_left` / "
+            "`lan_host_dhcp_rotation` — a LAN host (non-self / "
+            "non-gateway) joined / departed / changed IP within "
+            "the local /24 sweep."
+        )
     lines.append("")
 
     # ---- Anonymization appendix (placeholder)
     if a is not None:
-        lines.append("## Anonymization")
+        lines.append("## 匿名化" if zh else "## Anonymization")
         lines.append("")
-        lines.append(
-            "Anonymization is active. The handle ↔ original "
-            "mappings were printed to your terminal when this "
-            "report was generated. **Keep that mapping private** — "
-            "pasting it into a public LLM chat defeats the "
-            "anonymization purpose."
-        )
+        if zh:
+            lines.append(
+                "匿名化已启用。句柄 ↔ 原值的对应表在生成本报告时已打到"
+                "你的终端。**请保密那份映射** —— 把它粘进公共 LLM 聊天"
+                "就破坏了匿名化的意义。"
+            )
+        else:
+            lines.append(
+                "Anonymization is active. The handle ↔ original "
+                "mappings were printed to your terminal when this "
+                "report was generated. **Keep that mapping private** — "
+                "pasting it into a public LLM chat defeats the "
+                "anonymization purpose."
+            )
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
@@ -1857,7 +1938,7 @@ def scene_summary(report: Report) -> str:
     Used in the Markdown report header.
     """
     if not report.scenes:
-        return "unknown (pre-scene-aware capture)"
+        return t("unknown (pre-scene-aware capture)")
     counts: dict[str, int] = {}
     for s in report.scenes:
         counts[s] = counts.get(s, 0) + 1
@@ -1885,7 +1966,18 @@ def scene_llm_context_paragraph(report: Report) -> str:
     notes the gap and falls back to a generic prior.
     """
     from . import scene as _scene_mod
+    zh = i18n.get_lang() == i18n.ZH
+    header = "[场景背景]" if zh else "[Scene context]"
     if not report.scenes:
+        if zh:
+            return (
+                f"{header}\n"
+                "场景未知（pre-scene-aware 抓取 —— JSONL 没有 "
+                "session_meta 行）。只应用通用先验。数据可能属于以下"
+                "任一：home（稀疏，新奇性重要）、office（密集企业基线"
+                "流动）、public（充满敌意的共享 Wi-Fi）、audit（原始"
+                "抓取，无过滤）。"
+            )
         return (
             "[Scene context]\n"
             "Scene unknown (pre-scene-aware capture — JSONL has no "
@@ -1904,26 +1996,40 @@ def scene_llm_context_paragraph(report: Report) -> str:
             prior = _scene_mod.scene_defaults(scene).get("llm_prior", "")
         except ValueError:
             prior = ""
+        if prior:
+            prior = t(prior)  # localized via the ZH catalog
         env_facts: list[str] = []
         if report.observed_bssid_count:
             env_facts.append(
-                f"observed BSSID count {report.observed_bssid_count}"
+                (f"观察到 BSSID 数 {report.observed_bssid_count}" if zh
+                 else f"observed BSSID count {report.observed_bssid_count}")
             )
         if report.observed_ble_identifier_count:
             env_facts.append(
-                f"observed BLE identifier count "
-                f"{report.observed_ble_identifier_count}"
+                (f"观察到 BLE 标识数 {report.observed_ble_identifier_count}"
+                 if zh else
+                 f"observed BLE identifier count "
+                 f"{report.observed_ble_identifier_count}")
             )
         facts = (
-            f" ({'; '.join(env_facts)})" if env_facts else ""
+            (f"（{'；'.join(env_facts)}）" if zh else
+             f" ({'; '.join(env_facts)})") if env_facts else ""
         )
         rhythm = ""
         rh = report.hourly_rhythms.get("ble_device_seen")
         if rh is not None and rh.total >= 50:
             rhythm = (
-                f" Observed BLE-arrival rhythm: busiest around "
-                f"{rh.peak_hour:02d}:00, quietest around "
-                f"{rh.quiet_hour:02d}:00."
+                (f" 观察到的 BLE 到达节律：最忙约 {rh.peak_hour:02d}:00，"
+                 f"最闲约 {rh.quiet_hour:02d}:00。") if zh else
+                (f" Observed BLE-arrival rhythm: busiest around "
+                 f"{rh.peak_hour:02d}:00, quietest around "
+                 f"{rh.quiet_hour:02d}:00.")
+            )
+        if zh:
+            return (
+                f"{header}\n"
+                f"这些会话在 `{scene}` 模式下抓取{facts}。{prior} "
+                f"关注偏离这个基线的地方，而不是基线本身。{rhythm}"
             )
         return (
             f"[Scene context]\n"
@@ -1934,6 +2040,13 @@ def scene_llm_context_paragraph(report: Report) -> str:
     # Multi-scene
     parts = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     mix = ", ".join(f"{n} × `{name}`" for name, n in parts)
+    if zh:
+        return (
+            f"{header}\n"
+            f"输入跨多个场景：{mix}。把每个场景的先验应用到它自己的"
+            f"子集，而不是平均。当同一指标在不同基线下讲出不同故事时，"
+            f"跨场景对比。"
+        )
     return (
         f"[Scene context]\n"
         f"Input spans multiple scenes: {mix}. Apply each scene's "
@@ -1955,10 +2068,50 @@ def build_llm_prompt(report: Report) -> str:
             f"{report.span_end.date().isoformat()}"
         )
     else:
-        span_str = "an unknown span"
+        span_str = "an unknown span" if i18n.get_lang() != i18n.ZH \
+            else "一段未知的时间"
     files = len(report.source_paths) or 1
+    scene_para = scene_llm_context_paragraph(report)
+    if i18n.get_lang() == i18n.ZH:
+        return (
+            f"{scene_para}\n\n"
+            f"你是一名无线 / 网络分析师，正在审阅一份 `diting` 报告"
+            f"（macOS 终端 Wi-Fi / BLE / LAN 监视器）。报告覆盖 "
+            f"{span_str}，跨 {files} 个会话日志。\n\n"
+            f"你的任务：\n\n"
+            f"1. 找出数据支持的前 3 个模式。\n"
+            f"2. 对每个模式，给出最可能的根因，以及报告中支持它的证据。\n"
+            f"3. 建议用户可以用 diting 跑的具体后续调查（例如「周二 "
+            f"14:00-15:00 用 --log 抓一段再分析」）。\n"
+            f"4. 当报告里的 ASCII 图暗示某种趋势时，把趋势复述为一句话"
+            f"的论断，并标注以下之一：「数据支持」「弱信号」「推测」。\n"
+            f"5. 如果报告含匿名化附录，不要尝试解码句柄 —— 把句柄当作"
+            f"不透明标识符来分析。\n\n"
+            f"时序与人口视角 —— 请显式应用：\n"
+            f"- 节律与聚集：每种信号（BLE 到达、丢包、延迟、扰动、漫游）"
+            f"在一天里集中在什么时候？指出峰值 / 谷值窗口和任何爬升"
+            f"（例如早高峰填充），并说明这个时间意味着什么（占用、拥塞"
+            f"窗口、备份任务）。\n"
+            f"- 按稳定身份的复现：区分「少数物理设备整天在场」和「大量"
+            f"短暂过客」。注意：BLE MAC / 每次出现的 id 会轮换，按原始 "
+            f"id 计数会高估 —— 请从报告里按稳定身份的人口数推理，而不是"
+            f"出现次数。\n"
+            f"- 停留：短暂（秒级）vs 常驻（小时级）—— 高短暂占比意味着"
+            f"人流，而非固定设备群。\n"
+            f"- 跨信号共现：丢包 / 延迟 / 扰动是否和 BLE 到达峰值集中在"
+            f"相同的小时？如果是，给出假设（例如人到达带来的空口争用）"
+            f"以及能验证它的抓取 —— 不要断言因果。\n"
+            f"- off-hours 异常：在本应安静的时段（公司夜间、家里工作日）"
+            f"出现的活动，比同样的活动出现在正常时段更值得注意 —— 点"
+            f"出来，并说明可能是什么在活动。\n\n"
+            f"输出格式：markdown。不要逐字重复报告数据 —— 要解读它。"
+            f"结论先行，再给证据。任何超出数据所示的推断都标为「假设」。\n\n"
+            f"重要：不要臆测数据没有触及的原因。如果某处看着可疑但你"
+            f"无法指向报告里具体的事件，就直说。\n\n"
+            f"请用中文输出你的分析。\n"
+        )
     return (
-        f"{scene_llm_context_paragraph(report)}\n\n"
+        f"{scene_para}\n\n"
         f"You are a wireless / network analyst reviewing a "
         f"`diting` report (macOS terminal Wi-Fi / BLE / LAN "
         f"monitor). The report covers {span_str} across {files} "

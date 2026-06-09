@@ -430,9 +430,11 @@ Markdown 报告（排行数据用表格、ASCII 图用围栏代码块、附 Glos
 运行 → 打开任意 AI 聊天 → ⌘V → 提交
 ```
 
-不用拖拽、不用复制第二次。任何有能力的聊天都行 —— Claude
-（`claude.ai`）、ChatGPT（`chat.openai.com`）、DeepSeek
-（`chat.deepseek.com`）、Gemini、Kimi，随你用。`-o PATH` 指定
+不用拖拽、不用复制第二次。在 `--lang zh` 下，整份文档 —— 分析师
+提示词和报告 —— 都用中文写，且提示词要求模型用中文回答，所以你拿回
+的是中文分析（`ble_device_seen` 这类技术 token 保持原样）。任何有
+能力的聊天都行 —— Claude（`claude.ai`）、ChatGPT（`chat.openai.com`）、
+DeepSeek（`chat.deepseek.com`）、Gemini、Kimi，随你用。`-o PATH` 指定
 输出（`-o run.md` 给文件，`-o dir/` 给目录）。没有 API key、没有
 遥测、没有上传 —— diting 把文件写在本地、放进你的剪贴板，谁能看
 由你决定。

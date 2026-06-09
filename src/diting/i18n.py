@@ -1750,6 +1750,37 @@ _ZH: dict[str, str] = {
         "diting analyze：输出路径是一个目录：{path}",
     "diting analyze: {flag} requires a path argument":
         "diting analyze：{flag} 需要一个路径参数",
+    # localize-llm-document: scene priors + scene_summary (LLM document follows --lang)
+    "unknown (pre-scene-aware capture)": "未知（pre-scene-aware 抓取）",
+    "small known network — novelty matters. Sparse RF, "
+    "stable AP, ~10-15 BLE devices typical. Look for new "
+    "identifiers and unexpected roams.":
+        "小型已知网络 —— 新奇性重要。RF 稀疏、AP 稳定、通常 10-15 台 "
+        "BLE 设备。关注新出现的标识符和意外的漫游。",
+    "dense enterprise environment — baseline churn expected. "
+    "50+ BLE devices, 100+ BSSIDs typical. Continuous Apple "
+    "Continuity RPA rotation; roams every 5-15 min from AP "
+    "density. Look for departures from this baseline, not "
+    "the baseline itself.":
+        "密集企业环境 —— 预期有基线流动。通常 50+ 台 BLE 设备、100+ 个 "
+        "BSSID。Apple Continuity RPA 持续轮换；因 AP 密集每 5-15 分钟"
+        "漫游一次。关注偏离这个基线的地方，而不是基线本身。",
+    "hostile shared WiFi — cardinality is noise. Cafe / "
+    "train / plane / public hotspot. Almost every identifier "
+    "is a passer-by. LAN-side hosts are untrusted strangers. "
+    "Treat per-identifier ranks as noise; aggregate counts "
+    "and timing are still meaningful.":
+        "充满敌意的共享 WiFi —— 基数即噪声。咖啡馆 / 火车 / 飞机 / 公共"
+        "热点。几乎每个标识符都是过客。LAN 侧主机是不可信的陌生人。把按"
+        "标识符的排名当作噪声；聚合计数和时间仍然有意义。",
+    "raw capture — no filtering applied. User is actively "
+    "investigating (security research / device debug / "
+    "forensics). Every event in the log is intentional. "
+    "Treat ephemeral identifiers and short-lived signals "
+    "as potentially meaningful.":
+        "原始抓取 —— 未做任何过滤。用户在主动调查（安全研究 / 设备调试 "
+        "/ 取证）。日志里每个事件都是有意为之。把短暂的标识符和短命的"
+        "信号都视为可能有意义。",
     "✓ wrote {path}  ({kb:.1f} KB)":
         "✓ 已写入 {path}  （{kb:.1f} KB）",
     ", anonymized": "，已匿名化",
