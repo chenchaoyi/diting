@@ -862,9 +862,12 @@ def aggregate_top_contributors(
             if b:
                 bssid_stir[b] = bssid_stir.get(b, 0) + 1
         elif typ == "ble_device_seen":
-            ident = ev.get("identifier")
-            if ident:
-                entry = ble_seen.setdefault(ident, {"count": 0})
+            # Key on the STABLE familiarity identity, not the rotating BLE
+            # `identifier` — otherwise one physical device seen under many
+            # rotated addresses ranks as many "1 seen" rows (useless).
+            key = _ble_stable_key(ev)
+            if key:
+                entry = ble_seen.setdefault(key, {"count": 0})
                 entry["count"] += 1
                 entry["name"] = entry.get("name") or ev.get("name")
                 entry["vendor"] = entry.get("vendor") or ev.get("vendor")
@@ -901,14 +904,14 @@ def aggregate_top_contributors(
     )[:n]
     top_ble = tuple(
         TopBLE(
-            identifier=ident,
+            identifier=key,
             label=" · ".join(
                 p for p in (entry.get("vendor"), entry.get("name"))
                 if p
-            ) or ident,
+            ) or key,
             seen_count=entry["count"],
         )
-        for ident, entry in ble_sorted
+        for key, entry in ble_sorted
     )
 
     lan_sorted = sorted(
@@ -2371,7 +2374,7 @@ def _render_per_network(nets: tuple[NetworkAggregate, ...]) -> list[str]:
         bd = " · ".join(
             f"{k} {v}" for k, v in sorted(n.counts_by_type.items())
         )
-        out.append(f"  {n.network_label:<30} {n.total:>6} events   {bd}")
+        out.append(f"  {n.network_label:<30} {n.total:>6} {t('events')}   {bd}")
     out.append("")
     return out
 
@@ -2391,7 +2394,7 @@ def _render_daily_trend(daily: tuple[DailyCount, ...]) -> list[str]:
     # per-family detail lives in hour-of-day breakdown.
     max_total = max((d.total for d in daily), default=0)
     spark = "".join(_density_char(d.total, max_total) for d in daily)
-    out.append(f"  total  {spark}")
+    out.append(f"  {t('total')}  {spark}")
     out.append("")
     return out
 
@@ -2409,7 +2412,7 @@ def _render_top_contributors(top: TopContributors) -> list[str]:
             )
         out.append("")
     if top.ble_identifiers:
-        out.append(t("  BLE identifier                     seen events"))
+        out.append(t("  BLE device                         seen events"))
         for ble in top.ble_identifiers:
             out.append(f"    {ble.label:<32} {ble.seen_count:>6}")
         out.append("")

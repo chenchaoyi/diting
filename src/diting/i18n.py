@@ -1715,6 +1715,26 @@ _ZH: dict[str, str] = {
         "diting analyze：未知选项 {flag!r}",
     "diting analyze: output path is not a directory: {path}":
         "diting analyze：输出路径不是目录：{path}",
+    # cross-session render blocks (fix-analyze-cross-blocks)
+    "Events by hour-of-day                  total: {n}":
+        "按小时事件分布                          共 {n} 条",
+    "most:": "最多：",
+    "Day × hour heatmap (density)": "天 × 小时 热力图（密度）",
+    "Mon": "周一", "Tue": "周二", "Wed": "周三", "Thu": "周四",
+    "Fri": "周五", "Sat": "周六", "Sun": "周日",
+    "Top networks by event volume                 (top 10)":
+        "按事件量排名的网络                       （前 10）",
+    "events": "条",
+    "Daily trend ({n}-day window, with 7-day rolling avg)":
+        "每日趋势（{n} 天窗口，含 7 天滚动均值）",
+    "total": "合计",
+    "Top contributors": "主要贡献来源",
+    "  BSSID                              roam+stir":
+        "  BSSID                              漫游+扰动",
+    "  BLE device                         seen events":
+        "  BLE 设备                           出现次数",
+    "  LAN host                           dhcp rotations":
+        "  LAN 主机                           DHCP 轮换",
     "Network change(s) detected": "检测到网络切换",
     "{n} gateway-IP transition(s) during this session: "
     "{moves}. Treat per-network statistics separately — "
