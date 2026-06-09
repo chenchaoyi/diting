@@ -10,10 +10,19 @@ All numeric fields are typed `int | None` / `float | None` because:
   off, transient error) does the same.
 """
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
+from typing import Any
 
 _HEX = set("0123456789abcdef")
+
+
+def connection_to_dict(conn: "Connection") -> dict[str, Any]:
+    """Machine-readable view of a Connection for `diting once --json`.
+    Locale-stable English keys; the timestamp is ISO-8601 with offset."""
+    d = asdict(conn)
+    d["timestamp"] = conn.timestamp.isoformat()
+    return d
 
 
 def normalize_bssid(raw: str | None) -> str | None:

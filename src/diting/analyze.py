@@ -2005,6 +2005,95 @@ def build_llm_prompt(report: Report) -> str:
     )
 
 
+def report_to_dict(report: Report) -> dict[str, Any]:
+    """Machine-readable view of a Report for `diting analyze --json`.
+
+    Locale-stable English keys (an agent parses keys, never prose),
+    mirroring the JSONL wire-format convention. Covers the same data
+    the human `render` shows: scope, counts, link timeline, the
+    temporal / population / coincidence aggregates, and the insights.
+    None-valued aggregates are emitted as null so the shape is stable.
+    """
+    def _dwell(d: "DwellSummary | None") -> "dict | None":
+        if d is None:
+            return None
+        return {
+            "n": d.n, "p50_s": d.p50_s, "p90_s": d.p90_s,
+            "transient": d.transient, "lingering": d.lingering,
+            "resident": d.resident,
+        }
+
+    def _pop(p: "PopulationSummary | None") -> "dict | None":
+        if p is None:
+            return None
+        return {
+            "distinct_devices": p.distinct_devices, "residents": p.residents,
+            "passersby": p.passersby,
+            "unkeyable_sightings": p.unkeyable_sightings,
+        }
+
+    def _rhythm(r: HourlyRhythm) -> dict:
+        return {
+            "peak_hour": r.peak_hour, "peak_count": r.peak_count,
+            "quiet_hour": r.quiet_hour, "quiet_count": r.quiet_count,
+            "top_hours_share": round(r.top_hours_share, 4),
+            "concentrated": r.concentrated, "total": r.total,
+        }
+
+    return {
+        "span": {
+            "start": report.span_start.isoformat() if report.span_start else None,
+            "end": report.span_end.isoformat() if report.span_end else None,
+        },
+        "source_paths": list(report.source_paths),
+        "scenes": list(report.scenes),
+        "total_events": report.total_events,
+        "counts_by_type": dict(report.counts_by_type),
+        "associations": [
+            {"ssid": s, "bssid": b} for s, b in report.associations
+        ],
+        "roams": report.roams,
+        "band_switches": report.band_switches,
+        "inter_ap_roams": report.inter_ap_roams,
+        "disassociates": report.disassociates,
+        "stir": {
+            "count": report.stir_count,
+            "modes": dict(report.stir_modes),
+            "confidences": dict(report.stir_confidences),
+            "sigma_p50": report.stir_sigma_p50,
+        },
+        "latency_spikes": report.latency_spike_count,
+        "loss_bursts": {
+            "count": report.loss_burst_count,
+            "max_pct": report.loss_burst_max_pct,
+        },
+        "network_changes": [
+            {"previous": p, "new": n} for p, n in report.network_changes
+        ],
+        "temporal": {
+            "ble_dwell": _dwell(report.ble_dwell),
+            "ble_population": _pop(report.ble_population),
+            "hourly_rhythms": {
+                cat: _rhythm(rh) for cat, rh in report.hourly_rhythms.items()
+            },
+            "co_peaks": [
+                {"hour": h, "categories": list(cats)}
+                for h, cats in report.co_peaks
+            ],
+            "hour_of_day": {
+                str(h): dict(b) for h, b in report.hour_of_day.items()
+            },
+        },
+        "insights": [
+            {
+                "severity": i.severity, "title": i.title,
+                "detail": i.detail, "todo": i.todo,
+            }
+            for i in report.insights
+        ],
+    }
+
+
 def render(report: Report) -> str:
     """Format the report as a multi-line string suitable for
     plain stdout. Keeps to ASCII art so it stays grep-friendly
