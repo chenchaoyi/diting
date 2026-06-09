@@ -11,6 +11,48 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.17.0] — 2026-06-09
+
+Feature release. **`diting analyze` reads the rhythm of a long capture, and
+the whole CLI becomes a dependable tool an agent can drive.**
+
+### Added
+
+- **Temporal & population intelligence in `analyze`.** A long log (≥ 2 h, no
+  longer only multi-file / `--since`) now surfaces: the BLE arrival rhythm
+  (peak / quiet hours), a dwell distribution (transient foot-traffic vs
+  residents), a device population counted by *stable* identity (not the
+  rotating BLE address — 79 real devices, not thousands of rotations), a
+  scene-aware off-hours flag, and a cross-signal coincidence read (e.g. "loss
+  concentrated in the busy arrival hours → airtime contention; capture then").
+  The `--for-llm` prompt gains matching temporal lenses.
+- **`--json` machine-readable output** on `once`, `analyze`, and `watch`, so a
+  coding agent or script can collect signals without scraping prose. `once` /
+  `analyze` emit one JSON document; `watch` emits a newline-delimited
+  line-stream. JSON-only on stdout (chrome → stderr); keys are stable English
+  even under `--lang zh`. `monitor` already streams JSONL.
+
+### Changed
+
+- **The CLI never prints a traceback.** Any unexpected error is one
+  `diting: <message>` line on stderr + exit 1 (a JSON `{"error","code"}` object
+  under `--json`); `DITING_DEBUG=1` restores the trace. Per-subcommand `--help`
+  with examples; a documented exit-code convention (`0` ok · `1` runtime · `2`
+  usage).
+- **`analyze --for-llm` takes its output dir via `-o` / `--out-dir`** (implies
+  `--for-llm`; `--for-llm=DIR` kept for back-compat) — a bare `--for-llm <log>`
+  no longer swallows the input.
+- **The analyze cross-session blocks honor `--lang zh`** (hour-of-day, heatmap,
+  networks, trend, top contributors), and the top-contributors BLE ranking now
+  ranks real devices by sighting count (stable identity), not the rotating
+  address.
+
+### Fixed
+
+- **`diting analyze --for-llm <log.jsonl>` no longer crashes** with a
+  `FileExistsError` traceback; an output dir that collides with a file is a
+  clean usage error.
+
 ## [1.16.2] — 2026-06-08
 
 Feature + polish release. **The pairing screen shows how many phones are
