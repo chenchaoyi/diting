@@ -192,6 +192,53 @@ class HourlyRhythm:
         return self.top_hours_share >= _CONCENTRATION_SHARE
 
 
+# Maps each monitor in the session_meta manifest to the event types it
+# produces, so the negative-space reader can say "monitor active, 0 events".
+_MONITOR_EVENT_TYPES: dict[str, tuple[str, ...]] = {
+    "wifi": ("roam",),
+    "ble": ("ble_device_seen",),
+    "lan": ("lan_host_seen", "lan_host_left", "lan_host_dhcp_rotation"),
+    "latency": ("latency_spike", "loss_burst"),
+    "rf_stir": ("rf_stir",),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageSummary:
+    """Monitoring-coverage manifest (from session_meta) + the observed event
+    count per signal, so the renderer can frame silence as 'monitored & quiet'
+    vs 'not observed'. (capture/analyze-observability.)"""
+    monitors: dict[str, Any]            # the raw manifest
+    permissions: dict[str, Any]
+    signal_events: dict[str, int]       # signal → observed event count
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectionQualitySummary:
+    """Steady-state link quality aggregated from link_state + link_sample
+    `quality` objects."""
+    ssid: str | None
+    bssid: str | None
+    security: str | None
+    channel: int | None
+    channel_band: str | None
+    phy_mode: str | None
+    rssi_p50: int | None
+    rssi_min: int | None
+    rssi_max: int | None
+    snr_p50: int | None
+    samples: int
+
+
+@dataclass(frozen=True, slots=True)
+class NeighborSummary:
+    """Latest scan-neighborhood reading from scan_summary events."""
+    neighbor_count: int | None
+    co_channel_count: int | None
+    current_channel: int | None
+    samples: int
+
+
 def _ble_stable_key(row: dict[str, Any]) -> str | None:
     """Stable physical-device identity for a BLE JSONL row, via the same
     ladder ``familiarity.familiarity_key`` uses — manufacturer payload →
@@ -209,6 +256,91 @@ def _ble_stable_key(row: dict[str, Any]) -> str | None:
         name=row.get("name"),
         service_data_id=row.get("service_data_id"),
         vendor=row.get("vendor"),
+    )
+
+
+def aggregate_coverage(events: list[dict[str, Any]]) -> "CoverageSummary | None":
+    """Read the `monitors` manifest + `permissions` from the session_meta
+    event and count observed events per signal, so the renderer can frame
+    silence ("monitored & quiet" vs "not observed"). None when no manifest."""
+    manifest: dict[str, Any] | None = None
+    permissions: dict[str, Any] = {}
+    for e in events:
+        if e.get("type") == "session_meta" and isinstance(
+            e.get("monitors"), dict
+        ):
+            manifest = e["monitors"]
+            permissions = e.get("permissions") or {}
+            break
+    if manifest is None:
+        return None
+    counts: dict[str, int] = {}
+    for e in events:
+        t = e.get("type")
+        for signal, types in _MONITOR_EVENT_TYPES.items():
+            if t in types:
+                counts[signal] = counts.get(signal, 0) + 1
+    signal_events = {s: counts.get(s, 0) for s in manifest}
+    return CoverageSummary(
+        monitors=manifest, permissions=permissions, signal_events=signal_events,
+    )
+
+
+def aggregate_connection_quality(
+    events: list[dict[str, Any]],
+) -> "ConnectionQualitySummary | None":
+    """Aggregate `quality` objects from link_state + link_sample into an RSSI /
+    SNR distribution + the steady channel / band / PHY. None when no quality."""
+    rssis: list[int] = []
+    snrs: list[int] = []
+    last: dict[str, Any] = {}
+    last_ls: dict[str, Any] = {}
+    for e in events:
+        t = e.get("type")
+        if t not in ("link_state", "link_sample"):
+            continue
+        q = e.get("quality")
+        if not isinstance(q, dict):
+            continue
+        if isinstance(q.get("rssi_dbm"), (int, float)):
+            rssis.append(int(q["rssi_dbm"]))
+        if isinstance(q.get("snr_db"), (int, float)):
+            snrs.append(int(q["snr_db"]))
+        last = q
+        if t == "link_state" and e.get("state") == "associated":
+            last_ls = e
+    if not rssis and not last:
+        return None
+    def _p50(xs: list[int]) -> int | None:
+        return int(statistics.median(xs)) if xs else None
+    return ConnectionQualitySummary(
+        ssid=last_ls.get("ssid"),
+        bssid=last_ls.get("bssid"),
+        security=last_ls.get("security"),
+        channel=last.get("channel"),
+        channel_band=last.get("channel_band"),
+        phy_mode=last.get("phy_mode"),
+        rssi_p50=_p50(rssis),
+        rssi_min=min(rssis) if rssis else None,
+        rssi_max=max(rssis) if rssis else None,
+        snr_p50=_p50(snrs),
+        samples=len(rssis),
+    )
+
+
+def aggregate_neighbors(
+    events: list[dict[str, Any]],
+) -> "NeighborSummary | None":
+    """Latest scan_summary reading + sample count. None when none present."""
+    summaries = [e for e in events if e.get("type") == "scan_summary"]
+    if not summaries:
+        return None
+    latest = summaries[-1]
+    return NeighborSummary(
+        neighbor_count=latest.get("neighbor_count"),
+        co_channel_count=latest.get("co_channel_count"),
+        current_channel=latest.get("current_channel"),
+        samples=len(summaries),
     )
 
 
@@ -389,6 +521,12 @@ class Report:
     ble_population: PopulationSummary | None = None
     hourly_rhythms: dict[str, "HourlyRhythm"] = field(default_factory=dict)
     co_peaks: tuple[tuple[int, tuple[str, ...]], ...] = ()
+    # ---------- observability (analyze-observability) ----------
+    # Synthesized from the capture-context / capture-sampling fields. None
+    # when the source log predates them (graceful for old captures).
+    coverage: "CoverageSummary | None" = None
+    connection_quality: "ConnectionQualitySummary | None" = None
+    neighbors: "NeighborSummary | None" = None
 
 
 # ---------- analyser ----------
@@ -561,6 +699,13 @@ def analyze(
         rhythms = {}
         co_peaks = ()
 
+    # Observability summaries run unconditionally (valuable on any session,
+    # including short / static ones); each returns None when its source data
+    # is absent (older logs).
+    coverage = aggregate_coverage(events)
+    connection_quality = aggregate_connection_quality(events)
+    neighbors = aggregate_neighbors(events)
+
     report = Report(
         path=source_path or (paths_t[0] if paths_t else ""),
         span_start=min(timestamps) if timestamps else None,
@@ -603,6 +748,9 @@ def analyze(
         ble_population=population,
         hourly_rhythms=rhythms,
         co_peaks=co_peaks,
+        coverage=coverage,
+        connection_quality=connection_quality,
+        neighbors=neighbors,
     )
 
     insights = list(_run_heuristics(report, events))
@@ -1535,6 +1683,105 @@ class Anonymizer:
         return out
 
 
+def _coverage_verdict(signal: str, zh: bool) -> str:
+    """Short interpretation for an active monitor that produced 0 events —
+    the 'monitored & quiet' reading. Empty for signals without one."""
+    table = {
+        "latency": ("已探测，链路稳定" if zh else "probed, link stable"),
+        "rf_stir": ("环境静止" if zh else "static environment"),
+        "wifi": ("单 AP，无漫游" if zh else "single AP, no roam"),
+        "ble": ("未见设备" if zh else "none seen"),
+        "lan": ("无主机变化" if zh else "no host changes"),
+    }
+    return table.get(signal, "")
+
+
+def _observability_lines(
+    report: Report, *, zh: bool, markdown: bool,
+) -> list[str]:
+    """Lines for the three observability sections (coverage / connection
+    quality / neighbors), shared by render() and render_markdown(). Each
+    section is emitted only when its summary is present."""
+    out: list[str] = []
+
+    def _head(title: str) -> None:
+        out.append("")
+        if markdown:
+            out.append(f"## {title}")
+            out.append("")
+        else:
+            out.append(title)
+            out.append("-" * 60)
+
+    def _row(text: str) -> None:
+        out.append(f"- {text}" if markdown else f"  {text}")
+
+    cov = report.coverage
+    if cov is not None:
+        _head("监听覆盖" if zh else "Monitoring coverage")
+        for signal, info in cov.monitors.items():
+            if not isinstance(info, dict):
+                continue
+            n = cov.signal_events.get(signal, 0)
+            if not info.get("active"):
+                _row(f"{signal}: " + ("未监听" if zh else "not observed"))
+                continue
+            ev = "事件" if zh else "events"
+            line = f"{signal}: " + ("监听中" if zh else "monitored") + f" · {n} {ev}"
+            if n == 0:
+                v = _coverage_verdict(signal, zh)
+                if v:
+                    line += f" → {v}"
+            _row(line)
+        loc = cov.permissions.get("location")
+        if loc:
+            _row(("位置权限：" if zh else "location permission: ") + str(loc))
+
+    cq = report.connection_quality
+    if cq is not None and cq.rssi_p50 is not None:
+        _head("连接质量" if zh else "Connection quality")
+        parts: list[str] = []
+        rng = (
+            f"（{cq.rssi_min}…{cq.rssi_max}）" if zh
+            else f"({cq.rssi_min}…{cq.rssi_max})"
+        )
+        parts.append(f"RSSI p50 {cq.rssi_p50} dBm {rng}")
+        if cq.snr_p50 is not None:
+            parts.append(f"SNR {cq.snr_p50} dB")
+        if cq.channel is not None:
+            ch = ("信道 " if zh else "ch ") + str(cq.channel)
+            if cq.channel_band:
+                ch += f" / {cq.channel_band}"
+            parts.append(ch)
+        if cq.phy_mode:
+            parts.append(cq.phy_mode)
+        if cq.security:
+            parts.append(cq.security)
+        tail = (
+            f"（{cq.samples} 个样本）" if zh else f"({cq.samples} samples)"
+        )
+        _row(" · ".join(parts) + "  " + tail)
+
+    nb = report.neighbors
+    if nb is not None and nb.neighbor_count is not None:
+        _head("邻居" if zh else "Neighbors")
+        if zh:
+            line = f"{nb.neighbor_count} 个 BSSID 可见"
+            if nb.co_channel_count is not None:
+                line += f" · {nb.co_channel_count} 个同信道"
+                if nb.current_channel is not None:
+                    line += f"（信道 {nb.current_channel}）"
+        else:
+            line = f"{nb.neighbor_count} BSSIDs visible"
+            if nb.co_channel_count is not None:
+                line += f" · {nb.co_channel_count} co-channel"
+                if nb.current_channel is not None:
+                    line += f" (channel {nb.current_channel})"
+        _row(line)
+
+    return out
+
+
 def render_markdown(
     report: Report,
     *,
@@ -1827,6 +2074,9 @@ def render_markdown(
                 lines.append(f"| `{label}` | {lan.rotation_count} |")
             lines.append("")
 
+    # ---- Observability (coverage / connection quality / neighbors)
+    lines.extend(_observability_lines(report, zh=zh, markdown=True))
+
     # ---- Glossary (always included — LLM benefits regardless of mode)
     lines.append("## 术语表" if zh else "## Glossary")
     lines.append("")
@@ -2109,7 +2359,10 @@ def build_llm_prompt(report: Report, *, raw_attached: bool = False) -> str:
             f"以及能验证它的抓取 —— 不要断言因果。\n"
             f"- off-hours 异常：在本应安静的时段（公司夜间、家里工作日）"
             f"出现的活动，比同样的活动出现在正常时段更值得注意 —— 点"
-            f"出来，并说明可能是什么在活动。\n\n"
+            f"出来，并说明可能是什么在活动。\n"
+            f"- 读「监听覆盖」一节：活跃监听下的 0 事件意味着「监听了但"
+            f"安静」（是一个结论），不是「未知」—— 不要说你无法评估一个"
+            f"明明被监听的信号；把它当作健康/稳定的证据。\n\n"
             + (
                 "随附了一份原始 JSONL 事件日志（与本简报一起附上）。用它来"
                 "核对摘要、并深入摘要没有覆盖的细节（精确时间戳、RSSI 序列、"
@@ -2162,7 +2415,11 @@ def build_llm_prompt(report: Report, *, raw_attached: bool = False) -> str:
         f"- Off-hours anomalies: activity when the scene expects quiet "
         f"(office overnight, home workday) is more noteworthy than the "
         f"same activity in-hours — call it out and say what could be "
-        f"active.\n\n"
+        f"active.\n"
+        f"- Read the 'Monitoring coverage' section: zero events under an "
+        f"ACTIVE monitor means 'monitored and quiet' (a finding), not "
+        f"'unknown' — don't claim you can't assess a signal that was "
+        f"monitored; treat it as evidence of a healthy / stable state.\n\n"
         + (
             "A raw JSONL event log is attached alongside this briefing. "
             "Use it to verify the summary and to investigate specifics the "
@@ -2327,6 +2584,39 @@ def report_to_dict(report: Report) -> dict[str, Any]:
             }
             for i in report.insights
         ],
+        "coverage": (
+            {
+                "monitors": report.coverage.monitors,
+                "permissions": report.coverage.permissions,
+                "signal_events": report.coverage.signal_events,
+            }
+            if report.coverage is not None else None
+        ),
+        "connection_quality": (
+            {
+                "ssid": report.connection_quality.ssid,
+                "bssid": report.connection_quality.bssid,
+                "security": report.connection_quality.security,
+                "channel": report.connection_quality.channel,
+                "channel_band": report.connection_quality.channel_band,
+                "phy_mode": report.connection_quality.phy_mode,
+                "rssi_p50": report.connection_quality.rssi_p50,
+                "rssi_min": report.connection_quality.rssi_min,
+                "rssi_max": report.connection_quality.rssi_max,
+                "snr_p50": report.connection_quality.snr_p50,
+                "samples": report.connection_quality.samples,
+            }
+            if report.connection_quality is not None else None
+        ),
+        "neighbors": (
+            {
+                "neighbor_count": report.neighbors.neighbor_count,
+                "co_channel_count": report.neighbors.co_channel_count,
+                "current_channel": report.neighbors.current_channel,
+                "samples": report.neighbors.samples,
+            }
+            if report.neighbors is not None else None
+        ),
     }
 
 
@@ -2493,6 +2783,13 @@ def render(report: Report) -> str:
         lines.extend(_render_daily_trend(report.daily_trend))
         if report.top_contributors is not None:
             lines.extend(_render_top_contributors(report.top_contributors))
+
+    # Observability sections render whenever their data is present —
+    # independent of the temporal gate, since coverage / quality / neighbors
+    # are valuable on a short single session too.
+    lines.extend(_observability_lines(
+        report, zh=i18n.get_lang() == i18n.ZH, markdown=False,
+    ))
 
     return "\n".join(lines).rstrip() + "\n"
 
