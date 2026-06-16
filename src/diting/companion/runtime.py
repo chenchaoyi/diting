@@ -24,6 +24,10 @@ FLUSH_INTERVAL_S = 3.0
 # Consecutive fully-failed flushes before the chip names the outage —
 # ~9 s at the flush interval, so a transient blip never flashes it.
 UNREACHABLE_AFTER_FAILURES = 3
+# Envelopes sent per flush. Bounds the per-call blocking time on a slow link
+# so a large backlog drains incrementally across periodic cycles instead of
+# one all-or-nothing burst that blocks the flush thread for minutes.
+DEFAULT_FLUSH_BATCH = 50
 
 
 def _state_path_if_paired(state_path: Path | None) -> Path | None:
@@ -65,11 +69,13 @@ async def flush_loop(sink: "CompanionSink", *, interval: float = FLUSH_INTERVAL_
         while True:
             await asyncio.sleep(interval)
             if sink.client.pending:
-                await asyncio.to_thread(sink.flush)
+                await asyncio.to_thread(sink.flush, DEFAULT_FLUSH_BATCH)
     except asyncio.CancelledError:
         if sink.client.pending:
             try:
-                await asyncio.to_thread(sink.flush)
+                # Best-effort, bounded: a clean quit never hangs the shutdown
+                # draining a deep backlog over a slow link.
+                await asyncio.to_thread(sink.flush, DEFAULT_FLUSH_BATCH)
             except Exception:
                 pass
         raise

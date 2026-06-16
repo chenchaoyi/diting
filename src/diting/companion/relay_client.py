@@ -166,11 +166,22 @@ class RelayClient:
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         return self._transport(self._url(), headers, body)
 
-    def flush(self) -> FlushReport:
-        """Drain the queue in order until empty or a POST fails."""
+    def flush(self, max_batch: int | None = None) -> FlushReport:
+        """Drain the queue in order until empty, a POST fails, or — when
+        ``max_batch`` is a positive int — this call has sent that many
+        envelopes. Bounding the batch caps the per-call blocking time at
+        ``max_batch × per-POST latency`` instead of the whole backlog, so a
+        large queue drains incrementally across successive periodic flushes
+        (the driver keeps ``pending`` true and sends the next batch next
+        cycle) rather than blocking one thread for minutes. ``None`` keeps the
+        unbounded drain-all behavior. Ordering, drop-oldest, and the
+        consecutive-failure accounting are unchanged; hitting the batch cap is
+        a success path (a full batch moved → the relay is reachable)."""
         attempted = bool(self._queue)
         sent = 0
         while self._queue:
+            if max_batch is not None and sent >= max_batch:
+                break  # batch full — leave the rest for the next flush
             envelope, category, summary = self._queue[0]
             status = self._post(envelope, category, summary)
             if 200 <= status < 300:

@@ -68,5 +68,5 @@ class CompanionSink:
         )
         return True
 
-    def flush(self):
-        return self._client.flush()
+    def flush(self, max_batch: int | None = None):
+        return self._client.flush(max_batch)

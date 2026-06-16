@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+
 from diting.companion import runtime
 from diting.companion.relay_client import RelayClient
 from diting.companion.state import PairingState
@@ -79,3 +82,48 @@ def test_subtitle_chip_recovers_after_successful_send():
     client.flush()
     chip = runtime.subtitle_chip(sink)
     assert "relay unreachable" not in chip and chip == "companion: on"
+
+
+class _FlushSink:
+    """Minimal sink for flush_loop: forwards flush to a real RelayClient."""
+
+    def __init__(self, client):
+        self.client = client
+
+    def flush(self, max_batch=None):
+        return self.client.flush(max_batch)
+
+
+def test_flush_loop_drains_backlog_across_cycles():
+    # A backlog deeper than one batch drains to empty across successive
+    # periodic flushes — each cycle sends at most DEFAULT_FLUSH_BATCH — with
+    # no loss or reordering.
+    sent: list[int] = []
+
+    def tx(url, headers, body):
+        sent.append(json.loads(body)["seq"])
+        return 200
+
+    client = RelayClient("https://r.example", "c", "tok", transport=tx)
+    total = runtime.DEFAULT_FLUSH_BATCH * 2 + 5  # spans 3 cycles
+    for s in range(1, total + 1):
+        client.enqueue({"seq": s})
+    sink = _FlushSink(client)
+
+    async def run():
+        task = asyncio.create_task(runtime.flush_loop(sink, interval=0))
+        for _ in range(500):  # bounded wait — in-memory transport drains fast
+            if client.pending == 0:
+                break
+            await asyncio.sleep(0.001)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+    assert client.pending == 0
+    assert sent == list(range(1, total + 1))  # in order, nothing lost
+    # More than one cycle was needed — never a single all-or-nothing burst.
+    assert total > runtime.DEFAULT_FLUSH_BATCH
