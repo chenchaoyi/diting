@@ -77,6 +77,13 @@ IGNORE_BELOW_RSSI = -85
 # a single big spike: the σ has to drop back below the absolute floor
 # before the same AP can fire again.
 DEFAULT_REARM_DB = 1.5
+# Re-arming additionally requires the below-floor condition to PERSIST for
+# this long. A neighbour AP sampled only at scan cadence (~7 s) frequently
+# has too few samples in the 5 s spike window for σ to be computable; that
+# "no data" state must not be read as "stir ended". Requiring a sustained,
+# *computable* quiet period before re-arming collapses one ongoing episode to
+# a single event instead of re-firing every tick.
+DEFAULT_REARM_DEBOUNCE_S = 30.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +129,8 @@ class _APState:
     last_above_threshold_at: datetime | None
     last_rssi: int | None
     armed: bool                    # False right after firing; re-arms on σ drop
+    rearm_below_since: datetime | None  # start of the sustained-quiet streak,
+    #                                     or None while σ is elevated/uncomputable
 
 
 class EnvironmentMonitor:
@@ -143,6 +152,7 @@ class EnvironmentMonitor:
         spike_min_db: float = DEFAULT_SPIKE_MIN_DB,
         cooldown_s: float = DEFAULT_COOLDOWN_S,
         rearm_db: float = DEFAULT_REARM_DB,
+        rearm_debounce_s: float = DEFAULT_REARM_DEBOUNCE_S,
         calibration: dict | None = None,
     ) -> None:
         self._inventory = inventory
@@ -152,6 +162,7 @@ class EnvironmentMonitor:
         self._spike_min_db = spike_min_db
         self._cooldown = timedelta(seconds=cooldown_s)
         self._rearm_db = rearm_db
+        self._rearm_debounce = timedelta(seconds=rearm_debounce_s)
         # Per-AP state, keyed by BSSID lower-case. We never trim:
         # APs come and go but the history naturally ages out as the
         # rolling window slides.
@@ -195,6 +206,7 @@ class EnvironmentMonitor:
             "last_above_threshold_at": None,
             "last_rssi": None,
             "armed": True,
+            "rearm_below_since": None,
             "ssid": None,
         })
         state["history"].append((now, rssi_dbm))
@@ -229,11 +241,23 @@ class EnvironmentMonitor:
             if mode == "ignored":
                 continue
             if not state["armed"]:
-                # Re-arm when the σ falls back below the floor so a
-                # single big spike doesn't fire repeatedly.
+                # Re-arm only on positive, SUSTAINED evidence the stir ended:
+                # a *computable* σ held below the floor for the debounce
+                # window. Missing data (current is None — too few samples in
+                # the spike window, common for a scan-cadence neighbour AP) or
+                # a single fluke-low reading must NOT re-arm, otherwise the AP
+                # re-arms every tick and re-fires the same ongoing episode.
                 current = self._current_sigma(state, now)
-                if current is None or current < self._rearm_db:
-                    state["armed"] = True
+                if current is not None and current < self._rearm_db:
+                    since = state["rearm_below_since"]
+                    if since is None:
+                        state["rearm_below_since"] = now
+                    elif (now - since) >= self._rearm_debounce:
+                        state["armed"] = True
+                        state["rearm_below_since"] = None
+                else:
+                    # Elevated again, or no evidence — reset the quiet streak.
+                    state["rearm_below_since"] = None
                 continue
             current = self._current_sigma(state, now)
             baseline = self._baseline_sigma(bssid, state, now)
@@ -278,6 +302,7 @@ class EnvironmentMonitor:
             ))
             state["last_event_at"] = now
             state["armed"] = False
+            state["rearm_below_since"] = None
         return events
 
     def baseline_summary(self) -> list[APBaseline]:
