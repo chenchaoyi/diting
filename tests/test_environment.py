@@ -14,6 +14,7 @@ import pytest
 
 from diting.environment import (
     DEFAULT_BASELINE_WINDOW_S,
+    DEFAULT_REARM_DEBOUNCE_S,
     EnvironmentMonitor,
     load_calibration,
     write_calibration,
@@ -330,6 +331,84 @@ def test_rf_stir_event_ssid_remembers_last_non_none():
         )
     events = monitor.fire_events(base + timedelta(seconds=burst_start + 4))
     assert events[0].ssid == "tedo_5G"
+
+
+_QUIET = [(i * 5, -55 + ((i * 7) % 3 - 1)) for i in range(60)]  # ~5 min, σ < 1.5
+_BURST = [(0, -45), (1, -65), (2, -47), (3, -63), (4, -50)]      # σ ~ 9 dB
+
+
+def _burst_at(t: float):
+    """A 5 s spike (≥3 samples) anchored at offset ``t``."""
+    return [(t + o, v) for o, v in _BURST]
+
+
+def test_undersampled_neighbour_stir_fires_once_not_per_tick():
+    """debounce-rf-stir-rearm: a sustained stir on a neighbour AP whose
+    spike window keeps dropping below 3 samples (scan-cadence sampling)
+    must fire exactly ONCE. The old guard re-armed whenever σ was
+    uncomputable (None), so it re-fired the same episode on the next
+    3-sample window."""
+    monitor = EnvironmentMonitor(inventory=_INV, cooldown_s=0.0)
+    base = _now()
+    bssid = "aa:bb:cc:11:22:10"
+    _seed(monitor, bssid, _QUIET, t0=base)
+    fired = 0
+    # First burst → one event; AP disarms.
+    _seed(monitor, bssid, _burst_at(300), t0=base)
+    fired += len(monitor.fire_events(base + timedelta(seconds=304)))
+    # An under-sampled tick: a lone sample → σ uncomputable (None).
+    _seed(monitor, bssid, [(308, -55)], t0=base)
+    monitor.fire_events(base + timedelta(seconds=308))   # must NOT re-arm
+    # A fresh 3-sample burst right after. Old code: re-armed → fires again.
+    _seed(monitor, bssid, _burst_at(309), t0=base)
+    fired += len(monitor.fire_events(base + timedelta(seconds=313)))
+    assert fired == 1
+
+
+def test_fluke_low_reading_does_not_rearm():
+    """A single brief σ-below-floor reading that is not sustained for
+    the debounce window must not re-arm the AP."""
+    monitor = EnvironmentMonitor(inventory=_INV, cooldown_s=0.0)
+    base = _now()
+    bssid = "aa:bb:cc:11:22:10"
+    _seed(monitor, bssid, _QUIET, t0=base)
+    fired = 0
+    _seed(monitor, bssid, _burst_at(300), t0=base)
+    fired += len(monitor.fire_events(base + timedelta(seconds=304)))
+    # A momentary quiet window (computable σ < 1.5) starts the streak…
+    _seed(monitor, bssid, [(305, -55), (306, -55), (307, -55)], t0=base)
+    monitor.fire_events(base + timedelta(seconds=307))   # rearm streak begins
+    # …but well before the debounce elapses, σ is elevated again, then a
+    # fresh burst. Streak reset → still disarmed → no second event.
+    _seed(monitor, bssid, _burst_at(309), t0=base)
+    fired += len(monitor.fire_events(base + timedelta(seconds=313)))
+    assert fired == 1
+
+
+def test_sustained_quiet_rearms_for_a_separate_disturbance():
+    """Two genuinely separated disturbances fire twice: a sustained,
+    computable σ below the floor held for the debounce window re-arms the
+    AP so a later spike fires again."""
+    monitor = EnvironmentMonitor(inventory=_INV, cooldown_s=0.0)
+    base = _now()
+    bssid = "aa:bb:cc:11:22:10"
+    _seed(monitor, bssid, _QUIET, t0=base)
+    fired = 0
+    _seed(monitor, bssid, _burst_at(300), t0=base)
+    fired += len(monitor.fire_events(base + timedelta(seconds=304)))
+    # Dense quiet (σ computable, < 1.5) sampled 1 Hz across the debounce
+    # window; tick the monitor at the start and end of the quiet so the
+    # re-arm streak can mature.
+    debounce = DEFAULT_REARM_DEBOUNCE_S
+    quiet2 = [(305 + i, -55 + (i % 3 - 1)) for i in range(int(debounce) + 8)]
+    _seed(monitor, bssid, quiet2, t0=base)
+    monitor.fire_events(base + timedelta(seconds=309))          # streak begins
+    monitor.fire_events(base + timedelta(seconds=305 + debounce + 4))  # re-arms
+    # A fresh burst after re-arm fires a second event.
+    second = 305 + debounce + 6
+    _seed(monitor, bssid, _burst_at(second), t0=base)
+    fired += len(monitor.fire_events(base + timedelta(seconds=second + 4)))
+    assert fired == 2
 
 
 def test_mixed_naive_aware_timestamps_do_not_raise():
