@@ -317,6 +317,49 @@ def test_queue_overflow_drops_oldest_and_counts():
     assert c.dropped == 1 and c.pending == 2  # seq 1 dropped
 
 
+def test_flush_max_batch_sends_at_most_n_in_order():
+    # A backlog larger than the batch sends exactly the batch, in order,
+    # and leaves the rest queued for the next flush.
+    tx = _FakeTransport(200)
+    c = _client(tx)
+    for s in range(1, 6):  # seq 1..5
+        c.enqueue({"seq": s})
+    report = c.flush(max_batch=2)
+    assert report.sent == 2 and report.pending == 3
+    assert [call["body"]["seq"] for call in tx.calls] == [1, 2]
+    # Next batch picks up exactly where the last left off — no loss/reorder.
+    report2 = c.flush(max_batch=2)
+    assert report2.sent == 2 and report2.pending == 1
+    assert [call["body"]["seq"] for call in tx.calls] == [1, 2, 3, 4]
+    report3 = c.flush(max_batch=2)
+    assert report3.sent == 1 and report3.pending == 0
+    assert [call["body"]["seq"] for call in tx.calls] == [1, 2, 3, 4, 5]
+
+
+def test_flush_max_batch_cap_resets_failure_counter():
+    # Hitting the batch cap is a success path: a full batch moved, so the
+    # relay is reachable and the unreachable counter resets.
+    tx = _FakeTransport(0)  # all fail first
+    c = _client(tx)
+    for s in range(1, 6):
+        c.enqueue({"seq": s})
+    c.flush(max_batch=2)
+    assert c.consecutive_failures == 1  # attempted, sent nothing
+    tx._status = 200
+    c.flush(max_batch=2)
+    assert c.consecutive_failures == 0 and c.pending == 3
+
+
+def test_flush_no_arg_still_drains_all():
+    # Back-compat: an unbounded flush drains the whole queue in one call.
+    tx = _FakeTransport(200)
+    c = _client(tx)
+    for s in range(1, 6):
+        c.enqueue({"seq": s})
+    report = c.flush()
+    assert report.sent == 5 and report.pending == 0
+
+
 def test_category_header_forwarded():
     tx = _FakeTransport(200)
     c = _client(tx)
