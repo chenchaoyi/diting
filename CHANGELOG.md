@@ -11,6 +11,36 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.19.0] — 2026-06-16
+
+Maintenance release. **Two noise-reduction fixes for the RF-environment
+detector and the companion relay, both found by analyzing a real multi-hour
+capture.**
+
+### Changed
+
+- **Companion relay flush is now bounded per cycle.** On a slow or flaky link a
+  deep offline backlog used to drain in one all-or-nothing synchronous burst —
+  blocking the flush thread for minutes and aborting the whole attempt on a
+  single slow POST, so the queue could sit frozen behind a `relay unreachable`
+  chip. Each flush now sends at most a bounded batch and the periodic loop
+  drains the rest across its cycles, so a backlog recovers incrementally.
+  Ordering, the bounded-queue drop-oldest behavior, and the unreachable
+  accounting are unchanged.
+
+### Fixed
+
+- **`rf_stir` no longer floods on a chronically-noisy AP.** The RF-stir
+  detector re-armed whenever σ was momentarily uncomputable (fewer than 3
+  samples in the spike window — the common case for a neighbour AP sampled only
+  at scan cadence), reading "no data" as "the disturbance ended". One persistent
+  stir could therefore re-fire on nearly every tick — in a real 22-hour capture,
+  2453 events from a single AP (41% of the log), flooding `--notify` banners and
+  the companion phone. Re-arming now requires positive, *sustained* evidence the
+  stir ended (a computable σ held below the floor for a debounce window), so a
+  sustained episode yields one event while a genuinely separate later
+  disturbance still fires.
+
 ## [1.18.0] — 2026-06-09
 
 Feature release. **diting now records what it *monitored*, not just what fired —
