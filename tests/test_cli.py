@@ -7,6 +7,8 @@ the top-level flag dispatch.
 """
 from __future__ import annotations
 
+import asyncio as _asyncio
+import json as _json
 from importlib.metadata import version as _pkg_version
 
 import pytest
@@ -584,37 +586,186 @@ def test_analyze_json_keys_stay_english_under_zh(tmp_path, capsys):
         i18n.set_lang(saved)
 
 
-def test_watch_event_to_json_shapes_each_kind():
-    from diting.poller import ScanUpdate, RoamEvent, ConnectionUpdate
+# ---------- agent-cli-foundation: verb redesign + aliases ----------
+
+def _fake_connection():
     from diting.models import Connection
     from datetime import datetime, timezone
-    inv = __import__("diting.network", fromlist=["NetworkInventory"]).NetworkInventory(aps=())
-    state = {"last_key": None, "last_rssi": None, "last_print_at": 0.0}
-    scan = cli._watch_event_to_json(ScanUpdate(results=[]), state, inv)
-    assert scan["kind"] == "scan" and scan["bssid_count"] == 0
-    roam = cli._watch_event_to_json(
-        RoamEvent(timestamp=datetime.now(timezone.utc),
-                  previous_bssid="a", new_bssid="b",
-                  previous_channel=1, new_channel=36), state, inv)
-    assert roam["kind"] == "roam" and roam["new_bssid"] == "b"
-    conn = Connection(
+    return Connection(
         ssid="X", bssid="aa:bb:cc:dd:ee:ff", rssi_dbm=-50, noise_dbm=-94,
         tx_rate_mbps=300.0, channel=36, channel_width_mhz=80,
         channel_band="5 GHz", phy_mode="ax", security="WPA2",
         mcs_index=7, nss=2, timestamp=datetime.now(timezone.utc),
     )
-    obj = cli._watch_event_to_json(ConnectionUpdate(connection=conn), state, inv)
-    assert obj["kind"] == "connection" and obj["connection"]["ssid"] == "X"
-    # Same unchanged connection within the heartbeat → deduped to None.
-    assert cli._watch_event_to_json(ConnectionUpdate(connection=conn), state, inv) is None
+
+
+class _FakeBackend:
+    name = "fake"
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def get_connection(self):
+        return self._conn
+
+    def permission_state(self):
+        return "granted"
+
+
+def test_canonical_verbs_dispatch():
+    # The canonical verb set is the contract; aliases resolve onto it.
+    assert cli._CANONICAL_VERBS == [
+        "status", "scan", "stream", "calibrate",
+        "analyze", "companion", "capabilities",
+    ]
+    for v in cli._CANONICAL_VERBS:
+        assert cli._resolve_alias(v) == v  # canonical passes through
+
+
+def test_deprecated_alias_forwards_to_canonical():
+    assert cli._resolve_alias("once") == "status"
+    assert cli._resolve_alias("watch") == "stream"
+    assert cli._resolve_alias("monitor") == "stream"
+    assert cli._resolve_alias("analyse") == "analyze"  # silent spelling alias
+
+
+def test_alias_notice_on_stderr_only(monkeypatch, capsys):
+    # `once --help` forwards to `status` (help short-circuits the backend).
+    monkeypatch.setattr("sys.argv", ["diting", "once", "--help"])
+    cli.main()
+    cap = capsys.readouterr()
+    assert cap.out.startswith("usage: diting status")
+    assert "deprecated" not in cap.out  # never pollutes stdout
+    assert "diting: 'once' is deprecated; use 'status'" in cap.err
+
+
+def test_status_json_snapshot(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "MacOSWiFiBackend", lambda: _FakeBackend(_fake_connection()))
+    with pytest.raises(SystemExit) as ei:
+        cli._run_status(["--json"])
+    assert ei.value.code == 0
+    doc = _json.loads(capsys.readouterr().out)
+    assert set(doc) == {"backend", "permission_state", "associated", "connection"}
+    assert doc["associated"] is True and doc["connection"]["ssid"] == "X"
+
+
+def test_status_not_associated_exits_1(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "MacOSWiFiBackend", lambda: _FakeBackend(None))
+    with pytest.raises(SystemExit) as ei:
+        cli._run_status(["--json"])
+    assert ei.value.code == 1
+    doc = _json.loads(capsys.readouterr().out)
+    assert doc["associated"] is False and doc["connection"] is None
+
+
+# ---------- agent-cli-foundation: capabilities manifest ----------
+
+def test_capabilities_manifest_shape():
+    m = cli._capabilities_manifest()
+    assert m["schema_version"] == cli.CAPABILITIES_SCHEMA_VERSION
+    assert m["exit_code_convention"]["2"] == "usage error"
+    for c in m["commands"]:
+        assert {"name", "summary", "output", "exit_codes", "flags"} <= set(c)
+        for f in c["flags"]:
+            assert {"name", "type", "default", "repeatable"} == set(f)
+
+
+def test_capabilities_covers_every_canonical_verb():
+    m = cli._capabilities_manifest()
+    assert {c["name"] for c in m["commands"]} == set(cli._CANONICAL_VERBS)
+
+
+def test_capabilities_lists_deprecated_aliases():
+    m = cli._capabilities_manifest()
+    assert m["deprecated_aliases"] == {
+        "once": "status", "watch": "stream", "monitor": "stream",
+    }
+
+
+def test_capabilities_json_is_pure_parseable_document(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["diting", "capabilities", "--json"])
+    cli._run_capabilities(["--json"])
+    doc = _json.loads(capsys.readouterr().out)
+    assert [c["name"] for c in doc["commands"]] == cli._CANONICAL_VERBS
+
+
+# ---------- agent-cli-foundation: scan one-shot ----------
+
+def test_scan_default_runs_both(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_scan_wifi", lambda: [{"ssid": "AP"}])
+
+    async def fake_ble(dur):
+        return [{"identifier": "x"}]
+    monkeypatch.setattr(cli, "_scan_ble", fake_ble)
+    with pytest.raises(SystemExit) as ei:
+        _asyncio.run(cli._run_scan(["--json"]))
+    assert ei.value.code == 0
+    doc = _json.loads(capsys.readouterr().out)
+    assert doc["wifi"] == [{"ssid": "AP"}] and doc["ble"] == [{"identifier": "x"}]
+
+
+def test_scan_wifi_only_json(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_scan_wifi", lambda: [{"ssid": "AP"}])
+
+    async def fake_ble(dur):  # must NOT be called
+        raise AssertionError("ble should not run with --wifi only")
+    monkeypatch.setattr(cli, "_scan_ble", fake_ble)
+    with pytest.raises(SystemExit) as ei:
+        _asyncio.run(cli._run_scan(["--wifi", "--json"]))
+    assert ei.value.code == 0
+    doc = _json.loads(capsys.readouterr().out)
+    assert set(doc) == {"wifi"}
+
+
+def test_scan_sensor_error_is_structured(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_scan_wifi", lambda: [{"ssid": "AP"}])
+
+    async def fake_ble(dur):
+        raise RuntimeError("BLE unavailable (permission: denied)")
+    monkeypatch.setattr(cli, "_scan_ble", fake_ble)
+    with pytest.raises(SystemExit) as ei:
+        _asyncio.run(cli._run_scan(["--json"]))
+    # wifi succeeded → exit 0 despite the ble error
+    assert ei.value.code == 0
+    doc = _json.loads(capsys.readouterr().out)
+    assert doc["wifi"] == [{"ssid": "AP"}]
+    assert doc["ble"]["error"] == "BLE unavailable (permission: denied)"
+    assert doc["ble"]["code"] == 1
+
+
+# ---------- agent-cli-foundation: duration grammar + help ----------
+
+def test_duration_grammar_suffix_forms():
+    assert cli._parse_duration_seconds("30") == 30.0
+    assert cli._parse_duration_seconds("45s") == 45.0
+    assert cli._parse_duration_seconds("5m") == 300.0
+    assert cli._parse_duration_seconds("2h") == 7200.0
+
+
+def test_duration_bad_value_exits_2(monkeypatch):
+    monkeypatch.setattr(cli, "_scan_wifi", lambda: [])
+    with pytest.raises(SystemExit) as ei:
+        _asyncio.run(cli._run_scan(["--duration", "soon", "--json"]))
+    assert ei.value.code == 2
 
 
 def test_subcommand_help_prints_and_exits_zero(monkeypatch, capsys):
-    for cmd in ("once", "watch", "analyze"):
+    # Every subcommand's help carries Examples + Exit codes; the
+    # json-object commands also advertise --json (stream is json-lines).
+    json_cmds = {"status", "scan", "analyze", "capabilities"}
+    for cmd in ("status", "scan", "stream", "analyze", "capabilities"):
         monkeypatch.setattr("sys.argv", ["diting", cmd, "--help"])
         cli.main()
         out = capsys.readouterr().out
-        assert "--json" in out and "Examples:" in out
+        assert "Examples:" in out and "Exit codes:" in out
+        if cmd in json_cmds:
+            assert "--json" in out
+
+
+def test_top_level_help_states_exit_codes_and_points_at_capabilities():
+    usage = cli._usage()
+    assert "Exit codes:" in usage
+    assert "capabilities" in usage
 
 
 def test_connection_to_dict_round_trips():
