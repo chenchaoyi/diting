@@ -2,29 +2,16 @@
 
 ## Purpose
 
-Defines diting's command-line surface — the subcommand vocabulary
-(`once`, `watch`, `monitor`, `calibrate`, `analyze`, default-TUI),
-how flags resolve (`--lang`, `--log <PATH>`, `--config`), and the
-exit-hint contract that points users at their just-finished session
-log. The CLI is the user's first contact with the tool; backward-
-compatible flag parsing is load-bearing.
+Defines diting's command-line surface — the agent-facing subcommand
+vocabulary (`status`, `scan`, `stream`, `calibrate`, `analyze`,
+`companion`, `capabilities`, default-TUI; with `once`/`watch`/`monitor`
+as deprecation aliases), how flags resolve (`--lang`, `--log <PATH>`,
+`--config`, the shared `--duration`/`--since` grammar), the uniform
+`--json` contract, and the exit-hint contract that points users at their
+just-finished session log. The CLI is both the user's first contact with
+the tool and the entry point an agent drives; predictable, JSON-first,
+self-describing behaviour is load-bearing.
 ## Requirements
-### Requirement: Subcommands SHALL be `once`, `watch`, `monitor`, `calibrate`, `analyze`
-The CLI SHALL accept exactly these five non-default subcommands:
-
-- `once` — print a single Connection snapshot to stdout and exit
-- `watch` — streaming colourised event log on stdout, Ctrl+C to quit
-- `monitor` — headless JSONL events stream for long-runs / Home Assistant
-- `calibrate` — record an empty-room σ baseline (default 300 s)
-- `analyze [PATH]` — post-process a JSONL log file into a report
-
-Adding a sixth subcommand or removing one MUST file an ADDED /
-REMOVED Requirement on this capability.
-
-#### Scenario: Each subcommand prints its primary output
-- **WHEN** the user runs `diting once`
-- **THEN** one Connection-line is printed and the process exits 0
-
 ### Requirement: `--lang en|zh` SHALL override env / locale resolution
 The `--lang` flag SHALL be the highest-priority language source,
 overriding `DITING_LANG` env var and the system locale. Invalid
@@ -98,20 +85,6 @@ NOT require any flag.
 #### Scenario: First-time user
 - **WHEN** they run `diting`
 - **THEN** the TUI starts immediately, no preamble
-
-### Requirement: `diting monitor` SHALL emit JSONL on stdout with no other output
-The monitor subcommand SHALL produce ONLY the JSONL event stream on
-stdout — no banner, no progress messages, no decorative text. All
-status / error messages SHALL go to stderr. SIGTERM SHALL flush the
-final event and exit cleanly.
-
-#### Scenario: Pipe to jq
-- **WHEN** user runs `diting monitor | jq 'select(.type=="roam")'`
-- **THEN** jq receives only valid JSON lines; nothing breaks the pipeline
-
-#### Scenario: Pipe to head -n 10
-- **WHEN** user runs `diting monitor | head -n 10`
-- **THEN** the monitor exits cleanly via SIGPIPE after head closes; no zombie process
 
 ### Requirement: `--notify` SHALL be valid on both the default TUI subcommand and `monitor`
 The `--notify` flag SHALL be parseable on both `diting` (default TUI subcommand) and `diting monitor`. The flag is a boolean toggle (no argument). When set, the running process SHALL raise macOS Notification Centre alerts for the three anomaly event types per the `anomaly-watchdog` capability spec. When unset, no `osascript` invocations SHALL occur and the rest of each subcommand's behaviour SHALL remain unchanged from v0.8.0.
@@ -205,7 +178,6 @@ A companion env var `DITING_LAN_UPNP_FETCH=0|1` SHALL gate the optional HTTP fet
 - **WHEN** the user runs `diting --help`
 - **THEN** the global-options section includes a line for `DITING_LAN_PROBE` and a line for `DITING_LAN_UPNP_FETCH` with brief descriptions, in the same style as `DITING_LANG` and `DITING_SCENE`
 
-
 ### Requirement: The default TUI subcommand SHALL render a startup splash during the synchronous TCC-probe phase
 The default `diting` subcommand SHALL host a startup splash in front of the `_ensure_helper_ready` TCC-probe phase. The splash SHALL render the canonical pixel-art beast mark with optional micro-motion animation, alongside a status-line block ticking down each probe step (`helper located`, `checking Location Services`, `checking Bluetooth`) as the underlying `_helper.has_*` callables resolve. The splash SHALL tear down cleanly before any post-probe permission-grant prompt flow runs (helper-bundle `open` + grant-polling loop) so that path retains its existing instructional prose unaltered.
 
@@ -291,42 +263,17 @@ than crash.
 - **WHEN** the resolved output directory path already exists as a regular file
 - **THEN** the CLI prints a usage error and exits 2, not a traceback
 
-### Requirement: `once`, `analyze`, and `watch` SHALL support `--json` machine-readable output
-With `--json`, `once` and `analyze` SHALL print exactly one JSON document to
-stdout, and `watch` SHALL print a newline-delimited stream of one JSON object
-per change event. In `--json` mode stdout SHALL carry ONLY the JSON — every
-banner / hint / human prose SHALL go to stderr — and any error SHALL be emitted
-as a JSON object (`{"error": <message>, "code": <int>}`) on stderr. JSON keys
-and values SHALL be locale-stable English regardless of `--lang` (an agent
-parses keys; localization applies only to human prose on stderr).
-
-#### Scenario: analyze emits one parseable JSON document
-- **WHEN** the user runs `diting analyze <log> --json`
-- **THEN** stdout is a single JSON object carrying the report's counts, timeline, temporal / population aggregates and insights, and `stdout | jq .` parses cleanly
-
-#### Scenario: once emits a connection snapshot
-- **WHEN** the user runs `diting once --json`
-- **THEN** stdout is one JSON object with the connection snapshot, permission state, and backend
-
-#### Scenario: watch emits a JSON line-stream
-- **WHEN** the user runs `diting watch --json`
-- **THEN** each surfaced change event is one JSON object on its own line, tailable by an agent
-
-#### Scenario: JSON mode keeps stdout pure
-- **WHEN** any `--json` command also has chrome to show (scene banner, permission hint)
-- **THEN** that chrome is written to stderr and stdout stays valid JSON
-
-#### Scenario: Errors are JSON under --json
-- **WHEN** a `--json` run fails (bad input, runtime error)
-- **THEN** the failure is a JSON object on stderr with an `error` message and a numeric `code`, and the exit code follows the documented convention
-
 ### Requirement: The CLI SHALL document subcommand help and a stable exit-code convention
+
 Each subcommand SHALL accept `--help` / `-h` and print its own usage with at
 least one EXAMPLES entry and a note of its automation surface (`--json` where
-applicable). The CLI SHALL follow a documented exit-code convention: `0`
-success, `1` runtime error (including `once` when not associated), `2` usage
-error (unknown flag / bad argument / unknown subcommand). The top-level help
-SHALL state this convention.
+applicable). The per-subcommand help text SHALL be generated from the same
+declarative command table that backs `capabilities`, so help and manifest cannot
+drift. The CLI SHALL follow a documented exit-code convention: `0` success, `1`
+runtime error (including `status` when not associated), `2` usage error (unknown
+flag / bad argument / unknown subcommand). The top-level `diting --help` SHALL
+state this convention and point at `diting capabilities` for the machine-readable
+surface.
 
 #### Scenario: Per-subcommand help
 - **WHEN** the user runs `diting analyze --help`
@@ -335,3 +282,71 @@ SHALL state this convention.
 #### Scenario: Exit codes are consistent
 - **WHEN** an unknown flag is passed to a subcommand
 - **THEN** the process exits 2; a successful run exits 0; an uncaught runtime error exits 1
+
+#### Scenario: Top-level help points at capabilities
+- **WHEN** the user runs `diting --help`
+- **THEN** the output states the exit-code convention and references `diting capabilities` for the machine-readable command surface
+
+### Requirement: All read commands SHALL support `--json`
+
+`status`, `scan`, `stream`, `analyze`, and `capabilities` SHALL each accept
+`--json`. Under `--json`, `status`/`scan`/`analyze`/`capabilities` SHALL print
+exactly one JSON document to stdout and `stream` SHALL print newline-delimited
+JSON (one object per event). stdout SHALL carry ONLY the JSON — every banner,
+hint, deprecation notice, and human prose SHALL go to stderr — and any error
+SHALL be emitted as a JSON object (`{"error": <message>, "code": <int>}`) on
+stderr with the matching exit code. JSON keys and values SHALL be locale-stable
+English regardless of `--lang`. All five commands SHALL share one JSON-output
+implementation so purity and error semantics are identical across them.
+
+#### Scenario: analyze emits one parseable JSON document
+- **WHEN** the user runs `diting analyze <log> --json`
+- **THEN** stdout is a single JSON object carrying the report's counts, timeline, aggregates, and insights, and `stdout | jq .` parses cleanly
+
+#### Scenario: status emits a connection snapshot
+- **WHEN** the user runs `diting status --json`
+- **THEN** stdout is one JSON object with the connection snapshot, permission state, and backend
+
+#### Scenario: stream emits a JSON line-stream
+- **WHEN** the user runs `diting stream --json`
+- **THEN** each event is one JSON object on its own line, tailable by an agent
+
+#### Scenario: JSON mode keeps stdout pure
+- **WHEN** any `--json` command also has chrome to show (scene banner, permission hint, deprecation notice)
+- **THEN** that chrome is written to stderr and stdout stays valid JSON
+
+#### Scenario: Errors are JSON under --json
+- **WHEN** a `--json` run fails (bad input, runtime error)
+- **THEN** the failure is a JSON object on stderr with an `error` message and a numeric `code`, and the exit code follows the documented convention
+
+### Requirement: `--notify` SHALL be valid on both the default TUI subcommand and `stream`
+
+The `--notify` flag SHALL be parseable on both `diting` (default TUI subcommand)
+and `diting stream`. The flag is a boolean toggle (no argument). When set, the
+running process SHALL raise macOS Notification Centre alerts for the anomaly
+event types per the `anomaly-watchdog` capability spec. When unset, no
+`osascript` invocations SHALL occur and the rest of each subcommand's behaviour
+SHALL remain unchanged. Because `monitor` forwards to `stream`, `diting monitor
+--notify` SHALL continue to work via the alias.
+
+Watchdog SEMANTICS — severity gate, silence window, env-var configuration,
+notification body composition — live in the `anomaly-watchdog` capability, not in
+`cli`. This Requirement is only about the flag being recognised at the two entry
+points.
+
+#### Scenario: TUI user enables notifications
+- **WHEN** the user runs `diting --notify` (default subcommand)
+- **THEN** the TUI launches as normal and additionally raises OS notifications when anomaly events fire (subject to the watchdog severity gate + silence window)
+
+#### Scenario: headless watchdog
+- **WHEN** the user runs `diting stream --notify`
+- **THEN** the headless stream emits JSONL events AND raises OS notifications (same semantics as the TUI path)
+
+#### Scenario: alias keeps working
+- **WHEN** the user runs `diting monitor --notify`
+- **THEN** the alias forwards to `stream`, the deprecation notice prints to stderr, and notifications fire as for `diting stream --notify`
+
+#### Scenario: headless without `--notify`
+- **WHEN** the user runs `diting stream` (no `--notify`)
+- **THEN** the headless stream emits JSONL events with NO `osascript` invocations
+
