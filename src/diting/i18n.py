@@ -1427,8 +1427,8 @@ _ZH: dict[str, str] = {
         "尚未配对。运行 `diting companion pair` 开始。",
     "Paired — channel {channel}": "已配对 —— channel {channel}",
     "last sequence: {n}": "最新序号：{n}",
-    "Forwarding runs while `diting` or `diting monitor` is active.":
-        "`diting` 或 `diting monitor` 运行时即开始转发。",
+    "Forwarding runs while `diting` or `diting stream` is active.":
+        "`diting` 或 `diting stream` 运行时即开始转发。",
     "Unpaired.": "已解除配对。",
     "Not paired; nothing to remove.": "未配对；无需移除。",
     "companion: on": "companion：开",
@@ -1805,6 +1805,14 @@ _ZH: dict[str, str] = {
         "diting analyze：--since 需要一个时长参数（例如 --since 7d）",
     "diting analyze: invalid --since value: {exc}":
         "diting analyze：无效的 --since 值：{exc}",
+    "diting scan: invalid --duration value: {exc}":
+        "diting scan：无效的 --duration 值：{exc}",
+    "diting stream: invalid --duration value: {exc}":
+        "diting stream：无效的 --duration 值：{exc}",
+    "  error: {msg}":
+        "  错误：{msg}",
+    "  {n} result(s)":
+        "  {n} 个结果",
     "--ble-presence-gate requires a duration (e.g. --ble-presence-gate 5s)":
         "--ble-presence-gate 需要一个时长（例如 --ble-presence-gate 5s）",
     "--ble-presence-gate: invalid duration {raw!r}: {exc}":

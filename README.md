@@ -81,7 +81,7 @@ TUI on top of the same APIs Apple uses internally:
 - **Unified events log.** Roam / RF stir / latency spike / loss
   burst / link state — all five event types stream into one ring
   buffer. Press `m` for a full-screen browser of the last 1000; use
-  `diting monitor` for headless JSONL output to a Home Assistant
+  `diting stream` for headless JSONL output to a Home Assistant
   pipeline or a `tail -F` audit window.
 
 For instance: you walk between rooms, your Mac stays glued to the
@@ -544,24 +544,33 @@ without leaking the mapping into the chat.
 
 ### Use from an agent or a script
 
-`once`, `watch`, and `analyze` accept `--json` for machine-readable
-output, so a coding agent (Claude Code et al.) or a script can collect
-signals without scraping prose:
+The CLI is JSON-first and self-describing, so a coding agent (Claude
+Code et al.) or a script can collect signals without scraping prose.
+Start with `diting capabilities --json` to discover the whole surface:
 
 ```bash
-diting once --json | jq .connection.rssi_dbm         # current RSSI
+diting capabilities --json | jq '.commands[].name'   # discover verbs
+diting status --json | jq .connection.rssi_dbm       # current RSSI
+diting scan --json | jq '.wifi | length'             # one-shot Wi-Fi + BLE
 diting analyze diting-20260608.jsonl --json | jq .insights
-diting watch --json | jq -c 'select(.kind=="roam")'  # tail roams
+diting stream --duration 5m | jq -c 'select(.type=="roam")'  # bounded JSONL
 ```
 
-JSON goes to stdout, all human chrome (banners, hints) to stderr, and
-JSON keys stay stable English regardless of `--lang`. `monitor` already
-streams JSONL. The CLI never prints a traceback — an unexpected error is
+`status` / `scan` / `analyze` / `capabilities` each accept `--json` and
+print one JSON document; `stream` emits canonical event-log JSONL (the
+same schema `analyze` consumes). JSON goes to stdout, all human chrome
+(banners, hints) to stderr, and JSON keys stay stable English regardless
+of `--lang`. The CLI never prints a traceback — an unexpected error is
 one `diting: <message>` line (a JSON `{"error", "code"}` object under
 `--json`), and exit codes are stable: `0` ok · `1` runtime error (incl.
-`once` when not associated) · `2` usage error. `DITING_DEBUG=1` restores
-the traceback for debugging. Run `diting <subcommand> --help` for
-per-command usage and examples.
+`status` when not associated) · `2` usage error. `DITING_DEBUG=1`
+restores the traceback for debugging. Run `diting <subcommand> --help`
+for per-command usage and examples, or see the
+[agent guide](docs/agents.md).
+
+The verbs were renamed for agent ergonomics: `once` → `status`, `watch`
+/ `monitor` → `stream`. The old names still work as deprecation aliases
+(one stderr notice, then they forward).
 
 ## Switching language
 
@@ -589,18 +598,20 @@ With no override, `diting` autodetects the system locale —
 | `b` | open / close Wi-Fi Basics: SSID, BSSID, channel, band, security, roam score |
 | `j` | (in the Wi-Fi detail modal) join the inspected SSID — previously-saved networks confirm via Touch ID (or login password on Macs without a sensor) and join silently; new networks get a native macOS password prompt. Not hitless: a cross-SSID switch tears the current connection down for ~2-5 s. Enterprise / 802.1X is refused with a hint. |
 
-`watch`, `once`, `monitor`, and `calibrate` subcommands run
+The `status`, `scan`, `stream`, and `calibrate` subcommands run
 diting without the TUI:
 
 ```bash
-uv run diting once                       # snapshot of current connection, exit
-uv run diting watch                      # streaming text events until Ctrl+C
-uv run diting monitor                    # headless JSONL events to stdout
-uv run diting monitor --out events.jsonl # append JSONL to a file
-uv run diting monitor --notify           # macOS Notification Centre alerts on high-confidence events
+uv run diting status                     # snapshot of current connection, exit
+uv run diting scan                       # one-shot Wi-Fi + BLE sensor snapshot
+uv run diting stream                     # headless canonical JSONL to stdout
+uv run diting stream --out events.jsonl  # append JSONL to a file
+uv run diting stream --duration 5m       # bounded run, then exit
+uv run diting stream --notify            # macOS Notification Centre alerts on high-confidence events
 uv run diting calibrate                  # 5 min "empty room" RSSI baseline → ./diting-baseline.json
 uv run diting companion pair             # pair a phone — renders a QR for diting-mobile
 uv run diting companion status           # show pairing + relay queue state
+uv run diting capabilities --json        # machine-readable CLI manifest
 ```
 
 The `monitor` subcommand is the long-run / Home Assistant
@@ -819,7 +830,7 @@ ordering is intent.
   a much richer answer than ARP.
 - **Anomaly watchdog mode.** Headless long-runs that push macOS
   Notification Centre alerts on high-confidence events (stir,
-  loss burst, latency spike). Today's `diting monitor --notify`
+  loss burst, latency spike). Today's `diting stream --notify`
   is the seed; it grows configurable thresholds and per-event
   silence windows.
 - **Per-device proximity compass.** When the BLE detail modal is

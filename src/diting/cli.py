@@ -1,12 +1,19 @@
 """Command-line entry point.
 
-Subcommands:
+The CLI is the agent-facing surface: every read command is JSON-first
+(pure JSON on stdout, prose + errors on stderr) and exits cleanly.
 
-    diting             launch the TUI (default)
-    diting once        one-shot snapshot of the current connection
-    diting watch       streaming event log (Ctrl+C to quit)
-    diting monitor     headless JSONL events for long-runs / Home Assistant
-    diting calibrate   record an "empty room" RSSI baseline
+    diting                 launch the TUI (default; human-facing)
+    diting status          one-shot connection + permission snapshot
+    diting scan            one-shot sensor snapshot (Wi-Fi and/or BLE)
+    diting stream          headless canonical-JSONL event stream
+    diting calibrate       record an "empty room" RSSI baseline
+    diting analyze         post-process a JSONL log into a report
+    diting companion       manage diting-mobile pairing
+    diting capabilities    machine-readable manifest of the CLI surface
+
+`once` / `watch` / `monitor` survive as deprecation aliases that forward
+to `status` / `stream` / `stream` with a one-line stderr notice.
 """
 
 from __future__ import annotations
@@ -47,15 +54,12 @@ from .macos_backend import MacOSWiFiBackend
 from .models import Connection
 from .network import (
     NetworkInventory,
-    band_label,
     format_bssid,
     load_inventory,
     lookup_ap_vendor,
-    resolve_config_path,
 )
 from .poller import (
     ConnectionUpdate,
-    Event,
     RoamEvent,
     ScanUpdate,
     WiFiPoller,
@@ -115,10 +119,10 @@ def _print_connection(c: Connection, inv: NetworkInventory) -> None:
         print(f"  {pad_cells(label, label_w)}  {value}")
 
 
-def _run_once(args: list[str] | None = None) -> None:
+def _run_status(args: list[str] | None = None) -> None:
     args = args or []
     if "--help" in args or "-h" in args:
-        print(_once_help(), end="")
+        print(_render_help("status"), end="")
         return
     json_mode = "--json" in args
     backend = MacOSWiFiBackend()
@@ -150,185 +154,170 @@ def _run_once(args: list[str] | None = None) -> None:
         print(_fallback_hint(), end="")
 
 
-# ---------- watch mode ----------
+# ---------- scan (one-shot sensor snapshot) ----------
 
-# Identity tuple — the parts of a Connection that, if any change, mean
-# something a human would care about. RSSI / noise / tx rate are noisy
-# fluctuating fields handled with a separate threshold.
-_IDENTITY_FIELDS = (
-    "ssid",
-    "bssid",
-    "channel",
-    "channel_width_mhz",
-    "channel_band",
-    "phy_mode",
-    "security",
-)
-_RSSI_DELTA_THRESHOLD_DB = 5
-_HEARTBEAT_SECONDS = 10.0
+def _scan_result_to_dict(r) -> dict:
+    """Serialize a `ScanResult` to a JSON-safe dict (datetime → ISO)."""
+    from dataclasses import asdict
+    d = asdict(r)
+    ts = d.get("timestamp")
+    if hasattr(ts, "isoformat"):
+        d["timestamp"] = ts.isoformat()
+    return d
 
 
-def _identity_key(c: Connection | None) -> tuple:
-    if c is None:
-        return ("disconnected",)
-    return tuple(getattr(c, f) for f in _IDENTITY_FIELDS)
+def _scan_wifi() -> list[dict]:
+    """One-shot Wi-Fi scan via the Swift helper. Raises on hard failure
+    (no helper) so the caller can shape a per-sensor structured error."""
+    from . import _helper
+    binary = _helper.find_helper()
+    if binary is None:
+        raise RuntimeError(
+            "diting-tianer helper not found; cannot scan Wi-Fi"
+        )
+    results, _iface = _helper.scan(binary)
+    return [_scan_result_to_dict(r) for r in results]
 
 
-def _format_conn_line(c: Connection | None, inv: NetworkInventory) -> str:
-    if c is None:
-        return "conn   <not associated>"
-    return (
-        f"conn   ssid={_fmt(c.ssid)}  bssid={format_bssid(c.bssid, c.channel, inv)}  "
-        f"rssi={_fmt(c.rssi_dbm, 'dBm')}  "
-        f"ch{c.channel or 0}/{c.channel_band or '?'}/{_fmt(c.channel_width_mhz, 'MHz')}  "
-        f"{c.phy_mode or '?'}  {c.security or '?'}"
-    )
+def _ble_device_to_dict(d, decode_all) -> dict:
+    """JSON-safe view of a `BLEDevice` plus any decoded payload fields."""
+    out: dict = {
+        "identifier": d.identifier,
+        "name": d.name,
+        "vendor": d.vendor,
+        "vendor_id": d.vendor_id,
+        "rssi_dbm": d.rssi_dbm,
+        "services": list(d.services),
+        "type": d.type,
+        "is_connected": d.is_connected,
+        "first_seen": d.first_seen.isoformat() if d.first_seen else None,
+        "last_seen": d.last_seen.isoformat() if d.last_seen else None,
+    }
+    try:
+        decoded = decode_all(d)
+    except Exception:
+        decoded = None
+    if decoded:
+        out["decoded"] = decoded
+    return out
 
 
-def _format_scan_line(results: list) -> str:
-    return f"scan   {len(results)} APs visible"
+async def _scan_ble(duration_s: float) -> list[dict]:
+    """Collect BLE adverts for ``duration_s`` via the helper's ble-scan,
+    then decode. Raises when the sensor is unreachable so the caller can
+    shape a per-sensor structured error."""
+    from . import _helper
+    from .ble import BLEPoller
+    from .decoders import decode_all
+    binary = _helper.find_helper()
+    if binary is None:
+        raise RuntimeError(
+            "diting-tianer helper not found; cannot scan BLE"
+        )
+    poller = BLEPoller(binary, presence_gate_s=0.0)
+    latest: dict = {"devices": [], "perm": "unknown"}
+
+    async def consume() -> None:
+        async for update in poller.events():
+            latest["perm"] = update.permission_state
+            latest["devices"] = list(update.devices) + list(update.connected)
+
+    task = asyncio.create_task(consume(), name="scan-ble")
+    try:
+        await asyncio.wait_for(task, timeout=max(0.5, duration_s))
+    except asyncio.TimeoutError:
+        pass  # task is cancelled by wait_for; we keep what we collected
+    perm = latest["perm"]
+    if perm in ("denied", "unavailable") and not latest["devices"]:
+        raise RuntimeError(f"BLE unavailable (permission: {perm})")
+    return [_ble_device_to_dict(d, decode_all) for d in latest["devices"]]
 
 
-def _format_roam_line(event: RoamEvent, inv: NetworkInventory) -> str:
-    same = inv.is_same_ap(event.previous_bssid, event.new_bssid)
-    prev = format_bssid(event.previous_bssid, event.previous_channel, inv)
-    new = format_bssid(event.new_bssid, event.new_channel, inv)
-    if same:
-        prev_band = band_label(event.previous_channel) or "?"
-        new_band = band_label(event.new_channel) or "?"
-        ap_name = inv.resolve(event.new_bssid) or "same AP"
-        tag = f"[band switch on {ap_name}: {prev_band} -> {new_band}]"
-    else:
-        tag = "[inter-AP roam]"
-    return f"ROAM   {prev}  ->  {new}   {tag}"
-
-
-async def _run_watch(args: list[str] | None = None) -> None:
-    args = args or []
+async def _run_scan(args: list[str]) -> None:
     if "--help" in args or "-h" in args:
-        print(_watch_help(), end="")
+        print(_render_help("scan"), end="")
         return
     json_mode = "--json" in args
-    # In --json mode the change-event line-stream is the stdout output;
-    # all the human chrome (backend / inventory / hints) goes to stderr.
-    chrome = sys.stderr if json_mode else sys.stdout
-    backend = MacOSWiFiBackend()
-    inv = load_inventory()
-    print(t("backend: {name}  (Ctrl+C to quit)", name=backend.name),
-          file=chrome)
-    if inv.aps or inv.radio_overrides:
-        print(t(
-            "inventory: {n_aps} APs, {n_overrides} overrides — {path}",
-            n_aps=len(inv.aps),
-            n_overrides=len(inv.radio_overrides),
-            path=resolve_config_path(),
-        ), file=chrome)
-    perm = backend.permission_state()
-    if perm == "denied":
-        print(file=chrome)
-        print(_denied_hint(), end="", file=chrome)
-    elif perm == "fallback":
-        print(_fallback_hint(), end="", file=chrome)
-    print(file=chrome)
+    want_wifi = "--wifi" in args
+    want_ble = "--ble" in args
+    if not want_wifi and not want_ble:
+        want_wifi = want_ble = True
+    duration_s = 4.0
+    raw = _arg_value(args, "--duration")
+    if raw is not None:
+        try:
+            duration_s = _parse_duration_seconds(raw)
+        except ValueError as exc:
+            print(t("diting scan: invalid --duration value: {exc}", exc=str(exc)),
+                  file=sys.stderr)
+            sys.exit(2)
 
-    poller = WiFiPoller(backend)
-    state: dict = {"last_key": None, "last_rssi": None, "last_print_at": 0.0}
+    result: dict = {}
+    any_ok = False
+    if want_wifi:
+        try:
+            result["wifi"] = _scan_wifi()
+            any_ok = True
+        except Exception as exc:  # noqa: BLE001 — per-sensor structured error
+            result["wifi"] = {"error": str(exc), "code": 1}
+    if want_ble:
+        try:
+            result["ble"] = await _scan_ble(duration_s)
+            any_ok = True
+        except Exception as exc:  # noqa: BLE001 — per-sensor structured error
+            result["ble"] = {"error": str(exc), "code": 1}
 
-    async for event in poller.events():
-        if json_mode:
-            obj = _watch_event_to_json(event, state, inv)
-            if obj is not None:
-                print(json.dumps(obj, ensure_ascii=False), flush=True)
-            continue
-        line = _render(event, state, inv)
-        if line is not None:
-            now_str = datetime.now().strftime("%H:%M:%S")
-            print(f"{now_str}  {line}", flush=True)
-
-
-def _watch_event_to_json(
-    event: Event, state: dict, inv: NetworkInventory,
-) -> dict | None:
-    """One JSON object per surfaced watch event, or None to skip — the
-    same dedup decision `_render` makes, shaped as data instead of prose.
-    Locale-stable English keys; ts is ISO-8601 with offset."""
-    ts = datetime.now().astimezone().isoformat()
-    if isinstance(event, ScanUpdate):
-        return {
-            "ts": ts, "kind": "scan",
-            "bssid_count": len(event.results),
-        }
-    if isinstance(event, RoamEvent):
-        return {
-            "ts": ts, "kind": "roam",
-            "previous_bssid": event.previous_bssid,
-            "new_bssid": event.new_bssid,
-            "previous_channel": event.previous_channel,
-            "new_channel": event.new_channel,
-        }
-    assert isinstance(event, ConnectionUpdate)
-    c = event.connection
-    key = _identity_key(c)
-    rssi = c.rssi_dbm if c is not None else None
-    now = time.monotonic()
-    identity_changed = key != state["last_key"]
-    rssi_jumped = (
-        rssi is not None and state["last_rssi"] is not None
-        and abs(rssi - state["last_rssi"]) >= _RSSI_DELTA_THRESHOLD_DB
-    )
-    heartbeat_due = now - state["last_print_at"] >= _HEARTBEAT_SECONDS
-    first_print = state["last_print_at"] == 0.0
-    if not (identity_changed or rssi_jumped or heartbeat_due or first_print):
-        return None
-    state["last_key"] = key
-    state["last_rssi"] = rssi
-    state["last_print_at"] = now
-    from .models import connection_to_dict
-    return {
-        "ts": ts, "kind": "connection",
-        "associated": c is not None,
-        "connection": connection_to_dict(c) if c is not None else None,
-    }
+    if json_mode:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        chrome = sys.stdout
+        for sensor in ("wifi", "ble"):
+            if sensor not in result:
+                continue
+            val = result[sensor]
+            print(f"== {sensor} ==", file=chrome)
+            if isinstance(val, dict) and "error" in val:
+                print(t("  error: {msg}", msg=val["error"]), file=chrome)
+            else:
+                print(t("  {n} result(s)", n=len(val)), file=chrome)
+                for row in val:
+                    label = row.get("ssid") or row.get("name") or row.get("identifier") or "?"
+                    rssi = row.get("rssi_dbm")
+                    print(f"  {label}  {_fmt(rssi, ' dBm')}", file=chrome)
+    sys.exit(0 if any_ok else 1)
 
 
-def _render(event: Event, state: dict, inv: NetworkInventory) -> str | None:
-    """Decide whether and how to render this event.
+# ---------- capabilities (machine-readable manifest) ----------
 
-    Mutates `state` to track last-printed identity / RSSI / timestamp
-    for connection dedup. Returns the formatted line, or None to skip.
-    """
-    if isinstance(event, ScanUpdate):
-        return _format_scan_line(event.results)
-    if isinstance(event, RoamEvent):
-        return _format_roam_line(event, inv)
-    assert isinstance(event, ConnectionUpdate)
-
-    c = event.connection
-    key = _identity_key(c)
-    rssi = c.rssi_dbm if c is not None else None
-    now = time.monotonic()
-
-    identity_changed = key != state["last_key"]
-    rssi_jumped = (
-        rssi is not None
-        and state["last_rssi"] is not None
-        and abs(rssi - state["last_rssi"]) >= _RSSI_DELTA_THRESHOLD_DB
-    )
-    heartbeat_due = now - state["last_print_at"] >= _HEARTBEAT_SECONDS
-    first_print = state["last_print_at"] == 0.0
-
-    if not (identity_changed or rssi_jumped or heartbeat_due or first_print):
-        return None
-
-    state["last_key"] = key
-    state["last_rssi"] = rssi
-    state["last_print_at"] = now
-    return _format_conn_line(c, inv)
+def _run_capabilities(args: list[str]) -> None:
+    if "--help" in args or "-h" in args:
+        print(_render_help("capabilities"), end="")
+        return
+    manifest = _capabilities_manifest()
+    if "--json" in args:
+        print(json.dumps(manifest, ensure_ascii=False))
+        return
+    # Pretty form — the same data, human-readable.
+    print(f"diting capabilities (schema_version {manifest['schema_version']})")
+    print()
+    print("exit codes: " + " · ".join(
+        f"{k} {v}" for k, v in manifest["exit_code_convention"].items()
+    ))
+    if manifest["deprecated_aliases"]:
+        print("deprecated aliases: " + ", ".join(
+            f"{k} → {v}" for k, v in manifest["deprecated_aliases"].items()
+        ))
+    print()
+    for c in manifest["commands"]:
+        flags = " ".join(f["name"] for f in c["flags"])
+        print(f"  {c['name']:<14} {c['summary']}")
+        if flags:
+            print(f"  {'':<14}   flags: {flags}  [output: {c['output']}]")
 
 
-# ---------- monitor (headless JSONL) ----------
+# ---------- stream (headless JSONL) ----------
 
-async def _run_monitor(
+async def _run_stream(
     args: list[str], *, scene_source: str = "default",
 ) -> None:
     """Long-running headless event stream.
@@ -336,16 +325,29 @@ async def _run_monitor(
     Spawns WiFiPoller + LatencyPoller + EnvironmentMonitor and emits
     one JSONL document per event to stdout (or ``--out path.jsonl``
     when set), with ``--notify`` raising a macOS Notification Centre
-    alert for high-confidence events.
+    alert for high-confidence events. ``--duration D`` bounds the run;
+    when omitted the stream runs until Ctrl+C / SIGTERM.
 
     ``scene_source`` is threaded from ``main()`` (where ``--scene`` /
     ``DITING_SCENE`` were resolved) so the session_meta line written
     here can record HOW the scene was picked.
     """
+    if "--help" in args or "-h" in args:
+        print(_render_help("stream"), end="")
+        return
     out_path = _arg_value(args, "--out")
     notify = "--notify" in args
     gateway_override = _arg_value(args, "--gateway")
     wan_override = _arg_value(args, "--wan")
+    duration_s: float | None = None
+    raw = _arg_value(args, "--duration")
+    if raw is not None:
+        try:
+            duration_s = _parse_duration_seconds(raw)
+        except ValueError as exc:
+            print(t("diting stream: invalid --duration value: {exc}", exc=str(exc)),
+                  file=sys.stderr)
+            sys.exit(2)
 
     backend = MacOSWiFiBackend()
     inv = load_inventory()
@@ -404,8 +406,8 @@ async def _run_monitor(
         scene_source=scene_source,
         ssid=startup_conn.ssid if startup_conn else None,
         gateway_ip=startup_conn.router_ip if startup_conn else None,
-        # `monitor` runs Wi-Fi scan + latency + rf_stir (EnvironmentMonitor);
-        # it does NOT run BLE or LAN sweeps (those are TUI-only).
+        # `stream` runs Wi-Fi scan + latency + rf_stir (EnvironmentMonitor);
+        # it does NOT run BLE or LAN sweeps (those are TUI-only for now).
         monitors=build_monitors_manifest(
             scan_interval_s=7.0, ble=False, lan=False,
             latency=True, rf_stir=True,
@@ -424,6 +426,10 @@ async def _run_monitor(
         "wan_override": wan_override,
         "gateway_override": gateway_override,
     }
+    # Child tasks spawned by the consumer (e.g. the late-bound latency
+    # consumer). Tracked so a `--duration`-bounded run can cancel them
+    # cleanly on timeout rather than orphaning them.
+    spawned: list[asyncio.Task] = []
 
     watchdog_cfg = WatchdogConfig.from_env() if notify else None
     silence_clock = (
@@ -474,10 +480,10 @@ async def _run_monitor(
                         gateway_ip=gateway_ip,
                         wan_ip=latency_state["wan_override"],
                     )
-                    asyncio.get_running_loop().create_task(
+                    spawned.append(asyncio.get_running_loop().create_task(
                         latency_consumer(latency_state["poller"]),
                         name="latency-consumer",
-                    )
+                    ))
                 if conn.bssid is not None and conn.rssi_dbm is not None:
                     monitor.ingest(
                         conn.bssid, conn.rssi_dbm, now,
@@ -597,9 +603,31 @@ async def _run_monitor(
         if companion_sink is not None
         else None
     )
+    consumer = asyncio.create_task(wifi_consumer(), name="wifi-consumer")
     try:
-        await wifi_consumer()
+        if duration_s is not None:
+            # `--duration`: run the stream for a bounded window, then stop.
+            # wait_for cancels `consumer` on timeout; the finally block
+            # reaps it and any child tasks it spawned.
+            try:
+                await asyncio.wait_for(consumer, timeout=duration_s)
+            except asyncio.TimeoutError:
+                pass
+        else:
+            await consumer
     finally:
+        # Cancel the consumer AND every child task it spawned (e.g. the
+        # late-bound latency consumer, which loops forever) BEFORE
+        # awaiting any of them — otherwise awaiting a still-running child
+        # would hang the bounded run.
+        for task in (consumer, *spawned):
+            if not task.done():
+                task.cancel()
+        for task in (consumer, *spawned):
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
         if flush_task is not None:
             flush_task.cancel()
             try:
@@ -645,6 +673,9 @@ async def _run_calibrate(args: list[str]) -> None:
     ``active`` / ``quiet`` qualifier on the diagnostic line
     meaningful.
     """
+    if "--help" in args or "-h" in args:
+        print(_render_help("calibrate"), end="")
+        return
     duration_s = 300
     raw = _arg_value(args, "--duration")
     if raw is not None:
@@ -726,7 +757,7 @@ def _run_analyze(args: list[str]) -> None:
     from . import analyze
 
     if "--help" in args or "-h" in args:
-        print(_analyze_help(), end="")
+        print(_render_help("analyze"), end="")
         return
     paths: list[Path] = []
     since: timedelta | None = None
@@ -987,34 +1018,33 @@ def _usage() -> str:
         "Default (no SUBCOMMAND): launch the TUI dashboard.\n"
         "\n"
         "Subcommands (run `diting SUBCOMMAND --help` for details):\n"
-        "  once         print the current connection and exit  [--json]\n"
-        "  watch        stream connection / scan / roam events  [--json]\n"
-        "  monitor      headless JSONL events (long-runs / Home Assistant)\n"
-        "                 flags: --out FILE  --notify  --gateway IP  --wan IP\n"
-        "  calibrate    record an empty-room RSSI baseline (default 300 s)\n"
-        "                 flags: --duration SECONDS\n"
-        "  analyze      read a JSONL log, print rule-based insights  [--json]\n"
-        "                 (newest diting-*.jsonl in cwd when no PATH given)\n"
-        "                 flags: --since DUR · --anonymize ·\n"
-        "                        --for-llm [-o PATH]  (write one .md file with\n"
-        "                        the prompt + report, and copy it to the\n"
-        "                        clipboard — paste into any AI chat)\n"
+        "  status        print the current connection snapshot and exit  [--json]\n"
+        "  scan          one-shot Wi-Fi / BLE sensor snapshot  [--wifi --ble --json]\n"
+        "  stream        headless canonical-JSONL event stream (long-runs)\n"
+        "                  flags: --duration D  --out FILE  --notify  --gateway IP\n"
+        "  calibrate     record an empty-room RSSI baseline (default 300 s)\n"
+        "  analyze       read a JSONL log, print rule-based insights  [--json]\n"
+        "                  (newest diting-*.jsonl in cwd when no PATH given)\n"
+        "  companion     manage diting-mobile pairing (pair / status / unpair)\n"
+        "  capabilities  machine-readable manifest of the CLI surface  [--json]\n"
         "\n"
-        "Automation: once / watch / analyze accept --json for machine-\n"
-        "readable output (JSON keys are stable English; chrome goes to\n"
-        "stderr). monitor already streams JSONL. Exit codes: 0 ok · 1\n"
-        "runtime error (incl. once when not associated) · 2 usage error.\n"
+        "Automation: status / scan / analyze / capabilities accept --json for\n"
+        "machine-readable output (JSON keys are stable English; chrome goes to\n"
+        "stderr); stream emits canonical JSONL. Run `diting capabilities --json`\n"
+        "to discover the full surface. Exit codes: 0 ok · 1 runtime error (incl.\n"
+        "status when not associated) · 2 usage error.\n"
+        "Deprecated aliases: once → status · watch → stream · monitor → stream\n"
         "\n"
         "Global options:\n"
         "  --lang L                interface language: en or zh\n"
         "                          (env: DITING_LANG; else system locale)\n"
         "  --log [PATH]            also write JSONL while TUI runs; no path =\n"
         "                          ./diting-YYYYMMDD-HHMMSS.jsonl in cwd. Same\n"
-        "                          schema as `diting monitor`; append-mode +\n"
+        "                          schema as `diting stream`; append-mode +\n"
         "                          line-flushed so events survive Ctrl+C\n"
         "                          (env: DITING_LOG=PATH or =auto)\n"
         "  --notify                raise OS banners on anomaly events while\n"
-        "                          TUI runs (also accepted by `monitor`)\n"
+        "                          TUI runs (also accepted by `stream`)\n"
         "  --no-companion          don't forward events to a paired phone this\n"
         "                          run — self-test without push spam (same as\n"
         "                          env DITING_COMPANION=0). Pairing is untouched\n"
@@ -1044,67 +1074,230 @@ def _usage() -> str:
     )
 
 
-def _once_help() -> str:
-    return (
-        "usage: diting once [--json]\n"
-        "\n"
-        "Print the current Wi-Fi connection snapshot and exit.\n"
-        "\n"
-        "  --json    emit one JSON object (backend, permission_state,\n"
-        "            associated, connection) to stdout; keys are stable\n"
-        "            English. Exit 0 associated, 1 not associated.\n"
-        "\n"
-        "Examples:\n"
-        "  diting once\n"
-        "  diting once --json | jq .connection.rssi_dbm\n"
-    )
+# ---------- agent-facing command surface (single source of truth) ----------
+#
+# This declarative table backs BOTH the per-subcommand `--help` text and
+# the `capabilities` manifest, so the two can never drift. Each flag's
+# `type` is one of bool / duration / seconds / string / path; `output`
+# is one of json-object / json-lines / text. Keep entries data-only —
+# no behaviour lives here, just description.
+
+CAPABILITIES_SCHEMA_VERSION = 1
+
+# Deprecated verb → canonical verb. Forwarded with a one-line stderr
+# notice, and advertised in the manifest's `deprecated_aliases`.
+_DEPRECATED_ALIASES = {
+    "once": "status",
+    "watch": "stream",
+    "monitor": "stream",
+}
+# Spelling alias — forwarded silently, not advertised in the manifest.
+_SILENT_ALIASES = {"analyse": "analyze"}
+
+_COMMANDS: list[dict] = [
+    {
+        "name": "status",
+        "summary": "print the current connection + permission snapshot and exit",
+        "output": "json-object",
+        "flags": [
+            {"name": "--json", "type": "bool", "default": False, "repeatable": False,
+             "help": "emit one JSON object (backend, permission_state, associated, connection)"},
+        ],
+        "exit_codes": {"0": "associated", "1": "not associated", "2": "usage error"},
+        "examples": ["diting status", "diting status --json | jq .connection.rssi_dbm"],
+    },
+    {
+        "name": "scan",
+        "summary": "one-shot sensor snapshot (Wi-Fi and/or BLE) and exit",
+        "output": "json-object",
+        "flags": [
+            {"name": "--wifi", "type": "bool", "default": False, "repeatable": False,
+             "help": "include the Wi-Fi scan list (default: both sensors)"},
+            {"name": "--ble", "type": "bool", "default": False, "repeatable": False,
+             "help": "include the BLE advertisement list (default: both sensors)"},
+            {"name": "--duration", "type": "duration", "default": "4s", "repeatable": False,
+             "help": "BLE collection window (Ns/Nm/Nh or bare seconds)"},
+            {"name": "--json", "type": "bool", "default": False, "repeatable": False,
+             "help": "emit one JSON object keyed by sensor (wifi, ble)"},
+        ],
+        "exit_codes": {"0": "at least one sensor returned data",
+                       "1": "no sensor returned data", "2": "usage error"},
+        "examples": ["diting scan --json",
+                     "diting scan --wifi --json | jq '.wifi | length'"],
+    },
+    {
+        "name": "stream",
+        "summary": "headless canonical-JSONL event stream (long-runs / pipelines)",
+        "output": "json-lines",
+        "flags": [
+            {"name": "--duration", "type": "duration", "default": None, "repeatable": False,
+             "help": "bound the run (Ns/Nm/Nh or bare seconds); unbounded until Ctrl+C when omitted"},
+            {"name": "--out", "type": "path", "default": None, "repeatable": False,
+             "help": "write JSONL to FILE instead of stdout"},
+            {"name": "--notify", "type": "bool", "default": False, "repeatable": False,
+             "help": "raise macOS notifications on anomaly events"},
+            {"name": "--gateway", "type": "string", "default": None, "repeatable": False,
+             "help": "override the gateway IP for latency probing"},
+            {"name": "--wan", "type": "string", "default": None, "repeatable": False,
+             "help": "override the WAN target for latency probing"},
+        ],
+        "exit_codes": {"0": "clean exit", "2": "usage error"},
+        "examples": ["diting stream | jq 'select(.type==\"roam\")'",
+                     "diting stream --duration 5m --out /tmp/cap.jsonl"],
+    },
+    {
+        "name": "calibrate",
+        "summary": "record an empty-room RSSI baseline (default 300 s)",
+        "output": "text",
+        "flags": [
+            {"name": "--duration", "type": "seconds", "default": "300", "repeatable": False,
+             "help": "sampling window in seconds (minimum 10)"},
+        ],
+        "exit_codes": {"0": "baseline saved or cancelled", "2": "usage error"},
+        "examples": ["diting calibrate --duration 120"],
+    },
+    {
+        "name": "analyze",
+        "summary": "read a JSONL log and print rule-based insights",
+        "output": "json-object",
+        "flags": [
+            {"name": "--since", "type": "duration", "default": None, "repeatable": False,
+             "help": "keep only events within the last DUR (7d/24h/90m)"},
+            {"name": "--json", "type": "bool", "default": False, "repeatable": False,
+             "help": "emit the full report as one JSON object to stdout"},
+            {"name": "--for-llm", "type": "bool", "default": False, "repeatable": False,
+             "help": "write ONE .md briefing (prompt + report) and copy it to the clipboard"},
+            {"name": "--out-dir", "type": "path", "default": None, "repeatable": False,
+             "help": "(-o) output .md file or directory for --for-llm; implies --for-llm"},
+            {"name": "--anonymize", "type": "bool", "default": False, "repeatable": False,
+             "help": "replace identifiers with stable handles in the briefing"},
+            {"name": "--raw", "type": "bool", "default": False, "repeatable": False,
+             "help": "also hand the AI the raw event log (implies --for-llm)"},
+        ],
+        "exit_codes": {"0": "report produced", "2": "usage error"},
+        "examples": ["diting analyze",
+                     "diting analyze diting-20260608.jsonl --json | jq .insights",
+                     "diting analyze *.jsonl --since 7d --for-llm"],
+    },
+    {
+        "name": "companion",
+        "summary": "manage diting-mobile pairing (pair / status / unpair)",
+        "output": "text",
+        "flags": [
+            {"name": "--relay", "type": "string", "default": None, "repeatable": False,
+             "help": "relay URL for `companion pair` (env: DITING_COMPANION_RELAY)"},
+        ],
+        "exit_codes": {"0": "ok", "2": "unknown action"},
+        "examples": ["diting companion pair", "diting companion status"],
+    },
+    {
+        "name": "capabilities",
+        "summary": "emit a machine-readable manifest of the CLI surface",
+        "output": "json-object",
+        "flags": [
+            {"name": "--json", "type": "bool", "default": False, "repeatable": False,
+             "help": "emit the manifest as one JSON object (else pretty-print)"},
+        ],
+        "exit_codes": {"0": "ok"},
+        "examples": ["diting capabilities --json | jq '.commands[].name'"],
+    },
+]
+
+# Canonical verb names, in declared order.
+_CANONICAL_VERBS = [c["name"] for c in _COMMANDS]
 
 
-def _watch_help() -> str:
-    return (
-        "usage: diting watch [--json]\n"
-        "\n"
-        "Stream connection / scan / roam change-events until Ctrl+C.\n"
-        "\n"
-        "  --json    emit one JSON object per event, newline-delimited\n"
-        "            (tailable); chrome goes to stderr so stdout is a\n"
-        "            clean JSON line-stream.\n"
-        "\n"
-        "Examples:\n"
-        "  diting watch\n"
-        "  diting watch --json | jq -c 'select(.kind==\"roam\")'\n"
-    )
+def _resolve_alias(cmd: str) -> str:
+    """Map a subcommand token to its canonical verb. Deprecation and
+    spelling aliases resolve; canonical / unknown tokens pass through."""
+    return _DEPRECATED_ALIASES.get(cmd, _SILENT_ALIASES.get(cmd, cmd))
 
 
-def _analyze_help() -> str:
-    return (
-        "usage: diting analyze [PATH ...] [--since DUR] [--json]\n"
-        "                      [--for-llm [-o PATH]] [--anonymize]\n"
-        "\n"
-        "Read a JSONL log and print rule-based insights. With no PATH,\n"
-        "uses the newest diting-*.jsonl in the current directory.\n"
-        "\n"
-        "  --since DUR     keep only events within the last DUR (7d/24h/90m)\n"
-        "  --json          emit the full report as one JSON object to stdout\n"
-        "                  (stable English keys); chrome goes to stderr\n"
-        "  --for-llm       write ONE .md file holding the analyst prompt +\n"
-        "                  the full report, and copy it to the clipboard so\n"
-        "                  you can paste it straight into any AI chat\n"
-        "  -o, --out-dir   output path: a .md file, or a directory the file\n"
-        "                  lands in (default ./diting-analysis-for-llm-<ts>.md);\n"
-        "                  implies --for-llm\n"
-        "  --anonymize     replace identifiers with stable handles in the file\n"
-        "  --raw           also hand the AI the raw event log: attach your\n"
-        "                  existing .jsonl alongside the briefing (with\n"
-        "                  --anonymize, a scrubbed copy is written instead)\n"
-        "\n"
-        "Examples:\n"
-        "  diting analyze\n"
-        "  diting analyze diting-20260608.jsonl --json | jq .insights\n"
-        "  diting analyze *.jsonl --since 7d --for-llm    # → clipboard\n"
-        "  diting analyze foo.jsonl --for-llm -o /tmp/run.md\n"
-        "  diting analyze foo.jsonl --for-llm --raw       # + attach raw log\n"
-    )
+def _command(name: str) -> dict:
+    for c in _COMMANDS:
+        if c["name"] == name:
+            return c
+    raise KeyError(name)
+
+
+def _parse_duration_seconds(raw: str) -> float:
+    """Shared `--duration` / `--since` grammar: a bare `<int>` (seconds),
+    or `<int>` suffixed with `s`/`m`/`h` (and `d`, inherited from the
+    analyze grammar). Raises ValueError on anything else."""
+    s = raw.strip()
+    if s.isdigit():
+        return float(int(s))
+    from . import analyze
+    return analyze.parse_since(s).total_seconds()
+
+
+def _flag_usage(flag: dict) -> str:
+    if flag["type"] == "bool":
+        return f"[{flag['name']}]"
+    placeholder = {
+        "duration": "D", "seconds": "SECS", "path": "PATH",
+    }.get(flag["type"], "VALUE")
+    return f"[{flag['name']} {placeholder}]"
+
+
+def _render_help(name: str) -> str:
+    """Build a subcommand's `--help` text from its descriptor so help and
+    the `capabilities` manifest stay in lock-step."""
+    desc = _command(name)
+    positional = " [PATH ...]" if name == "analyze" else ""
+    usage_flags = " ".join(_flag_usage(f) for f in desc["flags"])
+    lines = [
+        f"usage: diting {name}{positional}"
+        + (f" {usage_flags}" if usage_flags else ""),
+        "",
+        desc["summary"] + ".",
+    ]
+    if desc["flags"]:
+        lines.append("")
+        width = max(len(f["name"]) for f in desc["flags"])
+        for f in desc["flags"]:
+            lines.append(f"  {f['name']:<{width}}  {f['help']}")
+    if desc.get("examples"):
+        lines.append("")
+        lines.append("Examples:")
+        lines.extend(f"  {ex}" for ex in desc["examples"])
+    lines.append("")
+    lines.append("Exit codes: " + " · ".join(
+        f"{k} {v}" for k, v in desc["exit_codes"].items()
+    ))
+    return "\n".join(lines) + "\n"
+
+
+def _capabilities_manifest() -> dict:
+    """The self-describing surface manifest. Built from `_COMMANDS` so it
+    can never drift from actual parsing / help."""
+    return {
+        "schema_version": CAPABILITIES_SCHEMA_VERSION,
+        "exit_code_convention": {
+            "0": "success",
+            "1": "runtime error",
+            "2": "usage error",
+        },
+        "deprecated_aliases": dict(_DEPRECATED_ALIASES),
+        "commands": [
+            {
+                "name": c["name"],
+                "summary": c["summary"],
+                "output": c["output"],
+                "exit_codes": c["exit_codes"],
+                "flags": [
+                    {
+                        "name": f["name"],
+                        "type": f["type"],
+                        "default": f["default"],
+                        "repeatable": f["repeatable"],
+                    }
+                    for f in c["flags"]
+                ],
+            }
+            for c in _COMMANDS
+        ],
+    }
 
 
 def _extract_lang_arg(argv: list[str]) -> str | None:
@@ -1141,16 +1334,22 @@ def _validate_lang(value: str) -> str:
 # (flag absent) and from a regular path string.
 _LOG_DEFAULT = object()
 
-_KNOWN_SUBCOMMANDS = {
-    "once", "watch", "monitor", "calibrate", "analyze", "analyse", "companion",
-}
+# Every dispatchable subcommand token: canonical verbs + deprecation
+# aliases + the spelling alias. Used to detect "is the next argv token a
+# subcommand or a --log path" and to gate the default-TUI flag extraction.
+_KNOWN_SUBCOMMANDS = (
+    set(_CANONICAL_VERBS) | set(_DEPRECATED_ALIASES) | set(_SILENT_ALIASES)
+)
 
 
 def _run_companion(argv: list[str]) -> None:
     """`diting companion {pair|status|unpair}` — manage mobile pairing.
 
     Companion modules are imported lazily so the crypto/QR dependencies
-    do not load on the hot TUI / monitor path."""
+    do not load on the hot TUI / stream path."""
+    if argv and argv[0] in ("--help", "-h"):
+        print(_render_help("companion"), end="")
+        return
     action = argv[0] if argv else "status"
     if action == "pair":
         _companion_pair(argv[1:])
@@ -1207,7 +1406,7 @@ def _companion_status() -> None:
     print(t("Paired — channel {channel}", channel=st.channel))
     print(t("relay:   {url}", url=st.relay_url))
     print(t("last sequence: {n}", n=st.last_seq))
-    print(t("Forwarding runs while `diting` or `diting monitor` is active."))
+    print(t("Forwarding runs while `diting` or `diting stream` is active."))
 
 
 def _companion_unpair() -> None:
@@ -1970,35 +2169,48 @@ def _dispatch() -> None:
         )
         return
     cmd = args[0]
-    if cmd == "once":
-        _run_once(args[1:])
+    if cmd in ("-h", "--help"):
+        print(_usage(), end="")
         return
-    if cmd == "watch":
+
+    # Resolve deprecation / spelling aliases to a canonical verb. A
+    # deprecated alias prints exactly one stderr notice (never stdout,
+    # so `--json` stays pure); a spelling alias forwards silently.
+    canonical = _resolve_alias(cmd)
+    if cmd in _DEPRECATED_ALIASES:
+        print(f"diting: {cmd!r} is deprecated; use {canonical!r}",
+              file=sys.stderr)
+
+    rest = args[1:]
+    if canonical == "status":
+        _run_status(rest)
+        return
+    if canonical == "scan":
         try:
-            asyncio.run(_run_watch(args[1:]))
+            asyncio.run(_run_scan(rest))
         except KeyboardInterrupt:
             pass
         return
-    if cmd == "monitor":
+    if canonical == "stream":
         try:
-            asyncio.run(_run_monitor(args[1:], scene_source=scene_source))
+            asyncio.run(_run_stream(rest, scene_source=scene_source))
         except KeyboardInterrupt:
             pass
         return
-    if cmd == "calibrate":
+    if canonical == "calibrate":
         try:
-            asyncio.run(_run_calibrate(args[1:]))
+            asyncio.run(_run_calibrate(rest))
         except KeyboardInterrupt:
             print(t("Calibration cancelled."))
         return
-    if cmd == "analyze" or cmd == "analyse":
-        _run_analyze(args[1:])
+    if canonical == "analyze":
+        _run_analyze(rest)
         return
-    if cmd == "companion":
-        _run_companion(args[1:])
+    if canonical == "companion":
+        _run_companion(rest)
         return
-    if cmd in ("-h", "--help"):
-        print(_usage(), end="")
+    if canonical == "capabilities":
+        _run_capabilities(rest)
         return
     print(t("diting: unknown subcommand {cmd!r}", cmd=cmd) + "\n",
           file=sys.stderr)
