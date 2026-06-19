@@ -735,6 +735,67 @@ def test_scan_sensor_error_is_structured(monkeypatch, capsys):
 
 # ---------- agent-cli-foundation: duration grammar + help ----------
 
+# ---------- headless-capture-engine: scan --lan/--mdns + stream --sensors ----------
+
+def test_scan_lan_json_keying(monkeypatch, capsys):
+    async def fake_lan(dur):
+        return [{"ip": "10.0.0.5", "hostname": "nas"}]
+    monkeypatch.setattr(cli, "_scan_lan", fake_lan)
+    with pytest.raises(SystemExit) as ei:
+        _asyncio.run(cli._run_scan(["--lan", "--json"]))
+    assert ei.value.code == 0
+    doc = _json.loads(capsys.readouterr().out)
+    assert set(doc) == {"lan"} and doc["lan"][0]["ip"] == "10.0.0.5"
+
+
+def test_scan_mdns_json_keying(monkeypatch, capsys):
+    async def fake_mdns(dur):
+        return [{"name": "LivingRoom", "service_type": "_airplay._tcp"}]
+    monkeypatch.setattr(cli, "_scan_mdns", fake_mdns)
+    with pytest.raises(SystemExit) as ei:
+        _asyncio.run(cli._run_scan(["--mdns", "--json"]))
+    assert ei.value.code == 0
+    doc = _json.loads(capsys.readouterr().out)
+    assert set(doc) == {"mdns"} and doc["mdns"][0]["name"] == "LivingRoom"
+
+
+def test_scan_lan_error_is_structured(monkeypatch, capsys):
+    async def fake_lan(dur):
+        raise RuntimeError("not associated; cannot enumerate the LAN")
+    monkeypatch.setattr(cli, "_scan_lan", fake_lan)
+    with pytest.raises(SystemExit) as ei:
+        _asyncio.run(cli._run_scan(["--lan", "--json"]))
+    assert ei.value.code == 1  # only sensor failed → no data
+    doc = _json.loads(capsys.readouterr().out)
+    assert doc["lan"]["error"].startswith("not associated")
+    assert doc["lan"]["code"] == 1
+
+
+def test_stream_sensors_default():
+    assert cli._parse_sensors(None) == {"wifi", "latency", "rf"}
+
+
+def test_stream_sensors_all_parses():
+    from diting.capture import ALL_SENSORS
+    assert cli._parse_sensors("all") == set(ALL_SENSORS)
+    assert cli._parse_sensors("wifi,ble,lan") == {"wifi", "ble", "lan"}
+
+
+def test_stream_sensors_unknown_token_exits_2(capsys):
+    with pytest.raises(SystemExit) as ei:
+        cli._parse_sensors("wifi,sonar")
+    assert ei.value.code == 2
+    assert "sonar" in capsys.readouterr().err
+
+
+def test_capabilities_lists_sensors_flag():
+    m = cli._capabilities_manifest()
+    stream = next(c for c in m["commands"] if c["name"] == "stream")
+    scan = next(c for c in m["commands"] if c["name"] == "scan")
+    assert "--sensors" in {f["name"] for f in stream["flags"]}
+    assert {"--lan", "--mdns"} <= {f["name"] for f in scan["flags"]}
+
+
 def test_duration_grammar_suffix_forms():
     assert cli._parse_duration_seconds("30") == 30.0
     assert cli._parse_duration_seconds("45s") == 45.0

@@ -30,37 +30,18 @@ from pathlib import Path
 
 from . import i18n
 from . import familiarity as _familiarity
-from ._watchdog import SilenceClock, WatchdogConfig, maybe_notify
-from .event_log import EventLogger, build_monitors_manifest
-from .environment import (
-    EnvironmentMonitor,
-    load_calibration,
-    write_calibration,
-)
-from .events import (
-    EventRing,
-    LatencySpikeEvent,
-    LinkStateEvent,
-    LossBurstEvent,
-    event_to_jsonl,
-)
+from .event_log import EventLogger
+from .environment import write_calibration
 from .i18n import t
-from .latency import (
-    LatencyPoller,
-    detect_latency_spike,
-    detect_loss_burst,
-)
 from .macos_backend import MacOSWiFiBackend
 from .models import Connection
 from .network import (
     NetworkInventory,
     format_bssid,
     load_inventory,
-    lookup_ap_vendor,
 )
 from .poller import (
     ConnectionUpdate,
-    RoamEvent,
     ScanUpdate,
     WiFiPoller,
 )
@@ -233,6 +214,62 @@ async def _scan_ble(duration_s: float) -> list[dict]:
     return [_ble_device_to_dict(d, decode_all) for d in latest["devices"]]
 
 
+def _dataclass_snapshot_to_dict(obj) -> dict:
+    """JSON-safe dict for a frozen snapshot dataclass (LANHost /
+    BonjourDevice): `asdict` + top-level datetime → ISO-8601."""
+    from dataclasses import asdict
+    d = asdict(obj)
+    for k, v in list(d.items()):
+        if hasattr(v, "isoformat"):
+            d[k] = v.isoformat()
+    return d
+
+
+async def _collect_latest(poller, attr: str, duration_s: float, *, name: str):
+    """Drive ``poller.events()`` for ``duration_s`` and return the latest
+    snapshot's ``attr`` list. Stops the poller afterwards."""
+    latest: dict = {"items": []}
+
+    async def consume() -> None:
+        async for update in poller.events():
+            latest["items"] = list(getattr(update, attr))
+
+    task = asyncio.create_task(consume(), name=name)
+    try:
+        await asyncio.wait_for(task, timeout=max(0.5, duration_s))
+    except asyncio.TimeoutError:
+        pass
+    finally:
+        try:
+            poller.stop()
+        except Exception:  # noqa: BLE001
+            pass
+    return latest["items"]
+
+
+async def _scan_lan(duration_s: float) -> list[dict]:
+    """One-shot LAN host snapshot. Raises when the host is not associated
+    (no subnet to enumerate)."""
+    from .lan import LANInventoryPoller
+    try:
+        conn = MacOSWiFiBackend().get_connection()
+    except Exception:
+        conn = None
+    if conn is None or not conn.router_ip:
+        raise RuntimeError("not associated; cannot enumerate the LAN")
+    poller = LANInventoryPoller(connection_provider=lambda: conn)
+    hosts = await _collect_latest(poller, "hosts", duration_s, name="scan-lan")
+    return [_dataclass_snapshot_to_dict(h) for h in hosts]
+
+
+async def _scan_mdns(duration_s: float) -> list[dict]:
+    """One-shot mDNS/Bonjour service snapshot."""
+    from .mdns import BonjourPoller
+    poller = BonjourPoller()
+    devices = await _collect_latest(poller, "devices", duration_s, name="scan-mdns")
+    return [_dataclass_snapshot_to_dict(d) for d in devices]
+
+
 async def _run_scan(args: list[str]) -> None:
     if "--help" in args or "-h" in args:
         print(_render_help("scan"), end="")
@@ -240,7 +277,11 @@ async def _run_scan(args: list[str]) -> None:
     json_mode = "--json" in args
     want_wifi = "--wifi" in args
     want_ble = "--ble" in args
-    if not want_wifi and not want_ble:
+    want_lan = "--lan" in args
+    want_mdns = "--mdns" in args
+    if not any((want_wifi, want_ble, want_lan, want_mdns)):
+        # Default to the always-available pair; LAN/mDNS are opt-in (slower,
+        # and LAN may active-probe).
         want_wifi = want_ble = True
     duration_s = 4.0
     raw = _arg_value(args, "--duration")
@@ -266,12 +307,24 @@ async def _run_scan(args: list[str]) -> None:
             any_ok = True
         except Exception as exc:  # noqa: BLE001 — per-sensor structured error
             result["ble"] = {"error": str(exc), "code": 1}
+    if want_lan:
+        try:
+            result["lan"] = await _scan_lan(duration_s)
+            any_ok = True
+        except Exception as exc:  # noqa: BLE001 — per-sensor structured error
+            result["lan"] = {"error": str(exc), "code": 1}
+    if want_mdns:
+        try:
+            result["mdns"] = await _scan_mdns(duration_s)
+            any_ok = True
+        except Exception as exc:  # noqa: BLE001 — per-sensor structured error
+            result["mdns"] = {"error": str(exc), "code": 1}
 
     if json_mode:
         print(json.dumps(result, ensure_ascii=False))
     else:
         chrome = sys.stdout
-        for sensor in ("wifi", "ble"):
+        for sensor in ("wifi", "ble", "lan", "mdns"):
             if sensor not in result:
                 continue
             val = result[sensor]
@@ -281,9 +334,14 @@ async def _run_scan(args: list[str]) -> None:
             else:
                 print(t("  {n} result(s)", n=len(val)), file=chrome)
                 for row in val:
-                    label = row.get("ssid") or row.get("name") or row.get("identifier") or "?"
+                    label = (
+                        row.get("ssid") or row.get("name")
+                        or row.get("hostname") or row.get("ip")
+                        or row.get("identifier") or "?"
+                    )
                     rssi = row.get("rssi_dbm")
-                    print(f"  {label}  {_fmt(rssi, ' dBm')}", file=chrome)
+                    suffix = f"  {_fmt(rssi, ' dBm')}" if "rssi_dbm" in row else ""
+                    print(f"  {label}{suffix}", file=chrome)
     sys.exit(0 if any_ok else 1)
 
 
@@ -318,19 +376,21 @@ def _run_capabilities(args: list[str]) -> None:
 # ---------- stream (headless JSONL) ----------
 
 async def _run_stream(
-    args: list[str], *, scene_source: str = "default",
+    args: list[str],
+    *,
+    scene_source: str = "default",
+    ble_presence_gate_s: float = 5.0,
+    lan_active_probe: bool = False,
+    lan_upnp_fetch: bool = True,
 ) -> None:
-    """Long-running headless event stream.
+    """Long-running headless event stream, driven by `CaptureEngine`.
 
-    Spawns WiFiPoller + LatencyPoller + EnvironmentMonitor and emits
-    one JSONL document per event to stdout (or ``--out path.jsonl``
-    when set), with ``--notify`` raising a macOS Notification Centre
-    alert for high-confidence events. ``--duration D`` bounds the run;
-    when omitted the stream runs until Ctrl+C / SIGTERM.
-
-    ``scene_source`` is threaded from ``main()`` (where ``--scene`` /
-    ``DITING_SCENE`` were resolved) so the session_meta line written
-    here can record HOW the scene was picked.
+    Emits canonical event-log JSONL to stdout (or ``--out path.jsonl``).
+    ``--sensors`` selects which sensors the engine drives (default
+    ``wifi,latency,rf``); ``--duration D`` bounds the run; ``--notify``
+    raises macOS alerts. ``scene_source`` / the scene-derived gate + LAN
+    knobs are threaded from ``main()`` so the engine wires the same
+    sensitivity the TUI would.
     """
     if "--help" in args or "-h" in args:
         print(_render_help("stream"), end="")
@@ -349,295 +409,66 @@ async def _run_stream(
                   file=sys.stderr)
             sys.exit(2)
 
+    sensors = _parse_sensors(_arg_value(args, "--sensors"))
+
+    from .capture import CaptureEngine
+
     backend = MacOSWiFiBackend()
     inv = load_inventory()
-    monitor = EnvironmentMonitor(
-        inventory=inv, calibration=load_calibration(),
-    )
-
     logger = (
         EventLogger.to_path(out_path) if out_path
         else EventLogger.to_stdout()
     )
-    # Companion forwarding (opt-in via `diting companion pair`). When
-    # paired, every emitted payload is also offered to the sink via the
-    # logger's observer tap — the exact dict the JSONL line carries.
-    companion_sink = None
-    try:
-        from .companion import runtime as _companion_runtime
-        companion_sink = _companion_runtime.build_sink()
-    except Exception:
-        companion_sink = None
-    if companion_sink is not None:
-        logger.set_observer(companion_sink.offer)
-    # Familiarity / baseline store — classifies seen events against the
-    # persisted history. Always-on so the baseline accrues across sessions.
-    familiarity_store = None
-    try:
-        familiarity_store = _familiarity.FamiliarityStore(
-            _familiarity.default_store_path(),
-        )
-        logger.set_familiarity_store(familiarity_store)
-    except Exception:
-        familiarity_store = None
-    # Session header — must be the first line emitted, byte-identical
-    # to the TUI's --log path so downstream readers don't branch on
-    # source. Scene was resolved by main() before dispatching; we
-    # only thread the source through here.
-    #
-    # Synchronously fetch the connection ONCE before emitting so
-    # session_meta carries the at-launch SSID + gateway_ip rather
-    # than null. Pre-v1.7.1 this call ran before any poll
-    # completed and every session_meta line reported `ssid: null`
-    # even when the host was associated. Failure (no Wi-Fi yet,
-    # helper not ready) is absorbed as None so the disassociated-
-    # at-launch path keeps working.
-    from . import scene as _scene_mod
-    try:
-        startup_conn = backend.get_connection()
-    except Exception:
-        startup_conn = None
-    try:
-        _perm = backend.permission_state()
-    except Exception:
-        _perm = None
-    logger.emit_session_meta(
-        scene=_scene_mod.get_scene(),
+    # Resolve a BLE-capable helper only when BLE is actually requested, so
+    # the common no-BLE stream never pays the lookup. find_helper() does not
+    # trigger a LaunchServices permission prompt (that is the TUI's job).
+    ble_helper_path: str | None = None
+    if "ble" in sensors:
+        from . import _helper
+        cand = _helper.find_helper()
+        if cand is not None and _helper.has_ble_scan_subcommand(cand):
+            ble_helper_path = cand
+
+    engine = CaptureEngine(
+        backend, inv,
+        logger=logger,
+        sensors=sensors,
         scene_source=scene_source,
-        ssid=startup_conn.ssid if startup_conn else None,
-        gateway_ip=startup_conn.router_ip if startup_conn else None,
-        # `stream` runs Wi-Fi scan + latency + rf_stir (EnvironmentMonitor);
-        # it does NOT run BLE or LAN sweeps (those are TUI-only for now).
-        monitors=build_monitors_manifest(
-            scan_interval_s=7.0, ble=False, lan=False,
-            latency=True, rf_stir=True,
-        ),
-        permissions={"location": _perm} if _perm is not None else None,
+        ble_helper_path=ble_helper_path,
+        ble_presence_gate_s=ble_presence_gate_s,
+        lan_active_probe=lan_active_probe,
+        lan_upnp_fetch=lan_upnp_fetch,
+        scan_interval=_scan_interval(),
+        gateway_override=gateway_override,
+        wan_override=wan_override,
+        notify=notify,
     )
+    await engine.run(duration_s=duration_s)
 
-    poller = WiFiPoller(backend)
 
-    # The latency target list is a moving target — we can only start
-    # the LatencyPoller once we have a gateway. Spin up a small
-    # waiting loop instead of blocking the WiFi consumer with a long
-    # one-shot probe.
-    latency_state: dict = {
-        "poller": None,
-        "wan_override": wan_override,
-        "gateway_override": gateway_override,
-    }
-    # Child tasks spawned by the consumer (e.g. the late-bound latency
-    # consumer). Tracked so a `--duration`-bounded run can cancel them
-    # cleanly on timeout rather than orphaning them.
-    spawned: list[asyncio.Task] = []
-
-    watchdog_cfg = WatchdogConfig.from_env() if notify else None
-    silence_clock = (
-        SilenceClock(watchdog_cfg.silence_window_s) if notify else None
-    )
-
-    async def _notify(payload: dict, target: str) -> None:
-        if not notify:
-            return
-        await maybe_notify(
-            payload,
-            target=target,
-            clock=silence_clock,
-            config=watchdog_cfg,
-        )
-
-    last_ssid: dict[str, str | None] = {"value": None}
-    # capture-sampling: current channel for co-channel counts in scan_summary.
-    sampling_state: dict[str, int | None] = {"channel": None}
-
-    async def wifi_consumer() -> None:
-        async for event in poller.events():
-            now = datetime.now(timezone.utc)
-            if isinstance(event, ConnectionUpdate):
-                conn = event.connection
-                if conn is not None:
-                    last_ssid["value"] = conn.ssid
-                logger.emit_connection_update(
-                    conn, now=now,
-                    vendor=lookup_ap_vendor(
-                        conn.bssid if conn else None
-                    ),
-                )
-                # capture-sampling: track channel for co-channel counts +
-                # emit a throttled periodic quality sample while associated.
-                sampling_state["channel"] = conn.channel if conn else None
-                logger.emit_link_sample(conn, now=now)
-                if conn is None:
-                    continue
-                # Late-bind LatencyPoller once we know the gateway.
-                if latency_state["poller"] is None and (
-                    latency_state["gateway_override"] or conn.router_ip
-                ):
-                    gateway_ip = (
-                        latency_state["gateway_override"] or conn.router_ip
-                    )
-                    latency_state["poller"] = LatencyPoller(
-                        gateway_ip=gateway_ip,
-                        wan_ip=latency_state["wan_override"],
-                    )
-                    spawned.append(asyncio.get_running_loop().create_task(
-                        latency_consumer(latency_state["poller"]),
-                        name="latency-consumer",
-                    ))
-                if conn.bssid is not None and conn.rssi_dbm is not None:
-                    monitor.ingest(
-                        conn.bssid, conn.rssi_dbm, now,
-                        ssid=conn.ssid,
-                    )
-                    for stir in monitor.fire_events(now):
-                        logger.emit_rf_stir(stir)
-                        await _notify(
-                            {
-                                "type": "rf_stir",
-                                "confidence": stir.confidence,
-                                "location": stir.location,
-                            },
-                            target=stir.location,
-                        )
-            elif isinstance(event, ScanUpdate):
-                for r in event.results:
-                    if r.bssid is not None and r.rssi_dbm is not None:
-                        monitor.ingest(
-                            r.bssid, r.rssi_dbm, now,
-                            ssid=r.ssid,
-                        )
-                # capture-sampling: throttled neighborhood summary.
-                _ch = sampling_state["channel"]
-                logger.emit_scan_summary(
-                    neighbor_count=len(event.results),
-                    co_channel_count=(
-                        sum(1 for r in event.results if r.channel == _ch)
-                        if _ch is not None else None
-                    ),
-                    current_channel=_ch,
-                    now=now,
-                )
-                for stir in monitor.fire_events(now):
-                    logger.emit_rf_stir(stir)
-                    await _notify(
-                        {
-                            "type": "rf_stir",
-                            "confidence": stir.confidence,
-                            "location": stir.location,
-                        },
-                        target=stir.location,
-                    )
-            elif isinstance(event, RoamEvent):
-                kind = (
-                    "band_switch"
-                    if inv.is_same_ap(event.previous_bssid, event.new_bssid)
-                    else "inter_ap"
-                )
-                logger.emit_roam(
-                    event, kind=kind,
-                    ssid=last_ssid["value"],
-                    previous_vendor=lookup_ap_vendor(event.previous_bssid),
-                    new_vendor=lookup_ap_vendor(event.new_bssid),
-                )
-
-    last_event_at: dict[tuple[str, str], float] = {}
-
-    def should_fire(kind: str, target: str, cooldown_s: float = 30.0) -> bool:
-        now = time.monotonic()
-        last = last_event_at.get((kind, target))
-        if last is not None and (now - last) < cooldown_s:
-            return False
-        last_event_at[(kind, target)] = now
-        return True
-
-    async def latency_consumer(lp: LatencyPoller) -> None:
-        async for sample in lp.events():
-            history = list(lp._history.get(sample.target, ()))
-            if not history:
-                continue
-            spike = detect_latency_spike(history)
-            if spike is not None and sample is spike:
-                if should_fire("latency_spike", sample.target):
-                    agg = lp.aggregate(sample.target)
-                    rtt_ms = round(sample.rtt_ms or 0.0, 1)
-                    logger.emit_latency_spike(LatencySpikeEvent(
-                        timestamp=sample.ts,
-                        target=sample.target,
-                        target_ip=sample.target_ip,
-                        rtt_ms=rtt_ms,
-                        loss_pct=round(agg.loss_pct or 0.0, 1),
-                    ))
-                    await _notify(
-                        {
-                            "type": "latency_spike",
-                            "target": sample.target,
-                            "rtt_ms": rtt_ms,
-                        },
-                        target=sample.target,
-                    )
-            if sample.lost and detect_loss_burst(history):
-                if should_fire("loss_burst", sample.target):
-                    agg = lp.aggregate(sample.target)
-                    loss_pct = round(agg.loss_pct or 0.0, 1)
-                    logger.emit_loss_burst(LossBurstEvent(
-                        timestamp=sample.ts,
-                        target=sample.target,
-                        target_ip=sample.target_ip,
-                        loss_pct=loss_pct,
-                        lost_in_window=sum(1 for s in history[-5:] if s.lost),
-                    ))
-                    await _notify(
-                        {
-                            "type": "loss_burst",
-                            "target": sample.target,
-                            "loss_pct": loss_pct,
-                        },
-                        target=sample.target,
-                    )
-
-    flush_task = (
-        asyncio.create_task(
-            _companion_runtime.flush_loop(companion_sink),
-            name="companion-flush",
-        )
-        if companion_sink is not None
-        else None
-    )
-    consumer = asyncio.create_task(wifi_consumer(), name="wifi-consumer")
-    try:
-        if duration_s is not None:
-            # `--duration`: run the stream for a bounded window, then stop.
-            # wait_for cancels `consumer` on timeout; the finally block
-            # reaps it and any child tasks it spawned.
-            try:
-                await asyncio.wait_for(consumer, timeout=duration_s)
-            except asyncio.TimeoutError:
-                pass
-        else:
-            await consumer
-    finally:
-        # Cancel the consumer AND every child task it spawned (e.g. the
-        # late-bound latency consumer, which loops forever) BEFORE
-        # awaiting any of them — otherwise awaiting a still-running child
-        # would hang the bounded run.
-        for task in (consumer, *spawned):
-            if not task.done():
-                task.cancel()
-        for task in (consumer, *spawned):
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-        if flush_task is not None:
-            flush_task.cancel()
-            try:
-                await flush_task
-            except asyncio.CancelledError:
-                pass
-        if familiarity_store is not None:
-            familiarity_store.flush()
-        logger.close()
-
+def _parse_sensors(raw: str | None) -> set[str]:
+    """Parse ``--sensors a,b,…`` into a set. ``all`` expands to every
+    sensor; default (flag absent) is the historical ``wifi,latency,rf``.
+    An unknown token is a usage error (exit 2)."""
+    from .capture import ALL_SENSORS
+    if raw is None:
+        return {"wifi", "latency", "rf"}
+    out: set[str] = set()
+    for tok in raw.split(","):
+        tok = tok.strip().lower()
+        if not tok:
+            continue
+        if tok == "all":
+            out.update(ALL_SENSORS)
+            continue
+        if tok not in ALL_SENSORS:
+            print(t(
+                "diting stream: unknown sensor {tok!r}; valid: {valid}",
+                tok=tok, valid=", ".join((*ALL_SENSORS, "all")),
+            ), file=sys.stderr)
+            sys.exit(2)
+        out.add(tok)
+    return out or {"wifi", "latency", "rf"}
 
 def _iso(ts: datetime) -> str:
     if ts.tzinfo is None:
@@ -1114,11 +945,15 @@ _COMMANDS: list[dict] = [
             {"name": "--wifi", "type": "bool", "default": False, "repeatable": False,
              "help": "include the Wi-Fi scan list (default: both sensors)"},
             {"name": "--ble", "type": "bool", "default": False, "repeatable": False,
-             "help": "include the BLE advertisement list (default: both sensors)"},
+             "help": "include the BLE advertisement list (default: wifi+ble)"},
+            {"name": "--lan", "type": "bool", "default": False, "repeatable": False,
+             "help": "include a LAN host snapshot"},
+            {"name": "--mdns", "type": "bool", "default": False, "repeatable": False,
+             "help": "include an mDNS/Bonjour service snapshot"},
             {"name": "--duration", "type": "duration", "default": "4s", "repeatable": False,
-             "help": "BLE collection window (Ns/Nm/Nh or bare seconds)"},
+             "help": "collection window for streaming sensors (Ns/Nm/Nh or bare seconds)"},
             {"name": "--json", "type": "bool", "default": False, "repeatable": False,
-             "help": "emit one JSON object keyed by sensor (wifi, ble)"},
+             "help": "emit one JSON object keyed by sensor (wifi, ble, lan, mdns)"},
         ],
         "exit_codes": {"0": "at least one sensor returned data",
                        "1": "no sensor returned data", "2": "usage error"},
@@ -1130,6 +965,8 @@ _COMMANDS: list[dict] = [
         "summary": "headless canonical-JSONL event stream (long-runs / pipelines)",
         "output": "json-lines",
         "flags": [
+            {"name": "--sensors", "type": "string", "default": "wifi,latency,rf", "repeatable": False,
+             "help": "comma list from wifi,latency,rf,ble,lan,mdns (or all); default wifi,latency,rf"},
             {"name": "--duration", "type": "duration", "default": None, "repeatable": False,
              "help": "bound the run (Ns/Nm/Nh or bare seconds); unbounded until Ctrl+C when omitted"},
             {"name": "--out", "type": "path", "default": None, "repeatable": False,
@@ -2193,7 +2030,18 @@ def _dispatch() -> None:
         return
     if canonical == "stream":
         try:
-            asyncio.run(_run_stream(rest, scene_source=scene_source))
+            asyncio.run(_run_stream(
+                rest,
+                scene_source=scene_source,
+                # Thread the scene-derived gate + LAN knobs so a full-sensor
+                # capture honours the same sensitivity the TUI would. The BLE
+                # gate resolves env > scene default (no per-stream CLI flag).
+                ble_presence_gate_s=_resolve_ble_presence_gate(
+                    None, scene_default=scene_gate_default,
+                ),
+                lan_active_probe=lan_active_probe,
+                lan_upnp_fetch=lan_upnp_fetch,
+            ))
         except KeyboardInterrupt:
             pass
         return

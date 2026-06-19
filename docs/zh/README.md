@@ -531,7 +531,9 @@ DITING_LANG=zh uv run diting   # 用环境变量
 ```bash
 uv run diting status                     # 当前连接快照，随即退出
 uv run diting scan                       # 一次性 Wi-Fi + BLE 传感器快照
-uv run diting stream                     # 无 TUI，逐行规范 JSONL
+uv run diting scan --lan --mdns          # 一次性 LAN 主机 + Bonjour 快照
+uv run diting stream                     # 无 TUI，逐行规范 JSONL（wifi+latency+rf）
+uv run diting stream --sensors all       # 全套传感器（加上 BLE / LAN / mDNS）
 uv run diting stream --out events.jsonl  # 追加 JSONL 到文件
 uv run diting stream --duration 5m       # 限时运行后退出
 uv run diting stream --notify            # 高置信度事件触发 macOS 通知

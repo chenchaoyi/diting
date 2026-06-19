@@ -43,17 +43,27 @@ manifest before relying on a field.
 | Command | Output | Use it to |
 |---|---|---|
 | `diting status [--json]` | json-object | read the current connection + permission state once |
-| `diting scan [--wifi] [--ble] [--duration D] [--json]` | json-object | take a one-shot sensor snapshot |
-| `diting stream [--duration D] [--out FILE] [--notify]` | json-lines | capture a live event stream (bounded or until killed) |
+| `diting scan [--wifi] [--ble] [--lan] [--mdns] [--duration D] [--json]` | json-object | take a one-shot sensor snapshot |
+| `diting stream [--sensors …] [--duration D] [--out FILE] [--notify]` | json-lines | capture a live event stream (bounded or until killed) |
 | `diting analyze [PATH ...] [--since D] [--json]` | json-object | post-process a captured JSONL log into a report |
 | `diting capabilities [--json]` | json-object | discover the surface |
 
 `status` exits `1` when the host is not associated (the snapshot is still
-well-formed). `scan` runs both sensors when neither `--wifi` nor `--ble`
-is given, and keys its JSON by sensor; if one sensor is unavailable its
-value is a `{"error": ..., "code": ...}` object and the other still
-returns. `stream` emits the canonical event-log JSONL — the exact schema
-`analyze` consumes — so a captured stream round-trips through `analyze`.
+well-formed). `scan` runs Wi-Fi + BLE when no sensor flag is given, and keys
+its JSON by sensor (`wifi`/`ble`/`lan`/`mdns` — only the requested keys); if a
+sensor is unavailable its value is a `{"error": ..., "code": ...}` object and
+the others still return. `stream` emits the canonical event-log JSONL — the
+exact schema `analyze` consumes — so a captured stream round-trips through
+`analyze`.
+
+`stream --sensors a,b,…` selects which sensors the capture engine drives, from
+`wifi`, `latency`, `rf`, `ble`, `lan`, `mdns`, plus `all`. The default is
+`wifi,latency,rf` (the historical headless set), so an unflagged `stream` never
+starts BLE scanning or LAN active-probing unasked. Opt into the rest with, e.g.,
+`--sensors all` or `--sensors wifi,ble,lan`; when BLE/LAN/mDNS are active the
+stream emits their device-discovery events (`ble_device_seen`/`_left`,
+`lan_host_seen`/`_left`, `bonjour_service_seen`/`_left`) on the same JSONL
+stream, and `session_meta.monitors` reports exactly what was wired.
 
 `--duration` (on `scan` / `stream`) and `--since` (on `analyze`) share
 one grammar: a bare integer (seconds) or an integer with an `s` / `m` /
@@ -89,10 +99,10 @@ One-shot environment snapshot:
 diting scan --json | jq '{aps: (.wifi | length), ble: (.ble | length)}'
 ```
 
-Capture a bounded window, then analyze it:
+Capture a bounded full-sensor window, then analyze it:
 
 ```bash
-diting stream --duration 5m --out /tmp/cap.jsonl
+diting stream --sensors all --duration 5m --out /tmp/cap.jsonl
 diting analyze /tmp/cap.jsonl --json | jq '.insights'
 ```
 
@@ -111,8 +121,8 @@ the canonical names.
 
 ## What's not here yet
 
-The headless stream currently observes Wi-Fi, latency, and RF stir.
-Bringing BLE / LAN / mDNS into the capture path, and diting-managed
-background capture sessions, are tracked as follow-up work. For now, a
-long watch is `diting stream --out FILE` backgrounded by your harness,
-then `diting analyze FILE`.
+The headless stream can now observe the full sensor set (Wi-Fi, latency,
+RF, BLE, LAN, mDNS) via `--sensors`. Still tracked as follow-up work:
+diting-managed background capture sessions (start / status / stop / tail).
+For now, a long watch is `diting stream --sensors all --out FILE`
+backgrounded by your harness, then `diting analyze FILE`.

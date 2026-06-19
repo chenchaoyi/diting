@@ -1813,6 +1813,12 @@ _ZH: dict[str, str] = {
         "  错误：{msg}",
     "  {n} result(s)":
         "  {n} 个结果",
+    "BLE sensor requested but no helper with ble-scan is available; continuing without BLE":
+        "请求了 BLE 传感器，但没有可用的带 ble-scan 的 helper；继续运行但不含 BLE",
+    "mDNS/Bonjour unavailable: {err}":
+        "mDNS/Bonjour 不可用：{err}",
+    "diting stream: unknown sensor {tok!r}; valid: {valid}":
+        "diting stream：未知传感器 {tok!r}；有效值：{valid}",
     "--ble-presence-gate requires a duration (e.g. --ble-presence-gate 5s)":
         "--ble-presence-gate 需要一个时长（例如 --ble-presence-gate 5s）",
     "--ble-presence-gate: invalid duration {raw!r}: {exc}":
