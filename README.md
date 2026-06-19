@@ -604,7 +604,9 @@ diting without the TUI:
 ```bash
 uv run diting status                     # snapshot of current connection, exit
 uv run diting scan                       # one-shot Wi-Fi + BLE sensor snapshot
-uv run diting stream                     # headless canonical JSONL to stdout
+uv run diting scan --lan --mdns          # one-shot LAN host + Bonjour snapshot
+uv run diting stream                     # headless canonical JSONL to stdout (wifi+latency+rf)
+uv run diting stream --sensors all       # full sensor set (adds BLE / LAN / mDNS)
 uv run diting stream --out events.jsonl  # append JSONL to a file
 uv run diting stream --duration 5m       # bounded run, then exit
 uv run diting stream --notify            # macOS Notification Centre alerts on high-confidence events
