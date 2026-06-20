@@ -1819,6 +1819,32 @@ _ZH: dict[str, str] = {
         "mDNS/Bonjour 不可用：{err}",
     "diting stream: unknown sensor {tok!r}; valid: {valid}":
         "diting stream：未知传感器 {tok!r}；有效值：{valid}",
+    "capture start: --name is required":
+        "capture start：必须提供 --name",
+    "capture status: --name is required":
+        "capture status：必须提供 --name",
+    "capture stop: --name or --all is required":
+        "capture stop：必须提供 --name 或 --all",
+    "capture tail: --name is required":
+        "capture tail：必须提供 --name",
+    "capture tail: -n expects an integer":
+        "capture tail：-n 需要一个整数",
+    "capture: {msg}":
+        "capture：{msg}",
+    "capture: unknown action {action!r} (use start / list / status / stop / tail)":
+        "capture：未知动作 {action!r}（可用 start / list / status / stop / tail）",
+    "started session {name} (pid {pid})":
+        "已启动会话 {name}（pid {pid}）",
+    "  capture: {path}":
+        "  捕获文件：{path}",
+    "(no capture sessions)":
+        "（没有捕获会话）",
+    "(nothing running to stop)":
+        "（没有运行中的会话可停止）",
+    "stopped {name}":
+        "已停止 {name}",
+    "session {name}: {status}":
+        "会话 {name}：{status}",
     "--ble-presence-gate requires a duration (e.g. --ble-presence-gate 5s)":
         "--ble-presence-gate 需要一个时长（例如 --ble-presence-gate 5s）",
     "--ble-presence-gate: invalid duration {raw!r}: {exc}":
