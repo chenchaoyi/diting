@@ -236,6 +236,19 @@ consumes the exact payload dict the JSONL writer emits (via an
 | **headless-capture-engine** — Bonjour poller constructed before LAN and shared into it (LAN keeps Bonjour enrichment); latency late-bound on first gateway, rebuilt on gateway change with `network_change` emitted | `test_capture.py::test_bonjour_shared_into_lan`, `::test_network_change_on_gateway_shift` |
 | **headless-capture-engine** — clean bounded teardown: cancel/await consumers, stop bonjour+lan, flush familiarity, close logger; no orphaned task | `test_capture.py::test_teardown_cancels_tasks_and_closes_logger` |
 
+### `capture-sessions`
+
+| Requirement | Test |
+|---|---|
+| **capture-sessions** — `SessionStore` resolves the state dir from `DITING_STATE_DIR` else `~/.diting`; records live under it so they're found from any CWD; lazy dir creation; capture/stderr/record path layout | `test_sessions.py::test_state_dir_override`, `::test_records_found_from_other_cwd`, `::test_lazy_dir_creation` |
+| **capture-sessions** — record CRUD + name validation `[A-Za-z0-9._-]+`; reading/listing/deleting one JSON record; invalid name rejected | `test_sessions.py::test_record_round_trip`, `::test_invalid_name_rejected` |
+| **capture-sessions** — live status derivation: alive pid → `running`; record-says-running but dead pid → `exited`/`crashed` (never phantom running); `stop` marks `stopped` | `test_sessions.py::test_status_running_for_live_pid`, `::test_status_exited_for_dead_pid` |
+| **capture-sessions** — `start` spawns `python -m diting stream …` detached (own process group, stdout=DEVNULL, stderr→logfile) and writes a record; a still-running name is rejected (exit 2) | `test_sessions.py::test_start_spawns_expected_argv`, `::test_start_duplicate_running_rejected` |
+| **capture-sessions** — `stop(name/all)` SIGTERMs the pid(s) + marks stopped (idempotent on already-stopped); integration: start a real detached process, list sees it running, stop ends it | `test_sessions.py::test_stop_signals_and_marks`, `::test_stop_already_stopped_is_ok`, `::test_start_list_stop_integration` |
+| **capture-sessions** — `tail` returns the last K JSONL lines (raw, jq-pipeable) | `test_sessions.py::test_tail_last_k_lines` |
+| **capture-sessions** — `diting stream` installs a SIGTERM handler → engine teardown flushes + closes the logger, exit 0 (complete, not truncated); SIGINT unchanged | `test_sessions.py::test_stream_sigterm_closes_logger_cleanly` |
+| **capture-sessions** — `capture` is a dispatchable canonical verb in the manifest; `capture --help` lists the actions; `list`/`status` honour `--json` | `test_cli.py::test_capabilities_lists_capture_verb`, `::test_capture_help_lists_actions` |
+
 ### `cli`
 
 | Requirement | Test |

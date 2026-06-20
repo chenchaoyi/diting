@@ -42,6 +42,7 @@ diting capabilities --json
 | `diting status [--json]` | json-object | 一次性读取当前连接 + 权限状态 |
 | `diting scan [--wifi] [--ble] [--lan] [--mdns] [--duration D] [--json]` | json-object | 拍一张一次性的传感器快照 |
 | `diting stream [--sensors …] [--duration D] [--out FILE] [--notify]` | json-lines | 捕获实时事件流（限时或直到被杀） |
+| `diting capture start\|list\|status\|stop\|tail` | text/json | 管理一个 detached 的命名长时观测 |
 | `diting analyze [PATH ...] [--since D] [--json]` | json-object | 把已捕获的 JSONL 日志后处理成报告 |
 | `diting capabilities [--json]` | json-object | 发现命令面 |
 
@@ -97,6 +98,22 @@ diting stream --sensors all --duration 5m --out /tmp/cap.jsonl
 diting analyze /tmp/cap.jsonl --json | jq '.insights'
 ```
 
+启动一个长时观测，离开，回来再分析它（托管会话）：
+
+```bash
+diting capture start --name nightwatch --sensors all
+# …稍后，在任意 shell 里…
+diting capture list --json | jq -r '.[] | "\(.name) \(.status)"'
+diting capture tail --name nightwatch -n 50 | jq -c 'select(.type=="threat")'
+diting capture stop --name nightwatch
+diting analyze "$(diting capture status --name nightwatch --json | jq -r .capture_path)"
+```
+
+会话存于 `~/.diting`（用 `DITING_STATE_DIR` 覆盖）；`stop` 发 SIGTERM，
+`stream` 将其作为干净 flush 处理，所以捕获是完整的。`status`/`list` 报告
+实时状态（`running` / `exited` / `stopped`），由进程存活推导 —— 崩溃的会话
+会如实显示，而不是假报 `running`。
+
 跟踪实时流里的某类事件：
 
 ```bash
@@ -109,9 +126,9 @@ diting stream | jq -c 'select(.type == "roam")'
 再分别转发到 `status`、`stream`、`stream`。清单里的 `deprecated_aliases`
 映射是权威来源；请迁移到规范名。
 
-## 还没有的能力
+## 说明
 
-无头流现在可经 `--sensors` 观测全套传感器（Wi-Fi、延迟、RF、BLE、LAN、mDNS）。
-仍在跟进的后续工作：diting 自管的后台捕获会话（start / status / stop / tail）。
-眼下，长时间观测就是由你的 harness 后台运行 `diting stream --sensors all --out FILE`，
-再 `diting analyze FILE`。
+无头流经 `--sensors` 观测全套传感器（Wi-Fi、延迟、RF、BLE、LAN、mDNS），
+`capture` 管理 detached 的长时观测会话。TUI 仍保留自己的 poller 接线；把它
+也收敛到共享的 `CaptureEngine` 上是可能的后续工作，但不是把 diting 当工具
+驱动所必需的。

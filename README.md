@@ -610,6 +610,10 @@ uv run diting stream --sensors all       # full sensor set (adds BLE / LAN / mDN
 uv run diting stream --out events.jsonl  # append JSONL to a file
 uv run diting stream --duration 5m       # bounded run, then exit
 uv run diting stream --notify            # macOS Notification Centre alerts on high-confidence events
+uv run diting capture start --name watch --sensors all  # detached long watch
+uv run diting capture list               # sessions + live status
+uv run diting capture tail --name watch -n 50 -f        # follow a session's JSONL
+uv run diting capture stop --name watch  # clean SIGTERM stop (complete capture)
 uv run diting calibrate                  # 5 min "empty room" RSSI baseline → ./diting-baseline.json
 uv run diting companion pair             # pair a phone — renders a QR for diting-mobile
 uv run diting companion status           # show pairing + relay queue state

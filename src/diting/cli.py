@@ -443,7 +443,26 @@ async def _run_stream(
         wan_override=wan_override,
         notify=notify,
     )
-    await engine.run(duration_s=duration_s)
+    # Run the engine in a task so a SIGTERM (e.g. `diting capture stop`)
+    # cancels it cleanly — the engine's teardown then flushes + closes the
+    # logger, producing a COMPLETE capture rather than a truncated one.
+    # SIGINT (Ctrl+C) is left to the default KeyboardInterrupt path.
+    import signal as _signal
+    loop = asyncio.get_running_loop()
+    run_task = asyncio.create_task(engine.run(duration_s=duration_s))
+    try:
+        loop.add_signal_handler(_signal.SIGTERM, run_task.cancel)
+    except (NotImplementedError, RuntimeError):
+        pass  # signal handlers unavailable (non-main thread / platform)
+    try:
+        await run_task
+    except asyncio.CancelledError:
+        pass
+    finally:
+        try:
+            loop.remove_signal_handler(_signal.SIGTERM)
+        except (NotImplementedError, ValueError, RuntimeError):
+            pass
 
 
 def _parse_sensors(raw: str | None) -> set[str]:
@@ -1028,6 +1047,36 @@ _COMMANDS: list[dict] = [
         "examples": ["diting companion pair", "diting companion status"],
     },
     {
+        "name": "capture",
+        "summary": "manage detached capture sessions (start / list / status / stop / tail)",
+        "output": "text",
+        "flags": [
+            {"name": "--name", "type": "string", "default": None, "repeatable": False,
+             "help": "session name (start / status / stop / tail)"},
+            {"name": "--sensors", "type": "string", "default": None, "repeatable": False,
+             "help": "sensors for the spawned stream (see `stream --sensors`)"},
+            {"name": "--out", "type": "path", "default": None, "repeatable": False,
+             "help": "capture file for start (default under the state dir)"},
+            {"name": "--duration", "type": "duration", "default": None, "repeatable": False,
+             "help": "bounded run for start (Ns/Nm/Nh)"},
+            {"name": "--all", "type": "bool", "default": False, "repeatable": False,
+             "help": "stop: stop every running session"},
+            {"name": "-n", "type": "string", "default": "20", "repeatable": False,
+             "help": "tail: number of lines"},
+            {"name": "-f", "type": "bool", "default": False, "repeatable": False,
+             "help": "tail: follow the capture"},
+            {"name": "--json", "type": "bool", "default": False, "repeatable": False,
+             "help": "machine-readable output for list / status / start"},
+        ],
+        "exit_codes": {"0": "ok", "1": "unknown session", "2": "usage error"},
+        "examples": [
+            "diting capture start --name nightwatch --sensors all",
+            "diting capture list --json",
+            "diting capture tail --name nightwatch -n 50 -f",
+            "diting capture stop --name nightwatch",
+        ],
+    },
+    {
         "name": "capabilities",
         "summary": "emit a machine-readable manifest of the CLI surface",
         "output": "json-object",
@@ -1253,6 +1302,161 @@ def _companion_unpair() -> None:
         print(t("Unpaired."))
     else:
         print(t("Not paired; nothing to remove."))
+
+
+# ---------- capture sessions ----------
+
+def _run_capture(argv: list[str]) -> None:
+    """`diting capture {start|list|status|stop|tail}` — manage detached
+    capture sessions backed by the CaptureEngine."""
+    if not argv or argv[0] in ("-h", "--help"):
+        print(_render_help("capture"), end="")
+        return
+    from .sessions import SessionStore, SessionError
+
+    action, rest = argv[0], argv[1:]
+    store = SessionStore()
+    json_mode = "--json" in rest
+
+    if action == "start":
+        name = _arg_value(rest, "--name")
+        if not name:
+            print(t("capture start: --name is required"), file=sys.stderr)
+            sys.exit(2)
+        try:
+            rec = store.start(
+                name=name,
+                sensors=_arg_value(rest, "--sensors"),
+                out=_arg_value(rest, "--out"),
+                duration=_arg_value(rest, "--duration"),
+            )
+        except SessionError as exc:
+            print(t("capture: {msg}", msg=str(exc)), file=sys.stderr)
+            sys.exit(2)
+        if json_mode:
+            print(json.dumps(store.view(rec), ensure_ascii=False))
+        else:
+            print(t("started session {name} (pid {pid})",
+                    name=rec["name"], pid=rec["pid"]))
+            print(t("  capture: {path}", path=rec["capture_path"]))
+        return
+
+    if action == "list":
+        views = [store.view(r) for r in store.list_records()]
+        if json_mode:
+            print(json.dumps(views, ensure_ascii=False))
+        elif not views:
+            print(t("(no capture sessions)"))
+        else:
+            for v in views:
+                print(f"  {v['name']:<16} {v['status']:<8} "
+                      f"pid={v.get('pid')}  {v['capture_path']}")
+        return
+
+    if action == "status":
+        name = _arg_value(rest, "--name")
+        if not name:
+            print(t("capture status: --name is required"), file=sys.stderr)
+            sys.exit(2)
+        rec = store.read_record(name)
+        if rec is None:
+            msg = f"no such session {name!r}"
+            if json_mode:
+                print(json.dumps({"error": msg, "code": 1}), file=sys.stderr)
+            else:
+                print(t("capture: {msg}", msg=msg), file=sys.stderr)
+            sys.exit(1)
+        v = store.view(rec)
+        if json_mode:
+            print(json.dumps(v, ensure_ascii=False))
+        else:
+            for k in ("name", "status", "pid", "sensors",
+                      "capture_path", "started_at", "duration"):
+                print(f"  {k}: {v.get(k)}")
+        return
+
+    if action == "stop":
+        if "--all" in rest:
+            stopped = store.stop_all()
+            if json_mode:
+                print(json.dumps(
+                    [{"name": n, "status": s} for n, s in stopped],
+                    ensure_ascii=False,
+                ))
+            elif not stopped:
+                print(t("(nothing running to stop)"))
+            else:
+                for n, _s in stopped:
+                    print(t("stopped {name}", name=n))
+            return
+        name = _arg_value(rest, "--name")
+        if not name:
+            print(t("capture stop: --name or --all is required"), file=sys.stderr)
+            sys.exit(2)
+        try:
+            result = store.stop(name)
+        except SessionError as exc:
+            print(t("capture: {msg}", msg=str(exc)), file=sys.stderr)
+            sys.exit(1)
+        if json_mode:
+            print(json.dumps({"name": name, "status": result}, ensure_ascii=False))
+        else:
+            print(t("session {name}: {status}", name=name, status=result))
+        return
+
+    if action == "tail":
+        name = _arg_value(rest, "--name")
+        if not name:
+            print(t("capture tail: --name is required"), file=sys.stderr)
+            sys.exit(2)
+        n = 20
+        nraw = _arg_value(rest, "-n") or _arg_value(rest, "--lines")
+        if nraw is not None:
+            try:
+                n = int(nraw)
+            except ValueError:
+                print(t("capture tail: -n expects an integer"), file=sys.stderr)
+                sys.exit(2)
+        try:
+            lines = store.tail_lines(name, n)
+        except SessionError as exc:
+            print(t("capture: {msg}", msg=str(exc)), file=sys.stderr)
+            sys.exit(1)
+        for ln in lines:
+            print(ln)
+        if "-f" in rest or "--follow" in rest:
+            _follow_capture(store, name)
+        return
+
+    print(t("capture: unknown action {action!r} "
+            "(use start / list / status / stop / tail)", action=action) + "\n",
+          file=sys.stderr)
+    sys.exit(2)
+
+
+def _follow_capture(store, name: str) -> None:
+    """Poll the session's capture file and print newly-appended lines until
+    interrupted (the `-f` follow path)."""
+    rec = store.read_record(name)
+    if rec is None:
+        return
+    path = Path(rec["capture_path"])
+    pos = path.stat().st_size if path.is_file() else 0
+    try:
+        while True:
+            if path.is_file():
+                size = path.stat().st_size
+                if size > pos:
+                    with path.open() as fh:
+                        fh.seek(pos)
+                        chunk = fh.read()
+                        pos = fh.tell()
+                    for ln in chunk.splitlines():
+                        if ln.strip():
+                            print(ln, flush=True)
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
 
 
 def _extract_log_arg(argv: list[str]) -> str | object | None:
@@ -2056,6 +2260,9 @@ def _dispatch() -> None:
         return
     if canonical == "companion":
         _run_companion(rest)
+        return
+    if canonical == "capture":
+        _run_capture(rest)
         return
     if canonical == "capabilities":
         _run_capabilities(rest)

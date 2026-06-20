@@ -616,7 +616,7 @@ def test_canonical_verbs_dispatch():
     # The canonical verb set is the contract; aliases resolve onto it.
     assert cli._CANONICAL_VERBS == [
         "status", "scan", "stream", "calibrate",
-        "analyze", "companion", "capabilities",
+        "analyze", "companion", "capture", "capabilities",
     ]
     for v in cli._CANONICAL_VERBS:
         assert cli._resolve_alias(v) == v  # canonical passes through
@@ -786,6 +786,34 @@ def test_stream_sensors_unknown_token_exits_2(capsys):
         cli._parse_sensors("wifi,sonar")
     assert ei.value.code == 2
     assert "sonar" in capsys.readouterr().err
+
+
+def test_capabilities_lists_capture_verb():
+    m = cli._capabilities_manifest()
+    names = [c["name"] for c in m["commands"]]
+    assert "capture" in names
+    assert "capture" in cli._CANONICAL_VERBS
+
+
+def test_capture_help_lists_actions(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["diting", "capture", "--help"])
+    cli.main()
+    out = capsys.readouterr().out
+    assert "start / list / status / stop / tail" in out
+    assert "Examples:" in out
+
+
+def test_capture_list_json_empty(monkeypatch, capsys, tmp_path):
+    monkeypatch.setenv("DITING_STATE_DIR", str(tmp_path))
+    cli._run_capture(["list", "--json"])
+    assert _json.loads(capsys.readouterr().out) == []
+
+
+def test_capture_status_unknown_exits_1(monkeypatch, tmp_path):
+    monkeypatch.setenv("DITING_STATE_DIR", str(tmp_path))
+    with pytest.raises(SystemExit) as ei:
+        cli._run_capture(["status", "--name", "nope", "--json"])
+    assert ei.value.code == 1
 
 
 def test_capabilities_lists_sensors_flag():

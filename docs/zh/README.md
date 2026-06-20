@@ -537,6 +537,10 @@ uv run diting stream --sensors all       # 全套传感器（加上 BLE / LAN / 
 uv run diting stream --out events.jsonl  # 追加 JSONL 到文件
 uv run diting stream --duration 5m       # 限时运行后退出
 uv run diting stream --notify            # 高置信度事件触发 macOS 通知
+uv run diting capture start --name watch --sensors all  # detached 长时观测
+uv run diting capture list               # 会话 + 实时状态
+uv run diting capture tail --name watch -n 50 -f        # 跟随某会话的 JSONL
+uv run diting capture stop --name watch  # 干净 SIGTERM 停止（捕获完整）
 uv run diting calibrate                  # 5 分钟「房间没人」基线 → ./diting-baseline.json
 uv run diting companion pair             # 配对手机 —— 渲染给 diting-mobile 扫的二维码
 uv run diting companion status           # 查看配对 + 中继队列状态

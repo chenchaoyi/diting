@@ -45,6 +45,7 @@ manifest before relying on a field.
 | `diting status [--json]` | json-object | read the current connection + permission state once |
 | `diting scan [--wifi] [--ble] [--lan] [--mdns] [--duration D] [--json]` | json-object | take a one-shot sensor snapshot |
 | `diting stream [--sensors …] [--duration D] [--out FILE] [--notify]` | json-lines | capture a live event stream (bounded or until killed) |
+| `diting capture start\|list\|status\|stop\|tail` | text/json | manage a detached named long watch |
 | `diting analyze [PATH ...] [--since D] [--json]` | json-object | post-process a captured JSONL log into a report |
 | `diting capabilities [--json]` | json-object | discover the surface |
 
@@ -106,6 +107,23 @@ diting stream --sensors all --duration 5m --out /tmp/cap.jsonl
 diting analyze /tmp/cap.jsonl --json | jq '.insights'
 ```
 
+Launch a long watch, leave, come back and analyze it (managed session):
+
+```bash
+diting capture start --name nightwatch --sensors all
+# ... later, from any shell ...
+diting capture list --json | jq -r '.[] | "\(.name) \(.status)"'
+diting capture tail --name nightwatch -n 50 | jq -c 'select(.type=="threat")'
+diting capture stop --name nightwatch
+diting analyze "$(diting capture status --name nightwatch --json | jq -r .capture_path)"
+```
+
+Sessions live under `~/.diting` (override `DITING_STATE_DIR`); `stop` sends
+SIGTERM, which `stream` handles as a clean flush so the capture is complete.
+`status`/`list` report live status (`running` / `exited` / `stopped`),
+derived from process liveness — a crashed session shows up, not a phantom
+`running`.
+
 Tail a live stream for a specific event:
 
 ```bash
@@ -119,10 +137,10 @@ notice to stderr and forward to `status`, `stream`, and `stream`. The
 manifest's `deprecated_aliases` map is the source of truth; migrate to
 the canonical names.
 
-## What's not here yet
+## Notes
 
-The headless stream can now observe the full sensor set (Wi-Fi, latency,
-RF, BLE, LAN, mDNS) via `--sensors`. Still tracked as follow-up work:
-diting-managed background capture sessions (start / status / stop / tail).
-For now, a long watch is `diting stream --sensors all --out FILE`
-backgrounded by your harness, then `diting analyze FILE`.
+The headless stream observes the full sensor set (Wi-Fi, latency, RF, BLE,
+LAN, mDNS) via `--sensors`, and `capture` manages detached long-watch
+sessions. The TUI keeps its own poller wiring; converging it onto the shared
+`CaptureEngine` is possible future work but not required to drive diting as
+a tool.
