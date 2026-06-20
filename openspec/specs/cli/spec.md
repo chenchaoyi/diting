@@ -23,6 +23,9 @@ The CLI SHALL accept exactly these non-default subcommands, plus the default
 - `stream` — emit a foreground, bounded canonical-JSONL event stream on stdout
   (`--sensors` selects the engine's sensor set; `--duration` optional; runs
   until Ctrl+C / SIGTERM when unbounded)
+- `capture` — manage detached named capture sessions (`start` / `list` /
+  `status` / `stop` / `tail`; lifecycle owned by the `capture-sessions`
+  capability)
 - `calibrate` — record an empty-room σ baseline (default 300 s)
 - `analyze [PATH]` — post-process a JSONL log file into a report
 - `companion` — pairing actions (semantics owned by the `companion-bridge`
@@ -40,6 +43,10 @@ Requirement on this capability. The headless sensor set driven by `scan` /
 #### Scenario: Unknown subcommand is a usage error
 - **WHEN** the user runs `diting frobnicate`
 - **THEN** stderr names the unknown subcommand and the process exits 2
+
+#### Scenario: capture is a dispatchable canonical verb
+- **WHEN** an agent reads `diting capabilities --json`
+- **THEN** `capture` appears in the `commands` array, and `diting capture --help` prints its actions
 
 ### Requirement: The deprecated verbs `once`, `watch`, `monitor` SHALL forward to their canonical replacements
 
