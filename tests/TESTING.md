@@ -249,6 +249,17 @@ consumes the exact payload dict the JSONL writer emits (via an
 | **capture-sessions** — `diting stream` installs a SIGTERM handler → engine teardown flushes + closes the logger, exit 0 (complete, not truncated); SIGINT unchanged | `test_sessions.py::test_stream_sigterm_closes_logger_cleanly` |
 | **capture-sessions** — `capture` is a dispatchable canonical verb in the manifest; `capture --help` lists the actions; `list`/`status` honour `--json` | `test_cli.py::test_capabilities_lists_capture_verb`, `::test_capture_help_lists_actions` |
 
+### `permission-setup`
+
+| Requirement | Test |
+|---|---|
+| **installer-permission-setup** — `permission` model: `is_ready` needs Location+Bluetooth (Notifications best-effort); `settings_pane_url` maps each grant to its Privacy pane | `test_setup.py::test_is_ready_requires_location_and_bluetooth`, `::test_settings_pane_url_per_permission` |
+| **installer-permission-setup** — `diting setup --json` emits one `{location,bluetooth,notifications,ready}` object (notifications `null` when unverifiable on an older helper) and is non-blocking (never opens the bundle) | `test_setup.py::test_setup_json_emits_state`, `::test_setup_json_notifications_unknown`, `::test_setup_json_never_opens_bundle` |
+| **installer-permission-setup** — non-interactive (non-TTY) `setup` probes once and exits 1 when a required grant is missing; helper-missing exits 1 with a structured error (no traceback) | `test_setup.py::test_setup_noninteractive_exit_1_when_not_ready`, `::test_setup_helper_missing_exits_1` |
+| **installer-permission-setup** — `_helper.has_notification_permission` (notification-status exit 0) + `has_notification_status_subcommand` (`--help` grep) | `test_setup.py::test_notification_probes` |
+| **installer-permission-setup** — `setup` is a dispatchable canonical verb in the manifest; `setup --help` prints usage + exit codes | `test_cli.py::test_capabilities_lists_setup_verb`, `::test_setup_help_exits_zero` |
+| **installer-permission-setup** — the helper exposes a `notification-status` probe subcommand (exit-code only; listed in `--help`) | (helper-side; verified by hand against the rebuilt bundle — exit 3 when Notifications denied) |
+
 ### `cli`
 
 | Requirement | Test |
@@ -420,8 +431,8 @@ consumes the exact payload dict the JSONL writer emits (via an
 | Installer refuses to run on non-macOS hosts with a clear error | `test_install.py::test_install_script_refuses_linux`, `::test_install_script_refuses_unknown_uname` |
 | Tarball SHA256 verified against `SHASUMS256.txt`, mismatch aborts | `test_install.py::test_install_script_aborts_on_sha_mismatch`, `::test_install_script_accepts_matching_sha` |
 | Tarball extracted under `~/.local/share/diting/`, symlinked at `~/.local/bin/diting`; sudo not required | `test_install.py::test_install_script_lays_out_user_local_paths_in_dry_run` |
-| Helper bundle copied to `~/Library/Application Support/diting/`, quarantine xattr stripped, `open` primes TCC | `test_install.py::test_install_script_primes_application_support_helper_in_dry_run` |
-| Install-time locale derived from `defaults read -g AppleLanguages` and threaded into the helper launch via `--env DITING_LANG=` AND `--args -AppleLanguages '(<tag>)'` so the helper UI and macOS TCC prompts agree on language | `test_install.py::test_install_script_primes_application_support_helper_in_dry_run` |
+| Helper bundle copied to `~/Library/Application Support/diting/`, quarantine xattr stripped | `test_install.py::test_install_script_primes_application_support_helper_in_dry_run` |
+| **installer-permission-setup** — install drives + verifies TCC via `diting setup` (replaces the fire-and-forget `open`): TESTONLY emits a `would run diting setup` marker; `DITING_LANG` + `-AppleLanguages '(<tag>)'` threaded (locale from `defaults read -g AppleLanguages`) so the helper UI and macOS prompts agree on language; non-TTY install stays non-blocking | `test_install.py::test_install_script_primes_application_support_helper_in_dry_run` |
 | PATH-update hint printed when `~/.local/bin` not on PATH (zsh / bash / fish detected) | `test_install.py::test_install_script_emits_zsh_path_hint`, `::test_install_script_silent_when_already_on_path` |
 | `DITING_VERSION=vX.Y.Z` env var pins the install to a specific tag | `test_install.py::test_install_script_uses_diting_version_override` |
 | Frozen-binary install coexists with `uv run diting` developer flow | (review-enforced — search-path priority pins the in-repo dev build first; tested via `test_helper.py::test_find_helper_repo_dev_build_shadows_application_support`) |

@@ -43,6 +43,7 @@ diting capabilities --json
 | `diting scan [--wifi] [--ble] [--lan] [--mdns] [--duration D] [--json]` | json-object | 拍一张一次性的传感器快照 |
 | `diting stream [--sensors …] [--duration D] [--out FILE] [--notify]` | json-lines | 捕获实时事件流（限时或直到被杀） |
 | `diting capture start\|list\|status\|stop\|tail` | text/json | 管理一个 detached 的命名长时观测 |
+| `diting setup [--json]` | text/json | 驱动并验证 helper 的 macOS 权限授权 |
 | `diting analyze [PATH ...] [--since D] [--json]` | json-object | 把已捕获的 JSONL 日志后处理成报告 |
 | `diting capabilities [--json]` | json-object | 发现命令面 |
 
@@ -125,6 +126,19 @@ diting stream | jq -c 'select(.type == "roam")'
 `once`、`watch`、`monitor` 仍然可用 —— 它们向 stderr 打印一行弃用提示，
 再分别转发到 `status`、`stream`、`stream`。清单里的 `deprecated_aliases`
 映射是权威来源；请迁移到规范名。
+
+## 权限
+
+diting 的 helper 需要 macOS 的定位 + 蓝牙（以及可选的通知）授权。安装程序会把这些
+驱动到完成；你也可以随时用 `diting setup` 检查或（重新）驱动它们。`diting setup
+--json` 非阻塞，向 agent 报告状态：
+
+```bash
+diting setup --json    # {"location":true,"bluetooth":true,"notifications":false,"ready":true}
+```
+
+macOS 要求用户点击 “Allow” —— `setup` 驱动弹窗并验证结果，无法静默授权。对于此前
+被拒绝的授权，它会打开 系统设置 到相应的隐私面板。
 
 ## 说明
 

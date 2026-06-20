@@ -265,6 +265,45 @@ def has_bluetooth_permission(binary: str) -> bool:
     return proc.returncode == 0
 
 
+def has_notification_permission(binary: str) -> bool:
+    """Probe whether ``binary`` has Notifications TCC granted.
+
+    Runs the helper's ``notification-status`` subcommand, which exits 0
+    only when ``UNUserNotificationCenter`` reports ``.authorized`` /
+    ``.provisional``. Every other outcome (denied / notDetermined /
+    timeout) is non-zero → False. A helper that predates the subcommand
+    returns a non-zero "unknown subcommand" rc, which also reads as
+    False — callers gate on :func:`has_notification_status_subcommand`
+    first to distinguish "not granted" from "cannot verify".
+    """
+    try:
+        proc = subprocess.run(
+            [binary, "notification-status"],
+            capture_output=True, timeout=8, check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return proc.returncode == 0
+
+
+def has_notification_status_subcommand(binary: str) -> bool:
+    """Probe whether ``binary`` understands ``notification-status``.
+
+    Helpers built before this subcommand shipped cannot verify the
+    Notifications grant; the caller then reports it as unknown rather
+    than a false negative. Detected by grepping ``--help`` (cheap, no
+    permissions), the same trick as :func:`has_ble_scan_subcommand`.
+    """
+    try:
+        proc = subprocess.run(
+            [binary, "--help"], capture_output=True, timeout=5, check=False
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    blob = (proc.stdout or b"") + (proc.stderr or b"")
+    return b"notification-status" in blob
+
+
 def has_ble_scan_subcommand(binary: str) -> bool:
     """Probe whether ``binary`` understands ``ble-scan``.
 

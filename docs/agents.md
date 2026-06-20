@@ -46,6 +46,7 @@ manifest before relying on a field.
 | `diting scan [--wifi] [--ble] [--lan] [--mdns] [--duration D] [--json]` | json-object | take a one-shot sensor snapshot |
 | `diting stream [--sensors …] [--duration D] [--out FILE] [--notify]` | json-lines | capture a live event stream (bounded or until killed) |
 | `diting capture start\|list\|status\|stop\|tail` | text/json | manage a detached named long watch |
+| `diting setup [--json]` | text/json | drive + verify the helper's macOS permission grants |
 | `diting analyze [PATH ...] [--since D] [--json]` | json-object | post-process a captured JSONL log into a report |
 | `diting capabilities [--json]` | json-object | discover the surface |
 
@@ -136,6 +137,21 @@ diting stream | jq -c 'select(.type == "roam")'
 notice to stderr and forward to `status`, `stream`, and `stream`. The
 manifest's `deprecated_aliases` map is the source of truth; migrate to
 the canonical names.
+
+## Permissions
+
+diting's helper needs macOS Location + Bluetooth (and optionally Notifications)
+grants. The installer drives these to completion, but you can check or (re)drive
+them anytime with `diting setup`. `diting setup --json` is non-blocking and
+reports the state for an agent:
+
+```bash
+diting setup --json    # {"location":true,"bluetooth":true,"notifications":false,"ready":true}
+```
+
+macOS requires the user to click "Allow" — `setup` drives the prompts and
+verifies the outcome; it cannot grant silently. On a previously-denied grant it
+opens System Settings to the right Privacy pane.
 
 ## Notes
 

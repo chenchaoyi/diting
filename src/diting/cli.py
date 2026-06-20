@@ -1077,6 +1077,18 @@ _COMMANDS: list[dict] = [
         ],
     },
     {
+        "name": "setup",
+        "summary": "drive + verify the macOS TCC grants the helper needs",
+        "output": "text",
+        "flags": [
+            {"name": "--json", "type": "bool", "default": False, "repeatable": False,
+             "help": "probe once and emit a per-permission JSON state (non-blocking)"},
+        ],
+        "exit_codes": {"0": "required grants present", "1": "a required grant missing",
+                       "2": "usage error"},
+        "examples": ["diting setup", "diting setup --json | jq .ready"],
+    },
+    {
         "name": "capabilities",
         "summary": "emit a machine-readable manifest of the CLI surface",
         "output": "json-object",
@@ -1432,6 +1444,153 @@ def _run_capture(argv: list[str]) -> None:
             "(use start / list / status / stop / tail)", action=action) + "\n",
           file=sys.stderr)
     sys.exit(2)
+
+
+# ---------- setup (drive + verify TCC grants) ----------
+
+_SETUP_LABELS = {
+    "location": "Location Services",
+    "bluetooth": "Bluetooth",
+    "notifications": "Notifications",
+}
+
+
+def _setup_state_json(state: dict) -> dict:
+    notif = state["notifications"]
+    return {
+        "location": bool(state["location"]),
+        "bluetooth": bool(state["bluetooth"]),
+        "notifications": None if notif is None else bool(notif),
+        "ready": all(bool(state[k]) for k in ("location", "bluetooth")),
+    }
+
+
+def _print_setup_human(state: dict) -> None:
+    for k in ("location", "bluetooth", "notifications"):
+        v = state[k]
+        word = t("unknown") if v is None else (t("granted") if v else t("not granted"))
+        print(f"  {_SETUP_LABELS[k]:<20} {word}")
+
+
+def _maybe_report_notifications(state: dict) -> None:
+    n = state["notifications"]
+    if n is True:
+        return
+    if n is None:
+        print(t("note: Notifications grant could not be verified (older helper)."))
+    else:
+        print(t("note: Notifications not granted — `--notify` alerts stay silent "
+                "until you enable it."))
+
+
+def _route_denied_to_settings(key: str) -> None:
+    from . import permission as _perm
+    label = _SETUP_LABELS.get(key, key)
+    _perm.open_settings_pane(key)
+    print()
+    print(t("{label} looks denied — macOS will not prompt again.", label=label))
+    print(t("Opening System Settings → Privacy & Security → {label}.", label=label))
+    print(t("Enable diting-tianer there, then re-run `diting setup`."))
+
+
+def _run_setup(args: list[str]) -> None:
+    """`diting setup` — drive + verify the macOS TCC grants the helper
+    needs (Location / Bluetooth required, Notifications best-effort), so
+    the user grants once instead of re-prompting at first launch."""
+    if "--help" in args or "-h" in args:
+        print(_render_help("setup"), end="")
+        return
+    from . import _helper
+    from . import permission as _perm
+
+    json_mode = "--json" in args
+    noninteractive = (
+        json_mode
+        or not sys.stdout.isatty()
+        or bool(os.environ.get("DITING_SETUP_NONINTERACTIVE"))
+    )
+
+    binary = _helper.find_helper() or _helper.try_build()
+    if binary is None:
+        msg = (
+            "diting-tianer helper not found and could not be built; "
+            "install it (see the README) or build helper/ with the Swift toolchain"
+        )
+        if json_mode:
+            print(json.dumps({"error": msg, "code": 1}), file=sys.stderr)
+        else:
+            print(t("diting setup: {msg}", msg=msg), file=sys.stderr)
+        sys.exit(1)
+
+    state = _perm.probe(binary)
+
+    # Non-interactive (non-TTY / CI / --json): probe once, report, no
+    # bundle open, no blocking.
+    if noninteractive:
+        if json_mode:
+            print(json.dumps(_setup_state_json(state), ensure_ascii=False))
+            sys.exit(0)
+        _print_setup_human(state)
+        if not _perm.is_ready(state):
+            print(t("Run `diting setup` in an interactive terminal to grant the "
+                    "missing permissions."), file=sys.stderr)
+        sys.exit(0 if _perm.is_ready(state) else 1)
+
+    # Interactive drive-and-verify.
+    if _helper.bundle_path(binary) is None:
+        print(t("diting setup: the helper is not in an .app bundle, so the macOS "
+                "prompts cannot be triggered. Reinstall the helper bundle."),
+              file=sys.stderr)
+        _print_setup_human(state)
+        sys.exit(1)
+
+    if _perm.is_ready(state):
+        print(t("All required permissions are already granted."))
+        _maybe_report_notifications(state)
+        sys.exit(0)
+
+    print(t("Setting up macOS permissions for diting's helper."))
+    print(t("Click Allow on each prompt as it appears (one at a time)."))
+    print(t("(Ctrl+C to stop.)"))
+    print()
+    _perm.open_bundle(binary, lang=i18n.get_lang())
+
+    interval, timeout, grace = 2.0, 180.0, 12.0
+    waited = 0.0
+    opened_panes: set[str] = set()
+    last = {k: state[k] for k in _perm.REQUIRED}
+    try:
+        while waited < timeout:
+            time.sleep(interval)
+            waited += interval
+            state = _perm.probe(binary)
+            current = {k: state[k] for k in _perm.REQUIRED}
+            if current != last:
+                print(t("  Location: {loc}    Bluetooth: {bt}",
+                        loc=t("granted") if state["location"] else t("waiting"),
+                        bt=t("granted") if state["bluetooth"] else t("waiting")))
+                last = current
+            if _perm.is_ready(state):
+                print(t("✓ all required permissions granted."))
+                _maybe_report_notifications(state)
+                return
+            # After the grace window a still-missing required grant is a
+            # settled denial macOS will not re-prompt → route to Settings.
+            if waited >= grace:
+                for key in _perm.REQUIRED:
+                    if not state[key] and key not in opened_panes:
+                        opened_panes.add(key)
+                        _route_denied_to_settings(key)
+    except KeyboardInterrupt:
+        print()
+        print(t("Stopped. Re-run `diting setup` to finish granting."))
+        sys.exit(1)
+    print()
+    print(t("Timed out waiting for grants. Current state:"))
+    _print_setup_human(state)
+    print(t("Re-run `diting setup` after granting, or use the System Settings "
+            "steps above."))
+    sys.exit(1)
 
 
 def _follow_capture(store, name: str) -> None:
@@ -2263,6 +2422,9 @@ def _dispatch() -> None:
         return
     if canonical == "capture":
         _run_capture(rest)
+        return
+    if canonical == "setup":
+        _run_setup(rest)
         return
     if canonical == "capabilities":
         _run_capabilities(rest)

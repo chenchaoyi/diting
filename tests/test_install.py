@@ -90,18 +90,19 @@ def test_install_script_lays_out_user_local_paths_in_dry_run():
 
 def test_install_script_primes_application_support_helper_in_dry_run():
     """TESTONLY markers prove the helper-bundle bootstrap branch is
-    reached (copy, quarantine strip, `open` to trigger TCC) AND
-    threads the install-time locale into the helper launch so the
-    helper UI and the macOS TCC prompts agree on language."""
+    reached (copy, quarantine strip) AND that the install drives the
+    TCC grants via `diting setup`, threading the install-time locale
+    so the helper UI and the macOS TCC prompts agree on language."""
     proc = _run({"DITING_VERSION": "v0.10.0-rc1"})
     assert proc.returncode == 0, proc.stdout + proc.stderr
     out = proc.stdout
     assert "Library/Application Support/diting" in out
     assert "xattr -dr com.apple.quarantine" in out
-    # New: helper prime line documents the open invocation with
-    # both DITING_LANG and -AppleLanguages so reviewers can see
-    # the locale flowing all the way through to Cocoa's lproj pick.
-    assert "would open --env DITING_LANG=" in out
+    # Helper prime now drives + verifies grants via `diting setup`, with
+    # DITING_LANG + -AppleLanguages threaded so the locale flows all the
+    # way through to Cocoa's lproj pick.
+    assert "would run diting setup" in out
+    assert "DITING_LANG=" in out
     assert "-AppleLanguages" in out
     # Locale resolution runs against the test host's preferences;
     # both en and zh runs are valid outputs, so accept either tag.

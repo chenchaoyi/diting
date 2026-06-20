@@ -615,7 +615,7 @@ if [ -n "$TESTONLY" ]; then
   note "TESTONLY: detected locale=${DITING_LOCALE} (tag=${DITING_LOCALE_TAG})"
   note "TESTONLY: would copy helper to ${APP_SUPPORT_DIR}"
   note "TESTONLY: would xattr -dr com.apple.quarantine"
-  note "TESTONLY: would open --env DITING_LANG=${DITING_LOCALE} --args -AppleLanguages (${DITING_LOCALE_TAG})"
+  note "TESTONLY: would run diting setup with DITING_LANG=${DITING_LOCALE} -AppleLanguages (${DITING_LOCALE_TAG})"
 else
   mkdir -p "$APP_SUPPORT_DIR"
   SRC_BUNDLE="${INSTALL_PREFIX}/share/diting-tianer.app"
@@ -629,29 +629,21 @@ else
   # in via curl. Without this Gatekeeper would block first launch.
   # Same trick Homebrew uses for unsigned casks.
   xattr -dr com.apple.quarantine "$DST_BUNDLE" 2>/dev/null || true
-  # Open the bundle foreground (no -g) so macOS surfaces the TCC
-  # prompts ON TOP and the helper's status window stays visible.
-  # `--env DITING_LANG=...` makes the helper's Swift UI render in
-  # the matching language; `--args -AppleLanguages (...)` forces
-  # Cocoa's NSUserDefaults for the launched process to pick the
-  # matching .lproj so the macOS TCC prompt headers + bodies use
-  # the same locale. Without -AppleLanguages, Bundle.preferred-
-  # Localizations and Locale.preferredLanguages can disagree under
-  # LaunchServices and the user sees a mixed-language stack.
-  open --env "DITING_LANG=${DITING_LOCALE}" \
-       "$DST_BUNDLE" \
-       --args -AppleLanguages "(${DITING_LOCALE_TAG})" \
-       2>/dev/null || true
   step 6 "Helper" "${DST_BUNDLE}" "helper bundle primed at ${DST_BUNDLE}"
+  # Drive AND verify the TCC grants now, so first launch is clean
+  # instead of re-prompting. `diting setup` owns the open + poll +
+  # System-Settings routing; it opens the bundle with the matching
+  # DITING_LANG / -AppleLanguages so the helper UI and macOS prompts
+  # share one locale. On an interactive terminal it blocks-and-verifies
+  # (the user clicks Allow on each prompt); on a non-TTY install
+  # (CI / pipe) `setup` auto-detects and runs non-blocking. `|| true`
+  # so an incomplete grant never fails the install.
   if [ "$DITING_LOCALE" = "zh" ]; then
-    step_continuation "macOS 会依次弹出 3 个权限请求（定位 → 蓝牙 → 通知）— 请逐个点击 Allow"
-    step_continuation "helper 窗口在第 3 个授权完成后约 4 秒自动关闭"
-    step_continuation "升级用户：bundle cdhash 已变更，定位与蓝牙会重新询问一次"
+    step_continuation "正在请求 macOS 权限（定位 → 蓝牙 → 通知）— 逐个点击 Allow"
   else
-    step_continuation "macOS will prompt for Location → Bluetooth → Notifications in order — click Allow on each"
-    step_continuation "the helper window auto-closes ~4s after the third grant lands"
-    step_continuation "upgrading from v1.0.x: the bundle's cdhash changed, so Location + Bluetooth re-prompt once"
+    step_continuation "granting macOS permissions (Location → Bluetooth → Notifications) — click Allow on each"
   fi
+  DITING_LANG="${DITING_LOCALE}" "${BIN_DIR}/diting" setup || true
 fi
 
 # ---- PATH hint + summary block ----
