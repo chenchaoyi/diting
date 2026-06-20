@@ -11,6 +11,27 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-06-21
+
+Patch release. **Fixes duplicate macOS permission prompts stacking up during
+install / `diting setup`.**
+
+### Fixed
+
+- **`diting setup` no longer fires its own permission prompts.** The helper's
+  window already requests Location → Bluetooth → Notifications one at a time, but
+  `setup` then verified by polling with probes that re-triggered the prompts
+  (`scan` calls `requestWhenInUseAuthorization`; `bluetooth-status` spins up a
+  live `CBCentralManager`). A user who read each prompt slowly saw several stack
+  on top of one another. `setup` now verifies with **read-only** authorization
+  probes — new helper `location-status` (`CLLocationManager.authorizationStatus`)
+  and `bluetooth-authorization` (`CBManager.authorization`), which never prompt
+  and never power the radio — so the helper window is the sole source of prompts,
+  one at a time, at the user's own pace. Older helpers without the read-only
+  probes fall back to the previous behaviour.
+- The irrelevant `auto-detected scene: …` line is suppressed during `diting
+  setup`, keeping the install / permission output focused.
+
 ## [2.0.0] — 2026-06-20
 
 **diting is now an agent-first tool with a clean one-time install.** The CLI

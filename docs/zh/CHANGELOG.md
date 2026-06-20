@@ -10,6 +10,22 @@
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-06-21
+
+补丁发布。**修复安装 / `diting setup` 期间 macOS 权限弹窗重复堆叠的问题。**
+
+### Fixed
+
+- **`diting setup` 不再自行触发权限弹窗。** helper 窗口本就会按 定位 → 蓝牙 → 通知
+  逐个请求，但 `setup` 随后用会重新触发弹窗的探测来轮询验证（`scan` 调用
+  `requestWhenInUseAuthorization`；`bluetooth-status` 启动一个真实的
+  `CBCentralManager`）。读弹窗慢一点的用户就会看到好几个弹窗叠在一起。`setup`
+  现在改用**只读**授权探测验证 —— 新增 helper 的 `location-status`
+  （`CLLocationManager.authorizationStatus`）和 `bluetooth-authorization`
+  （`CBManager.authorization`），它们不弹窗、不开无线 —— 于是 helper 窗口成为唯一的
+  弹窗来源，逐个出现，由用户自己的节奏决定。没有只读探测的旧 helper 会回退到之前的行为。
+- `diting setup` 期间抑制无关的 `auto-detected scene: …` 行，使安装 / 权限输出聚焦。
+
 ## [2.0.0] — 2026-06-20
 
 **diting 现在是一个 agent 优先、且一次性干净安装的工具。** 从 1.20.0 开始的 CLI
