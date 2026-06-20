@@ -1098,6 +1098,46 @@ func runBluetoothStatusProbe() -> Never {
 }
 
 // ---------------------------------------------------------------------
+// `notification-status` subcommand
+//
+// Exit-code-only probe of the bundle's Notifications TCC authorization,
+// mirroring `bluetooth-status`. Lets the Python side VERIFY the
+// Notifications grant (not just request it) so `diting setup` can report
+// a trustworthy state. `getNotificationSettings` is a read — it never
+// prompts. We take the same disclaim hop as the other probes so the
+// authorization is attributed to OUR bundle, not the launching terminal.
+//
+//   exit 0  .authorized / .provisional  (granted)
+//   exit 3  .denied
+//   exit 4  .notDetermined
+//   exit 2  timeout / unknown
+func runNotificationStatusProbe() -> Never {
+    if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
+        reExecWithDisclaimedResponsibility()
+    }
+    // Read-only query; prohibit any Dock-icon flash just like `notify`.
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    let center = UNUserNotificationCenter.current()
+    center.getNotificationSettings { settings in
+        switch settings.authorizationStatus {
+        case .authorized, .provisional:
+            exit(0)
+        case .denied:
+            exit(3)
+        case .notDetermined:
+            exit(4)
+        @unknown default:
+            exit(2)
+        }
+    }
+    // No callback in time → treat as not granted from the caller's POV.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+        exit(2)
+    }
+    dispatchMain()
+}
+
+// ---------------------------------------------------------------------
 // `notify` subcommand
 //
 // Posts a single UserNotification under the bundle's identity so the
@@ -2317,6 +2357,8 @@ if args.count > 1 {
         runBLEScan()
     case "bluetooth-status":
         runBluetoothStatusProbe()
+    case "notification-status":
+        runNotificationStatusProbe()
     case "notify":
         runNotifyAndExit(args: Array(args.dropFirst(2)))
     case "associate":
@@ -2340,6 +2382,12 @@ if args.count > 1 {
                             0 .poweredOn (granted), 2 timeout / unknown,
                             3 .unauthorized, 4 .poweredOff,
                             5 .unsupported.
+          notification-status
+                            Probe Notifications TCC state and exit
+                            non-zero when not granted. No JSON output.
+                            Exit codes: 0 authorized/provisional,
+                            2 timeout / unknown, 3 denied,
+                            4 notDetermined.
           notify --title T --body B
                             Post a UserNotification with the helper's
                             bundle identity (icon = diting logo).

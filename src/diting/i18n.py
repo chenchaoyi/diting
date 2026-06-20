@@ -1845,6 +1845,42 @@ _ZH: dict[str, str] = {
         "已停止 {name}",
     "session {name}: {status}":
         "会话 {name}：{status}",
+    "diting setup: {msg}":
+        "diting setup：{msg}",
+    "diting setup: the helper is not in an .app bundle, so the macOS prompts cannot be triggered. Reinstall the helper bundle.":
+        "diting setup：helper 不在 .app bundle 里，无法触发 macOS 权限弹窗。请重新安装 helper bundle。",
+    "All required permissions are already granted.":
+        "所需权限均已授予。",
+    "Setting up macOS permissions for diting's helper.":
+        "正在为 diting 的 helper 设置 macOS 权限。",
+    "Click Allow on each prompt as it appears (one at a time).":
+        "弹窗逐个出现时，请逐个点击 Allow。",
+    "(Ctrl+C to stop.)":
+        "（Ctrl+C 可停止。）",
+    "✓ all required permissions granted.":
+        "✓ 所需权限均已授予。",
+    "note: Notifications grant could not be verified (older helper).":
+        "注意：无法验证通知权限（helper 版本较旧）。",
+    "note: Notifications not granted — `--notify` alerts stay silent until you enable it.":
+        "注意：通知权限未授予 —— 在你启用之前 `--notify` 提醒不会响。",
+    "{label} looks denied — macOS will not prompt again.":
+        "{label} 似乎被拒绝 —— macOS 不会再次弹窗。",
+    "Opening System Settings → Privacy & Security → {label}.":
+        "正在打开 系统设置 → 隐私与安全性 → {label}。",
+    "Enable diting-tianer there, then re-run `diting setup`.":
+        "在那里启用 diting-tianer，然后重新运行 `diting setup`。",
+    "Run `diting setup` in an interactive terminal to grant the missing permissions.":
+        "在交互式终端里运行 `diting setup` 以授予缺失的权限。",
+    "Stopped. Re-run `diting setup` to finish granting.":
+        "已停止。重新运行 `diting setup` 完成授权。",
+    "Timed out waiting for grants. Current state:":
+        "等待授权超时。当前状态：",
+    "Re-run `diting setup` after granting, or use the System Settings steps above.":
+        "授权后重新运行 `diting setup`，或按上面的系统设置步骤操作。",
+    "not granted":
+        "未授予",
+    "unknown":
+        "未知",
     "--ble-presence-gate requires a duration (e.g. --ble-presence-gate 5s)":
         "--ble-presence-gate 需要一个时长（例如 --ble-presence-gate 5s）",
     "--ble-presence-gate: invalid duration {raw!r}: {exc}":

@@ -614,6 +614,8 @@ uv run diting capture start --name watch --sensors all  # detached long watch
 uv run diting capture list               # sessions + live status
 uv run diting capture tail --name watch -n 50 -f        # follow a session's JSONL
 uv run diting capture stop --name watch  # clean SIGTERM stop (complete capture)
+uv run diting setup                      # (re)grant the helper's macOS permissions
+uv run diting setup --json               # check permission state (non-blocking)
 uv run diting calibrate                  # 5 min "empty room" RSSI baseline → ./diting-baseline.json
 uv run diting companion pair             # pair a phone — renders a QR for diting-mobile
 uv run diting companion status           # show pairing + relay queue state

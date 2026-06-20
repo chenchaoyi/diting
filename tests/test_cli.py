@@ -616,7 +616,7 @@ def test_canonical_verbs_dispatch():
     # The canonical verb set is the contract; aliases resolve onto it.
     assert cli._CANONICAL_VERBS == [
         "status", "scan", "stream", "calibrate",
-        "analyze", "companion", "capture", "capabilities",
+        "analyze", "companion", "capture", "setup", "capabilities",
     ]
     for v in cli._CANONICAL_VERBS:
         assert cli._resolve_alias(v) == v  # canonical passes through
@@ -793,6 +793,19 @@ def test_capabilities_lists_capture_verb():
     names = [c["name"] for c in m["commands"]]
     assert "capture" in names
     assert "capture" in cli._CANONICAL_VERBS
+
+
+def test_capabilities_lists_setup_verb():
+    m = cli._capabilities_manifest()
+    assert "setup" in [c["name"] for c in m["commands"]]
+    assert "setup" in cli._CANONICAL_VERBS
+
+
+def test_setup_help_exits_zero(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["diting", "setup", "--help"])
+    cli.main()
+    out = capsys.readouterr().out
+    assert "usage: diting setup" in out and "Exit codes:" in out
 
 
 def test_capture_help_lists_actions(monkeypatch, capsys):
