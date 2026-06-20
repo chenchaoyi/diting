@@ -28,15 +28,39 @@ _SETTINGS_PANE = {
 }
 
 
-def probe(binary: str) -> dict:
+def detect_caps(binary: str) -> dict:
+    """Which read-only status probes the (possibly older) helper supports.
+    Detected once so the poll doesn't re-grep `--help` every tick."""
+    return {
+        "location_status": _helper.has_location_status_subcommand(binary),
+        "bluetooth_auth": _helper.has_bluetooth_authorization_subcommand(binary),
+        "notification_status": _helper.has_notification_status_subcommand(binary),
+    }
+
+
+def probe(binary: str, *, caps: dict | None = None) -> dict:
     """Probe each grant. `location`/`bluetooth` are bools; `notifications`
-    is True/False, or None when the helper can't verify it (too old)."""
-    loc = _helper.has_permission(binary)
-    bt = _helper.has_bluetooth_permission(binary)
-    if _helper.has_notification_status_subcommand(binary):
-        notif: bool | None = _helper.has_notification_permission(binary)
-    else:
-        notif = None  # unverifiable on an older helper — report unknown
+    is True/False, or None when the helper can't verify it (too old).
+
+    Prefers the READ-ONLY status probes (`location-status` /
+    `bluetooth-authorization`) which never prompt, so a verification poll
+    doesn't stack TCC prompts on the helper GUI's one-at-a-time flow.
+    Falls back to the functional probes (`scan` / `bluetooth-status`,
+    which DO prompt) only against an older helper that lacks them."""
+    if caps is None:
+        caps = detect_caps(binary)
+    loc = (
+        _helper.location_authorized(binary) if caps["location_status"]
+        else _helper.has_permission(binary)
+    )
+    bt = (
+        _helper.bluetooth_authorized(binary) if caps["bluetooth_auth"]
+        else _helper.has_bluetooth_permission(binary)
+    )
+    notif: bool | None = (
+        _helper.has_notification_permission(binary)
+        if caps["notification_status"] else None
+    )
     return {"location": loc, "bluetooth": bt, "notifications": notif}
 
 

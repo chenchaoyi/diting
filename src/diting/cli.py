@@ -1522,7 +1522,11 @@ def _run_setup(args: list[str]) -> None:
             print(t("diting setup: {msg}", msg=msg), file=sys.stderr)
         sys.exit(1)
 
-    state = _perm.probe(binary)
+    # Detect which read-only status probes this helper supports ONCE, so
+    # the verification poll uses non-prompting checks (no stacked prompts)
+    # and doesn't re-grep `--help` every tick.
+    caps = _perm.detect_caps(binary)
+    state = _perm.probe(binary, caps=caps)
 
     # Non-interactive (non-TTY / CI / --json): probe once, report, no
     # bundle open, no blocking.
@@ -1555,7 +1559,8 @@ def _run_setup(args: list[str]) -> None:
     print()
     _perm.open_bundle(binary, lang=i18n.get_lang())
 
-    interval, timeout, grace = 2.0, 180.0, 12.0
+    # Read-only probes are fast and prompt-free, so poll snappily.
+    interval, timeout, grace = 1.0, 180.0, 12.0
     waited = 0.0
     opened_panes: set[str] = set()
     last = {k: state[k] for k in _perm.REQUIRED}
@@ -1563,7 +1568,7 @@ def _run_setup(args: list[str]) -> None:
         while waited < timeout:
             time.sleep(interval)
             waited += interval
-            state = _perm.probe(binary)
+            state = _perm.probe(binary, caps=caps)
             current = {k: state[k] for k in _perm.REQUIRED}
             if current != last:
                 print(t("  Location: {loc}    Bluetooth: {bt}",
@@ -2343,7 +2348,11 @@ def _dispatch() -> None:
         scene_cli,
     )
     _scene_mod.set_scene(scene_name)
-    _emit_scene_banner(scene_banner)
+    # The scene-detection banner is irrelevant noise for `setup` (the
+    # install / permission flow) — suppress it so that output stays
+    # focused on the grant steps.
+    if not (args and _resolve_alias(args[0]) == "setup"):
+        _emit_scene_banner(scene_banner)
     scene_gate_default = _scene_mod.scene_defaults(scene_name).get(
         "ble_presence_gate_s", 5.0,
     )

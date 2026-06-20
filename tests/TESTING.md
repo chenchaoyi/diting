@@ -259,6 +259,9 @@ consumes the exact payload dict the JSONL writer emits (via an
 | **installer-permission-setup** — `_helper.has_notification_permission` (notification-status exit 0) + `has_notification_status_subcommand` (`--help` grep) | `test_setup.py::test_notification_probes` |
 | **installer-permission-setup** — `setup` is a dispatchable canonical verb in the manifest; `setup --help` prints usage + exit codes | `test_cli.py::test_capabilities_lists_setup_verb`, `::test_setup_help_exits_zero` |
 | **installer-permission-setup** — the helper exposes a `notification-status` probe subcommand (exit-code only; listed in `--help`) | (helper-side; verified by hand against the rebuilt bundle — exit 3 when Notifications denied) |
+| **setup-non-prompting-poll** — `setup` verifies with READ-ONLY probes so its poll never fires a TCC prompt (no stacking on slow reads); `permission.probe` prefers `location-status`/`bluetooth-authorization` when advertised, falls back to the functional probes on an older helper | `test_setup.py::test_probe_prefers_readonly_when_supported`, `::test_probe_falls_back_when_readonly_absent`, `::test_readonly_probe_helpers` |
+| **setup-non-prompting-poll** — `setup` suppresses the scene-detection banner so the install / permission output stays focused | `test_setup.py::test_setup_suppresses_scene_banner` |
+| **setup-non-prompting-poll** — the helper exposes read-only `location-status` (CLLocationManager.authorizationStatus) + `bluetooth-authorization` (CBManager.authorization) probes — no prompt, no radio; listed in `--help` | (helper-side; verified by hand — both exit 4 / notDetermined on a freshly-rebuilt cdhash, no prompt surfaced) |
 
 ### `cli`
 

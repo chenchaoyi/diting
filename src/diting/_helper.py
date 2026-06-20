@@ -265,6 +265,52 @@ def has_bluetooth_permission(binary: str) -> bool:
     return proc.returncode == 0
 
 
+def location_authorized(binary: str) -> bool:
+    """Read-only Location TCC check via the helper's `location-status`
+    probe (no prompt, no scan). True only when authorized."""
+    try:
+        proc = subprocess.run(
+            [binary, "location-status"],
+            capture_output=True, timeout=6, check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return proc.returncode == 0
+
+
+def bluetooth_authorized(binary: str) -> bool:
+    """Read-only Bluetooth TCC check via the helper's
+    `bluetooth-authorization` probe (no prompt, no radio). True only when
+    authorized."""
+    try:
+        proc = subprocess.run(
+            [binary, "bluetooth-authorization"],
+            capture_output=True, timeout=6, check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return proc.returncode == 0
+
+
+def has_location_status_subcommand(binary: str) -> bool:
+    return _help_mentions(binary, "location-status")
+
+
+def has_bluetooth_authorization_subcommand(binary: str) -> bool:
+    return _help_mentions(binary, "bluetooth-authorization")
+
+
+def _help_mentions(binary: str, token: str) -> bool:
+    try:
+        proc = subprocess.run(
+            [binary, "--help"], capture_output=True, timeout=5, check=False
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    blob = (proc.stdout or b"") + (proc.stderr or b"")
+    return token.encode() in blob
+
+
 def has_notification_permission(binary: str) -> bool:
     """Probe whether ``binary`` has Notifications TCC granted.
 

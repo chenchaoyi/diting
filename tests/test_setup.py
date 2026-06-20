@@ -23,7 +23,10 @@ def fake_helper(monkeypatch):
 
 
 def _set_state(monkeypatch, *, location, bluetooth, notifications):
-    monkeypatch.setattr(perm, "probe", lambda b: {
+    monkeypatch.setattr(perm, "detect_caps", lambda b: {
+        "location_status": True, "bluetooth_auth": True, "notification_status": True,
+    })
+    monkeypatch.setattr(perm, "probe", lambda b, *, caps=None: {
         "location": location, "bluetooth": bluetooth, "notifications": notifications,
     })
 
@@ -93,6 +96,75 @@ def test_setup_helper_missing_exits_1(monkeypatch, capsys):
 
 
 # ---------- helper probes (test_helper-style, kept here for cohesion) ----------
+
+def test_probe_prefers_readonly_when_supported(monkeypatch):
+    # Read-only probes win; the prompting functional probes must NOT be
+    # consulted when the helper advertises the read-only ones.
+    from diting import _helper
+
+    def boom(b):
+        raise AssertionError("functional (prompting) probe must not run")
+
+    monkeypatch.setattr(_helper, "location_authorized", lambda b: True)
+    monkeypatch.setattr(_helper, "bluetooth_authorized", lambda b: True)
+    monkeypatch.setattr(_helper, "has_notification_permission", lambda b: True)
+    monkeypatch.setattr(_helper, "has_permission", boom)
+    monkeypatch.setattr(_helper, "has_bluetooth_permission", boom)
+    caps = {"location_status": True, "bluetooth_auth": True, "notification_status": True}
+    assert perm.probe("/x", caps=caps) == {
+        "location": True, "bluetooth": True, "notifications": True,
+    }
+
+
+def test_probe_falls_back_when_readonly_absent(monkeypatch):
+    from diting import _helper
+
+    def boom(b):
+        raise AssertionError("read-only probe must not run when unsupported")
+
+    monkeypatch.setattr(_helper, "has_permission", lambda b: True)
+    monkeypatch.setattr(_helper, "has_bluetooth_permission", lambda b: True)
+    monkeypatch.setattr(_helper, "location_authorized", boom)
+    monkeypatch.setattr(_helper, "bluetooth_authorized", boom)
+    caps = {"location_status": False, "bluetooth_auth": False, "notification_status": False}
+    assert perm.probe("/x", caps=caps) == {
+        "location": True, "bluetooth": True, "notifications": None,
+    }
+
+
+def test_setup_suppresses_scene_banner(monkeypatch):
+    monkeypatch.setattr(cli, "_run_setup", lambda rest: None)
+    monkeypatch.setattr(
+        cli, "_resolve_scene_at_startup",
+        lambda c: ("home", "auto", "auto-detected scene: home (x)"),
+    )
+    emitted: list = []
+    monkeypatch.setattr(cli, "_emit_scene_banner", lambda b: emitted.append(b))
+    monkeypatch.setattr("sys.argv", ["diting", "setup"])
+    cli._dispatch()
+    assert emitted == []  # banner suppressed for setup
+
+
+def test_readonly_probe_helpers(monkeypatch):
+    from diting import _helper
+
+    class P:
+        def __init__(self, rc, out=b""):
+            self.returncode = rc
+            self.stdout = out
+            self.stderr = b""
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: P(0))
+    assert _helper.location_authorized("/x") is True
+    assert _helper.bluetooth_authorized("/x") is True
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: P(4))
+    assert _helper.location_authorized("/x") is False
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: P(0, b"... location-status ... bluetooth-authorization ..."))
+    assert _helper.has_location_status_subcommand("/x") is True
+    assert _helper.has_bluetooth_authorization_subcommand("/x") is True
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: P(0, b"scan ble-scan"))
+    assert _helper.has_location_status_subcommand("/x") is False
+
 
 def test_notification_probes(monkeypatch):
     from diting import _helper
