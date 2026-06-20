@@ -11,6 +11,50 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [1.20.0] — 2026-06-20
+
+Agent-first CLI release. **diting's command line is reshaped into a predictable,
+JSON-first, self-describing tool an agent can drive — discover the surface,
+capture the full sensor set headless, and manage long watches as named
+sessions.** Three OpenSpec changes (`agent-cli-foundation`,
+`headless-capture-engine`, `capture-sessions`). The TUI is unchanged.
+
+### Added
+
+- **`diting capabilities`** — a machine-readable manifest of every command, its
+  flags (`name`/`type`/`default`), output mode, and the exit-code convention,
+  built from the same declarative table that backs `--help` so the two can't
+  drift. Start here to discover the surface: `diting capabilities --json`.
+- **`diting scan`** — a one-shot sensor snapshot. `--wifi` / `--ble` (default
+  both), plus `--lan` / `--mdns`; keyed-by-sensor JSON; a sensor that can't run
+  yields a per-sensor `{"error","code"}` without aborting the others.
+- **Full-sensor headless capture.** A new `CaptureEngine` drives Wi-Fi + latency
+  + RF + BLE + LAN + mDNS below the UI and emits the same canonical event-log
+  JSONL the dashboard writes. `diting stream --sensors a,b,…`
+  (`wifi`/`latency`/`rf`/`ble`/`lan`/`mdns`/`all`; default `wifi,latency,rf`)
+  selects the set, and `session_meta.monitors` now reports what actually ran.
+- **`diting capture`** — diting-managed detached watch sessions:
+  `start --name N [--sensors …]` / `list` / `status` / `stop [--all]` /
+  `tail [-n K] [-f]`. Launch a long watch, leave, and come back from any shell;
+  sessions live under `~/.diting` (`DITING_STATE_DIR`), with live status derived
+  from process liveness (a crashed session shows up, not a phantom `running`).
+- **Agent guide** `docs/agents.md` (+ 中文) documenting the JSON contracts,
+  invocation patterns, and the session lifecycle.
+- `python -m diting` entry point.
+
+### Changed
+
+- **Agent-facing verbs were renamed for ergonomics** (back-compatible): `once` →
+  `status`, `watch` / `monitor` → `stream`. The old names still work as
+  deprecation aliases — they print one notice to stderr and forward — and are
+  listed under `deprecated_aliases` in the `capabilities` manifest.
+- **Uniform `--json` contract** across all read commands via one writer: pure
+  JSON on stdout, all prose / notices / errors on stderr (a failure is a
+  `{"error","code"}` object), keys locale-stable English regardless of `--lang`.
+- **`diting stream` shuts down cleanly on SIGTERM** — it flushes and closes the
+  log before exiting 0, so a `capture stop` (or any `kill`) yields a complete
+  capture rather than a truncated final line.
+
 ## [1.19.0] — 2026-06-16
 
 Maintenance release. **Two noise-reduction fixes for the RF-environment

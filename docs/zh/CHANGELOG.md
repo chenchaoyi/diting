@@ -10,6 +10,44 @@
 
 ## [Unreleased]
 
+## [1.20.0] — 2026-06-20
+
+Agent 优先的 CLI 发布。**diting 的命令行被重塑为一个可预测、JSON 优先、自描述的
+工具，agent 可以驱动它 —— 发现命令面、无头捕获全套传感器、把长时观测当作命名会话
+来管理。** 三个 OpenSpec 变更（`agent-cli-foundation`、`headless-capture-engine`、
+`capture-sessions`）。TUI 不变。
+
+### Added
+
+- **`diting capabilities`** —— 机器可读的清单，列出每个命令、其旗标
+  （`name`/`type`/`default`）、输出模式和退出码约定，由支撑 `--help` 的同一张声明式
+  表生成，二者不会漂移。从这里开始发现命令面：`diting capabilities --json`。
+- **`diting scan`** —— 一次性传感器快照。`--wifi` / `--ble`（默认两者），外加
+  `--lan` / `--mdns`；按传感器建键的 JSON；某传感器无法运行时返回该传感器的
+  `{"error","code"}` 而不影响其他。
+- **全传感器无头捕获。** 新的 `CaptureEngine` 在 UI 之下驱动 Wi-Fi + 延迟 + RF +
+  BLE + LAN + mDNS，并输出与仪表盘一致的规范事件日志 JSONL。
+  `diting stream --sensors a,b,…`（`wifi`/`latency`/`rf`/`ble`/`lan`/`mdns`/`all`；
+  默认 `wifi,latency,rf`）选择传感器集合，`session_meta.monitors` 如实反映实际运行的传感器。
+- **`diting capture`** —— diting 托管的 detached 观测会话：
+  `start --name N [--sensors …]` / `list` / `status` / `stop [--all]` /
+  `tail [-n K] [-f]`。启动一个长时观测，离开，在任意 shell 回来继续；会话存于
+  `~/.diting`（`DITING_STATE_DIR`），状态由进程存活实时推导（崩溃的会话会如实显示，
+  而非假报 `running`）。
+- **Agent 指南** `docs/agents.md`（+ English）说明 JSON 契约、调用范式与会话生命周期。
+- `python -m diting` 入口。
+
+### Changed
+
+- **面向 agent 的动词为贴合使用而重命名**（向后兼容）：`once` → `status`，
+  `watch` / `monitor` → `stream`。旧名仍作为弃用别名可用 —— 在 stderr 打印一行提示
+  后转发 —— 并列在 `capabilities` 清单的 `deprecated_aliases` 下。
+- **统一的 `--json` 契约** 经由同一个写出器覆盖所有 read 命令：stdout 纯 JSON，所有
+  文案 / 提示 / 报错走 stderr（失败为 `{"error","code"}` 对象），键无论 `--lang`
+  如何都保持稳定英文。
+- **`diting stream` 在 SIGTERM 下干净退出** —— 退出（0）前 flush 并关闭日志，所以
+  `capture stop`（或任何 `kill`）产出的是完整捕获，而非被截断的末行。
+
 ## [1.19.0] — 2026-06-16
 
 维护发布。**两处降噪修复，分别针对 RF 环境检测器和 companion 中继，都是在分析一份
