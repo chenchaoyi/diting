@@ -11,6 +11,46 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-06-20
+
+**diting is now an agent-first tool with a clean one-time install.** The CLI
+reshaping that began in 1.20.0 — the `status` / `scan` / `stream` / `capture` /
+`capabilities` verbs, the full-sensor headless `CaptureEngine`, managed capture
+sessions, and the uniform JSON contract (with `once` / `watch` / `monitor` kept
+as deprecation aliases) — is complete, and this release closes the loop on
+setup: the installer now drives **and verifies** the macOS permission grants so
+the first launch just works, instead of re-prompting.
+
+### Added
+
+- **`diting setup`** — drive + verify the helper's macOS TCC grants. It opens
+  the helper to surface the prompts and **block-and-verifies** Location +
+  Bluetooth (polling until granted, with live per-permission status), drives
+  Notifications best-effort, and on a previously-denied grant opens System
+  Settings to the exact Privacy pane with instructions. `diting setup --json` is
+  a non-blocking per-permission state check for scripts/agents. macOS requires
+  the user's "Allow" click — `setup` drives the prompts and verifies the
+  outcome; it cannot grant silently.
+- The Swift helper gained a `notification-status` probe so the Notifications
+  grant can be **verified**, not just requested.
+
+### Changed
+
+- **The installer now completes the permission grants at install.** Where it
+  previously fired the helper once fire-and-forget and exited, it now runs
+  `diting setup` after copying the helper — so an interactive install verifies
+  Location + Bluetooth before finishing and the first `diting` launch no longer
+  re-prompts. Non-interactive (CI / piped) installs stay non-blocking. The
+  install-time locale is threaded through so the helper UI and the macOS prompts
+  share one language.
+
+### Note
+
+- Upgrading to 2.0.0 ships a rebuilt helper bundle (new `notification-status`
+  probe). TCC keys grants by the bundle's cdhash, so if the cdhash changed the
+  Location / Bluetooth / Notifications prompts fire once more on first run — the
+  new install flow walks you through them.
+
 ## [1.20.0] — 2026-06-20
 
 Agent-first CLI release. **diting's command line is reshaped into a predictable,
