@@ -1138,6 +1138,54 @@ func runNotificationStatusProbe() -> Never {
 }
 
 // ---------------------------------------------------------------------
+// `location-status` / `bluetooth-authorization` subcommands
+//
+// READ-ONLY TCC authorization probes for `diting setup`'s verification
+// poll. Unlike `scan` (which calls requestWhenInUseAuthorization) and
+// `bluetooth-status` (which spins up a live CBCentralManager), these read
+// the authorization *property* only — they never prompt and never power
+// the radio — so a poll can verify state without stacking prompts on top
+// of the helper GUI's one-at-a-time grant flow. Same disclaim hop as the
+// other probes so TCC attributes to OUR bundle.
+//
+//   exit 0 authorized · 3 denied · 4 notDetermined · 5 restricted · 2 unknown
+func runLocationStatusProbe() -> Never {
+    if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
+        reExecWithDisclaimedResponsibility()
+    }
+    switch CLLocationManager().authorizationStatus {
+    case .authorizedAlways, .authorizedWhenInUse:
+        exit(0)
+    case .denied:
+        exit(3)
+    case .notDetermined:
+        exit(4)
+    case .restricted:
+        exit(5)
+    @unknown default:
+        exit(2)
+    }
+}
+
+func runBluetoothAuthorizationProbe() -> Never {
+    if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
+        reExecWithDisclaimedResponsibility()
+    }
+    switch CBManager.authorization {
+    case .allowedAlways:
+        exit(0)
+    case .denied:
+        exit(3)
+    case .notDetermined:
+        exit(4)
+    case .restricted:
+        exit(5)
+    @unknown default:
+        exit(2)
+    }
+}
+
+// ---------------------------------------------------------------------
 // `notify` subcommand
 //
 // Posts a single UserNotification under the bundle's identity so the
@@ -2357,6 +2405,10 @@ if args.count > 1 {
         runBLEScan()
     case "bluetooth-status":
         runBluetoothStatusProbe()
+    case "location-status":
+        runLocationStatusProbe()
+    case "bluetooth-authorization":
+        runBluetoothAuthorizationProbe()
     case "notification-status":
         runNotificationStatusProbe()
     case "notify":
@@ -2388,6 +2440,13 @@ if args.count > 1 {
                             Exit codes: 0 authorized/provisional,
                             2 timeout / unknown, 3 denied,
                             4 notDetermined.
+          location-status   Read-only Location TCC probe (no prompt, no
+                            scan). Exit 0 authorized, 3 denied,
+                            4 notDetermined, 5 restricted.
+          bluetooth-authorization
+                            Read-only Bluetooth TCC probe (no prompt, no
+                            radio). Exit 0 allowedAlways, 3 denied,
+                            4 notDetermined, 5 restricted.
           notify --title T --body B
                             Post a UserNotification with the helper's
                             bundle identity (icon = diting logo).
