@@ -10,6 +10,36 @@
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-06-20
+
+**diting 现在是一个 agent 优先、且一次性干净安装的工具。** 从 1.20.0 开始的 CLI
+重塑 —— `status` / `scan` / `stream` / `capture` / `capabilities` 动词、全传感器
+无头 `CaptureEngine`、托管捕获会话、统一的 JSON 契约（`once` / `watch` / `monitor`
+保留为弃用别名）—— 已经完成；本次发布补上了安装这一环：安装程序现在驱动**并验证**
+macOS 权限授权，使首次启动直接可用，而不再重新弹窗索权。
+
+### Added
+
+- **`diting setup`** —— 驱动并验证 helper 的 macOS TCC 授权。它打开 helper 触发弹窗，
+  对 Location + Bluetooth **阻塞并验证**（轮询至授予，带每项实时状态），对 Notifications
+  尽力而为，对此前被拒绝的授权则打开 系统设置 到相应隐私面板并给出步骤。
+  `diting setup --json` 是给脚本 / agent 用的非阻塞按权限状态检查。macOS 要求用户点击
+  “Allow” —— `setup` 驱动弹窗并验证结果，无法静默授权。
+- Swift helper 新增 `notification-status` 探测子命令，使通知授权可被**验证**而不仅是请求。
+
+### Changed
+
+- **安装程序现在在安装时完成权限授权。** 此前它只 fire-and-forget 地打开一次 helper 就退出；
+  现在它在拷贝 helper 后运行 `diting setup` —— 交互式安装会在结束前验证 Location + Bluetooth，
+  首次 `diting` 启动不再重新弹窗。非交互（CI / 管道）安装保持非阻塞。安装期 locale 会被透传，
+  使 helper UI 与 macOS 弹窗语言一致。
+
+### Note
+
+- 升级到 2.0.0 会带来重建后的 helper bundle（新增 `notification-status` 探测）。TCC 按 bundle
+  的 cdhash 记录授权，因此若 cdhash 变化，定位 / 蓝牙 / 通知弹窗会在首次运行时再出现一次 ——
+  新的安装流程会带你逐个完成。
+
 ## [1.20.0] — 2026-06-20
 
 Agent 优先的 CLI 发布。**diting 的命令行被重塑为一个可预测、JSON 优先、自描述的
