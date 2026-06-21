@@ -105,14 +105,14 @@ def test_probe_prefers_readonly_when_supported(monkeypatch):
     def boom(b):
         raise AssertionError("functional (prompting) probe must not run")
 
-    monkeypatch.setattr(_helper, "location_authorized", lambda b: True)
-    monkeypatch.setattr(_helper, "bluetooth_authorized", lambda b: True)
+    monkeypatch.setattr(_helper, "location_status", lambda b: "authorized")
+    monkeypatch.setattr(_helper, "bluetooth_authorization_status", lambda b: "authorized")
     monkeypatch.setattr(_helper, "has_notification_permission", lambda b: True)
     monkeypatch.setattr(_helper, "has_permission", boom)
     monkeypatch.setattr(_helper, "has_bluetooth_permission", boom)
     caps = {"location_status": True, "bluetooth_auth": True, "notification_status": True}
     assert perm.probe("/x", caps=caps) == {
-        "location": True, "bluetooth": True, "notifications": True,
+        "location": "authorized", "bluetooth": "authorized", "notifications": True,
     }
 
 
@@ -124,12 +124,36 @@ def test_probe_falls_back_when_readonly_absent(monkeypatch):
 
     monkeypatch.setattr(_helper, "has_permission", lambda b: True)
     monkeypatch.setattr(_helper, "has_bluetooth_permission", lambda b: True)
-    monkeypatch.setattr(_helper, "location_authorized", boom)
-    monkeypatch.setattr(_helper, "bluetooth_authorized", boom)
+    monkeypatch.setattr(_helper, "location_status", boom)
+    monkeypatch.setattr(_helper, "bluetooth_authorization_status", boom)
     caps = {"location_status": False, "bluetooth_auth": False, "notification_status": False}
     assert perm.probe("/x", caps=caps) == {
-        "location": True, "bluetooth": True, "notifications": None,
+        "location": "authorized", "bluetooth": "authorized", "notifications": None,
     }
+
+
+def test_pending_is_distinct_from_denied():
+    assert perm.is_authorized("authorized") is True
+    assert perm.is_authorized("not_determined") is False
+    assert perm.is_denied("not_determined") is False      # pending — wait, don't route
+    assert perm.is_denied("denied") is True
+    assert perm.is_denied("restricted") is True
+    assert perm.is_ready({"location": "authorized", "bluetooth": "authorized"})
+    assert not perm.is_ready({"location": "not_determined", "bluetooth": "authorized"})
+
+
+def test_setup_json_maps_pending_to_false(monkeypatch, capsys, fake_helper):
+    monkeypatch.setattr(perm, "detect_caps", lambda b: {
+        "location_status": True, "bluetooth_auth": True, "notification_status": True,
+    })
+    monkeypatch.setattr(perm, "probe", lambda b, *, caps=None: {
+        "location": "not_determined", "bluetooth": "authorized", "notifications": None,
+    })
+    with pytest.raises(SystemExit):
+        cli._run_setup(["--json"])
+    doc = _json.loads(capsys.readouterr().out)
+    assert doc == {"location": False, "bluetooth": True,
+                   "notifications": None, "ready": False}
 
 
 def test_setup_suppresses_scene_banner(monkeypatch):
