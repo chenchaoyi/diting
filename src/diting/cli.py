@@ -1456,20 +1456,32 @@ _SETUP_LABELS = {
 
 
 def _setup_state_json(state: dict) -> dict:
+    from . import permission as _perm
     notif = state["notifications"]
     return {
-        "location": bool(state["location"]),
-        "bluetooth": bool(state["bluetooth"]),
+        "location": _perm.is_authorized(state["location"]),
+        "bluetooth": _perm.is_authorized(state["bluetooth"]),
         "notifications": None if notif is None else bool(notif),
-        "ready": all(bool(state[k]) for k in ("location", "bluetooth")),
+        "ready": _perm.is_ready(state),
     }
+
+
+def _setup_word(v) -> str:
+    """Human status word for a grant value (status string for
+    location/bluetooth; bool/None for notifications)."""
+    from . import permission as _perm
+    if _perm.is_authorized(v):
+        return t("granted")
+    if v is None or v == "unknown":
+        return t("unknown")
+    if v is False or _perm.is_denied(v):
+        return t("not granted")
+    return t("waiting")  # not_determined — the prompt is pending
 
 
 def _print_setup_human(state: dict) -> None:
     for k in ("location", "bluetooth", "notifications"):
-        v = state[k]
-        word = t("unknown") if v is None else (t("granted") if v else t("not granted"))
-        print(f"  {_SETUP_LABELS[k]:<20} {word}")
+        print(f"  {_SETUP_LABELS[k]:<20} {_setup_word(state[k])}")
 
 
 def _maybe_report_notifications(state: dict) -> None:
@@ -1560,7 +1572,7 @@ def _run_setup(args: list[str]) -> None:
     _perm.open_bundle(binary, lang=i18n.get_lang())
 
     # Read-only probes are fast and prompt-free, so poll snappily.
-    interval, timeout, grace = 1.0, 180.0, 12.0
+    interval, timeout = 1.0, 180.0
     waited = 0.0
     opened_panes: set[str] = set()
     last = {k: state[k] for k in _perm.REQUIRED}
@@ -1572,20 +1584,20 @@ def _run_setup(args: list[str]) -> None:
             current = {k: state[k] for k in _perm.REQUIRED}
             if current != last:
                 print(t("  Location: {loc}    Bluetooth: {bt}",
-                        loc=t("granted") if state["location"] else t("waiting"),
-                        bt=t("granted") if state["bluetooth"] else t("waiting")))
+                        loc=_setup_word(state["location"]),
+                        bt=_setup_word(state["bluetooth"])))
                 last = current
             if _perm.is_ready(state):
                 print(t("✓ all required permissions granted."))
                 _maybe_report_notifications(state)
                 return
-            # After the grace window a still-missing required grant is a
-            # settled denial macOS will not re-prompt → route to Settings.
-            if waited >= grace:
-                for key in _perm.REQUIRED:
-                    if not state[key] and key not in opened_panes:
-                        opened_panes.add(key)
-                        _route_denied_to_settings(key)
+            # Route to Settings ONLY on a settled denial (macOS won't
+            # re-prompt). A `not_determined` grant means the helper's prompt
+            # is still pending — keep waiting for the user, don't mislabel it.
+            for key in _perm.REQUIRED:
+                if _perm.is_denied(state[key]) and key not in opened_panes:
+                    opened_panes.add(key)
+                    _route_denied_to_settings(key)
     except KeyboardInterrupt:
         print()
         print(t("Stopped. Re-run `diting setup` to finish granting."))

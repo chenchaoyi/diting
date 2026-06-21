@@ -38,24 +38,34 @@ def detect_caps(binary: str) -> dict:
     }
 
 
+def is_authorized(value) -> bool:
+    """A grant value (status string, or bool/None for notifications) is
+    granted when it is True or the `authorized` status."""
+    return value is True or value == "authorized"
+
+
 def probe(binary: str, *, caps: dict | None = None) -> dict:
-    """Probe each grant. `location`/`bluetooth` are bools; `notifications`
-    is True/False, or None when the helper can't verify it (too old).
+    """Probe each grant. `location`/`bluetooth` are STATUS strings —
+    `authorized` / `denied` / `not_determined` / `restricted` / `unknown`
+    — so the caller can tell a pending prompt from a settled denial.
+    `notifications` is True/False, or None when the helper can't verify it.
 
     Prefers the READ-ONLY status probes (`location-status` /
     `bluetooth-authorization`) which never prompt, so a verification poll
     doesn't stack TCC prompts on the helper GUI's one-at-a-time flow.
     Falls back to the functional probes (`scan` / `bluetooth-status`,
-    which DO prompt) only against an older helper that lacks them."""
+    which DO prompt) only against an older helper that lacks them — those
+    can't distinguish pending from denied, so they map to `authorized` /
+    `unknown`."""
     if caps is None:
         caps = detect_caps(binary)
     loc = (
-        _helper.location_authorized(binary) if caps["location_status"]
-        else _helper.has_permission(binary)
+        _helper.location_status(binary) if caps["location_status"]
+        else ("authorized" if _helper.has_permission(binary) else "unknown")
     )
     bt = (
-        _helper.bluetooth_authorized(binary) if caps["bluetooth_auth"]
-        else _helper.has_bluetooth_permission(binary)
+        _helper.bluetooth_authorization_status(binary) if caps["bluetooth_auth"]
+        else ("authorized" if _helper.has_bluetooth_permission(binary) else "unknown")
     )
     notif: bool | None = (
         _helper.has_notification_permission(binary)
@@ -65,8 +75,13 @@ def probe(binary: str, *, caps: dict | None = None) -> dict:
 
 
 def is_ready(state: dict) -> bool:
-    """All REQUIRED grants present (notifications is best-effort)."""
-    return all(bool(state.get(k)) for k in REQUIRED)
+    """All REQUIRED grants authorized (notifications is best-effort)."""
+    return all(is_authorized(state.get(k)) for k in REQUIRED)
+
+
+def is_denied(value) -> bool:
+    """A settled refusal macOS won't re-prompt (vs a pending prompt)."""
+    return value in ("denied", "restricted")
 
 
 def open_bundle(binary: str, *, lang: str) -> bool:

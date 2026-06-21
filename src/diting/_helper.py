@@ -265,31 +265,46 @@ def has_bluetooth_permission(binary: str) -> bool:
     return proc.returncode == 0
 
 
-def location_authorized(binary: str) -> bool:
-    """Read-only Location TCC check via the helper's `location-status`
-    probe (no prompt, no scan). True only when authorized."""
+# Read-only auth-probe exit code → status string. Lets `diting setup`
+# distinguish a pending grant (`not_determined`) from a settled denial.
+_AUTH_STATUS_BY_EXIT = {
+    0: "authorized",
+    3: "denied",
+    4: "not_determined",
+    5: "restricted",
+}
+
+
+def _auth_status(binary: str, subcommand: str) -> str:
     try:
         proc = subprocess.run(
-            [binary, "location-status"],
-            capture_output=True, timeout=6, check=False,
+            [binary, subcommand], capture_output=True, timeout=6, check=False,
         )
     except (subprocess.TimeoutExpired, OSError):
-        return False
-    return proc.returncode == 0
+        return "unknown"
+    return _AUTH_STATUS_BY_EXIT.get(proc.returncode, "unknown")
+
+
+def location_status(binary: str) -> str:
+    """Read-only Location TCC status via `location-status` (no prompt, no
+    scan): one of authorized / denied / not_determined / restricted /
+    unknown."""
+    return _auth_status(binary, "location-status")
+
+
+def bluetooth_authorization_status(binary: str) -> str:
+    """Read-only Bluetooth TCC status via `bluetooth-authorization` (no
+    prompt, no radio): one of authorized / denied / not_determined /
+    restricted / unknown."""
+    return _auth_status(binary, "bluetooth-authorization")
+
+
+def location_authorized(binary: str) -> bool:
+    return location_status(binary) == "authorized"
 
 
 def bluetooth_authorized(binary: str) -> bool:
-    """Read-only Bluetooth TCC check via the helper's
-    `bluetooth-authorization` probe (no prompt, no radio). True only when
-    authorized."""
-    try:
-        proc = subprocess.run(
-            [binary, "bluetooth-authorization"],
-            capture_output=True, timeout=6, check=False,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return False
-    return proc.returncode == 0
+    return bluetooth_authorization_status(binary) == "authorized"
 
 
 def has_location_status_subcommand(binary: str) -> bool:
