@@ -1149,22 +1149,54 @@ func runNotificationStatusProbe() -> Never {
 // other probes so TCC attributes to OUR bundle.
 //
 //   exit 0 authorized · 3 denied · 4 notDetermined · 5 restricted · 2 unknown
+//
+// Location is read via the delegate callback, NOT a synchronous property
+// read: a freshly-created `CLLocationManager` reports `.notDetermined`
+// until it registers with the location daemon (which takes a moment), so
+// reading `.authorizationStatus` immediately in a short-lived process
+// returns a spurious `.notDetermined` even when the bundle is actually
+// authorized — which left `diting setup` stuck on "Location: waiting"
+// forever. `locationManagerDidChangeAuthorization` fires once registration
+// completes with the REAL status, and assigning a delegate triggers it
+// WITHOUT calling `requestWhenInUseAuthorization` (so still no prompt).
+private func exitForLocation(_ status: CLAuthorizationStatus) -> Never {
+    switch status {
+    case .authorizedAlways, .authorizedWhenInUse: exit(0)
+    case .denied: exit(3)
+    case .notDetermined: exit(4)
+    case .restricted: exit(5)
+    @unknown default: exit(2)
+    }
+}
+
+final class LocationStatusProbe: NSObject, CLLocationManagerDelegate {
+    let manager = CLLocationManager()
+    func start() { manager.delegate = self }
+    // Modern (macOS 11+) callback. A first `.notDetermined` may precede the
+    // settled status, so we wait through it; the caller's timeout reads the
+    // property directly if nothing settles.
+    func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
+        if m.authorizationStatus != .notDetermined { exitForLocation(m.authorizationStatus) }
+    }
+    // Pre-11 spelling.
+    func locationManager(_ m: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        if status != .notDetermined { exitForLocation(status) }
+    }
+}
+
 func runLocationStatusProbe() -> Never {
     if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
         reExecWithDisclaimedResponsibility()
     }
-    switch CLLocationManager().authorizationStatus {
-    case .authorizedAlways, .authorizedWhenInUse:
-        exit(0)
-    case .denied:
-        exit(3)
-    case .notDetermined:
-        exit(4)
-    case .restricted:
-        exit(5)
-    @unknown default:
-        exit(2)
+    let probe = LocationStatusProbe()
+    probe.start()
+    // Settle timeout: the callback didn't deliver a non-notDetermined
+    // status, so the grant really is pending (or denied/restricted) — read
+    // the now-registered property directly.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+        exitForLocation(probe.manager.authorizationStatus)
     }
+    dispatchMain()
 }
 
 func runBluetoothAuthorizationProbe() -> Never {
