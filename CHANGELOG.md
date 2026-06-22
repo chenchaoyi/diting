@@ -11,6 +11,33 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [2.0.5] — 2026-06-22
+
+Patch release. **Polishes the install-time permission flow — a cleaner helper
+window, a faster prompt, and aligned installer output.**
+
+### Fixed
+
+- **The helper permission window is laid out properly.** Its content used to
+  jam into the bottom-left corner under a large empty void (the content stack
+  had no layout constraints, so macOS dropped it at the origin). It is now
+  top-aligned and sized to fit, showing the diting app icon, a title, a short
+  explanation, and one status row per permission — each with a color-coded
+  status glyph (in-progress in the diting brand orange, green when granted,
+  an orange triangle when denied).
+- **`diting setup`'s output aligns with the installer.** It printed flush-left
+  while the installer indented everything else; it now left-pads its lines to
+  sit within the installer's frame.
+
+### Changed
+
+- **The permission window appears promptly.** `diting setup` opened the helper
+  bundle only after a blocking status probe that, on a fresh install, waited
+  several seconds for Location Services to register — so the window seemed slow
+  to appear. Setup now opens the window before that probe, so it shows right
+  away. (The remaining gap between the individual macOS prompts is inherent to
+  macOS — TCC dialogs are strictly one-at-a-time.)
+
 ## [2.0.4] — 2026-06-22
 
 Patch release. **Fixes `diting setup` waiting forever on "Location: waiting"
