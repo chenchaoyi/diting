@@ -11,6 +11,24 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [2.0.2] — 2026-06-22
+
+Patch release. **Fixes `diting setup` falsely reporting "denied" on a fresh
+install before you could answer the permission prompt.**
+
+### Fixed
+
+- **`diting setup` no longer mislabels a pending grant as denied.** Installing a
+  new version rebuilds the helper, which changes its code signature (cdhash), so
+  macOS resets its Location / Bluetooth grants to *not-yet-determined*. `setup`
+  had collapsed that into "not granted" and, after a 12-second grace window,
+  announced "Location Services looks denied" and opened System Settings —
+  stealing focus before the helper's prompt could be answered. `setup` now reads
+  the permission status precisely: it **waits** while a grant is still pending
+  (the prompt is on its way), and opens System Settings **only** for a genuine,
+  settled denial (which macOS won't re-prompt), then keeps polling so toggling it
+  on is detected. No fixed grace window. `diting setup --json` is unchanged.
+
 ## [2.0.1] — 2026-06-21
 
 Patch release. **Fixes duplicate macOS permission prompts stacking up during
