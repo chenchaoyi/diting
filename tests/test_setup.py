@@ -26,7 +26,7 @@ def _set_state(monkeypatch, *, location, bluetooth, notifications):
     monkeypatch.setattr(perm, "detect_caps", lambda b: {
         "location_status": True, "bluetooth_auth": True, "notification_status": True,
     })
-    monkeypatch.setattr(perm, "probe", lambda b, *, caps=None: {
+    monkeypatch.setattr(perm, "probe", lambda b, *, caps=None, settle=None: {
         "location": location, "bluetooth": bluetooth, "notifications": notifications,
     })
 
@@ -105,7 +105,7 @@ def test_probe_prefers_readonly_when_supported(monkeypatch):
     def boom(b):
         raise AssertionError("functional (prompting) probe must not run")
 
-    monkeypatch.setattr(_helper, "location_status", lambda b: "authorized")
+    monkeypatch.setattr(_helper, "location_status", lambda b, *, settle=None: "authorized")
     monkeypatch.setattr(_helper, "bluetooth_authorization_status", lambda b: "authorized")
     monkeypatch.setattr(_helper, "has_notification_permission", lambda b: True)
     monkeypatch.setattr(_helper, "has_permission", boom)
@@ -146,7 +146,7 @@ def test_setup_json_maps_pending_to_false(monkeypatch, capsys, fake_helper):
     monkeypatch.setattr(perm, "detect_caps", lambda b: {
         "location_status": True, "bluetooth_auth": True, "notification_status": True,
     })
-    monkeypatch.setattr(perm, "probe", lambda b, *, caps=None: {
+    monkeypatch.setattr(perm, "probe", lambda b, *, caps=None, settle=None: {
         "location": "not_determined", "bluetooth": "authorized", "notifications": None,
     })
     with pytest.raises(SystemExit):
@@ -207,3 +207,90 @@ def test_notification_probes(monkeypatch):
     assert _helper.has_notification_status_subcommand("/x") is True
     monkeypatch.setattr("subprocess.run", lambda *a, **k: P(0, b"scan ble-scan bluetooth-status"))
     assert _helper.has_notification_status_subcommand("/x") is False
+
+
+# ---------- polish-setup-ux: prompt-launch settle + indented output ----------
+
+def test_probe_threads_settle_to_location(monkeypatch):
+    """`permission.probe(settle=…)` forwards the settle to location_status;
+    the other probes are unaffected."""
+    from diting import _helper
+
+    seen = {}
+    monkeypatch.setattr(_helper, "location_status",
+                        lambda b, *, settle=None: seen.__setitem__("settle", settle) or "not_determined")
+    monkeypatch.setattr(_helper, "bluetooth_authorization_status", lambda b: "authorized")
+    monkeypatch.setattr(_helper, "has_notification_permission", lambda b: True)
+    caps = {"location_status": True, "bluetooth_auth": True, "notification_status": True}
+    out = perm.probe("/x", caps=caps, settle=1.2)
+    assert seen["settle"] == 1.2
+    assert out["location"] == "not_determined"
+
+
+def test_location_status_settle_sets_env(monkeypatch):
+    """A `settle` override sets DITING_LOC_SETTLE on the subprocess; the
+    default (settle=None) passes no custom env."""
+    from diting import _helper
+
+    class P:
+        returncode = 4
+        stdout = b""
+        stderr = b""
+
+    captured = {}
+    monkeypatch.setattr("subprocess.run",
+                        lambda *a, **k: captured.update(k) or P())
+    assert _helper.location_status("/x", settle=0.5) == "not_determined"
+    assert float(captured["env"]["DITING_LOC_SETTLE"]) == 0.5
+
+    captured.clear()
+    _helper.location_status("/x")  # default: no settle override
+    assert captured.get("env") is None
+
+
+def test_setup_json_uses_default_settle(monkeypatch, capsys, fake_helper):
+    """The --json path reads with the accurate default settle (settle=None),
+    never the short prompt-launch pre-check value."""
+    settles = []
+    monkeypatch.setattr(perm, "detect_caps", lambda b: {
+        "location_status": True, "bluetooth_auth": True, "notification_status": True,
+    })
+
+    def rec(b, *, caps=None, settle=None):
+        settles.append(settle)
+        return {"location": True, "bluetooth": True, "notifications": True}
+
+    monkeypatch.setattr(perm, "probe", rec)
+    with pytest.raises(SystemExit):
+        cli._run_setup(["--json"])
+    assert settles == [None]
+
+
+def test_setup_indent_pads_human_output(monkeypatch, capsys):
+    monkeypatch.setenv("DITING_SETUP_INDENT", "4")
+    cli._sprint("hello\nworld")
+    cli._sprint()  # blank line stays blank, no trailing spaces
+    out = capsys.readouterr().out
+    assert out == "    hello\n    world\n\n"
+
+
+def test_setup_indent_absent_no_pad(monkeypatch, capsys):
+    monkeypatch.delenv("DITING_SETUP_INDENT", raising=False)
+    cli._sprint("hi")
+    assert capsys.readouterr().out == "hi\n"
+    # Unparsable value is treated as no indent, not a crash.
+    monkeypatch.setenv("DITING_SETUP_INDENT", "lots")
+    cli._sprint("hi")
+    assert capsys.readouterr().out == "hi\n"
+
+
+def test_setup_json_never_indented(monkeypatch, capsys, fake_helper):
+    """--json output is machine-readable and must not be indented even when
+    DITING_SETUP_INDENT is set."""
+    monkeypatch.setenv("DITING_SETUP_INDENT", "6")
+    _set_state(monkeypatch, location=True, bluetooth=True, notifications=False)
+    with pytest.raises(SystemExit):
+        cli._run_setup(["--json"])
+    out = capsys.readouterr().out
+    assert not out.startswith(" ")
+    assert _json.loads(out)["ready"] is True

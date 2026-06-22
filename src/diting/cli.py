@@ -1455,6 +1455,38 @@ _SETUP_LABELS = {
 }
 
 
+# Short Location settle (seconds) for setup's prompt-launch pre-check, so the
+# helper window is not held back by the helper's ~4 s registration-settle on a
+# fresh install. A genuinely-granted system still resolves fast via the delegate
+# callback; the accurate default settle is reserved for --json / non-interactive.
+_PRECHECK_SETTLE = 1.2
+
+
+def _setup_indent() -> str:
+    """Leading pad for setup's human output, from `DITING_SETUP_INDENT` (a
+    non-negative integer count of spaces). The installer sets it so the setup
+    lines align under its own framed steps. Absent / unparsable → no indent."""
+    try:
+        n = int(os.environ.get("DITING_SETUP_INDENT", "") or 0)
+    except ValueError:
+        n = 0
+    return " " * max(0, n)
+
+
+def _sprint(text: str = "") -> None:
+    """print() for setup's human terminal output, left-padded by
+    `DITING_SETUP_INDENT`. Blank input prints a bare blank line (no trailing
+    spaces). `--json` output never routes through here."""
+    if not text:
+        print()
+        return
+    pad = _setup_indent()
+    if not pad:
+        print(text)
+        return
+    print("\n".join(pad + line if line else line for line in text.split("\n")))
+
+
 def _setup_state_json(state: dict) -> dict:
     from . import permission as _perm
     notif = state["notifications"]
@@ -1481,7 +1513,7 @@ def _setup_word(v) -> str:
 
 def _print_setup_human(state: dict) -> None:
     for k in ("location", "bluetooth", "notifications"):
-        print(f"  {_SETUP_LABELS[k]:<20} {_setup_word(state[k])}")
+        _sprint(f"  {_SETUP_LABELS[k]:<20} {_setup_word(state[k])}")
 
 
 def _maybe_report_notifications(state: dict) -> None:
@@ -1489,20 +1521,20 @@ def _maybe_report_notifications(state: dict) -> None:
     if n is True:
         return
     if n is None:
-        print(t("note: Notifications grant could not be verified (older helper)."))
+        _sprint(t("note: Notifications grant could not be verified (older helper)."))
     else:
-        print(t("note: Notifications not granted — `--notify` alerts stay silent "
-                "until you enable it."))
+        _sprint(t("note: Notifications not granted — `--notify` alerts stay silent "
+                  "until you enable it."))
 
 
 def _route_denied_to_settings(key: str) -> None:
     from . import permission as _perm
     label = _SETUP_LABELS.get(key, key)
     _perm.open_settings_pane(key)
-    print()
-    print(t("{label} looks denied — macOS will not prompt again.", label=label))
-    print(t("Opening System Settings → Privacy & Security → {label}.", label=label))
-    print(t("Enable diting-tianer there, then re-run `diting setup`."))
+    _sprint()
+    _sprint(t("{label} looks denied — macOS will not prompt again.", label=label))
+    _sprint(t("Opening System Settings → Privacy & Security → {label}.", label=label))
+    _sprint(t("Enable diting-tianer there, then re-run `diting setup`."))
 
 
 def _run_setup(args: list[str]) -> None:
@@ -1538,11 +1570,11 @@ def _run_setup(args: list[str]) -> None:
     # the verification poll uses non-prompting checks (no stacked prompts)
     # and doesn't re-grep `--help` every tick.
     caps = _perm.detect_caps(binary)
-    state = _perm.probe(binary, caps=caps)
 
-    # Non-interactive (non-TTY / CI / --json): probe once, report, no
-    # bundle open, no blocking.
+    # Non-interactive (non-TTY / CI / --json): probe once with the ACCURATE
+    # default settle, report, no bundle open, no blocking.
     if noninteractive:
+        state = _perm.probe(binary, caps=caps)
         if json_mode:
             print(json.dumps(_setup_state_json(state), ensure_ascii=False))
             sys.exit(0)
@@ -1557,18 +1589,23 @@ def _run_setup(args: list[str]) -> None:
         print(t("diting setup: the helper is not in an .app bundle, so the macOS "
                 "prompts cannot be triggered. Reinstall the helper bundle."),
               file=sys.stderr)
-        _print_setup_human(state)
+        _print_setup_human(_perm.probe(binary, caps=caps))
         sys.exit(1)
 
+    # Prompt-launch pre-check: SHORT Location settle so we don't stall the
+    # helper window on a fresh install's ~4 s registration-settle. A
+    # genuinely-granted system still resolves quickly via the delegate
+    # callback, so the already-granted fast path stays fast too.
+    state = _perm.probe(binary, caps=caps, settle=_PRECHECK_SETTLE)
     if _perm.is_ready(state):
-        print(t("All required permissions are already granted."))
+        _sprint(t("All required permissions are already granted."))
         _maybe_report_notifications(state)
         sys.exit(0)
 
-    print(t("Setting up macOS permissions for diting's helper."))
-    print(t("Click Allow on each prompt as it appears (one at a time)."))
-    print(t("(Ctrl+C to stop.)"))
-    print()
+    _sprint(t("Setting up macOS permissions for diting's helper."))
+    _sprint(t("Click Allow on each prompt as it appears (one at a time)."))
+    _sprint(t("(Ctrl+C to stop.)"))
+    _sprint()
     _perm.open_bundle(binary, lang=i18n.get_lang())
 
     # Read-only probes are fast and prompt-free, so poll snappily.
@@ -1583,12 +1620,12 @@ def _run_setup(args: list[str]) -> None:
             state = _perm.probe(binary, caps=caps)
             current = {k: state[k] for k in _perm.REQUIRED}
             if current != last:
-                print(t("  Location: {loc}    Bluetooth: {bt}",
-                        loc=_setup_word(state["location"]),
-                        bt=_setup_word(state["bluetooth"])))
+                _sprint(t("  Location: {loc}    Bluetooth: {bt}",
+                          loc=_setup_word(state["location"]),
+                          bt=_setup_word(state["bluetooth"])))
                 last = current
             if _perm.is_ready(state):
-                print(t("✓ all required permissions granted."))
+                _sprint(t("✓ all required permissions granted."))
                 _maybe_report_notifications(state)
                 return
             # Route to Settings ONLY on a settled denial (macOS won't
@@ -1599,13 +1636,13 @@ def _run_setup(args: list[str]) -> None:
                     opened_panes.add(key)
                     _route_denied_to_settings(key)
     except KeyboardInterrupt:
-        print()
-        print(t("Stopped. Re-run `diting setup` to finish granting."))
+        _sprint()
+        _sprint(t("Stopped. Re-run `diting setup` to finish granting."))
         sys.exit(1)
-    print()
-    print(t("Timed out waiting for grants. Current state:"))
+    _sprint()
+    _sprint(t("Timed out waiting for grants. Current state:"))
     _print_setup_human(state)
-    print(t("Re-run `diting setup` after granting, or use the System Settings "
+    _sprint(t("Re-run `diting setup` after granting, or use the System Settings "
             "steps above."))
     sys.exit(1)
 

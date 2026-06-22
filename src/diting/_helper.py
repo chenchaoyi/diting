@@ -275,21 +275,37 @@ _AUTH_STATUS_BY_EXIT = {
 }
 
 
-def _auth_status(binary: str, subcommand: str) -> str:
+def _auth_status(binary: str, subcommand: str, *, env: dict | None = None,
+                 timeout: float = 6.0) -> str:
     try:
         proc = subprocess.run(
-            [binary, subcommand], capture_output=True, timeout=6, check=False,
+            [binary, subcommand], capture_output=True, timeout=timeout,
+            check=False, env=env,
         )
     except (subprocess.TimeoutExpired, OSError):
         return "unknown"
     return _AUTH_STATUS_BY_EXIT.get(proc.returncode, "unknown")
 
 
-def location_status(binary: str) -> str:
+def location_status(binary: str, *, settle: float | None = None) -> str:
     """Read-only Location TCC status via `location-status` (no prompt, no
     scan): one of authorized / denied / not_determined / restricted /
-    unknown."""
-    return _auth_status(binary, "location-status")
+    unknown.
+
+    `settle` overrides the helper's registration-settle bound (seconds) via
+    `DITING_LOC_SETTLE`. A freshly-created CLLocationManager reports
+    notDetermined until it registers with the location daemon; the helper
+    waits up to `settle` for the delegate callback before reading the
+    property. `setup`'s prompt-launch pre-check passes a short value so a
+    not-yet-granted system is reported quickly; leave None for the accurate
+    4 s default used by `--json` / non-interactive reads."""
+    if settle is None:
+        return _auth_status(binary, "location-status")
+    env = dict(os.environ)
+    env["DITING_LOC_SETTLE"] = repr(float(settle))
+    # Give the subprocess a beat beyond its own settle bound to exit cleanly.
+    return _auth_status(binary, "location-status", env=env,
+                        timeout=float(settle) + 3.0)
 
 
 def bluetooth_authorization_status(binary: str) -> str:
