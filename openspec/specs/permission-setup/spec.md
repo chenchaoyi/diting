@@ -15,6 +15,14 @@ SHALL drive the Notifications prompt as best-effort (never blocking on it).
 claim to grant permissions itself — macOS requires the user's Allow click; setup
 only drives the prompts and verifies.
 
+In interactive mode `setup` SHALL open the helper bundle PROMPTLY — before
+running any blocking verification probe — so the permission window appears
+without waiting on a slow status read. The readiness pre-check that decides
+whether grants are already complete SHALL NOT stall the window's appearance:
+it SHALL use a short Location settle bound so a not-yet-granted system is
+recognized quickly. The accurate (default-settle) read SHALL still be used for
+`--json` / non-interactive reporting.
+
 `setup` SHALL verify each grant using READ-ONLY status probes (which neither
 prompt the user nor power the radio), so that the ONLY source of TCC prompts is
 the opened helper bundle's GUI — which requests the three grants one at a time,
@@ -23,6 +31,12 @@ itself trigger a TCC prompt; the user SHALL never see duplicate or stacked
 prompts, regardless of how long they take to respond. When the running helper
 predates the read-only probes, `setup` MAY fall back to the functional probes
 (preserving function on an older helper).
+
+When the `DITING_SETUP_INDENT` environment variable is set to a non-negative
+integer, `setup` SHALL left-pad every line of its human-readable terminal output
+by that many spaces, so an embedding context (the installer) can align the setup
+output within its own frame. The machine-readable `--json` output SHALL NOT be
+indented.
 
 #### Scenario: All required grants land
 - **WHEN** the user runs `diting setup` and clicks Allow on Location and Bluetooth
@@ -35,6 +49,15 @@ predates the read-only probes, `setup` MAY fall back to the functional probes
 #### Scenario: Slow user sees no stacked prompts
 - **WHEN** the user runs `diting setup` and reads each macOS prompt slowly before clicking Allow
 - **THEN** only the helper GUI's prompts appear, one at a time; setup's verification poll never adds a second Location or Bluetooth prompt on top
+
+#### Scenario: Permission window appears promptly
+- **WHEN** the user runs `diting setup` on a fresh install where Location is not yet granted
+- **THEN** the helper permission window appears promptly rather than after a multi-second status-probe stall
+
+#### Scenario: Output is indented under the installer
+- **WHEN** the installer runs `diting setup` with `DITING_SETUP_INDENT` set
+- **THEN** setup's printed lines are left-padded to align under the installer's helper step
+- **AND** `diting setup --json` output is not indented
 
 ### Requirement: `setup` SHALL recover a previously-denied grant by opening System Settings
 
