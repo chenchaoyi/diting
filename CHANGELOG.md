@@ -11,6 +11,24 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [2.0.3] — 2026-06-22
+
+Patch release. **Fixes the permission prompts never appearing during install /
+`diting setup`.**
+
+### Fixed
+
+- **The helper now shows its permission prompts when the installer opens it.**
+  `diting setup` and the installer open the helper bundle with
+  `open … --args -AppleLanguages "(<tag>)"` to render the macOS prompts in your
+  language — but the helper read `-AppleLanguages` as an unknown subcommand and
+  exited immediately, before its GUI (the only thing that requests the Location /
+  Bluetooth / Notifications prompts) could launch. So no prompt ever appeared and
+  `setup` waited indefinitely. The helper now treats only its real subcommands as
+  subcommands; a launch flag like `-AppleLanguages` correctly falls through to the
+  permission window. (This was masked until 2.0.1, when the verification poll
+  stopped triggering the prompts itself.)
+
 ## [2.0.2] — 2026-06-22
 
 Patch release. **Fixes `diting setup` falsely reporting "denied" on a fresh
