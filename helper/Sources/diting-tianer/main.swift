@@ -2397,7 +2397,21 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
 
 let args = CommandLine.arguments
 
-if args.count > 1 {
+// Only these tokens are subcommands. Anything else after the binary path
+// — most importantly a Cocoa / LaunchServices flag like `-AppleLanguages
+// (en)` that `open --args` injects — is NOT a subcommand and MUST fall
+// through to the GUI, so `diting setup` / the installer (which open the
+// bundle with `--args -AppleLanguages (tag)` to localise the prompts)
+// still launch the permission window. Previously the `default` case
+// exit(64)'d on `-AppleLanguages`, so the GUI never ran and no prompt
+// ever appeared.
+let knownSubcommands: Set<String> = [
+    "scan", "ble-scan", "bluetooth-status", "location-status",
+    "bluetooth-authorization", "notification-status", "notify",
+    "associate", "--help", "-h",
+]
+
+if args.count > 1, knownSubcommands.contains(args[1]) {
     switch args[1] {
     case "scan":
         runScanAndDumpJSON()
@@ -2465,11 +2479,17 @@ if args.count > 1 {
         """)
         exit(0)
     default:
-        FileHandle.standardError.write("unknown subcommand \(args[1])\n".data(using: .utf8)!)
-        exit(64)
+        break  // unreachable — guarded by knownSubcommands above
     }
+} else if args.count > 1, !args[1].hasPrefix("-") {
+    // A non-flag token that is not a known subcommand → a genuine typo.
+    // (Flags fall through to the GUI; see the knownSubcommands note.)
+    FileHandle.standardError.write("unknown subcommand \(args[1])\n".data(using: .utf8)!)
+    exit(64)
 }
 
+// No subcommand, or a Cocoa / LaunchServices flag (e.g. `-AppleLanguages`):
+// launch the GUI permission window so the macOS prompts can show.
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 let delegate = HelperAppDelegate()
