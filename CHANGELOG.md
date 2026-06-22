@@ -11,6 +11,32 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [2.0.4] — 2026-06-22
+
+Patch release. **Fixes `diting setup` waiting forever on "Location: waiting"
+after you grant Location, and trims the wait between prompts.**
+
+### Fixed
+
+- **`diting setup` now detects the Location grant instead of stalling.** The
+  helper's `location-status` probe read `CLLocationManager().authorizationStatus`
+  synchronously, but CoreLocation reports `not determined` until the manager
+  finishes registering with the location daemon — so even after you clicked Allow,
+  the probe kept reporting "not determined" and `setup` sat on "Location: waiting"
+  indefinitely. The helper now reads the authorization via CoreLocation's
+  delegate callback (which fires reliably and never prompts), with a short
+  settle-timeout backstop.
+
+### Changed
+
+- **`diting setup`'s verification poll runs its three permission checks
+  concurrently.** Each check is a separate disclaimed helper subprocess (~2s of
+  re-exec overhead); running Location / Bluetooth / Notifications in parallel makes
+  each poll tick take about as long as the slowest single check instead of their
+  sum. The remaining gap between prompts is macOS-inherent (TCC dialogs are
+  strictly sequential, with CoreLocation / CoreBluetooth registration in between)
+  and is not something diting can collapse.
+
 ## [2.0.3] — 2026-06-22
 
 Patch release. **Fixes the permission prompts never appearing during install /

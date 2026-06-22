@@ -10,6 +10,27 @@
 
 ## [Unreleased]
 
+## [2.0.4] — 2026-06-22
+
+补丁发布。**修复授予定位后 `diting setup` 一直卡在“Location: waiting”的问题，
+并缩短弹窗之间的等待。**
+
+### Fixed
+
+- **`diting setup` 现在能检测到定位授权，而不再卡住。** helper 的 `location-status`
+  探测此前同步读取 `CLLocationManager().authorizationStatus`，但 CoreLocation 在
+  manager 完成向定位守护进程注册之前一律返回“尚未决定” —— 于是即使你点了“允许”，探测仍
+  一直报“尚未决定”，`setup` 便无限停在“Location: waiting”。helper 现在改为通过
+  CoreLocation 的委托回调读取授权状态（该回调可靠触发，且从不弹窗），并以一个短的稳定超时
+  兜底。
+
+### Changed
+
+- **`diting setup` 的验证轮询现在并发执行三项权限检查。** 每项检查都是一个独立的
+  disclaimed helper 子进程（约 2 秒的 re-exec 开销）；把 定位 / 蓝牙 / 通知 并行跑，让
+  每一轮轮询耗时约等于最慢的那一项，而非三项之和。弹窗之间剩余的间隔是 macOS 固有的（TCC
+  弹窗严格串行，其间还有 CoreLocation / CoreBluetooth 的注册）—— 这不是 diting 能消除的。
+
 ## [2.0.3] — 2026-06-22
 
 补丁发布。**修复安装 / `diting setup` 期间权限弹窗从未出现的问题。**
