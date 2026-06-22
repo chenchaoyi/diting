@@ -59,19 +59,39 @@ def probe(binary: str, *, caps: dict | None = None) -> dict:
     `unknown`."""
     if caps is None:
         caps = detect_caps(binary)
-    loc = (
-        _helper.location_status(binary) if caps["location_status"]
-        else ("authorized" if _helper.has_permission(binary) else "unknown")
-    )
-    bt = (
-        _helper.bluetooth_authorization_status(binary) if caps["bluetooth_auth"]
-        else ("authorized" if _helper.has_bluetooth_permission(binary) else "unknown")
-    )
-    notif: bool | None = (
-        _helper.has_notification_permission(binary)
-        if caps["notification_status"] else None
-    )
-    return {"location": loc, "bluetooth": bt, "notifications": notif}
+
+    def _loc():
+        return (
+            _helper.location_status(binary) if caps["location_status"]
+            else ("authorized" if _helper.has_permission(binary) else "unknown")
+        )
+
+    def _bt():
+        return (
+            _helper.bluetooth_authorization_status(binary) if caps["bluetooth_auth"]
+            else ("authorized" if _helper.has_bluetooth_permission(binary) else "unknown")
+        )
+
+    def _notif():
+        return (
+            _helper.has_notification_permission(binary)
+            if caps["notification_status"] else None
+        )
+
+    # Each probe is a separate disclaimed subprocess (~2 s of re-exec
+    # overhead, and location waits up to its registration timeout), so run
+    # the three concurrently — the poll's wall-clock becomes the slowest
+    # single probe instead of their sum.
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        f_loc = pool.submit(_loc)
+        f_bt = pool.submit(_bt)
+        f_notif = pool.submit(_notif)
+        return {
+            "location": f_loc.result(),
+            "bluetooth": f_bt.result(),
+            "notifications": f_notif.result(),
+        }
 
 
 def is_ready(state: dict) -> bool:
