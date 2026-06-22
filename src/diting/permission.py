@@ -44,7 +44,8 @@ def is_authorized(value) -> bool:
     return value is True or value == "authorized"
 
 
-def probe(binary: str, *, caps: dict | None = None) -> dict:
+def probe(binary: str, *, caps: dict | None = None,
+          settle: float | None = None) -> dict:
     """Probe each grant. `location`/`bluetooth` are STATUS strings —
     `authorized` / `denied` / `not_determined` / `restricted` / `unknown`
     — so the caller can tell a pending prompt from a settled denial.
@@ -56,13 +57,18 @@ def probe(binary: str, *, caps: dict | None = None) -> dict:
     Falls back to the functional probes (`scan` / `bluetooth-status`,
     which DO prompt) only against an older helper that lacks them — those
     can't distinguish pending from denied, so they map to `authorized` /
-    `unknown`."""
+    `unknown`.
+
+    `settle` overrides the Location probe's registration-settle bound
+    (seconds). `setup`'s prompt-launch pre-check passes a short value so a
+    not-yet-granted system is recognized quickly and the helper window is
+    not held back; leave None for the accurate default."""
     if caps is None:
         caps = detect_caps(binary)
 
     def _loc():
         return (
-            _helper.location_status(binary) if caps["location_status"]
+            _helper.location_status(binary, settle=settle) if caps["location_status"]
             else ("authorized" if _helper.has_permission(binary) else "unknown")
         )
 

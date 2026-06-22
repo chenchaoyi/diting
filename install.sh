@@ -643,7 +643,15 @@ else
   else
     step_continuation "granting macOS permissions (Location → Bluetooth → Notifications) — click Allow on each"
   fi
-  DITING_LANG="${DITING_LOCALE}" "${BIN_DIR}/diting" setup || true
+  # Align `diting setup`'s own output under the helper step in the framed
+  # tiers (FULL / PLAIN) by indenting it the same 7 spaces step_continuation
+  # uses. TIER LOG keeps the flush-left prose the install tests pin.
+  if [ "$TIER" = "log" ]; then
+    DITING_LANG="${DITING_LOCALE}" "${BIN_DIR}/diting" setup || true
+  else
+    DITING_LANG="${DITING_LOCALE}" DITING_SETUP_INDENT=7 \
+      "${BIN_DIR}/diting" setup || true
+  fi
 fi
 
 # ---- PATH hint + summary block ----

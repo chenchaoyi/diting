@@ -1192,8 +1192,14 @@ func runLocationStatusProbe() -> Never {
     probe.start()
     // Settle timeout: the callback didn't deliver a non-notDetermined
     // status, so the grant really is pending (or denied/restricted) — read
-    // the now-registered property directly.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+    // the now-registered property directly. The bound defaults to 4 s (long
+    // enough for daemon registration on an actually-granted system), but
+    // `diting setup`'s prompt-launch pre-check sets DITING_LOC_SETTLE to a
+    // shorter value so a not-yet-granted system is reported quickly and the
+    // permission window is not held back by this read.
+    let settle = ProcessInfo.processInfo.environment["DITING_LOC_SETTLE"]
+        .flatMap(Double.init) ?? 4.0
+    DispatchQueue.main.asyncAfter(deadline: .now() + settle) {
         exitForLocation(probe.manager.authorizationStatus)
     }
     dispatchMain()
@@ -2169,6 +2175,16 @@ private struct HelperStrings {
             return "All permissions granted. This window will close automatically in a few seconds..."
         }
     }
+    // Neutral closer for the case where the flow finished but not every
+    // grant was allowed — `allGranted` would mislead.
+    var closingWindow: String {
+        switch lang {
+        case .zh:
+            return "本窗口将在几秒后自动关闭…"
+        case .en:
+            return "This window will close automatically in a few seconds..."
+        }
+    }
     // Location lines
     func locationWaiting() -> String { lang == .zh ? "定位服务：等待用户决定…" : "Location: waiting for permission decision..." }
     func locationRestricted() -> String { lang == .zh ? "定位服务：被系统策略限制。" : "Location: restricted by a system policy." }
@@ -2216,9 +2232,27 @@ private enum InstallStep: Int {
     case allDone
 }
 
+// Per-row visual state for the status window. Drives the leading glyph's
+// SF Symbol and color.
+private enum RowStatus { case pending, current, granted, denied }
+
+// A single status row in the window: a leading glyph + a text label.
+private struct PermRow {
+    let container: NSStackView
+    let icon: NSImageView
+    let label: NSTextField
+}
+
+// diting brand orange (rgb 254,166,43) — the one warm accent, used for the
+// in-progress step glyph so the window reads as the same instrument as the TUI.
+private let kBrandOrange = NSColor(srgbRed: 254.0 / 255.0,
+                                   green: 166.0 / 255.0,
+                                   blue: 43.0 / 255.0, alpha: 1.0)
+
 final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManagerDelegate, CBCentralManagerDelegate {
     private var window: NSWindow!
-    private var statusLabel: NSTextField!
+    private var rows: [PermRow] = []
+    private var footnote: NSTextField!
     private let locationManager = CLLocationManager()
     private var bluetoothManager: CBCentralManager?
     private var locationSettled = false
@@ -2230,47 +2264,117 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
     private let strings = HelperStrings(lang: detectHelperLang())
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let frame = NSRect(x: 0, y: 0, width: 520, height: 320)
+        let pad: CGFloat = 24
+        let contentWidth: CGFloat = 480
+        let textWidth = contentWidth - pad * 2
+
+        let body = NSStackView()
+        body.orientation = .vertical
+        body.alignment = .leading
+        body.spacing = 14
+        body.translatesAutoresizingMaskIntoConstraints = false
+
+        // App icon (the diting logo, from the bundle's AppIcon.icns).
+        let iconView = NSImageView()
+        iconView.image = NSApp.applicationIconImage
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        iconView.heightAnchor.constraint(equalToConstant: 56).isActive = true
+        body.addArrangedSubview(iconView)
+
+        let title = NSTextField(labelWithString: strings.title)
+        title.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
+        body.addArrangedSubview(title)
+
+        let intro = NSTextField(wrappingLabelWithString: strings.intro)
+        intro.font = NSFont.systemFont(ofSize: 12)
+        intro.textColor = .secondaryLabelColor
+        intro.preferredMaxLayoutWidth = textWidth
+        body.addArrangedSubview(intro)
+
+        // One status row per permission. A small color-coded leading glyph
+        // carries the state; the label carries the detail text. Built once;
+        // `report()` mutates the glyph + text in place.
+        let rowsStack = NSStackView()
+        rowsStack.orientation = .vertical
+        rowsStack.alignment = .leading
+        rowsStack.spacing = 10
+        rowsStack.translatesAutoresizingMaskIntoConstraints = false
+        for _ in 0..<3 {
+            let row = makeRow(textWidth: textWidth - 23)
+            rows.append(row)
+            rowsStack.addArrangedSubview(row.container)
+        }
+        body.addArrangedSubview(rowsStack)
+
+        footnote = NSTextField(wrappingLabelWithString: "")
+        footnote.font = NSFont.systemFont(ofSize: 12)
+        footnote.textColor = .secondaryLabelColor
+        footnote.preferredMaxLayoutWidth = textWidth
+        footnote.isHidden = true
+        body.addArrangedSubview(footnote)
+
+        // Pin the content to the TOP of the container with even padding, so
+        // the text never floats in the bottom-left corner under an empty void
+        // (the previous layout set translatesAutoresizingMaskIntoConstraints
+        // = false but added no constraints, leaving the stack at the origin).
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.topAnchor.constraint(equalTo: container.topAnchor, constant: pad),
+            body.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: pad),
+            body.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -pad),
+            body.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -pad),
+        ])
+
         window = NSWindow(
-            contentRect: frame,
+            contentRect: NSRect(x: 0, y: 0, width: contentWidth, height: 200),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.title = strings.title
+        window.contentView = container
+        // Size the window to the laid-out content so there is no empty region.
+        container.layoutSubtreeIfNeeded()
+        let fit = body.fittingSize
+        window.setContentSize(NSSize(width: contentWidth, height: fit.height + pad * 2))
         window.center()
-
-        let body = NSStackView(frame: NSRect(x: 24, y: 24, width: 472, height: 272))
-        body.orientation = .vertical
-        body.alignment = .leading
-        body.spacing = 12
-        body.translatesAutoresizingMaskIntoConstraints = false
-
-        let title = NSTextField(labelWithString: strings.title)
-        title.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
-        body.addArrangedSubview(title)
-
-        let intro = NSTextField(wrappingLabelWithString: strings.intro)
-        intro.preferredMaxLayoutWidth = 472
-        body.addArrangedSubview(intro)
-
-        statusLabel = NSTextField(wrappingLabelWithString: strings.requestingStatus)
-        statusLabel.font = NSFont.systemFont(ofSize: 13, weight: .regular)
-        statusLabel.preferredMaxLayoutWidth = 472
-        body.addArrangedSubview(statusLabel)
-
-        window.contentView?.addSubview(body)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
         // Step 1/3 — Location only. The Bluetooth and Notifications
         // requests fire from their predecessor's auth callback, so
         // macOS shows at most one TCC prompt on screen at a time
-        // and the status panel can update each line in sequence.
+        // and the status rows update each line in sequence.
         locationManager.delegate = self
         locationManager.requestWhenInUseAuthorization()
         locationManager.startUpdatingLocation()
         report()
+    }
+
+    /// Build one status row: a fixed-size glyph image view next to a wrapping
+    /// text label. `report()` later sets the glyph symbol/color and the text.
+    private func makeRow(textWidth: CGFloat) -> PermRow {
+        let icon = NSImageView()
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.widthAnchor.constraint(equalToConstant: 15).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 15).isActive = true
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = NSFont.systemFont(ofSize: 13)
+        label.preferredMaxLayoutWidth = textWidth
+
+        let h = NSStackView(views: [icon, label])
+        h.orientation = .horizontal
+        h.alignment = .top
+        h.spacing = 8
+        h.translatesAutoresizingMaskIntoConstraints = false
+        return PermRow(container: h, icon: icon, label: label)
     }
 
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
@@ -2338,30 +2442,28 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
         let locStatus = locationManager.authorizationStatus
         let btState = bluetoothManager?.state ?? .unknown
 
-        let line1 = renderLine(
-            stepNum: 1,
-            isCurrent: step == .requestingLocation,
-            text: locationLine(locStatus)
-        )
-        let line2 = renderLine(
-            stepNum: 2,
-            isCurrent: step == .requestingBluetooth,
-            // Show "waiting" if we haven't yet entered this step;
-            // otherwise show the live BT state line.
-            text: step.rawValue >= InstallStep.requestingBluetooth.rawValue
-                ? bluetoothLine(btState)
-                : strings.bluetoothQuerying()
-        )
-        let line3 = renderLine(
-            stepNum: 3,
-            isCurrent: step == .requestingNotifications,
-            text: notificationsLine()
-        )
-        statusLabel.stringValue = [line1, line2, line3].joined(separator: "\n")
+        apply(row: 0,
+              text: strings.stepPrefix(1, of: 3) + locationLine(locStatus),
+              status: locationRowStatus(locStatus))
+
+        // Show "waiting" if we haven't yet entered this step; otherwise the
+        // live BT state line.
+        let btText = step.rawValue >= InstallStep.requestingBluetooth.rawValue
+            ? bluetoothLine(btState)
+            : strings.bluetoothQuerying()
+        apply(row: 1,
+              text: strings.stepPrefix(2, of: 3) + btText,
+              status: bluetoothRowStatus(btState))
+
+        apply(row: 2,
+              text: strings.stepPrefix(3, of: 3) + notificationsLine(),
+              status: notificationsRowStatus())
 
         if step == .allDone && !autoCloseScheduled {
             autoCloseScheduled = true
-            statusLabel.stringValue += "\n\n" + strings.allGranted
+            let requiredGranted = isLocationGranted(locStatus) && btState == .poweredOn
+            footnote.stringValue = requiredGranted ? strings.allGranted : strings.closingWindow
+            footnote.isHidden = false
             // 4 s gives the user a beat to actually read the final
             // outcome before the window vanishes. TCC grants are
             // persistent — diting's Python launcher will pick them
@@ -2372,9 +2474,65 @@ final class HelperAppDelegate: NSObject, NSApplicationDelegate, CLLocationManage
         }
     }
 
-    private func renderLine(stepNum: Int, isCurrent: Bool, text: String) -> String {
-        let marker = isCurrent ? strings.pendingMarker : strings.inactiveMarker
-        return marker + strings.stepPrefix(stepNum, of: 3) + text
+    /// Set a row's glyph (symbol + tint) and text for the given status.
+    private func apply(row idx: Int, text: String, status: RowStatus) {
+        guard idx < rows.count else { return }
+        let row = rows[idx]
+        row.label.stringValue = text
+        let symbol: String
+        let color: NSColor
+        switch status {
+        case .pending:
+            symbol = "circle"; color = .tertiaryLabelColor
+        case .current:
+            symbol = "arrow.right.circle.fill"; color = kBrandOrange
+        case .granted:
+            symbol = "checkmark.circle.fill"; color = .systemGreen
+        case .denied:
+            symbol = "exclamationmark.triangle.fill"; color = .systemOrange
+        }
+        row.icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        row.icon.contentTintColor = color
+        row.label.textColor = (status == .pending) ? .secondaryLabelColor : .labelColor
+    }
+
+    private func isLocationGranted(_ s: CLAuthorizationStatus) -> Bool {
+        // `.authorizedWhenInUse` is only usable in a case pattern on macOS
+        // (it is marked unavailable for `==` comparisons), so switch on it.
+        switch s {
+        case .authorizedAlways, .authorizedWhenInUse: return true
+        default: return false
+        }
+    }
+
+    private func locationRowStatus(_ s: CLAuthorizationStatus) -> RowStatus {
+        switch s {
+        case .authorizedAlways, .authorizedWhenInUse:
+            return .granted
+        case .denied, .restricted:
+            return .denied
+        default:
+            return step == .requestingLocation ? .current : .pending
+        }
+    }
+
+    private func bluetoothRowStatus(_ s: CBManagerState) -> RowStatus {
+        if step.rawValue < InstallStep.requestingBluetooth.rawValue { return .pending }
+        switch s {
+        case .poweredOn:
+            return .granted
+        case .unauthorized, .unsupported:
+            return .denied
+        default:
+            return .current
+        }
+    }
+
+    private func notificationsRowStatus() -> RowStatus {
+        if !notificationsSettled {
+            return step == .requestingNotifications ? .current : .pending
+        }
+        return notificationsGranted ? .granted : .denied
     }
 
     private func locationLine(_ status: CLAuthorizationStatus) -> String {
