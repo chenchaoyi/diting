@@ -10,6 +10,19 @@
 
 ## [Unreleased]
 
+## [2.0.3] — 2026-06-22
+
+补丁发布。**修复安装 / `diting setup` 期间权限弹窗从未出现的问题。**
+
+### Fixed
+
+- **安装程序打开 helper 时现在会正常弹出权限请求。** `diting setup` 与安装程序用
+  `open … --args -AppleLanguages "(<tag>)"` 打开 helper bundle，以便用你的语言渲染
+  macOS 弹窗 —— 但 helper 把 `-AppleLanguages` 当成未知子命令而立即退出，根本没等到它的
+  GUI（唯一会请求 定位 / 蓝牙 / 通知 弹窗的东西）启动。于是弹窗从未出现，`setup` 一直等待。
+  helper 现在只把真正的子命令当作子命令；像 `-AppleLanguages` 这样的启动旗标会正确地落到
+  权限窗口。（此问题在 2.0.1 之前被掩盖 —— 那时验证轮询自己会触发弹窗。）
+
 ## [2.0.2] — 2026-06-22
 
 补丁发布。**修复全新安装时 `diting setup` 在你还没来得及回答权限弹窗前就误报
