@@ -11,6 +11,25 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [2.1.1] — 2026-06-23
+
+Patch release. **`diting --help` now lists every command, and a few TUI labels
+read more clearly.**
+
+### Fixed
+
+- **`diting --help` lists every subcommand.** The top-level usage had drifted and
+  omitted `capture`, `setup`, and `update`, even though they were dispatchable
+  and shown in `diting capabilities --json`. All commands are now listed.
+- **Help screen no longer runs words together.** Two rows in the in-app help (`?`)
+  rendered the label and its description with no space — `Eventsstrip`,
+  `enter / iinspect`. They now read `Events  strip…` and `enter / i  inspect…`.
+- **BLE panel labels are clearer.** The visible-device count reads `N advertising`
+  (it sits beside a separate Connected-peripherals count, so the old `N total`
+  didn't match the list footer), and the rotation-fold note names its unit —
+  `(+N rotations folded)` — so it doesn't read as folded vendors. The long-tail
+  `Edifier International Limited` device name shortens to `Edifier`.
+
 ## [2.1.0] — 2026-06-23
 
 Minor release. **Adds `diting update` for self-updating, and finishes the

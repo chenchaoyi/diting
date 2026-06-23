@@ -10,6 +10,22 @@
 
 ## [Unreleased]
 
+## [2.1.1] — 2026-06-23
+
+补丁发布。**`diting --help` 现在会列出每个命令，部分 TUI 标签也更易读了。**
+
+### Fixed
+
+- **`diting --help` 列出每个子命令。** 顶层用法此前发生了漂移，漏掉了 `capture`、`setup`
+  与 `update`，尽管它们可派发且出现在 `diting capabilities --json` 里。现在全部列出。
+- **帮助页不再把词粘在一起。** 应用内帮助（`?`）里有两行把标签和描述贴在一起渲染 ——
+  `Eventsstrip`、`enter / iinspect`。现在分别读作 `Events  strip…` 和
+  `enter / i  inspect…`。
+- **BLE 面板标签更清晰。** 可见设备计数写作 `N advertising`（它旁边还有独立的 Connected
+  计数，旧的 `N total` 与列表页脚对不上），轮换折叠提示点明单位 ——
+  `(+N rotations folded)` —— 以免读成折叠厂商。长尾设备名 `Edifier International
+  Limited` 缩短为 `Edifier`。
+
 ## [2.1.0] — 2026-06-23
 
 次要发布。**新增 `diting update` 自更新能力，并完善安装时的权限流程（独立的 Permissions
