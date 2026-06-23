@@ -107,12 +107,12 @@ def test_probe_prefers_readonly_when_supported(monkeypatch):
 
     monkeypatch.setattr(_helper, "location_status", lambda b, *, settle=None: "authorized")
     monkeypatch.setattr(_helper, "bluetooth_authorization_status", lambda b: "authorized")
-    monkeypatch.setattr(_helper, "has_notification_permission", lambda b: True)
+    monkeypatch.setattr(_helper, "notification_status", lambda b: "authorized")
     monkeypatch.setattr(_helper, "has_permission", boom)
     monkeypatch.setattr(_helper, "has_bluetooth_permission", boom)
     caps = {"location_status": True, "bluetooth_auth": True, "notification_status": True}
     assert perm.probe("/x", caps=caps) == {
-        "location": "authorized", "bluetooth": "authorized", "notifications": True,
+        "location": "authorized", "bluetooth": "authorized", "notifications": "authorized",
     }
 
 
@@ -294,3 +294,92 @@ def test_setup_json_never_indented(monkeypatch, capsys, fake_helper):
     out = capsys.readouterr().out
     assert not out.startswith(" ")
     assert _json.loads(out)["ready"] is True
+
+
+# ---------- installer-permissions-step: notifications visibility ----------
+
+def test_notification_status_string_probe(monkeypatch):
+    """`_helper.notification_status` maps the notification-status exit codes
+    to a status string (mirrors location/bluetooth)."""
+    from diting import _helper
+
+    class P:
+        def __init__(self, rc):
+            self.returncode = rc
+            self.stdout = b""
+            self.stderr = b""
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: P(0))
+    assert _helper.notification_status("/x") == "authorized"
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: P(3))
+    assert _helper.notification_status("/x") == "denied"
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: P(4))
+    assert _helper.notification_status("/x") == "not_determined"
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: P(2))
+    assert _helper.notification_status("/x") == "unknown"
+
+
+def test_probe_notifications_is_status_string(monkeypatch):
+    """`permission.probe` returns Notifications as a status string when the
+    helper supports it; None when it does not."""
+    from diting import _helper
+    monkeypatch.setattr(_helper, "location_status", lambda b, *, settle=None: "authorized")
+    monkeypatch.setattr(_helper, "bluetooth_authorization_status", lambda b: "authorized")
+    monkeypatch.setattr(_helper, "notification_status", lambda b: "not_determined")
+    caps_yes = {"location_status": True, "bluetooth_auth": True, "notification_status": True}
+    assert perm.probe("/x", caps=caps_yes)["notifications"] == "not_determined"
+
+    caps_no = {"location_status": True, "bluetooth_auth": True, "notification_status": False}
+    assert perm.probe("/x", caps=caps_no)["notifications"] is None
+
+
+def test_setup_json_notifications_status_maps_to_bool(monkeypatch, capsys, fake_helper):
+    """A Notifications status string collapses to a bool in --json:
+    authorized → true, pending/denied → false, None → null."""
+    monkeypatch.setattr(perm, "detect_caps", lambda b: {
+        "location_status": True, "bluetooth_auth": True, "notification_status": True})
+
+    for status, expect in [("authorized", True), ("denied", False),
+                           ("not_determined", False)]:
+        monkeypatch.setattr(perm, "probe", lambda b, *, caps=None, settle=None, _s=status: {
+            "location": "authorized", "bluetooth": "authorized", "notifications": _s})
+        with pytest.raises(SystemExit):
+            cli._run_setup(["--json"])
+        doc = _json.loads(capsys.readouterr().out)
+        assert doc["notifications"] is expect
+
+
+def test_setup_waits_for_notifications_to_settle(monkeypatch, capsys, fake_helper):
+    """Interactive: after the required grants land, setup keeps polling until
+    the best-effort Notifications prompt settles, showing all three lines."""
+    import sys as _sys
+    monkeypatch.setattr(_sys.stdout, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr("time.sleep", lambda *a, **k: None)
+    monkeypatch.setattr(perm, "open_bundle", lambda b, *, lang: True)
+    monkeypatch.setattr(perm, "detect_caps", lambda b: {
+        "location_status": True, "bluetooth_auth": True, "notification_status": True})
+
+    seq = [
+        # pre-check: not ready
+        {"location": "not_determined", "bluetooth": "not_determined",
+         "notifications": "not_determined"},
+        # loop 1: required ready, notifications still pending
+        {"location": "authorized", "bluetooth": "authorized",
+         "notifications": "not_determined"},
+        # loop 2: notifications settles
+        {"location": "authorized", "bluetooth": "authorized",
+         "notifications": "authorized"},
+    ]
+    calls = {"n": 0}
+
+    def fake_probe(b, *, caps=None, settle=None):
+        i = min(calls["n"], len(seq) - 1)
+        calls["n"] += 1
+        return seq[i]
+
+    monkeypatch.setattr(perm, "probe", fake_probe)
+    cli._run_setup([])  # interactive success returns (no SystemExit)
+    out = capsys.readouterr().out
+    assert "Notifications: waiting" in out      # shown while pending
+    assert "Notifications: granted" in out      # then settled
+    assert "all required permissions granted" in out

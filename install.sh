@@ -15,8 +15,10 @@
 #   4. Extracts under ~/.local/share/diting/ (atomic rename swap)
 #   5. Symlinks ~/.local/bin/diting → libexec/diting/diting
 #   6. Copies the helper bundle to ~/Library/Application Support/diting/,
-#      strips quarantine, `open`s once to trigger TCC prompts
-#   7. Prints a PATH-update hint if ~/.local/bin isn't on PATH
+#      strips quarantine
+#   7. Drives + verifies the macOS TCC grants via `diting setup`
+#      (Location → Bluetooth → Notifications) — the "Permissions" step
+#   8. Prints a PATH-update hint if ~/.local/bin isn't on PATH
 #
 # DITING_INSTALL_TESTONLY=1 short-circuits the download / extract /
 # helper-prime / open steps so the test suite can exercise the
@@ -108,6 +110,10 @@ else
   ORANGE="" GREEN="" RED="" DIM="" BOLD="" RESET=""
 fi
 
+# Total numbered steps in the framed (FULL / PLAIN) render. Bump this when
+# adding/removing a `step` so every `[n/N]` row stays consistent.
+readonly STEP_TOTAL=7
+
 # MIRROR resolution happens later, AFTER the helpers section,
 # because the `die()` it calls on invalid values is defined there.
 # Kept near the top conceptually — see the `---- mirror resolution
@@ -129,11 +135,11 @@ die_with_marker() {
   shift
   case "$TIER" in
     full)
-      printf '%s[%s/6] %-10s%s %s%b%s\n' \
-        "" "$step_n" "FAIL" "" "${RED}" "✗${RESET}" "" >&2
+      printf '%s[%s/%d] %-11s%s %s%b%s\n' \
+        "" "$step_n" "$STEP_TOTAL" "FAIL" "" "${RED}" "✗${RESET}" "" >&2
       ;;
     plain)
-      printf '[%s/6] %-10s [FAIL]\n' "$step_n" "FAIL" >&2
+      printf '[%s/%d] %-11s [FAIL]\n' "$step_n" "$STEP_TOTAL" "FAIL" >&2
       ;;
     log)
       : # die() will emit the existing prefix line; no extra marker
@@ -277,16 +283,36 @@ step() {
   local n="$1" label="$2" value="$3" log_text="$4"
   case "$TIER" in
     full)
-      printf '%b[%d/6]%b %-10s %s %b✓%b\n' \
-        "${DIM}" "$n" "${RESET}" "$label" "$value" "${GREEN}" "${RESET}"
+      printf '%b[%d/%d]%b %-11s %s %b✓%b\n' \
+        "${DIM}" "$n" "$STEP_TOTAL" "${RESET}" "$label" "$value" "${GREEN}" "${RESET}"
       ;;
     plain)
-      printf '[%d/6] %-10s %s [OK]\n' "$n" "$label" "$value"
+      printf '[%d/%d] %-11s %s [OK]\n' "$n" "$STEP_TOTAL" "$label" "$value"
       ;;
     log)
       # Empty log_text means the caller has already covered LOG-tier
       # output (typically a `note "TESTONLY: …"` line right after).
       # Use `if` (not `&&`) so an empty value doesn't trip `set -e`.
+      if [ -n "$log_text" ]; then note "$log_text"; fi
+      ;;
+  esac
+}
+
+# step_open prints a numbered step HEADER without the trailing ✓ — used by
+# the Permissions step, whose body (diting setup's own indented output)
+# carries the completion marker on its own line. Same `[n/N]` framing as
+# `step`, so the grant reads as a first-class numbered step.
+step_open() {
+  local n="$1" label="$2" value="$3" log_text="$4"
+  case "$TIER" in
+    full)
+      printf '%b[%d/%d]%b %-11s %s\n' \
+        "${DIM}" "$n" "$STEP_TOTAL" "${RESET}" "$label" "$value"
+      ;;
+    plain)
+      printf '[%d/%d] %-11s %s\n' "$n" "$STEP_TOTAL" "$label" "$value"
+      ;;
+    log)
       if [ -n "$log_text" ]; then note "$log_text"; fi
       ;;
   esac
@@ -610,11 +636,18 @@ fi
 DITING_LOCALE="$(detect_locale)"
 DITING_LOCALE_TAG="$(bundle_locale_tag "$DITING_LOCALE")"
 
+if [ "$DITING_LOCALE" = "zh" ]; then
+  PERM_VALUE="定位 → 蓝牙 → 通知"
+else
+  PERM_VALUE="Location → Bluetooth → Notifications"
+fi
+
 if [ -n "$TESTONLY" ]; then
   step 6 "Helper" "${APP_SUPPORT_DIR}/diting-tianer.app (testonly)" ""
   note "TESTONLY: detected locale=${DITING_LOCALE} (tag=${DITING_LOCALE_TAG})"
   note "TESTONLY: would copy helper to ${APP_SUPPORT_DIR}"
   note "TESTONLY: would xattr -dr com.apple.quarantine"
+  step_open 7 "Permissions" "${PERM_VALUE} (testonly)" ""
   note "TESTONLY: would run diting setup with DITING_LANG=${DITING_LOCALE} -AppleLanguages (${DITING_LOCALE_TAG})"
 else
   mkdir -p "$APP_SUPPORT_DIR"
@@ -630,22 +663,19 @@ else
   # Same trick Homebrew uses for unsigned casks.
   xattr -dr com.apple.quarantine "$DST_BUNDLE" 2>/dev/null || true
   step 6 "Helper" "${DST_BUNDLE}" "helper bundle primed at ${DST_BUNDLE}"
-  # Drive AND verify the TCC grants now, so first launch is clean
-  # instead of re-prompting. `diting setup` owns the open + poll +
-  # System-Settings routing; it opens the bundle with the matching
-  # DITING_LANG / -AppleLanguages so the helper UI and macOS prompts
-  # share one locale. On an interactive terminal it blocks-and-verifies
-  # (the user clicks Allow on each prompt); on a non-TTY install
-  # (CI / pipe) `setup` auto-detects and runs non-blocking. `|| true`
-  # so an incomplete grant never fails the install.
-  if [ "$DITING_LOCALE" = "zh" ]; then
-    step_continuation "正在请求 macOS 权限（定位 → 蓝牙 → 通知）— 逐个点击 Allow"
-  else
-    step_continuation "granting macOS permissions (Location → Bluetooth → Notifications) — click Allow on each"
-  fi
-  # Align `diting setup`'s own output under the helper step in the framed
-  # tiers (FULL / PLAIN) by indenting it the same 7 spaces step_continuation
-  # uses. TIER LOG keeps the flush-left prose the install tests pin.
+  # Step 7 — drive AND verify the TCC grants now, so first launch is clean
+  # instead of re-prompting, framed as the final numbered step. `diting
+  # setup` owns the open + poll + System-Settings routing; it opens the
+  # bundle with the matching DITING_LANG / -AppleLanguages so the helper UI
+  # and macOS prompts share one locale. On an interactive terminal it
+  # blocks-and-verifies (the user clicks Allow on each prompt); on a non-TTY
+  # install (CI / pipe) `setup` auto-detects and runs non-blocking. `|| true`
+  # so an incomplete grant never fails the install. `setup`'s own (indented)
+  # output is the body of this step.
+  step_open 7 "Permissions" "$PERM_VALUE" "granting macOS permissions (${PERM_VALUE}) — click Allow on each"
+  # Indent `diting setup`'s output the same 7 spaces under the step header in
+  # the framed tiers (FULL / PLAIN). TIER LOG keeps the flush-left prose the
+  # install tests pin.
   if [ "$TIER" = "log" ]; then
     DITING_LANG="${DITING_LOCALE}" "${BIN_DIR}/diting" setup || true
   else

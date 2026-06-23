@@ -250,7 +250,7 @@ def test_tier_log_byte_identical_under_non_tty():
     assert "diting install: host detected: darwin-" in proc.stdout
     assert "diting install: pinned version: v0.10.0" in proc.stdout
     # No tier-polished decorations in LOG.
-    assert "[1/6]" not in proc.stdout
+    assert "[1/7]" not in proc.stdout
     assert "Installed." not in proc.stdout
     # Specifically no ANSI escape sequences.
     assert "\x1b[" not in proc.stdout
@@ -258,7 +258,7 @@ def test_tier_log_byte_identical_under_non_tty():
 
 def test_tier_full_under_pty():
     """Interactive TTY with UTF-8 locale and no NO_COLOR gets the
-    polished output: brand-orange pixel beast, six numbered steps
+    polished output: brand-orange pixel beast, seven numbered steps
     with ✓ markers, indented Installed. summary block."""
     rc, out = _run_via_pty({"DITING_VERSION": "v0.10.0"})
     assert rc == 0, out
@@ -266,10 +266,12 @@ def test_tier_full_under_pty():
     assert "\x1b[38;2;254;166;43m" in out
     # Pixel-beast art (final row of _LOGO_MARK_ART).
     assert "▀██▀▀▀▀██" in out
-    # Numbered step structure.
-    assert "[1/6]" in out
-    assert "[2/6]" in out
-    assert "[6/6]" in out
+    # Numbered step structure — Permissions is the final (7th) step.
+    assert "[1/7]" in out
+    assert "[2/7]" in out
+    assert "[6/7]" in out
+    assert "[7/7]" in out
+    assert "Permissions" in out
     # Unicode success marker.
     assert "✓" in out
     # Polished summary block.
@@ -281,12 +283,13 @@ def test_tier_full_under_pty():
 
 def test_tier_plain_under_pty_with_no_color():
     """NO_COLOR=1 on an interactive TTY downgrades FULL to PLAIN —
-    keeps the six-step structure but drops the logo + color + Unicode."""
+    keeps the seven-step structure but drops the logo + color + Unicode."""
     rc, out = _run_via_pty({"DITING_VERSION": "v0.10.0", "NO_COLOR": "1"})
     assert rc == 0, out
     # Numbered step structure preserved.
-    assert "[1/6]" in out
-    assert "[6/6]" in out
+    assert "[1/7]" in out
+    assert "[6/7]" in out
+    assert "[7/7]" in out
     # ASCII markers, NOT Unicode.
     assert "[OK]" in out
     assert "✓" not in out
@@ -308,7 +311,7 @@ def test_tier_format_env_override_forces_log_on_tty():
     })
     assert rc == 0, out
     assert "diting install: host detected: darwin-" in out
-    assert "[1/6]" not in out
+    assert "[1/7]" not in out
     assert "Installed." not in out
 
 
@@ -322,7 +325,7 @@ def test_tier_plain_under_lc_all_c():
         "LANG": "C",
     })
     assert rc == 0, out
-    assert "[1/6]" in out
+    assert "[1/7]" in out
     assert "[OK]" in out
     assert "▀██▀▀▀▀██" not in out
     assert "\x1b[" not in out

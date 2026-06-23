@@ -1493,7 +1493,9 @@ def _setup_state_json(state: dict) -> dict:
     return {
         "location": _perm.is_authorized(state["location"]),
         "bluetooth": _perm.is_authorized(state["bluetooth"]),
-        "notifications": None if notif is None else bool(notif),
+        # Notifications is a status string (or None when unverifiable);
+        # collapse to a bool for the machine surface, None preserved.
+        "notifications": None if notif is None else _perm.is_authorized(notif),
         "ready": _perm.is_ready(state),
     }
 
@@ -1517,10 +1519,11 @@ def _print_setup_human(state: dict) -> None:
 
 
 def _maybe_report_notifications(state: dict) -> None:
+    from . import permission as _perm
     n = state["notifications"]
-    if n is True:
+    if _perm.is_authorized(n):
         return
-    if n is None:
+    if n is None or n == "unknown":
         _sprint(t("note: Notifications grant could not be verified (older helper)."))
     else:
         _sprint(t("note: Notifications not granted — `--notify` alerts stay silent "
@@ -1610,31 +1613,49 @@ def _run_setup(args: list[str]) -> None:
 
     # Read-only probes are fast and prompt-free, so poll snappily.
     interval, timeout = 1.0, 180.0
+    # The helper requests Notifications LAST and it is best-effort. Once the
+    # REQUIRED grants land, give the user this long to answer the still-pending
+    # Notifications prompt before reporting — bounded, so setup never blocks on
+    # it indefinitely.
+    notif_grace = 30.0
     waited = 0.0
+    ready_at = None
     opened_panes: set[str] = set()
-    last = {k: state[k] for k in _perm.REQUIRED}
+    last = {k: state[k] for k in _perm.ALL}
     try:
         while waited < timeout:
             time.sleep(interval)
             waited += interval
             state = _perm.probe(binary, caps=caps)
-            current = {k: state[k] for k in _perm.REQUIRED}
+            current = {k: state[k] for k in _perm.ALL}
             if current != last:
-                _sprint(t("  Location: {loc}    Bluetooth: {bt}",
+                _sprint(t("  Location: {loc}    Bluetooth: {bt}    Notifications: {nt}",
                           loc=_setup_word(state["location"]),
-                          bt=_setup_word(state["bluetooth"])))
+                          bt=_setup_word(state["bluetooth"]),
+                          nt=_setup_word(state["notifications"])))
                 last = current
             if _perm.is_ready(state):
-                _sprint(t("✓ all required permissions granted."))
-                _maybe_report_notifications(state)
-                return
-            # Route to Settings ONLY on a settled denial (macOS won't
-            # re-prompt). A `not_determined` grant means the helper's prompt
-            # is still pending — keep waiting for the user, don't mislabel it.
-            for key in _perm.REQUIRED:
-                if _perm.is_denied(state[key]) and key not in opened_panes:
-                    opened_panes.add(key)
-                    _route_denied_to_settings(key)
+                if ready_at is None:
+                    ready_at = waited
+                # Wait for the best-effort Notifications prompt to settle
+                # (granted / denied), but only up to the bounded grace. A
+                # `None` (older helper that can't verify it) is not worth
+                # waiting on.
+                notif = state["notifications"]
+                notif_settled = notif is None or notif != "not_determined"
+                if notif_settled or (waited - ready_at) >= notif_grace:
+                    _sprint(t("✓ all required permissions granted."))
+                    _maybe_report_notifications(state)
+                    return
+            else:
+                # Route to Settings ONLY on a settled denial of a REQUIRED
+                # grant (macOS won't re-prompt). A `not_determined` grant
+                # means the prompt is still pending — keep waiting, don't
+                # mislabel it.
+                for key in _perm.REQUIRED:
+                    if _perm.is_denied(state[key]) and key not in opened_panes:
+                        opened_panes.add(key)
+                        _route_denied_to_settings(key)
     except KeyboardInterrupt:
         _sprint()
         _sprint(t("Stopped. Re-run `diting setup` to finish granting."))

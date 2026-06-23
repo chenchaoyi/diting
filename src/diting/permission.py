@@ -49,7 +49,8 @@ def probe(binary: str, *, caps: dict | None = None,
     """Probe each grant. `location`/`bluetooth` are STATUS strings —
     `authorized` / `denied` / `not_determined` / `restricted` / `unknown`
     — so the caller can tell a pending prompt from a settled denial.
-    `notifications` is True/False, or None when the helper can't verify it.
+    `notifications` is the same kind of STATUS string, or None when the
+    helper can't verify it (predates the `notification-status` probe).
 
     Prefers the READ-ONLY status probes (`location-status` /
     `bluetooth-authorization`) which never prompt, so a verification poll
@@ -79,8 +80,12 @@ def probe(binary: str, *, caps: dict | None = None,
         )
 
     def _notif():
+        # Status string (authorized/denied/not_determined/unknown) so the
+        # caller can tell a pending Notifications prompt from a settled
+        # denial, just like location/bluetooth. None when the helper can't
+        # verify it (predates the probe).
         return (
-            _helper.has_notification_permission(binary)
+            _helper.notification_status(binary)
             if caps["notification_status"] else None
         )
 

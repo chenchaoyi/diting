@@ -682,6 +682,8 @@ _ZH: dict[str, str] = {
         "(按 Ctrl+C 可跳过，TUI 会以受限视图启动。)",
     "  Location: {loc}    Bluetooth: {bt}":
         "  定位：{loc}    蓝牙：{bt}",
+    "  Location: {loc}    Bluetooth: {bt}    Notifications: {nt}":
+        "  定位：{loc}    蓝牙：{bt}    通知：{nt}",
     "granted": "已授权",
     "waiting": "等待中",
     "All permissions granted — starting TUI.":
