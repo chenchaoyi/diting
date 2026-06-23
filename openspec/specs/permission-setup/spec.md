@@ -10,10 +10,21 @@ so macOS surfaces the Location → Bluetooth → Notifications prompts, and then
 verify the outcome by probing each grant. It SHALL block-and-verify the two
 grants required for core function — Location (Wi-Fi scan list) and Bluetooth
 (BLE view) — polling until both are granted or a bounded timeout elapses, and
-SHALL drive the Notifications prompt as best-effort (never blocking on it).
-`setup` SHALL print live per-permission status as each grant lands. It SHALL NOT
-claim to grant permissions itself — macOS requires the user's Allow click; setup
-only drives the prompts and verifies.
+SHALL drive the Notifications prompt as best-effort (never blocking on it
+indefinitely). `setup` SHALL print live per-permission status as each grant
+lands. It SHALL NOT claim to grant permissions itself — macOS requires the user's
+Allow click; setup only drives the prompts and verifies.
+
+`setup`'s live status SHALL show all three permissions — Location, Bluetooth, and
+Notifications — reading each as a distinct status (granted / pending / denied) so
+a not-yet-answered prompt is shown as waiting, not as denied. Because the helper
+requests Notifications LAST (after the required two), `setup` SHALL NOT exit the
+instant the required grants land while the Notifications prompt is still pending:
+after the required grants are present, `setup` SHALL wait a bounded grace for the
+best-effort Notifications grant to settle (granted or denied) before reporting
+the final state, then exit regardless of the Notifications outcome (it remains
+non-blocking — the grace is bounded). When the helper cannot verify Notifications
+(an older helper without the probe), `setup` SHALL NOT wait.
 
 In interactive mode `setup` SHALL open the helper bundle PROMPTLY — before
 running any blocking verification probe — so the permission window appears
@@ -45,6 +56,10 @@ indented.
 #### Scenario: A required grant never lands before timeout
 - **WHEN** the user runs `diting setup` and never grants Bluetooth within the timeout
 - **THEN** setup reports Bluetooth still missing, prints what to do, and exits non-zero
+
+#### Scenario: Notifications is shown and given a chance to settle
+- **WHEN** the user grants Location and Bluetooth and the Notifications prompt is still pending
+- **THEN** setup's live status shows Notifications as waiting (not denied), and setup waits a bounded grace for the Notifications outcome before reporting and exiting
 
 #### Scenario: Slow user sees no stacked prompts
 - **WHEN** the user runs `diting setup` and reads each macOS prompt slowly before clicking Allow
