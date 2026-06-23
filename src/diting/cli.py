@@ -1089,6 +1089,22 @@ _COMMANDS: list[dict] = [
         "examples": ["diting setup", "diting setup --json | jq .ready"],
     },
     {
+        "name": "update",
+        "summary": "check for and install the latest diting release",
+        "output": "text",
+        "flags": [
+            {"name": "--check", "type": "bool", "default": False, "repeatable": False,
+             "help": "report whether an update is available; do not install"},
+            {"name": "--json", "type": "bool", "default": False, "repeatable": False,
+             "help": "emit {current,latest,update_available} as JSON (no install)"},
+        ],
+        "exit_codes": {"0": "up to date / reported / installed ok",
+                       "1": "could not check for updates, or the installer failed"},
+        "examples": ["diting update --check",
+                     "diting update --json | jq .update_available",
+                     "diting update"],
+    },
+    {
         "name": "capabilities",
         "summary": "emit a machine-readable manifest of the CLI surface",
         "output": "json-object",
@@ -1538,6 +1554,57 @@ def _route_denied_to_settings(key: str) -> None:
     _sprint(t("{label} looks denied — macOS will not prompt again.", label=label))
     _sprint(t("Opening System Settings → Privacy & Security → {label}.", label=label))
     _sprint(t("Enable diting-tianer there, then re-run `diting setup`."))
+
+
+def _run_update(args: list[str]) -> None:
+    """`diting update` — resolve the latest release, compare with the running
+    version, and (unless `--check` / `--json`) re-run the canonical installer
+    pinned to it so the binary AND helper bundle refresh together."""
+    if "--help" in args or "-h" in args:
+        print(_render_help("update"), end="")
+        return
+    from . import __version__
+    from . import update as _update
+
+    json_mode = "--json" in args
+    check_only = "--check" in args
+    current = _update.normalize(__version__)
+
+    try:
+        tag = _update.fetch_latest_tag()
+    except Exception as exc:  # noqa: BLE001 — network/parse: report, no traceback
+        msg = f"could not check for updates: {exc}"
+        if json_mode:
+            print(json.dumps({"error": msg, "code": 1}), file=sys.stderr)
+        else:
+            print(t("diting update: {msg}", msg=msg), file=sys.stderr)
+        sys.exit(1)
+
+    latest = _update.normalize(tag)
+    available = _update.is_newer(latest, current)
+
+    if json_mode:
+        print(json.dumps(
+            {"current": current, "latest": latest, "update_available": available},
+            ensure_ascii=False,
+        ))
+        sys.exit(0)
+
+    if not available:
+        print(t("diting {current} is already the latest release.", current=current))
+        sys.exit(0)
+
+    print(t("update available: {current} → {latest}", current=current, latest=latest))
+    if check_only:
+        print(t("Run `diting update` (without --check) to install it."))
+        sys.exit(0)
+
+    if not getattr(sys, "frozen", False):
+        print(t("note: this looks like a source checkout; update installs the "
+                "released binary to ~/.local/bin."), file=sys.stderr)
+    print(t("updating diting to {latest} …", latest=latest))
+    rc = _update.run_installer(tag, lang=i18n.get_lang())
+    sys.exit(rc)
 
 
 def _run_setup(args: list[str]) -> None:
@@ -2421,7 +2488,7 @@ def _dispatch() -> None:
     # The scene-detection banner is irrelevant noise for `setup` (the
     # install / permission flow) — suppress it so that output stays
     # focused on the grant steps.
-    if not (args and _resolve_alias(args[0]) == "setup"):
+    if not (args and _resolve_alias(args[0]) in ("setup", "update")):
         _emit_scene_banner(scene_banner)
     scene_gate_default = _scene_mod.scene_defaults(scene_name).get(
         "ble_presence_gate_s", 5.0,
@@ -2504,6 +2571,9 @@ def _dispatch() -> None:
         return
     if canonical == "setup":
         _run_setup(rest)
+        return
+    if canonical == "update":
+        _run_update(rest)
         return
     if canonical == "capabilities":
         _run_capabilities(rest)

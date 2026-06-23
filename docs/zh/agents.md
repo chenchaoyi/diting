@@ -44,6 +44,7 @@ diting capabilities --json
 | `diting stream [--sensors …] [--duration D] [--out FILE] [--notify]` | json-lines | 捕获实时事件流（限时或直到被杀） |
 | `diting capture start\|list\|status\|stop\|tail` | text/json | 管理一个 detached 的命名长时观测 |
 | `diting setup [--json]` | text/json | 驱动并验证 helper 的 macOS 权限授权 |
+| `diting update [--check] [--json]` | text/json | 检查 / 安装最新发布版（`--json` → `{current,latest,update_available}`） |
 | `diting analyze [PATH ...] [--since D] [--json]` | json-object | 把已捕获的 JSONL 日志后处理成报告 |
 | `diting capabilities [--json]` | json-object | 发现命令面 |
 

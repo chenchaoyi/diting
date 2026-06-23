@@ -616,7 +616,7 @@ def test_canonical_verbs_dispatch():
     # The canonical verb set is the contract; aliases resolve onto it.
     assert cli._CANONICAL_VERBS == [
         "status", "scan", "stream", "calibrate",
-        "analyze", "companion", "capture", "setup", "capabilities",
+        "analyze", "companion", "capture", "setup", "update", "capabilities",
     ]
     for v in cli._CANONICAL_VERBS:
         assert cli._resolve_alias(v) == v  # canonical passes through
