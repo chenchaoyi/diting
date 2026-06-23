@@ -142,8 +142,18 @@ class SessionStore:
 
     def build_argv(self, *, capture_path: Path, sensors: str | None,
                    duration: str | None) -> list[str]:
-        argv = [sys.executable, "-m", "diting", "stream",
-                "--out", str(capture_path)]
+        # In a PyInstaller frozen install (`~/.local/bin/diting`, the shipped
+        # binary) `sys.executable` IS the `diting` binary, which does not
+        # understand `-m diting` — it parses `-m` as a subcommand and exits
+        # with "unknown subcommand '-m'", so the detached stream prints --help
+        # and dies instantly. Invoke its own `stream` verb directly. Only the
+        # source / `uv run` install (where `sys.executable` is a real Python)
+        # uses `-m diting`.
+        if getattr(sys, "frozen", False):
+            argv = [sys.executable, "stream", "--out", str(capture_path)]
+        else:
+            argv = [sys.executable, "-m", "diting", "stream",
+                    "--out", str(capture_path)]
         if sensors:
             argv += ["--sensors", sensors]
         if duration:
