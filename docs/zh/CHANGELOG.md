@@ -10,6 +10,30 @@
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-06-23
+
+次要发布。**新增 `diting update` 自更新能力，并完善安装时的权限流程（独立的 Permissions
+步骤 + 可见的通知权限）。**
+
+### Added
+
+- **`diting update` —— 自更新到最新发布版。** `diting update --check` 报告是否有新版可用；
+  `diting update --json` 输出 `{current, latest, update_available}`；`diting update`
+  会通过重新运行钉到该版本的官方安装脚本来安装最新版，使二进制与 helper bundle 一同更新。
+  网络失败时干净地报错并以非零退出。
+
+### Changed
+
+- **安装时的权限授予现在是独立的编号步骤。** 安装器把它渲染为最后一步 `[7/7] Permissions`，
+  框住 `diting setup` 的输出，而不再把它松散地堆在 Helper 步骤下面。
+
+### Fixed
+
+- **`diting setup` 现在会显示通知权限。** 此前它的实时状态只打印定位与蓝牙，并在这两项
+  （所需授权）一到位就结束 —— 而那时你还没回答通知弹窗（helper 最后才请求它）。现在 setup
+  显示全部三项权限，并在所需授权到位后对尽力而为的通知弹窗等待一个有界宽限期使其 settle
+  （显示为 `waiting` 而非 `not granted`）再汇报。
+
 ## [2.0.5] — 2026-06-22
 
 补丁发布。**打磨安装时的权限流程 —— 更整洁的 helper 窗口、更快弹出的弹窗、与安装器对齐的输出。**
