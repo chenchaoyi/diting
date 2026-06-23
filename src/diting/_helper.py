@@ -315,6 +315,17 @@ def bluetooth_authorization_status(binary: str) -> str:
     return _auth_status(binary, "bluetooth-authorization")
 
 
+def notification_status(binary: str) -> str:
+    """Read-only Notifications TCC status via `notification-status` (a
+    `getNotificationSettings` read — never prompts): authorized /
+    denied / not_determined / unknown. Lets `setup` tell a pending
+    Notifications prompt (not yet answered) from a settled denial, the
+    same way Location/Bluetooth do, instead of collapsing to a bool.
+    Exit codes: 0 authorized/provisional, 3 denied, 4 notDetermined,
+    2 timeout/unknown (→ `unknown`)."""
+    return _auth_status(binary, "notification-status")
+
+
 def location_authorized(binary: str) -> bool:
     return location_status(binary) == "authorized"
 
