@@ -47,6 +47,7 @@ manifest before relying on a field.
 | `diting stream [--sensors …] [--duration D] [--out FILE] [--notify]` | json-lines | capture a live event stream (bounded or until killed) |
 | `diting capture start\|list\|status\|stop\|tail` | text/json | manage a detached named long watch |
 | `diting setup [--json]` | text/json | drive + verify the helper's macOS permission grants |
+| `diting update [--check] [--json]` | text/json | check for / install the latest release (`--json` → `{current,latest,update_available}`) |
 | `diting analyze [PATH ...] [--since D] [--json]` | json-object | post-process a captured JSONL log into a report |
 | `diting capabilities [--json]` | json-object | discover the surface |
 

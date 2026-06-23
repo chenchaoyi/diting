@@ -1871,6 +1871,19 @@ _ZH: dict[str, str] = {
         "正在打开 系统设置 → 隐私与安全性 → {label}。",
     "Enable diting-tianer there, then re-run `diting setup`.":
         "在那里启用 diting-tianer，然后重新运行 `diting setup`。",
+    "diting update: {msg}":
+        "diting update：{msg}",
+    "diting {current} is already the latest release.":
+        "diting {current} 已是最新版本。",
+    "update available: {current} → {latest}":
+        "有可用更新：{current} → {latest}",
+    "Run `diting update` (without --check) to install it.":
+        "运行 `diting update`（不加 --check）即可安装。",
+    "note: this looks like a source checkout; update installs the "
+    "released binary to ~/.local/bin.":
+        "注意：当前看起来是源码检出；update 会把发布版二进制安装到 ~/.local/bin。",
+    "updating diting to {latest} …":
+        "正在将 diting 更新到 {latest} …",
     "Run `diting setup` in an interactive terminal to grant the missing permissions.":
         "在交互式终端里运行 `diting setup` 以授予缺失的权限。",
     "Stopped. Re-run `diting setup` to finish granting.":

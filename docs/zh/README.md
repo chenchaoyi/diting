@@ -543,6 +543,8 @@ uv run diting capture tail --name watch -n 50 -f        # 跟随某会话的 JSO
 uv run diting capture stop --name watch  # 干净 SIGTERM 停止（捕获完整）
 uv run diting setup                      # （重新）授予 helper 的 macOS 权限
 uv run diting setup --json               # 检查权限状态（非阻塞）
+uv run diting update --check             # 是否有新版本可用？
+uv run diting update                     # 自更新到最新发布版
 uv run diting calibrate                  # 5 分钟「房间没人」基线 → ./diting-baseline.json
 uv run diting companion pair             # 配对手机 —— 渲染给 diting-mobile 扫的二维码
 uv run diting companion status           # 查看配对 + 中继队列状态
