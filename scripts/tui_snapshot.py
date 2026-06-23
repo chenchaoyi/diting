@@ -1677,6 +1677,13 @@ def run(
     scenario_ids: list[str] | None = None,
 ) -> dict:
     """Sync wrapper around :func:`run_async`."""
+    # A snapshot capture is ALWAYS a self-test — regression and explore both
+    # build a real DitingApp, which wires the companion sink from any paired
+    # `diting-companion.json` in cwd and forwards events to the phone. The
+    # regression run injects synthetic roam / threat / insight events, so
+    # without this every CI-gate run would buzz the user's paired phone.
+    # Mute it for the whole process (both modes) before any app is built.
+    os.environ["DITING_COMPANION"] = "0"
     return asyncio.run(
         run_async(out_dir, mode=mode, scenario_ids=scenario_ids),
     )
