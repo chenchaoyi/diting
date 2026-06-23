@@ -15,6 +15,15 @@ name SHALL be a usage error (exit 2). Starting a name whose session is still
 running SHALL be a usage error (exit 2); starting a name whose prior session has
 exited or been stopped SHALL overwrite the record.
 
+The spawned-stream invocation SHALL be correct for the runtime: in a frozen
+(PyInstaller) install — where `sys.executable` is the `diting` binary itself, not
+a Python interpreter — `capture start` SHALL invoke the binary's own `stream`
+verb directly (`[sys.executable, "stream", …]`), NOT `[sys.executable, "-m",
+"diting", "stream", …]` (the frozen binary rejects `-m` as an unknown subcommand
+and the detached stream would exit immediately, leaving an empty capture). The
+source / `uv run` runtime (where `sys.executable` is a Python interpreter) SHALL
+use `-m diting`.
+
 #### Scenario: Start returns immediately with the session + path
 - **WHEN** the user runs `diting capture start --name nightwatch --sensors all`
 - **THEN** the process exits 0 promptly, a record for `nightwatch` exists, and stdout names the session and its capture path
@@ -26,6 +35,10 @@ exited or been stopped SHALL overwrite the record.
 #### Scenario: Invalid name
 - **WHEN** the user runs `diting capture start --name "bad name"`
 - **THEN** stderr reports the invalid name and the process exits 2
+
+#### Scenario: Frozen install spawns the stream verb directly
+- **WHEN** `capture start` runs from a frozen binary (`sys.frozen` is true)
+- **THEN** the spawned argv invokes `<binary> stream …` directly, with no `-m diting`, so the detached stream actually runs and writes its capture
 
 ### Requirement: The session registry SHALL live under a stable state dir
 
