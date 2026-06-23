@@ -101,6 +101,19 @@ def test_start_spawns_expected_argv(tmp_path):
     assert store.read_record("s")["pid"] == 4242
 
 
+def test_build_argv_frozen_omits_dash_m(tmp_path, monkeypatch):
+    """On a PyInstaller frozen install, `sys.executable` IS the `diting`
+    binary, which rejects `-m diting` ('unknown subcommand'). The spawn must
+    invoke the binary's own `stream` verb directly."""
+    store = _store(tmp_path)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    argv = store.build_argv(capture_path=tmp_path / "c.jsonl",
+                            sensors="all", duration="5m")
+    assert argv[:2] == [sys.executable, "stream"]
+    assert "-m" not in argv and "diting" not in argv[2:]
+    assert "--out" in argv and "all" in argv and "5m" in argv
+
+
 def test_start_duplicate_running_rejected(tmp_path):
     store = _store(tmp_path)
     store.start(name="s", spawn=lambda argv, e: os.getpid())  # "running"
