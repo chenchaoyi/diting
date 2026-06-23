@@ -423,6 +423,7 @@ _ZH: dict[str, str] = {
         "(授权后才会显示 BLE 诊断)",
     "Visible BLE  ": "可见 BLE  ",
     "{n} total": "共 {n} 个",
+    "{n} advertising": "{n} 个广播中",
     "  ·  {n} connectable": "  ·  {n} 可连接",
     "  ·  {n} anonymous": "  ·  {n} 匿名",
     "Vendors  ": "厂商  ",
@@ -433,7 +434,7 @@ _ZH: dict[str, str] = {
     "(rotating ID)": "(临时标识)",
     "Raw name": "原始名称",
     "  ×{n}": "  ×{n}",
-    "(+{n} folded)": "(已折叠 {n})",
+    "(+{n} rotations folded)": "(已折叠 {n} 次轮换)",
     "{n} other": "{n} 其他",
     # events-cascade-census-fold: at-launch census summary row
     "session start": "会话开始",
