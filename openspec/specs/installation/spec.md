@@ -187,6 +187,13 @@ bundle so macOS surfaces the Location → Bluetooth → Notifications prompts an
 verifies the outcome (per the `permission-setup` capability), so the user grants
 once at install rather than re-granting at first launch.
 
+In the framed render tiers (FULL / PLAIN) the installer SHALL present the
+permission grant as its own numbered step — the final step, labelled
+`Permissions` — and SHALL render `diting setup`'s output as the body of that
+step (indented under the step header via `DITING_SETUP_INDENT`). The helper-copy
+step (`Helper`) and the grant step (`Permissions`) SHALL be distinct numbered
+steps, so the displayed step total reflects the grant as its own step.
+
 The installer SHALL render the helper / prompt language in the user's
 macOS-preferred locale: it SHALL pass `DITING_LANG=<en|zh>` to `setup` (derived
 from `defaults read -g AppleLanguages` first entry; `zh` when it starts with
@@ -211,6 +218,10 @@ fire-and-forget `open`.
 - **WHEN** the user runs the installer on a Mac whose `defaults read -g AppleLanguages` first entry does not start with `zh` (or `defaults` returns no value)
 - **THEN** the installer invokes `diting setup` with `DITING_LANG=en`, and the helper launches with `-AppleLanguages '(en)'`
 - **AND** the helper status window text, the macOS Location prompt header (`diting · tianer`), and the prompt body text all render in English
+
+#### Scenario: The permission grant is its own numbered step
+- **WHEN** the user runs the installer in a framed tier (FULL / PLAIN)
+- **THEN** the grant is shown as the final numbered step labelled `Permissions`, distinct from the `Helper` step, and `diting setup`'s output is indented as that step's body
 
 #### Scenario: Interactive install verifies the grants before finishing
 - **WHEN** the user runs the installer in an interactive terminal and clicks Allow on the Location and Bluetooth prompts
