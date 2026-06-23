@@ -77,42 +77,63 @@ final class ScanWorker: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     private var done = false
 
+    private var proceeded = false
+
     func start() {
+        // Assigning the delegate makes locationd deliver the SETTLED
+        // authorization through the callback WITHOUT prompting (the same
+        // trick `location-status` uses). We register the CoreLocation
+        // consumer and scan only once we KNOW the bundle is authorized; for
+        // any other status we emit a redacted scan rather than firing a TCC
+        // prompt. Prompting is the GUI helper's job — one dialog — never the
+        // scan's: `scan` runs on EVERY poll tick, so prompting here re-popped
+        // the Location dialog on every tick while the grant was still
+        // notDetermined (e.g. a freshly-rebuilt cdhash, or an audit run).
         manager.delegate = self
-        manager.requestWhenInUseAuthorization()
-        manager.startUpdatingLocation()
-        // Don't wait a fixed time — try the scan immediately, and if
-        // it comes back redacted (CoreLocation registration not yet
-        // complete), retry after 500 ms. Up to 6 attempts ≈ 5 s
-        // worst-case. dispatchMain keeps the libdispatch + CoreLocation
-        // machinery alive across retries, so registration eventually
-        // lands; we use the *first* unredacted scan we get as the
-        // result. Warm state returns on attempt 0 in ~0.2 s; cold
-        // state typically takes 3-4 attempts (~2 s wall-clock).
-        attemptScan(attempt: 0)
+        // Fallback: if no settled status arrives (genuinely notDetermined),
+        // proceed anyway → redacted, still no prompt. The window also covers
+        // the CoreLocation registration lag for an authorized bundle.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            self?.proceed()
+        }
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        // Cut the retry loop short on explicit denial / restriction —
-        // the scan will return redacted no matter how many times we
-        // ask, so don't make the user wait the full 6 s.
-        switch manager.authorizationStatus {
-        case .denied, .restricted:
-            emitCurrentScan(force: true)
-        default:
-            break
-        }
+        // A first `.notDetermined` may precede the settled status — wait for
+        // it (the fallback timer reads the property directly if nothing else
+        // settles). Never call requestWhenInUseAuthorization from here.
+        if manager.authorizationStatus == .notDetermined { return }
+        proceed()
     }
 
     // Pre-Catalina spelling — macOS picks one of the two delegate
     // entry points based on SDK target.
     func locationManager(_ manager: CLLocationManager,
                          didChangeAuthorization status: CLAuthorizationStatus) {
-        switch status {
-        case .denied, .restricted:
-            emitCurrentScan(force: true)
+        if status == .notDetermined { return }
+        proceed()
+    }
+
+    /// Decide what to do once the authorization has settled (or the fallback
+    /// fired). Authorized → register the consumer + scan exactly as before;
+    /// anything else → redacted scan, NO prompt.
+    private func proceed() {
+        guard !proceeded, !done else { return }
+        proceeded = true
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            // Already granted: requestWhenInUseAuthorization is a no-op that
+            // does NOT prompt. Keep it + startUpdatingLocation to finish
+            // CoreLocation registration, then run the scan-with-retry (warm
+            // state returns on attempt 0 in ~0.2 s; cold state takes a few
+            // 500 ms retries while registration lands).
+            manager.requestWhenInUseAuthorization()
+            manager.startUpdatingLocation()
+            attemptScan(attempt: 0)
         default:
-            break
+            // notDetermined (grant still pending) / denied / restricted:
+            // emit a redacted scan without ever prompting.
+            emitCurrentScan(force: true)
         }
     }
 
