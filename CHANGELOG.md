@@ -11,6 +11,24 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [2.1.2] — 2026-06-23
+
+Patch release. **Stops the macOS Location prompt from re-popping on every scan.**
+
+### Fixed
+
+- **The Wi-Fi scan no longer re-triggers the Location permission prompt.** The
+  helper's `scan` ran once per refresh and asked for Location authorization each
+  time, so while the grant was still pending (e.g. right after an update rebuilds
+  the helper) the prompt re-appeared on every scan — most visibly during a long
+  audit / monitoring session. The scan now reads the authorization without
+  prompting and only scans for unredacted data once Location is granted;
+  otherwise it returns redacted results silently. The one-time prompt is still
+  driven by the helper window during install / `diting setup` / first launch.
+
+  After updating, run `diting setup` once to re-grant Location to the rebuilt
+  helper; scans then stay silent.
+
 ## [2.1.1] — 2026-06-23
 
 Patch release. **`diting --help` now lists every command, and a few TUI labels
