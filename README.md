@@ -556,9 +556,10 @@ diting analyze diting-20260608.jsonl --json | jq .insights
 diting stream --duration 5m | jq -c 'select(.type=="roam")'  # bounded JSONL
 ```
 
-`status` / `scan` / `analyze` / `capabilities` each accept `--json` and
-print one JSON document; `stream` emits canonical event-log JSONL (the
-same schema `analyze` consumes). JSON goes to stdout, all human chrome
+`status` / `scan` / `analyze` / `setup` / `update` / `capabilities` each
+accept `--json` and print one JSON document; `stream` (and `capture`) emit
+canonical event-log JSONL (the same schema `analyze` consumes). JSON goes
+to stdout, all human chrome
 (banners, hints) to stderr, and JSON keys stay stable English regardless
 of `--lang`. The CLI never prints a traceback — an unexpected error is
 one `diting: <message>` line (a JSON `{"error", "code"}` object under
@@ -598,8 +599,9 @@ With no override, `diting` autodetects the system locale —
 | `b` | open / close Wi-Fi Basics: SSID, BSSID, channel, band, security, roam score |
 | `j` | (in the Wi-Fi detail modal) join the inspected SSID — previously-saved networks confirm via Touch ID (or login password on Macs without a sensor) and join silently; new networks get a native macOS password prompt. Not hitless: a cross-SSID switch tears the current connection down for ~2-5 s. Enterprise / 802.1X is refused with a hint. |
 
-The `status`, `scan`, `stream`, and `calibrate` subcommands run
-diting without the TUI:
+The non-TUI subcommands — `status`, `scan`, `stream`, `calibrate`,
+`analyze`, `companion`, `capture`, `setup`, `update`, `capabilities` —
+run diting without the dashboard:
 
 ```bash
 uv run diting status                     # snapshot of current connection, exit

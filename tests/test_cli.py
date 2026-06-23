@@ -622,6 +622,15 @@ def test_canonical_verbs_dispatch():
         assert cli._resolve_alias(v) == v  # canonical passes through
 
 
+def test_usage_lists_every_canonical_verb():
+    # The hand-written top-level `--help` must advertise the full surface,
+    # never a subset — guards against the drift that hid capture / setup /
+    # update from `diting --help`.
+    usage = cli._usage()
+    for v in cli._CANONICAL_VERBS:
+        assert f"  {v}" in usage, f"{v!r} missing from top-level usage"
+
+
 def test_deprecated_alias_forwards_to_canonical():
     assert cli._resolve_alias("once") == "status"
     assert cli._resolve_alias("watch") == "stream"

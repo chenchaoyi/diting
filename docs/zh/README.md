@@ -486,9 +486,9 @@ diting analyze diting-20260608.jsonl --json | jq .insights
 diting stream --duration 5m | jq -c 'select(.type=="roam")'  # 限时 JSONL
 ```
 
-`status` / `scan` / `analyze` / `capabilities` 都接受 `--json` 并打印
-单个 JSON 文档；`stream` 输出规范事件日志 JSONL（与 `analyze` 消费的
-格式相同）。JSON 走 stdout，所有人类文案（横幅、提示）走 stderr，且
+`status` / `scan` / `analyze` / `setup` / `update` / `capabilities` 都接受
+`--json` 并打印单个 JSON 文档；`stream`（以及 `capture`）输出规范事件日志
+JSONL（与 `analyze` 消费的格式相同）。JSON 走 stdout，所有人类文案（横幅、提示）走 stderr，且
 无论 `--lang` 如何，JSON 的键始终是稳定的英文。CLI 绝不打印
 traceback —— 意外错误只是一行 `diting: <消息>`（`--json` 下是
 `{"error", "code"}` JSON 对象），退出码稳定：`0` 正常 · `1` 运行时
@@ -526,7 +526,8 @@ DITING_LANG=zh uv run diting   # 用环境变量
 | `b` | 打开 / 关闭 Wi-Fi 基础知识：SSID、BSSID、信道、频段、加密、漫游评分 |
 | `j` | （在 Wi-Fi 详情页内）加入当前查看的 SSID —— 已保存过的网络通过 Touch ID（无指纹传感器的 Mac 则走登录密码）确认后无感加入，新网络弹出原生 macOS 密码框。**不是无损切换**：跨 SSID 会断开当前连接 ~2–5 秒。企业 / 802.1X 网络会被拒绝并提示。 |
 
-`status`、`scan`、`stream`、`calibrate` 子命令不走 TUI：
+不走 TUI 的子命令 —— `status`、`scan`、`stream`、`calibrate`、`analyze`、
+`companion`、`capture`、`setup`、`update`、`capabilities` —— 都不走 dashboard：
 
 ```bash
 uv run diting status                     # 当前连接快照，随即退出
