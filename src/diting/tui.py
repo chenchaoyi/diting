@@ -684,7 +684,12 @@ def _help_content() -> tuple[Text, Text]:
     def line(label: str, desc: str) -> None:
         body.append("  ")
         body.append(f"{label:<6}", style="bold")
-        body.append(desc + "\n")
+        # Prepend a guaranteed separator: `:<6` is a MINIMUM width, so a
+        # label that is exactly 6 chars ("Events") or longer ("enter / i")
+        # gets no trailing pad and the description would abut it
+        # ("Eventsstrip", "enter / iinspect"). One leading space keeps a
+        # gap for every label length.
+        body.append(" " + desc + "\n")
 
     body.append("diting", style="bold cyan")
     body.append(
@@ -3193,7 +3198,11 @@ def _ble_visible_line(devices: list[BLEDevice]) -> Text:
     anonymous = sum(1 for d in devices if is_silent_device(d))
     line = Text()
     line.append(t("Visible BLE  "), style="bold dim")
-    line.append(t("{n} total", n=n), style="white")
+    # "advertising", not "total": the list footer counts advertising rows +
+    # the separate Connected-peripherals group, so a bare "N total" here read
+    # as the grand total and didn't reconcile with the footer (30 vs 32). The
+    # Connected count lives on its own diagnostics row.
+    line.append(t("{n} advertising", n=n), style="white")
     line.append(t("  ·  {n} connectable", n=connectable), style="dim")
     if anonymous:
         line.append(t("  ·  {n} anonymous", n=anonymous), style="yellow")
@@ -3239,7 +3248,10 @@ def _ble_vendors_line(devices: list[BLEDevice]) -> Text:
     folded = sum(max(0, d.merged_count - 1) for d in devices)
     if folded:
         line.append("  ·  ", style="white")
-        line.append(t("(+{n} folded)", n=folded), style="dim")
+        # Name the unit: this counts rotating-ID ADVERTS the merger collapsed,
+        # not vendors. Sitting on the Vendors line, a bare "(+183 folded)" read
+        # as "+183 more vendors" (impossible with ~30 devices).
+        line.append(t("(+{n} rotations folded)", n=folded), style="dim")
     return line
 
 
@@ -3950,6 +3962,9 @@ _BLE_VENDOR_DISPLAY: dict[str, str] = {
     "GuangDong Oppo Mobile Telecommunications Corp., Ltd.": "OPPO",
     "RESIDEO TECHNOLOGIES, INC.": "Resideo",
     "Sony Corporation": "Sony",
+    # Long-tail registrant confirmed in a 2026-06-23 live audit — 29 chars,
+    # overflows the event vendor slot without an alias.
+    "Edifier International Limited": "Edifier",
 }
 
 

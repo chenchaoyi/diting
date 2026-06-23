@@ -369,10 +369,12 @@ def test_ble_visible_line_counts_total_connectable_anonymous():
                  vendor_id=None, is_connectable=True),
     ]
     text = _ble_visible_line(devices).plain
-    # Three devices total, two connectable, two anonymous (no vendor
+    # Three advertising devices, two connectable, two anonymous (no vendor
     # AND no name). Anonymous count appears even when it equals the
-    # connectable count because the categories are independent.
-    assert "3 total" in text
+    # connectable count because the categories are independent. The label
+    # is "advertising" (not "total") so it reconciles with the list footer,
+    # which also counts the separate Connected-peripherals group.
+    assert "3 advertising" in text
     assert "2 connectable" in text
     assert "2 anonymous" in text
 
@@ -418,8 +420,9 @@ def test_ble_vendors_line_annotates_folded_rotation_count():
     assert "Anhui Huami 2" in text
     assert "Apple, Inc. 1" in text
     # Folded annotation totals (merged_count - 1) across all rows:
-    # (5-1) + (3-1) + (1-1) = 6.
-    assert "(+6 folded)" in text
+    # (5-1) + (3-1) + (1-1) = 6. The unit is named ("rotations") so it
+    # doesn't read as folded vendors on the Vendors line.
+    assert "(+6 rotations folded)" in text
 
 
 def test_ble_vendors_line_skips_annotation_when_nothing_folded():
@@ -4057,3 +4060,18 @@ def test_presence_line_error():
         assert "Can't confirm connections" in txt
     finally:
         i18n.set_lang(saved)
+
+
+def test_help_content_separates_label_from_description():
+    """Regression: the help modal's two-column `line()` must keep a gap
+    between the key/label and its description for EVERY label length.
+    `:<6` is a minimum width, so a 6-char label ("Events") or a longer
+    binding ("enter / i") used to abut its text → "Eventsstrip" /
+    "enter / iinspect", which read as typos."""
+    from diting.tui import _help_content
+    body, _footer = _help_content()
+    text = body.plain
+    assert "Eventsstrip" not in text
+    assert "Events strip" in text
+    assert "iinspect" not in text
+    assert "enter / i inspect" in text
