@@ -11,6 +11,36 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-06-23
+
+Minor release. **Adds `diting update` for self-updating, and finishes the
+install-time permission flow (a numbered Permissions step + visible
+Notifications).**
+
+### Added
+
+- **`diting update` — self-update to the latest release.** `diting update
+  --check` reports whether a newer release is available; `diting update --json`
+  emits `{current, latest, update_available}`; `diting update` installs the
+  latest by re-running the canonical installer pinned to that version, so the
+  binary and the helper bundle refresh together. Network failures are reported
+  cleanly and exit non-zero.
+
+### Changed
+
+- **The install-time permission grant is now its own numbered step.** The
+  installer renders it as the final step, `[7/7] Permissions`, framing `diting
+  setup`'s output instead of dumping it loose below the Helper step.
+
+### Fixed
+
+- **`diting setup` now shows Notifications.** Its live status used to print only
+  Location and Bluetooth and finish the moment those two (the required grants)
+  landed — before you had answered the Notifications prompt, which the helper
+  requests last. Setup now shows all three permissions and waits a bounded grace
+  for the best-effort Notifications prompt to settle (shown as `waiting`, not
+  `not granted`) before reporting.
+
 ## [2.0.5] — 2026-06-22
 
 Patch release. **Polishes the install-time permission flow — a cleaner helper
