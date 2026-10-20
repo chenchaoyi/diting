@@ -33,7 +33,10 @@ through normal `openspec/changes/<name>/` proposals; no further
 openspec/changes/
 ```
 
-(empty as of 2026-05-09 — all current proposals are archived.)
+| Change | Status |
+|---|---|
+| [companion-remote-camera](changes/companion-remote-camera/proposal.md) | Snapshot camera shipped; change remains unarchived |
+| [remote-live-av](changes/remote-live-av/research.md) | Deferred on 2026-10-20; research and design only, implementation not started |
 
 ## Recent archive
 
