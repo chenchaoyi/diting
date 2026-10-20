@@ -92,7 +92,7 @@ wheels = [
 
 [[package]]
 name = "diting"
-version = "2.1.2"
+version = "2.1.5"
 source = { editable = "." }
 dependencies = [
     { name = "pynacl" },
